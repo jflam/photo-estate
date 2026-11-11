@@ -1,0 +1,1178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Photo Estate</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Photo Estate">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c0c0d" media="(prefers-color-scheme: dark)">
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fbfbfa; --surface: #f1f1ef; --raised: #ffffff; --hover: rgba(0,0,0,.05);
+  --line: rgba(0,0,0,.08); --line-2: rgba(0,0,0,.14);
+  --ink: #131314; --ink-2: #4b4b51; --muted: #86868d; --faint: #c9c9cd;
+  --tile: #ececea; --seg: rgba(0,0,0,.06); --seg-on: #ffffff; --inv: #131314; --inv-ink: #ffffff; --fav: #e5484d;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 12px 36px rgba(0,0,0,.14);
+  --pad: 32px; --gap: 4px;
+  --ease: cubic-bezier(.2,.7,.2,1);
+  --sans: "Inter Variable", "Inter", "Adwaita Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0c0d; --surface: #18181a; --raised: #1c1c1f; --hover: rgba(255,255,255,.06);
+    --line: rgba(255,255,255,.08); --line-2: rgba(255,255,255,.14);
+    --ink: #f1f1f2; --ink-2: #b7b7bc; --muted: #7d7d85; --faint: #45454b;
+    --tile: #17171a; --seg: rgba(255,255,255,.06); --seg-on: rgba(255,255,255,.13); --inv: #f1f1f2; --inv-ink: #0c0c0d; --fav: #ff6b6b;
+    --shadow: 0 0 0 1px rgba(0,0,0,.4), 0 16px 48px rgba(0,0,0,.55);
+  }
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); scrollbar-gutter: stable; }
+body { margin: 0; color: var(--ink); font: 14px/1.4 var(--sans); letter-spacing: -.006em;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+button, input { font: inherit; letter-spacing: inherit; color: inherit; }
+button { background: none; border: 0; padding: 0; cursor: pointer; }
+svg { display: block; flex: none; }
+.num { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* ── header ─────────────────────────────────────────────────────────── */
+header { position: sticky; top: 0; z-index: 10; padding: 16px var(--pad) 0;
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  -webkit-backdrop-filter: saturate(1.5) blur(20px); backdrop-filter: saturate(1.5) blur(20px);
+  box-shadow: 0 1px 0 transparent; transition: box-shadow .3s; }
+header.scrolled { box-shadow: 0 1px 0 var(--line); }
+.bar { display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; }
+.search { position: relative; flex: 1 1 340px; max-width: 540px; height: 40px; display: flex; align-items: center;
+  gap: 10px; padding: 0 12px; border-radius: 10px; background: var(--surface);
+  box-shadow: inset 0 0 0 1px transparent; transition: box-shadow .18s, background .18s; cursor: text; }
+.search:focus-within { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 4px var(--hover); }
+.search > svg { color: var(--muted); }
+.search input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none; font-size: 14.5px; }
+.search input::placeholder { color: var(--muted); }
+.search input::-webkit-search-cancel-button { display: none; }
+.search kbd { font: 500 11px var(--sans); color: var(--muted); border: 1px solid var(--line-2); border-radius: 5px;
+  width: 20px; height: 20px; display: grid; place-items: center; transition: opacity .15s; }
+.search:focus-within kbd { opacity: 0; }
+.like { display: none; align-items: center; gap: 7px; height: 28px; padding: 0 4px 0 3px; margin-left: -4px;
+  border-radius: 7px; background: var(--inv); color: var(--inv-ink); font-weight: 500; font-size: 13px; white-space: nowrap; }
+.like.on { display: inline-flex; }
+.like img { width: 22px; height: 22px; border-radius: 4px; object-fit: cover; }
+.like button { width: 20px; height: 20px; display: grid; place-items: center; opacity: .6; }
+.like button:hover { opacity: 1; }
+
+.pills { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.pill { height: 32px; padding: 0 10px; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px;
+  color: var(--ink-2); font-weight: 500; font-size: 13.5px; white-space: nowrap; max-width: 240px;
+  transition: background .15s, color .15s; }
+.pill > span { overflow: hidden; text-overflow: ellipsis; }
+.pill svg { opacity: .55; transition: opacity .15s, transform .2s var(--ease); }
+.pill:hover, .pill.open { background: var(--hover); color: var(--ink); }
+.pill.open .chev { transform: rotate(180deg); }
+.pill.on { background: var(--inv); color: var(--inv-ink); padding-right: 4px; animation: pillin .25s var(--ease); }
+.pill.on .chev { display: none; }
+.pill .x { display: none; width: 22px; height: 22px; border-radius: 6px; place-items: center; }
+.pill.on .x { display: grid; }
+.pill .x:hover { background: color-mix(in srgb, var(--inv-ink) 16%, transparent); }
+.pill .x:hover svg { opacity: 1; }
+.pill.fav.on svg { opacity: 1; color: var(--fav); fill: var(--fav); }
+.pill.fav.on { padding-right: 10px; }
+@keyframes pillin { from { transform: scale(.94); opacity: .6; } }
+.tools { margin-left: auto; display: flex; gap: 2px; }
+.icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--ink-2);
+  transition: background .15s, color .15s; }
+.icon:hover, .icon.open { background: var(--hover); color: var(--ink); }
+
+/* ── timeline ───────────────────────────────────────────────────────── */
+.tl { position: relative; margin-top: 14px; padding-bottom: 10px; user-select: none; touch-action: none; cursor: crosshair; }
+.tl-bars { display: flex; align-items: flex-end; height: 34px; color: var(--ink); }
+.tl-bars i { flex: 1; height: 100%; min-width: 0; transform-origin: 50% 100%; transform: scaleY(0);
+  background: currentColor; opacity: .26; transition: transform .5s var(--ease), opacity .25s; }
+.tl.gapped .tl-bars i { margin-right: 1px; }
+.tl-bars i.in { opacity: .92; }
+.tl-bars i.hov { opacity: 1; }
+.tl-years { position: relative; height: 16px; margin-top: 5px; border-top: 1px solid var(--line); }
+.tl-years span { position: absolute; top: 4px; font-size: 10.5px; line-height: 12px; color: var(--muted);
+  font-variant-numeric: tabular-nums; letter-spacing: .01em; padding-left: 4px; cursor: pointer; transition: color .15s; }
+.tl-years span::before { content: ""; position: absolute; left: 0; top: -4px; height: 4px; width: 1px; background: var(--line-2); }
+.tl-years span:hover, .tl-years span.in { color: var(--ink); }
+.tl-sel { position: absolute; top: -4px; height: 43px; border-radius: 4px; background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--line-2); opacity: 0; pointer-events: none;
+  transition: opacity .2s, left .25s var(--ease), width .25s var(--ease); }
+.tl-sel.on { opacity: 1; }
+.tl.drag .tl-sel { transition: opacity .2s; }
+.tl-here { position: absolute; top: 38px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%;
+  background: var(--ink); opacity: 0; pointer-events: none; transition: left .3s var(--ease), opacity .3s; }
+.tl-here.on { opacity: 1; }
+.tl-tip { position: absolute; top: -27px; transform: translateX(-50%); padding: 3px 8px; border-radius: 6px;
+  background: var(--inv); color: var(--inv-ink); font-size: 11.5px; font-weight: 500; white-space: nowrap;
+  pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 2; }
+.tl-tip.on { opacity: 1; }
+.tl-tip b { font-weight: 500; opacity: .6; margin-left: 6px; }
+
+/* ── page ───────────────────────────────────────────────────────────── */
+main { padding: 26px var(--pad) 96px; }
+.head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; min-height: 58px; }
+.head h1 { margin: 0; font-size: 28px; line-height: 1.15; font-weight: 600; letter-spacing: -.028em;
+  display: flex; align-items: center; gap: 12px; }
+.head h1 img { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; }
+.head p { margin: 5px 0 0; color: var(--muted); font-size: 13.5px; }
+.head p b { font-weight: 500; color: var(--ink-2); }
+.head p i { font-style: normal; color: var(--faint); margin: 0 7px; }
+.head-r { display: flex; gap: 2px; padding-bottom: 1px; }
+.txt { height: 28px; padding: 0 9px; border-radius: 7px; color: var(--muted); font-size: 13px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 6px; transition: background .15s, color .15s; }
+.txt:hover { background: var(--hover); color: var(--ink); }
+#grid { transition: opacity .2s; }
+#grid.stale { opacity: .45; }
+#grid.fresh { animation: rise .45s var(--ease); }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+section { margin-top: 30px; }
+section.flat { margin-top: 22px; }
+.sh { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.sh h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.012em; white-space: nowrap; }
+.sh h2 span { font-weight: 400; color: var(--muted); }
+.sh .where { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sh .n { color: var(--muted); font-size: 12px; }
+.row { display: flex; gap: var(--gap); margin-bottom: var(--gap); content-visibility: auto; }
+.t { position: relative; flex: none; height: 100%; overflow: hidden; border-radius: 3px; background: var(--tile); cursor: pointer; }
+.t img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0;
+  transition: opacity .35s, filter .25s, transform .6s var(--ease); }
+.t img.in { opacity: 1; }
+.t:hover img { filter: brightness(1.07); transform: scale(1.012); }
+.t .fv { position: absolute; top: 7px; right: 7px; color: #fff; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+.t .cap { position: absolute; inset: auto 0 0 0; padding: 22px 8px 6px; font-size: 11.5px; font-weight: 500; color: #fff;
+  background: linear-gradient(transparent, rgba(0,0,0,.5)); opacity: 0; transition: opacity .2s; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.t:hover .cap { opacity: 1; }
+.empty { padding: 96px 0; text-align: center; color: var(--muted); }
+.empty h3 { margin: 0 0 6px; color: var(--ink); font-size: 17px; font-weight: 600; letter-spacing: -.015em; }
+.empty button { margin-top: 18px; height: 32px; padding: 0 14px; border-radius: 8px; background: var(--inv);
+  color: var(--inv-ink); font-weight: 500; font-size: 13.5px; }
+#more { height: 1px; }
+
+/* ── popovers ───────────────────────────────────────────────────────── */
+.pop { position: fixed; z-index: 30; width: 300px; padding: 6px; border-radius: 12px; background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--line), var(--shadow); transform-origin: 20px 0; animation: pop .16s var(--ease); }
+.pop.wide { width: 380px; }
+@keyframes pop { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+.seg { display: flex; padding: 2px; border-radius: 8px; background: var(--seg); margin-bottom: 6px; }
+.seg button { flex: 1; height: 26px; border-radius: 6px; font-size: 12.5px; font-weight: 500; color: var(--muted);
+  transition: color .15s, background .15s, box-shadow .15s; }
+.seg button:hover { color: var(--ink); }
+.seg button.on { color: var(--ink); background: var(--seg-on); box-shadow: 0 1px 2px rgba(0,0,0,.14); }
+.pop .find { width: 100%; height: 34px; padding: 0 10px; border: 0; outline: 0; background: none;
+  border-bottom: 1px solid var(--line); margin-bottom: 6px; font-size: 13.5px; }
+.pop .find::placeholder { color: var(--muted); }
+.opts { max-height: min(360px, calc(100vh - 220px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--faint) transparent; }
+.opt { width: 100%; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  padding: 7px 10px 7px 8px; border-radius: 7px; text-align: left; font-size: 13.5px; }
+.opt:hover, .opt.cur { background: var(--hover); }
+.opt .l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opt .l em { font-style: normal; color: var(--muted); margin-left: 6px; font-size: 12.5px; }
+.opt .n { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.opt .ck { opacity: 0; transform: scale(.6); transition: opacity .12s, transform .2s var(--ease); }
+.opt.on .ck { opacity: 1; transform: none; }
+.opt.on .l { font-weight: 500; }
+.opt.zero { opacity: .45; }
+.opt.trip { grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; padding: 6px 10px 6px 6px; }
+.opt.trip img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: var(--tile); }
+.opt.trip .l { display: block; }
+.opt.trip small { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; font-variant-numeric: tabular-nums; }
+.opt.sug { grid-template-columns: 16px minmax(0, 1fr) auto; }
+.opt.sug svg { color: var(--muted); }
+.opt.sug .n { font-size: 11.5px; }
+.cap2 { padding: 8px 10px 5px; font-size: 11px; font-weight: 500; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.none { padding: 18px 10px; color: var(--muted); font-size: 13px; text-align: center; }
+.set { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 10px; font-size: 13.5px; }
+.set .seg { margin: 0; width: 132px; }
+.sw { width: 34px; height: 20px; border-radius: 10px; background: var(--faint); position: relative; transition: background .2s; }
+.sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .22s var(--ease); }
+.sw.on { background: var(--ink); }
+.sw.on::after { transform: translateX(14px); background: var(--bg); }
+
+/* ── viewer ─────────────────────────────────────────────────────────── */
+.v { position: fixed; inset: 0; z-index: 50; display: none; color: #ececed; --vline: rgba(255,255,255,.09); --vmuted: #85858c; }
+.v.on { display: block; }
+.v-bg { position: absolute; inset: 0; background: #060607; }
+.v-pic { position: absolute; left: 0; top: 0; border-radius: 2px; overflow: hidden; background: #111; transform-origin: 0 0;
+  will-change: transform; }
+.v-pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.v-pic .hi { opacity: 0; transition: opacity .3s; }
+.v-pic .hi.in { opacity: 1; }
+.v-ui { position: absolute; inset: 0; pointer-events: none; transition: opacity .25s; }
+.v-ui > * { pointer-events: auto; }
+.v-btn { position: absolute; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+  color: #d9d9dc; background: rgba(255,255,255,.07); transition: background .15s, color .15s, opacity .2s, transform .2s var(--ease); }
+.v-btn:hover { background: rgba(255,255,255,.15); color: #fff; }
+.v-btn:active { transform: scale(.94); }
+#vClose { top: 18px; left: 18px; }
+#vInfoBtn { top: 18px; right: 18px; transition: right .3s var(--ease), background .15s; }
+.v.info #vInfoBtn { right: 378px; background: rgba(255,255,255,.16); color: #fff; }
+#vPrev { left: 18px; top: 50%; margin-top: -19px; }
+#vNext { right: 18px; top: 50%; margin-top: -19px; transition: right .3s var(--ease), background .15s, opacity .2s; }
+.v.info #vNext { right: 378px; }
+.v-btn[disabled] { opacity: 0; pointer-events: none; }
+.v-count { position: absolute; top: 28px; left: 70px; font-size: 12.5px; color: var(--vmuted); font-variant-numeric: tabular-nums; }
+.v-info { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; padding: 30px 28px 40px; overflow-y: auto;
+  background: #101012; box-shadow: -1px 0 0 var(--vline); transform: translateX(100%); transition: transform .3s var(--ease);
+  scrollbar-width: thin; scrollbar-color: #3a3a40 transparent; font-size: 13.5px; }
+.v.info .v-info { transform: none; }
+.v-info h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; letter-spacing: -.02em; color: #fff; }
+.v-info .sub { margin-top: 4px; color: var(--vmuted); }
+.v-info h4 { margin: 26px 0 8px; font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--vmuted); }
+.v-info .big { font-size: 15px; font-weight: 500; color: #fff; }
+.v-info .dim { color: var(--vmuted); }
+.v-info a, .lnk { color: inherit; text-decoration: none; cursor: pointer; background: linear-gradient(currentColor, currentColor) 0 100% / 100% 1px no-repeat;
+  background-size: 0 1px; transition: background-size .25s var(--ease); }
+.v-info a:hover, .lnk:hover { background-size: 100% 1px; }
+.go { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 9px 12px;
+  margin-top: 6px; border-radius: 9px; background: rgba(255,255,255,.05); text-align: left; transition: background .15s; }
+.go:hover { background: rgba(255,255,255,.1); }
+.go span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; font-weight: 500; }
+.go small { color: var(--vmuted); font-size: 12px; font-weight: 400; margin-left: 8px; font-variant-numeric: tabular-nums; }
+.go svg { color: var(--vmuted); transition: transform .2s var(--ease); }
+.go:hover svg { transform: translateX(2px); color: #fff; }
+.exp { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; margin-top: 12px; border-radius: 9px;
+  box-shadow: inset 0 0 0 1px var(--vline); }
+.exp div { padding: 10px 0 9px; text-align: center; }
+.exp div + div { box-shadow: -1px 0 0 var(--vline); }
+.exp b { display: block; font-size: 14px; font-weight: 500; color: #fff; font-variant-numeric: tabular-nums; }
+.exp small { display: block; margin-top: 2px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--vmuted); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { height: 26px; padding: 0 10px; border-radius: 7px; background: rgba(255,255,255,.07); color: #ececed;
+  font-size: 12.5px; font-weight: 500; transition: background .15s; }
+.tag:hover { background: rgba(255,255,255,.14); }
+.v-info .path { margin-top: 4px; font: 11px/1.5 var(--mono); color: var(--vmuted); word-break: break-all; letter-spacing: 0; }
+.v-info .cta { margin-top: 28px; width: 100%; height: 36px; border-radius: 9px; background: #ececed; color: #0c0c0d;
+  font-weight: 600; font-size: 13.5px; transition: background .15s, transform .2s var(--ease); }
+.v-info .cta:hover { background: #fff; }
+.v-info .cta:active { transform: scale(.985); }
+
+@media (max-width: 1100px) {      /* search and view options share the first row; filters get their own */
+  .search { order: 0; flex: 1 1 0; max-width: none; }
+  .tools { order: 1; margin-left: 0; }
+  .pills { order: 2; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-top: 4px; }
+}
+@media (max-width: 760px) {
+  :root { --pad: 14px; --gap: 3px; }
+  .search kbd { display: none; }
+  .head h1 { font-size: 22px; }
+  .v-info { width: 100%; top: 45%; box-shadow: 0 -1px 0 var(--vline); transform: translateY(100%); }
+  .v.info #vInfoBtn, .v.info #vNext { right: 18px; }
+}
+/* ── phone: notch and home bar (insets are 0 in a normal browser tab), touch ── */
+header { padding-top: calc(16px + env(safe-area-inset-top)); padding-left: calc(var(--pad) + env(safe-area-inset-left));
+  padding-right: calc(var(--pad) + env(safe-area-inset-right)); }
+main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right: calc(var(--pad) + env(safe-area-inset-right));
+  padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+#vClose, #vInfoBtn, #vShare { top: calc(18px + env(safe-area-inset-top)); }
+#vClose { left: calc(18px + env(safe-area-inset-left)); }
+.v-count { top: calc(28px + env(safe-area-inset-top)); left: calc(70px + env(safe-area-inset-left));
+  max-width: calc(100% - 190px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.v.info .v-count { max-width: calc(100% - 550px); }
+@media (max-width: 760px) { .v.info .v-count { max-width: calc(100% - 190px); } }
+.v-info { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
+.v { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.v-info { touch-action: pan-y; -webkit-user-select: text; user-select: text; }
+#vShare { right: 64px; transition: right .3s var(--ease), background .15s, opacity .2s; }
+.v.info #vShare { right: 424px; }
+#vShare.busy svg { animation: pulse 1s ease-in-out infinite; }
+#vShare.ready { background: #ececed; color: #0c0c0d; }
+@keyframes pulse { 50% { opacity: .35; } }
+.v.bare .v-btn, .v.bare .v-count { opacity: 0; pointer-events: none; }
+.back { display: none; }
+@media (display-mode: standalone) { html.deep .back { display: grid; margin-right: -6px; } }
+@media (pointer: coarse) {
+  #vPrev, #vNext { display: none; }                 /* swipe instead */
+  .t:hover img { filter: none; transform: none; }
+  .pill { height: 36px; }
+  .icon { width: 36px; height: 36px; }
+}
+@media (max-width: 760px) { .v.info #vShare { right: 64px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header id="hdr">
+  <div class="bar">
+    <button class="icon back" id="backBtn" aria-label="Back"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
+    <label class="search" id="search">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14"/></svg>
+      <span class="like" id="like"><img alt=""><span>Similar photos</span><button type="button" aria-label="Clear similar photos"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m4 4 8 8m0-8-8 8"/></svg></button></span>
+      <input id="q" type="search" placeholder="Describe a photo, or find a place, person, trip or camera" autocomplete="off" spellcheck="false" aria-label="Search photos">
+      <kbd>/</kbd>
+    </label>
+    <div class="pills" id="pills"></div>
+    <div class="tools">
+      <button class="icon" id="viewBtn" aria-label="View options"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 5h5.5M11.5 5H14M2 11h2.5M8.5 11H14"/><circle cx="9.5" cy="5" r="1.9"/><circle cx="6.5" cy="11" r="1.9"/></svg></button>
+    </div>
+  </div>
+  <div class="tl" id="tl">
+    <div class="tl-tip num" id="tlTip"></div>
+    <div class="tl-sel" id="tlSel"></div>
+    <div class="tl-bars" id="tlBars"></div>
+    <div class="tl-years" id="tlYears"></div>
+    <div class="tl-here" id="tlHere"></div>
+  </div>
+</header>
+
+<main>
+  <div class="head">
+    <div><h1 id="title">Library</h1><p id="sub" class="num">&nbsp;</p></div>
+    <div class="head-r" id="headR"></div>
+  </div>
+  <div id="grid"></div>
+  <div id="more"></div>
+</main>
+
+<div class="v" id="v" role="dialog" aria-modal="true" aria-label="Photo">
+  <div class="v-bg" id="vBg"></div>
+  <div class="v-pic" id="vPic"><img class="lo" id="vLo" alt=""><img class="hi" id="vHi" alt=""></div>
+  <div class="v-ui" id="vUi">
+    <button class="v-btn" id="vClose" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m3.5 3.5 9 9m0-9-9 9"/></svg></button>
+    <span class="v-count" id="vCount"></span>
+    <button class="v-btn" id="vShare" aria-label="Save or share"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M5 4.8 8 2l3 2.8M5.5 7H4.2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h7.600a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1H10.500"/></svg></button>
+    <button class="v-btn" id="vInfoBtn" aria-label="Details"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.3v3.6"/><circle cx="8" cy="5" r=".4" fill="currentColor"/></svg></button>
+    <button class="v-btn" id="vPrev" aria-label="Previous"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
+    <button class="v-btn" id="vNext" aria-label="Next"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 5 5-5 5"/></svg></button>
+    <aside class="v-info" id="vInfo"></aside>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = n => Number(n).toLocaleString();
+const EASE = "cubic-bezier(.2,.7,.2,1)";
+const I = {
+  chev: '<svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m2 3.75 3 3 3-3"/></svg>',
+  x: '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m2 2 6 6m0-6-6 6"/></svg>',
+  check: '<svg class="ck" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 8.5 3 3 6-7"/></svg>',
+  heart: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.9-5.600 7.300-5.600 7.300Z"/></svg>',
+  heartFill: '<svg class="fv" width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.800a3 3 0 0 1 5.600 1.500c0 3.900-5.600 7.300-5.600 7.300Z"/></svg>',
+  search: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14"/></svg>',
+  arrow: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg>',
+  dot: '<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>',
+};
+const IDEAS = ["sunset over water", "kids playing in the snow", "birthday cake with candles", "dog on the beach",
+  "city at night", "old black and white family photo"];
+
+/* ── state ─────────────────────────────────────────────────────────── */
+const KEYS = ["country", "region", "city", "person", "album", "camera", "lens"];
+const KIND = { country: "Country", region: "Region", city: "Place", person: "Person", album: "Album", camera: "Camera", lens: "Lens", trip: "Trip" };
+const blank = () => ({ q: "", sha: "", trip: "", event: "", fav: false, from: "", to: "", sort: "",
+  f: Object.fromEntries(KEYS.map(k => [k, []])) });
+let S = blank();
+let V = { size: "m", dedupe: true, info: true };
+try { Object.assign(V, JSON.parse(localStorage.getItem("estate.view") || "{}")); } catch (e) {}
+const saveView = () => { try { localStorage.setItem("estate.view", JSON.stringify(V)); } catch (e) {} };
+const ROW_H = { s: 128, m: 196, l: 288 };
+let INFO = null, F = null;                  // library facts; facet counts under the current filters
+let D = {}, items = [], sections = [], next = null, ranked = false, gen = 0, busy = false;
+
+function toParams(s) {
+  const p = new URLSearchParams();
+  if (s.q) p.set("q", s.q);
+  if (s.sha) p.set("sha", s.sha);
+  for (const k of KEYS) for (const v of s.f[k]) p.append(k, v);
+  for (const k of ["trip", "event", "from", "to", "sort"]) if (s[k]) p.set(k, s[k]);
+  if (s.fav) p.set("fav", "1");
+  return p;
+}
+function fromParams(p) {
+  const s = blank();
+  for (const k of ["q", "sha", "trip", "event", "from", "to", "sort"]) s[k] = p.get(k) || "";
+  for (const k of KEYS) s.f[k] = p.getAll(k);
+  s.fav = p.get("fav") === "1";
+  return s;
+}
+const filtered = () => KEYS.some(k => S.f[k].length) || S.trip || S.event || S.fav || S.from || S.to;
+
+/* ── dates ─────────────────────────────────────────────────────────── */
+const dParts = w => { const m = /^(\d{4})-(\d\d)(?:-(\d\d))?(?:T(\d\d):(\d\d))?/.exec(w || "");
+  return m && new Date(+m[1], +m[2] - 1, +(m[3] || 1), +(m[4] || 0), +(m[5] || 0)); };
+const DF = o => new Intl.DateTimeFormat(undefined, o);
+const fLong = DF({ weekday: "long", day: "numeric", month: "long", year: "numeric" });
+const fDay = DF({ weekday: "long", day: "numeric", month: "long" });
+const fTime = DF({ hour: "numeric", minute: "2-digit" });
+const fMed = DF({ day: "numeric", month: "short", year: "numeric" });
+const fMonth = DF({ month: "long" }), fMon = DF({ month: "short", year: "numeric" });
+const when = r => r.local || r.taken || "";
+function span(a, b) {
+  const x = dParts(a), y = dParts(b || a);
+  if (!x) return "";
+  try { return fMed.formatRange(x, y); } catch (e) { return fMed.format(x); }
+}
+const ymOf = s => { const m = /^(\d{4})-(\d\d)/.exec(s || ""); return m ? +m[1] * 12 + +m[2] - 1 - INFO.m0 : -1; };
+const ymStr = i => { const a = i + INFO.m0; return `${Math.floor(a / 12)}-${String(a % 12 + 1).padStart(2, "0")}`; };
+const ymDate = i => new Date(Math.floor((i + INFO.m0) / 12), (i + INFO.m0) % 12, 1);
+function rangeLabel() {
+  const a = S.from ? ymOf(S.from) : 0, b = S.to ? ymOf(S.to) : INFO.months - 1;
+  if (a === b) return fMon.format(ymDate(a));
+  const A = ymDate(a), B = ymDate(b);
+  if (A.getMonth() === 0 && B.getMonth() === 11)
+    return A.getFullYear() === B.getFullYear() ? String(A.getFullYear()) : `${A.getFullYear()} – ${B.getFullYear()}`;
+  return `${fMon.format(A)} – ${fMon.format(B)}`;
+}
+
+/* ── fetch + render ────────────────────────────────────────────────── */
+const getJSON = async u => { const r = await fetch(u); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; };
+const apiParams = () => { const p = toParams(S); p.set("dedupe", V.dedupe ? "1" : "0"); return p; };
+
+// A home-screen app has no browser back button, so the header gets one once there is somewhere to go back to.
+const depth = () => history.state?.d || 0;
+async function refresh(push = true) {
+  const g = ++gen;
+  if (push) history.pushState({ d: depth() + 1 }, "", toParams(S).size ? "?" + toParams(S) : location.pathname);
+  document.documentElement.classList.toggle("deep", depth() > 0);
+  closePop();
+  renderPills(); renderLike();
+  if ($("#q").value !== S.q && document.activeElement !== $("#q")) $("#q").value = S.q;
+  $("#grid").classList.add("stale");
+  getJSON("/api/facets?" + apiParams()).then(f => { if (g === gen) { F = f; renderTimeline(); renderCounts(); refreshPop(); } }).catch(() => {});
+  let data;
+  try { data = await getJSON((S.sha ? "/api/similar?" : "/api/search?") + apiParams() + "&limit=150"); }
+  catch (e) { if (g === gen) { $("#grid").classList.remove("stale"); $("#sub").textContent = "Search failed: " + e.message; } return; }
+  if (g !== gen) return;
+  D = data; items = []; sections = []; next = data.next; ranked = !!(S.sha || data.text);
+  if (S.event) { renderPills(); renderPillsKeepOpen(); }
+  const grid = $("#grid");
+  grid.innerHTML = ""; grid.classList.remove("stale", "fresh"); void grid.offsetWidth; grid.classList.add("fresh");
+  renderHead();
+  window.scrollTo({ top: 0 });
+  if (!data.results.length) {
+    grid.innerHTML = `<div class="empty"><h3>Nothing matches</h3>No photos fit everything you’ve chosen.${filtered() ? '<br><button id="clearAll">Clear filters</button>' : ""}</div>`;
+    return;
+  }
+  append(data.results);
+}
+
+async function loadMore() {
+  if (busy || next == null) return;
+  busy = true; const g = gen;
+  try {
+    const data = await getJSON((S.sha ? "/api/similar?" : "/api/search?") + apiParams() + `&limit=200&cursor=${next}`);
+    if (g === gen) { next = data.next; append(data.results); if (vCur >= 0) vChrome(); }
+  } catch (e) {}
+  busy = false;
+  if (g === gen && next != null && $("#more").getBoundingClientRect().top < innerHeight + 1200) loadMore();
+}
+new IntersectionObserver(es => { if (es[0].isIntersecting) loadMore(); }, { rootMargin: "1400px" }).observe($("#more"));
+
+/* grouping: none when ranked by meaning; by day inside a trip, an event or a short date range; else by month */
+function grain() {
+  if (ranked) return 0;
+  if (D.scope || S.event) return 10;
+  if (S.from && S.to && ymOf(S.to) - ymOf(S.from) <= 1) return 10;
+  return 7;
+}
+function append(list) {
+  const g = grain(), touched = new Set();
+  for (const r of list) {
+    const key = g ? when(r).slice(0, g) : "";
+    let sec = sections[sections.length - 1];
+    if (!sec || sec.key !== key) { sec = { key, base: items.length, items: [], rows: [], el: null }; sections.push(sec); }
+    sec.items.push(r); items.push(r); touched.add(sec);
+  }
+  const W = $("#grid").clientWidth;
+  for (const sec of touched) drawSection(sec, W);
+}
+
+function drawSection(sec, W) {
+  if (!sec.el) {
+    sec.el = document.createElement("section");
+    if (sec.key || !ranked) {
+      const d = dParts(sec.key);
+      const t = !d ? "Undated" : sec.key.length > 7 ? `${fDay.format(d)} <span>${d.getFullYear()}</span>` : `${fMonth.format(d)} <span>${d.getFullYear()}</span>`;
+      sec.el.innerHTML = `<div class="sh"><h2>${t}</h2><span class="where"></span><span class="n num" data-ym="${sec.key.length === 7 ? ymOf(sec.key) : ""}"></span></div>`;
+    } else sec.el.className = "flat";
+    sec.box = document.createElement("div"); sec.el.append(sec.box);
+    $("#grid").append(sec.el);
+  }
+  const wh = $(".where", sec.el);
+  if (wh) {                                     // the three places that account for most of this section
+    const c = new Map();
+    for (const r of sec.items) { const p = (r.city || r.event_title || "").split(",")[0]; if (p) c.set(p, (c.get(p) || 0) + 1); }
+    wh.textContent = [...c].sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]).join("  ·  ");
+    const n = $(".n", sec.el); if (F && n.dataset.ym !== "") n.textContent = fmt(F.months[+n.dataset.ym] || sec.items.length);
+  }
+  // rows are stable from the left, so only an unfinished last row needs laying out again
+  let from = 0;
+  const last = sec.rows[sec.rows.length - 1];
+  if (last && !last.full) { sec.rows.pop(); sec.box.lastElementChild.remove(); from = last.start; }
+  else if (last) from = last.start + last.n;
+  const H = Math.min(ROW_H[V.size], Math.max(96, W / 2.4)), G = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gap")) || 4;
+  const ar = r => Math.min(2.6, Math.max(.5, r.ar || 1.5));
+  let html = "";
+  for (let i = from; i < sec.items.length;) {
+    let sum = 0, j = i, full = false;
+    while (j < sec.items.length) { sum += ar(sec.items[j++]); if (sum * H + G * (j - i - 1) >= W) { full = true; break; } }
+    const n = j - i, room = W - G * (n - 1);
+    if (!full && sum * H >= room * .9) full = true;
+    const h = Math.round(full ? room / sum : H);
+    const ws = sec.items.slice(i, j).map(r => Math.round(ar(r) * h));
+    if (full) { let d = room - ws.reduce((a, b) => a + b, 0); for (let k = 0; d !== 0; k = (k + 1) % n) { ws[k] += Math.sign(d); d -= Math.sign(d); } }
+    html += `<div class="row" style="height:${h}px;contain-intrinsic-size:auto ${h}px">`;
+    for (let k = 0; k < n; k++) {
+      const r = sec.items[i + k];
+      html += `<div class="t" tabindex="0" data-i="${sec.base + i + k}" style="width:${ws[k]}px"><img loading="lazy" decoding="async" alt="" src="/thumb/${r.sha}" onload="this.classList.add('in')">`
+        + (r.fav ? I.heartFill : "") + (ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
+    }
+    html += "</div>";
+    sec.rows.push({ start: i, n, full });
+    i = j;
+  }
+  sec.box.insertAdjacentHTML("beforeend", html);
+}
+const caption = r => { const d = dParts(when(r)); return [d && fMed.format(d), (r.city || "").split(",")[0]].filter(Boolean).join("  ·  "); };
+
+function relayout() {
+  const W = $("#grid").clientWidth;
+  for (const sec of sections) { sec.rows = []; sec.box.innerHTML = ""; drawSection(sec, W); }
+}
+let lastW = 0;
+new ResizeObserver(() => { const w = $("#grid").clientWidth; if (w !== lastW) { lastW = w; if (sections.length) relayout(); layoutYears(); } }).observe($("#grid"));
+
+function renderCounts() {
+  for (const n of document.querySelectorAll(".sh .n")) if (n.dataset.ym !== "" && F.months[+n.dataset.ym]) n.textContent = fmt(F.months[+n.dataset.ym]);
+}
+
+function renderHead() {
+  let title, sub;
+  const n = `<b>${fmt(D.matching)}</b> ${D.matching === 1 ? "photo" : "photos"}`;
+  if (S.sha) { title = `<img src="/thumb/${S.sha}" alt="">More like this`; sub = `Closest in look and subject among ${n}`; }
+  else if (D.text) { title = `“${esc(D.text)}”`; sub = `Best matches among ${n}`; }
+  else if (D.scope) { title = esc(D.scope.title || "Untitled"); sub = `${esc(span(D.scope.start, D.scope.end))}<i>·</i>${n}`; }
+  else if (filtered()) {
+    const parts = [S.f.person.join(" & "), [...S.f.city, ...S.f.region, ...S.f.country].map(v => v.split(",")[0]).join(", "),
+      S.f.album.join(", "), [...S.f.camera, ...S.f.lens].join(", "), S.from || S.to ? rangeLabel() : "", ].filter(Boolean);
+    title = esc(parts.join(" · ") || (S.fav ? "Favourites" : "Photos")); sub = n + (S.fav && parts.length ? "<i>·</i>favourites" : "");
+  } else {
+    title = "Library";
+    sub = `${n}<i>·</i>${Math.floor(INFO.m0 / 12)} – ${Math.floor((INFO.m0 + INFO.months - 1) / 12)}`;
+  }
+  for (const f of D.filters || []) sub += `<i>·</i>${esc(f)}`;
+  sub += `<i>·</i>${D.ms} ms`;
+  $("#title").innerHTML = title; $("#sub").innerHTML = sub;
+  document.title = ($("#title").textContent === "Library" ? "" : $("#title").textContent + " — ") + "Photo Estate";
+  $("#headR").innerHTML = (ranked ? "" : `<button class="txt" id="sortBtn">${D.sort === "old" ? "Oldest first" : "Newest first"}
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(${D.sort === "old" ? 180 : 0}deg);transition:transform .3s ${EASE}"><path d="M6 2v8M2.800 6.800 6 10l3.200-3.200"/></svg></button>`)
+    + (filtered() || S.q || S.sha ? `<button class="txt" id="clearAll">Clear all</button>` : "");
+}
+
+/* ── filter pills ──────────────────────────────────────────────────── */
+const PILLS = [
+  { id: "where", label: "Where", tabs: [["country", "Countries"], ["region", "Regions"], ["city", "Places"]] },
+  { id: "people", label: "People", tabs: [["person", ""]] },
+  { id: "albums", label: "Albums", tabs: [["album", ""]] },
+  { id: "trips", label: "Trips" },
+  { id: "camera", label: "Camera", tabs: [["camera", "Cameras"], ["lens", "Lenses"]] },
+];
+const tripTitle = t => (t?.title || "Trip").replace(/^Trip to /, "");
+const tripById = id => INFO.trips.find(t => String(t.id) === String(id));
+function pillValue(p) {
+  if (p.id === "trips") return S.trip ? [tripTitle(tripById(S.trip))] : [];
+  return p.tabs.flatMap(([k]) => S.f[k]).map(v => p.id === "where" ? v.split(",")[0] : v);
+}
+function renderPills() {
+  if (!INFO) return;
+  let html = "";
+  if (S.from || S.to) html += `<button class="pill on" data-pill="date"><span>${esc(rangeLabel())}</span><span class="x" data-x>${I.x}</span></button>`;
+  if (S.event) html += `<button class="pill on" data-pill="event"><span>${esc(D.scope?.title || "Event")}</span><span class="x" data-x>${I.x}</span></button>`;
+  for (const p of PILLS) {
+    const v = pillValue(p);
+    html += `<button class="pill${v.length ? " on" : ""}" data-pill="${p.id}" aria-haspopup="true"><span>${esc(v.length ? v[0] + (v.length > 1 ? ` +${v.length - 1}` : "") : p.label)}</span>${I.chev}<span class="x" data-x>${I.x}</span></button>`;
+  }
+  html += `<button class="pill fav${S.fav ? " on" : ""}" data-pill="fav" aria-pressed="${S.fav}">${I.heart}<span>Favourites</span></button>`;
+  const el = $("#pills");
+  const was = new Set([...el.querySelectorAll(".pill.on")].map(b => b.dataset.pill));
+  el.innerHTML = html;
+  for (const b of el.querySelectorAll(".pill.on")) if (was.has(b.dataset.pill)) b.style.animation = "none";
+}
+$("#pills").addEventListener("click", e => {
+  const b = e.target.closest(".pill"); if (!b) return;
+  const id = b.dataset.pill, p = PILLS.find(p => p.id === id);
+  if (e.target.closest("[data-x]") || id === "date" || id === "event") {
+    if (id === "date") S.from = S.to = "";
+    else if (id === "event") S.event = "";
+    else if (id === "trips") S.trip = "";
+    else for (const [k] of p.tabs) S.f[k] = [];
+    return refresh();
+  }
+  if (id === "fav") { S.fav = !S.fav; return refresh(); }
+  if (pop && pop.anchor === b) return closePop();
+  openPop(b, id === "trips" ? tripsPop : el => facetPop(el, p));
+});
+
+/* ── popovers ──────────────────────────────────────────────────────── */
+let pop = null;
+function openPop(anchor, build, cls = "") {
+  closePop();
+  const el = document.createElement("div"); el.className = "pop " + cls;
+  document.body.append(el);
+  pop = { el, anchor, build, state: {} };
+  anchor.classList.add("open");
+  build(el, pop.state);
+  placePop();
+  const f = $(".find", el); if (f && anchor.id !== "search") f.focus({ preventScroll: true });
+}
+function placePop() {
+  if (!pop) return;
+  const r = pop.anchor.getBoundingClientRect(), w = pop.el.offsetWidth;
+  const right = pop.anchor.id === "viewBtn";
+  pop.el.style.left = Math.max(8, Math.min(right ? r.right - w : r.left, innerWidth - w - 8)) + "px";
+  pop.el.style.top = r.bottom + 6 + "px";
+  if (pop.anchor.id === "search") pop.el.style.width = r.width + "px";
+  if (right) pop.el.style.transformOrigin = "calc(100% - 20px) 0";
+}
+function closePop() { if (!pop) return; pop.anchor.classList.remove("open"); pop.el.remove(); pop = null; }
+function refreshPop() { if (pop && pop.state.list) pop.state.list(); }
+document.addEventListener("pointerdown", e => { if (pop && !pop.el.contains(e.target) && !pop.anchor.contains(e.target)) closePop(); });
+addEventListener("resize", placePop);
+
+function facetPop(el, p) {
+  const st = pop.state;
+  st.tab = st.tab || (p.tabs.find(([k]) => S.f[k].length) || p.tabs[0])[0];
+  el.innerHTML = (p.tabs.length > 1 ? `<div class="seg">${p.tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join("")}</div>` : "")
+    + `<input class="find" placeholder="Filter ${p.label.toLowerCase()}…" spellcheck="false"><div class="opts"></div>`;
+  const find = $(".find", el), opts = $(".opts", el);
+  st.list = () => {
+    const k = st.tab, q = find.value.trim().toLowerCase(), sel = new Set(S.f[k]);
+    for (const b of el.querySelectorAll("[data-tab]")) b.classList.toggle("on", b.dataset.tab === k);
+    let rows = (F || INFO).facets[k] || [];
+    const seen = new Set(rows.map(r => r[0]));
+    rows = [...S.f[k].filter(v => !seen.has(v)).map(v => [v, 0]), ...rows];        // keep what's chosen visible
+    if (q) rows = rows.filter(r => r[0].toLowerCase().includes(q));
+    find.style.display = rows.length > 8 || q ? "" : "none";
+    opts.innerHTML = rows.slice(0, 250).map(([v, n]) => {
+      const [a, ...rest] = k === "city" || k === "region" ? v.split(", ") : [v];
+      return `<button class="opt${sel.has(v) ? " on" : ""}${n ? "" : " zero"}" data-v="${esc(v)}">${I.check}<span class="l">${esc(a)}${rest.length ? `<em>${esc(rest.join(", "))}</em>` : ""}</span><span class="n">${fmt(n)}</span></button>`;
+    }).join("") || `<div class="none">Nothing here</div>`;
+  };
+  st.list();
+  find.oninput = st.list;
+  el.onclick = e => {
+    const t = e.target.closest("[data-tab]"), o = e.target.closest(".opt");
+    if (t) { st.tab = t.dataset.tab; find.value = ""; st.list(); opts.scrollTop = 0; }
+    if (o) {
+      const a = S.f[st.tab], v = o.dataset.v, i = a.indexOf(v);
+      i < 0 ? a.push(v) : a.splice(i, 1);
+      o.classList.toggle("on");
+      soft();
+    }
+  };
+}
+/* refresh without closing the open popover (choosing several values in a row) */
+function soft() { const keep = pop; pop = null; refresh().finally?.(() => {}); pop = keep; renderPillsKeepOpen(); }
+function renderPillsKeepOpen() {
+  if (!pop) return;
+  const id = pop.anchor.dataset.pill; if (!id) return;
+  const b = $(`.pill[data-pill="${id}"]`); if (b) { pop.anchor = b; b.classList.add("open"); placePop(); }
+}
+
+function tripsPop(el) {
+  const st = pop.state; el.classList.add("wide");
+  el.innerHTML = `<input class="find" placeholder="Filter trips…" spellcheck="false"><div class="opts"></div>`;
+  const find = $(".find", el), opts = $(".opts", el);
+  st.list = () => {
+    const q = find.value.trim().toLowerCase();
+    const live = new Map(((F || INFO).facets.trip || []).map(([id, n]) => [id, n]));
+    const rows = INFO.trips.filter(t => (!q || (t.title || "").toLowerCase().includes(q) || t.start.startsWith(q)));
+    opts.innerHTML = rows.map(t => { const n = live.get(String(t.id)) || 0;
+      return `<button class="opt trip${String(t.id) === S.trip ? " on" : ""}${n ? "" : " zero"}" data-v="${t.id}"><img loading="lazy" src="/thumb/${t.cover}" alt=""><span class="l">${esc(tripTitle(t))}<small>${esc(span(t.start, t.end))}</small></span><span class="n">${fmt(n)}</span></button>`;
+    }).join("") || `<div class="none">No trips</div>`;
+  };
+  st.list(); find.oninput = st.list;
+  el.onclick = e => { const o = e.target.closest(".opt"); if (o) { S.trip = S.trip === o.dataset.v ? "" : o.dataset.v; S.event = ""; S.sort = ""; refresh(); } };
+}
+
+$("#viewBtn").onclick = e => {
+  if (pop && pop.anchor === e.currentTarget) return closePop();
+  openPop(e.currentTarget, el => {
+    const draw = () => {
+      el.innerHTML = `<div class="set"><span>Photo size</span><div class="seg">${["s", "m", "l"].map(s => `<button data-size="${s}" class="${V.size === s ? "on" : ""}">${s.toUpperCase()}</button>`).join("")}</div></div>
+        <div class="set"><span>Hide near-identical shots</span><button class="sw${V.dedupe ? " on" : ""}" data-dedupe role="switch" aria-checked="${V.dedupe}"></button></div>`;
+    };
+    draw();
+    el.onclick = ev => {
+      const s = ev.target.closest("[data-size]");
+      if (s) { V.size = s.dataset.size; saveView(); draw(); relayout(); }
+      if (ev.target.closest("[data-dedupe]")) { V.dedupe = !V.dedupe; saveView(); draw(); soft(); }
+    };
+  }, "");
+};
+
+/* ── search field + suggestions ────────────────────────────────────── */
+let vocab = [], sug = [], sugCur = 0;
+function buildVocab() {
+  vocab = [];
+  for (const k of KEYS) for (const [v, n] of INFO.facets[k] || [])
+    vocab.push({ k, v, n, label: k === "city" || k === "region" ? v : v, lc: v.toLowerCase() });
+  for (const t of INFO.trips) vocab.push({ k: "trip", v: String(t.id), n: t.n, label: t.title, sub: span(t.start, t.end), lc: (t.title || "").toLowerCase() });
+}
+function suggest() {
+  const raw = $("#q").value, q = raw.trim().toLowerCase();
+  sug = [];
+  if (!q) {
+    if (!S.q) sug = IDEAS.map(t => ({ type: "idea", label: t }));
+  } else {
+    sug.push({ type: "text", label: raw.trim() });
+    const words = q.split(/\s+/), hits = [];
+    for (const it of vocab) {
+      if (!words.every(w => it.lc.includes(w))) continue;
+      const at = it.lc.indexOf(words[0]);
+      const rank = it.lc.startsWith(q) ? 3 : at === 0 || /[\s,(-]/.test(it.lc[at - 1]) ? 2 : 1;
+      hits.push([rank * 20 + Math.log10(it.n + 1) + (it.k === "lens" ? -8 : 0), it]);
+    }
+    hits.sort((a, b) => b[0] - a[0]);
+    for (const [, it] of hits.slice(0, 7)) sug.push({ type: "facet", ...it });
+    if (/^(19|20)\d\d$/.test(q)) sug.splice(1, 0, { type: "year", label: q, y: q });
+  }
+  sugCur = 0;
+  if (!sug.length) return pop?.anchor.id === "search" && closePop();
+  if (!pop || pop.anchor.id !== "search") openPop($("#search"), el => { el.onpointerdown = e => e.preventDefault();
+    el.onclick = e => { const o = e.target.closest(".opt"); if (o) pick(sug[+o.dataset.i]); }; });
+  drawSug();
+}
+function drawSug() {
+  if (!pop || pop.anchor.id !== "search") return;
+  pop.el.innerHTML = (sug[0].type === "idea" ? `<div class="cap2">Try describing a photo</div>` : "") + `<div class="opts">` + sug.map((s, i) => {
+    const cur = i === sugCur && s.type !== "idea" ? " cur" : "";
+    if (s.type === "idea") return `<button class="opt sug${i === sugCur - 100 ? " cur" : ""}" data-i="${i}">${I.search}<span class="l">${esc(s.label)}</span><span></span></button>`;
+    if (s.type === "text") return `<button class="opt sug${cur}" data-i="${i}">${I.search}<span class="l">${esc(s.label)}</span><span class="n">Describe  ↵</span></button>`;
+    if (s.type === "year") return `<button class="opt sug${cur}" data-i="${i}">${I.dot}<span class="l">${s.y}</span><span class="n">Year</span></button>`;
+    const [a, ...rest] = s.k === "city" || s.k === "region" ? s.label.split(", ") : [s.label];
+    return `<button class="opt sug${cur}" data-i="${i}">${I.dot}<span class="l">${esc(a)}<em>${esc(s.sub || rest.join(", "))}</em></span><span class="n">${KIND[s.k]}  ·  ${fmt(s.n)}</span></button>`;
+  }).join("") + `</div>`;
+  $(".cur", pop.el)?.scrollIntoView({ block: "nearest" });
+}
+function pick(s) {
+  const q = $("#q");
+  if (s.type === "idea" || s.type === "text") { S.q = s.label; S.sha = ""; q.value = S.q; }
+  else {
+    q.value = S.q;                                  // the typed word became a filter, not a description
+    if (s.type === "year") { S.from = `${s.y}-01`; S.to = `${s.y}-12`; }
+    else if (s.k === "trip") { S.trip = s.v; S.event = ""; S.sort = ""; }
+    else if (!S.f[s.k].includes(s.v)) S.f[s.k].push(s.v);
+  }
+  q.blur(); refresh();
+}
+$("#q").addEventListener("input", suggest);
+$("#q").addEventListener("focus", suggest);
+$("#q").addEventListener("blur", () => { if (pop?.anchor.id === "search") closePop(); });
+$("#q").addEventListener("keydown", e => {
+  const q = e.currentTarget, open = pop?.anchor.id === "search", ideas = sug[0]?.type === "idea";
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (!open) return; e.preventDefault();
+    if (ideas) { q.value = sug[sugCur = (sugCur + (e.key === "ArrowDown" ? 1 : sug.length - 1)) % sug.length].label; return; }
+    sugCur = (sugCur + (e.key === "ArrowDown" ? 1 : sug.length - 1)) % sug.length; drawSug();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (open && !ideas && sug[sugCur]) return pick(sug[sugCur]);
+    S.q = q.value.trim(); if (S.q) S.sha = ""; q.blur(); refresh();
+  } else if (e.key === "Escape") { q.value = S.q; q.blur(); }
+  else if (e.key === "Backspace" && !q.value && S.sha) { S.sha = ""; refresh(); }
+});
+function renderLike() {
+  $("#like").classList.toggle("on", !!S.sha);
+  if (S.sha) $("#like img").src = "/thumb/" + S.sha;
+  $("#q").placeholder = S.sha ? "Narrow with filters, or describe something else" : "Describe a photo, or find a place, person, trip or camera";
+}
+$("#like button").onclick = e => { e.preventDefault(); S.sha = ""; refresh(); };
+
+/* ── timeline ──────────────────────────────────────────────────────── */
+const tl = $("#tl"), bars = $("#tlBars");
+function buildTimeline() {
+  bars.innerHTML = "<i></i>".repeat(INFO.months);
+  let h = "";
+  for (let i = 0; i < INFO.months; i++) if ((i + INFO.m0) % 12 === 0 || i === 0)
+    h += `<span data-y="${Math.floor((i + INFO.m0) / 12)}" style="left:${i / INFO.months * 100}%">${Math.floor((i + INFO.m0) / 12)}</span>`;
+  $("#tlYears").innerHTML = h;
+  layoutYears();
+}
+function layoutYears() {
+  if (!INFO) return;
+  const w = tl.clientWidth, per = w / INFO.months * 12, step = per >= 40 ? 1 : per >= 20 ? 2 : 5;
+  tl.classList.toggle("gapped", w / INFO.months >= 3);
+  for (const s of $("#tlYears").children) s.style.display = +s.dataset.y % step === 0 && (INFO.months - ymOf(s.dataset.y + "-01")) / INFO.months * w > 30 ? "" : "none";
+}
+const selRange = () => S.from || S.to ? [S.from ? Math.max(0, ymOf(S.from)) : 0, S.to ? Math.min(INFO.months - 1, ymOf(S.to)) : INFO.months - 1] : null;
+function renderTimeline(range = selRange()) {
+  const m = (F || INFO).months, max = Math.max(1, ...m), [a, b] = range || [0, INFO.months - 1];
+  const el = bars.children;
+  for (let i = 0; i < el.length; i++) {
+    el[i].style.transform = `scaleY(${m[i] ? Math.max(.045, Math.sqrt(m[i] / max)) : 0})`;
+    el[i].classList.toggle("in", i >= a && i <= b);
+  }
+  const sel = $("#tlSel");
+  sel.classList.toggle("on", !!range);
+  if (range) { sel.style.left = a / INFO.months * 100 + "%"; sel.style.width = (b - a + 1) / INFO.months * 100 + "%"; }
+  for (const s of $("#tlYears").children) { const y = ymOf(s.dataset.y + "-01"); s.classList.toggle("in", !!range && y + 11 >= a && y <= b); }
+}
+const tlIdx = e => { const r = bars.getBoundingClientRect(); return Math.max(0, Math.min(INFO.months - 1, Math.floor((e.clientX - r.left) / r.width * INFO.months))); };
+let drag = null, hov = -1;
+function tip(a, b = a) {
+  const t = $("#tlTip"), m = (F || INFO).months;
+  let n = 0; for (let i = Math.min(a, b); i <= Math.max(a, b); i++) n += m[i];
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  t.innerHTML = (lo === hi ? fMon.format(ymDate(lo)) : `${fMon.format(ymDate(lo))} – ${fMon.format(ymDate(hi))}`) + `<b>${fmt(n)}</b>`;
+  const x = (lo + hi + 1) / 2 / INFO.months * tl.clientWidth, half = t.offsetWidth / 2;
+  t.style.left = Math.max(half, Math.min(tl.clientWidth - half, x)) + "px";
+  t.classList.add("on");
+}
+tl.addEventListener("pointermove", e => {
+  if (!INFO) return;
+  const i = tlIdx(e);
+  if (drag) { drag.b = i; drag.moved ||= i !== drag.a; renderTimeline([Math.min(drag.a, i), Math.max(drag.a, i)]); return tip(drag.a, i); }
+  if (e.target.closest(".tl-years")) return tlLeave();
+  if (hov >= 0) bars.children[hov]?.classList.remove("hov");
+  bars.children[hov = i].classList.add("hov"); tip(i);
+});
+function tlLeave() { if (hov >= 0) bars.children[hov]?.classList.remove("hov"); hov = -1; if (!drag) $("#tlTip").classList.remove("on"); }
+tl.addEventListener("pointerleave", tlLeave);
+tl.addEventListener("pointerdown", e => {
+  if (!INFO || e.button) return;
+  const y = e.target.closest(".tl-years span");
+  if (y) { const f = `${y.dataset.y}-01`, t = `${y.dataset.y}-12`; if (S.from === f && S.to === t) S.from = S.to = ""; else { S.from = f; S.to = t; } return refresh(); }
+  drag = { a: tlIdx(e), b: tlIdx(e), moved: false }; tl.classList.add("drag"); tl.setPointerCapture(e.pointerId);
+});
+tl.addEventListener("pointerup", () => {
+  if (!drag) return;
+  const a = Math.min(drag.a, drag.b), b = Math.max(drag.a, drag.b), cur = selRange();
+  drag = null; tl.classList.remove("drag"); $("#tlTip").classList.remove("on");
+  if (a === b && cur && a >= cur[0] && a <= cur[1]) S.from = S.to = "";       // a click inside the selection clears it
+  else { S.from = ymStr(a); S.to = ymStr(b); }
+  refresh();
+});
+/* a dot under the timeline marks the month now at the top of the page */
+let ticking = false;
+addEventListener("scroll", () => {
+  if (ticking) return; ticking = true;
+  requestAnimationFrame(() => {
+    ticking = false;
+    $("#hdr").classList.toggle("scrolled", scrollY > 4);
+    const here = $("#tlHere"), top = $("#hdr").offsetHeight + 8;
+    let sec = null;
+    if (!ranked && scrollY > 40) for (const s of sections) { if (s.el.getBoundingClientRect().bottom > top) { sec = s; break; } }
+    const i = sec ? ymOf(sec.key) : -1;
+    here.classList.toggle("on", i >= 0);
+    if (i >= 0) here.style.left = (i + .5) / INFO.months * 100 + "%";
+  });
+}, { passive: true });
+
+/* ── viewer ────────────────────────────────────────────────────────── */
+const v = $("#v"), vPic = $("#vPic");
+let vCur = -1;
+const infoW = () => V.info && innerWidth > 760 ? 360 : 0;
+function fit(r) {
+  const W = innerWidth - infoW(), H = innerWidth > 760 ? innerHeight : innerHeight * (V.info ? .45 : 1), px = innerWidth > 760 ? 72 : 0, py = innerWidth > 760 ? 28 : 0;
+  const ar = r.ar || 1.5; let w = W - px * 2, h = w / ar;
+  if (h > H - py * 2) { h = H - py * 2; w = h * ar; }
+  return { x: Math.round((W - w) / 2), y: Math.round((H - h) / 2), w: Math.round(w), h: Math.round(h) };
+}
+const place = (el, b) => Object.assign(el.style, { left: b.x + "px", top: b.y + "px", width: b.w + "px", height: b.h + "px" });
+const tileOf = i => $(`.t[data-i="${i}"]`);
+function show(i, dir = 0) {
+  const r = items[i]; vCur = i;
+  resetZoom(); shareFile = null; $("#vShare").classList.remove("ready", "busy");
+  place(vPic, fit(r));
+  const lo = $("#vLo"), hi = $("#vHi");
+  hi.classList.remove("in"); hi.removeAttribute("src"); lo.src = "/thumb/" + r.sha;
+  const box = fit(r), need = Math.max(box.w, box.h) * devicePixelRatio;       // device pixels the photo will cover
+  const swap = (src, then) => { const im = new Image();
+    im.onload = () => { if (items[vCur] !== r) return; hi.src = src; hi.decode?.().catch(() => {}).finally(() => { hi.classList.add("in"); then?.(); }); };
+    im.onerror = () => { if (items[vCur] === r) $("#vCount").textContent += "  ·  full-size image didn’t load"; };
+    im.src = src; };
+  // 1600 px first because it is quick; then the 4096 px one when the screen can actually show more
+  swap("/preview/" + r.sha, () => { if (need > 1700 && Math.max(r.w || 0, r.h || 0) > 1700) swap("/large/" + r.sha); });
+  if (items[i + 1]) new Image().src = "/preview/" + items[i + 1].sha;
+  if (dir) vPic.animate([{ opacity: 0, transform: `translateX(${dir * 28}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE });
+  $("#vCount").textContent = ""; vChrome(); drawInfo(r);
+  if (i > items.length - 12) loadMore();
+}
+function vChrome() {
+  $("#vPrev").disabled = vCur <= 0; $("#vNext").disabled = vCur >= items.length - 1 && next == null;
+  $("#vCount").textContent = `${fmt(vCur + 1)} of ${fmt(D.matching)}`;
+}
+function openViewer(i) {
+  v.classList.add("on"); v.classList.toggle("info", V.info);
+  document.documentElement.style.overflow = "hidden";
+  show(i);
+  const t = tileOf(i)?.getBoundingClientRect(), f = fit(items[i]);
+  if (t) vPic.animate([{ transform: `translate(${t.x - f.x}px,${t.y - f.y}px) scale(${t.width / f.w},${t.height / f.h})` }, { transform: "none" }], { duration: 380, easing: EASE });
+  else vPic.animate([{ opacity: 0, transform: "scale(.97)" }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE });
+  $("#vBg").animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: "ease-out" });
+  $("#vUi").animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, delay: 80, fill: "backwards" });
+}
+function closeViewer(instant) {
+  if (vCur < 0) return;
+  const i = vCur;
+  resetZoom(); v.classList.remove("bare"); vCur = -1;
+  const done = () => { v.classList.remove("on"); document.documentElement.style.overflow = ""; };
+  if (instant) return done();
+  const el = tileOf(i);
+  el?.scrollIntoView({ block: "nearest" });
+  const t = el?.getBoundingClientRect(), f = fit(items[i]);
+  const a = t ? vPic.animate([{ transform: "none" }, { transform: `translate(${t.x - f.x}px,${t.y - f.y}px) scale(${t.width / f.w},${t.height / f.h})` }], { duration: 300, easing: EASE })
+              : vPic.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200 });
+  $("#vBg").animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: "ease-in", fill: "forwards" }).finished.then(x => x.cancel());
+  $("#vUi").animate([{ opacity: 1 }, { opacity: 0 }], { duration: 150, fill: "forwards" }).finished.then(x => setTimeout(() => x.cancel(), 200));
+  a.finished.then(done);
+}
+const step = d => { const i = vCur + d; if (i >= 0 && i < items.length) show(i, d); };
+function toggleInfo() {
+  V.info = !V.info; saveView(); v.classList.toggle("info", V.info);
+  const a = vPic.getBoundingClientRect(), b = fit(items[vCur]);
+  place(vPic, b);
+  vPic.animate([{ transform: `translate(${a.x - b.x}px,${a.y - b.y}px) scale(${a.width / b.w},${a.height / b.h})` }, { transform: "none" }], { duration: 300, easing: EASE });
+}
+
+function drawInfo(r) {
+  const d = dParts(when(r)), gps = r.lat != null && r.lon != null && (r.lat || r.lon);
+  const L = (k, val, text) => `<span class="lnk" data-k="${k}" data-v="${esc(val)}">${esc(text ?? val)}</span>`;
+  let h = `<h3>${d ? fLong.format(d) : "Undated"}</h3>`;
+  if (d && when(r).length > 10) h += `<div class="sub num">${fTime.format(d)}${r.tz ? `  ·  ${esc(r.tz.replace(/_/g, " "))}` : ""}</div>`;
+  if (r.place || gps) {
+    h += `<h4>Place</h4>`;
+    if (r.place) {
+      const bits = [r.city && L("city", r.city, r.city.split(", ")[0]), r.region && r.region !== r.country && r.region.split(", ")[0] !== (r.city || "").split(", ")[0] && L("region", r.region, r.region.split(", ")[0]), r.country && L("country", r.country)].filter(Boolean);
+      h += `<div class="big">${bits.join(", ") || esc(r.place)}</div>`;
+    }
+    h += `<div class="dim num" style="margin-top:3px">${[r.place_inferred ? "Inferred from the photos around it" : r.county && esc(r.county),
+      gps && `<a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${r.lat}&mlon=${r.lon}#map=15/${r.lat}/${r.lon}">${(+r.lat).toFixed(4)}, ${(+r.lon).toFixed(4)}</a>`].filter(Boolean).join("  ·  ")}</div>`;
+  }
+  if (r.event != null || r.trip != null) {
+    h += `<h4>Part of</h4>`;
+    if (r.event != null && String(r.event) !== S.event) h += `<button class="go" data-k="event" data-v="${r.event}"><span>${esc(r.event_title || "This event")}<small>Event</small></span>${I.arrow}</button>`;
+    if (r.trip != null && String(r.trip) !== S.trip) h += `<button class="go" data-k="trip" data-v="${r.trip}"><span>${esc(r.trip_title || "This trip")}<small>Trip</small></span>${I.arrow}</button>`;
+    if (d) h += `<button class="go" data-k="day" data-v="${when(r).slice(0, 7)}"><span>${fMonth.format(d)} ${d.getFullYear()}<small>Month</small></span>${I.arrow}</button>`;
+  }
+  if (r.camera || r.lens) {
+    h += `<h4>Camera</h4>`;
+    if (r.camera) h += `<div class="big">${L("camera", r.camera)}</div>`;
+    if (r.lens) {                                 // "iPhone 15 Pro Max back triple camera 2.22mm f/2.2" repeats the camera
+      const model = (r.camera || "").replace(/^\S+ /, ""), short = model && r.lens.startsWith(model) ? r.lens.slice(model.length).trim() : r.lens;
+      h += `<div class="dim" style="margin-top:3px">${L("lens", r.lens, short.charAt(0).toUpperCase() + short.slice(1))}</div>`;
+    }
+    const cells = [
+      r.exposure && [r.exposure >= 1 ? `${+r.exposure.toFixed(1)}s` : `1/${Math.round(1 / r.exposure)}`, "Shutter"],
+      r.fnumber && [`ƒ/${+r.fnumber.toFixed(1)}`, "Aperture"],
+      r.iso && [r.iso, "ISO"],
+      (r.focal35 || r.focal) && [`${Math.round(r.focal35 || r.focal)}mm`, r.focal35 ? "35mm eq." : "Focal"],
+    ].filter(Boolean);
+    if (cells.length) h += `<div class="exp">${cells.map(([a, b]) => `<div><b>${a}</b><small>${b}</small></div>`).join("")}</div>`;
+  }
+  if (r.people?.length) h += `<h4>People</h4><div class="tags">${r.people.map(p => `<button class="tag" data-k="person" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
+  if (r.albums?.length) h += `<h4>Albums</h4><div class="tags">${r.albums.map(p => `<button class="tag" data-k="album" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
+  if (r.desc) h += `<h4>Note</h4><div>${esc(r.desc)}</div>`;
+  const name = (r.path || "").split("/").pop();
+  h += `<h4>File</h4><div>${esc(name)}${r.fav ? `  <span style="color:#ff6b6b">♥</span>` : ""}</div>
+    <div class="dim num" style="margin-top:3px">${r.w && r.h ? `${fmt(r.w)} × ${fmt(r.h)}  ·  ${(r.w * r.h / 1e6).toFixed(1)} MP  ·  ` : ""}${esc((r.ext || "").slice(1).toUpperCase())}</div>
+    <div class="path">${esc((r.path || "").slice(0, -name.length))}</div>
+    <button class="cta" data-k="like" data-v="${r.sha}">More like this</button>`;
+  const el = $("#vInfo"); el.innerHTML = h; el.scrollTop = 0;
+}
+$("#vInfo").addEventListener("click", e => {
+  const t = e.target.closest("[data-k]"); if (!t) return;
+  const k = t.dataset.k, val = t.dataset.v;
+  S = blank(); $("#q").value = "";
+  if (k === "like") S.sha = val;
+  else if (k === "event" || k === "trip") S[k] = val;
+  else if (k === "day") S.from = S.to = val;
+  else S.f[k] = [val];
+  closeViewer(true); refresh();
+});
+$("#vClose").onclick = () => closeViewer();
+let lastPointer = "mouse";
+v.addEventListener("pointerdown", e => { lastPointer = e.pointerType; }, true);
+$("#vBg").onclick = () => { if (lastPointer === "mouse") closeViewer(); };   // on touch a tap toggles the buttons
+$("#vPrev").onclick = () => step(-1);
+$("#vNext").onclick = () => step(1);
+$("#vInfoBtn").onclick = toggleInfo;
+$("#backBtn").onclick = () => history.back();
+addEventListener("resize", () => { if (vCur >= 0) { resetZoom(); place(vPic, fit(items[vCur])); } });
+
+/* ── viewer on touch: swipe between photos, swipe down to close, pinch or double-tap to zoom, tap for chrome ── */
+const Z = { s: 1, x: 0, y: 0 };                      // zoom: scale and pan, applied on top of fit()
+const pts = new Map();
+let g = null, lastTap = 0;
+const applyZoom = () => { vPic.style.transform = Z.s === 1 ? "" : `translate(${Z.x}px,${Z.y}px) scale(${Z.s})`; };
+function resetZoom() { Z.s = 1; Z.x = Z.y = 0; applyZoom(); }
+function clampZoom() {                               // keep the photo covering the screen where it can
+  const b = fit(items[vCur]), w = b.w * Z.s, h = b.h * Z.s;   // on screen the photo spans b.x + Z.x … + w
+  Z.x = w <= innerWidth ? (innerWidth - w) / 2 - b.x : Math.min(-b.x, Math.max(innerWidth - w - b.x, Z.x));
+  Z.y = h <= innerHeight ? (innerHeight - h) / 2 - b.y : Math.min(-b.y, Math.max(innerHeight - h - b.y, Z.y));
+}
+function zoomAt(cx, cy, s) {                         // set scale s keeping screen point (cx, cy) still
+  const b = fit(items[vCur]);
+  const px = (cx - b.x - Z.x) / Z.s, py = (cy - b.y - Z.y) / Z.s;
+  Z.s = Math.min(Math.max(s, 1), 6);
+  Z.x = cx - b.x - px * Z.s; Z.y = cy - b.y - py * Z.s;
+  if (Z.s === 1) Z.x = Z.y = 0;
+  if (Z.s > 1.6) wantLarge();
+}
+function wantLarge() {                               // zoomed in: the 4096 px version is worth fetching
+  const r = items[vCur], hi = $("#vHi");
+  if (!r || Math.max(r.w || 0, r.h || 0) <= 1700 || hi.dataset.large === r.sha) return;
+  hi.dataset.large = r.sha;
+  const im = new Image(); im.onload = () => { if (items[vCur] === r) hi.src = im.src; }; im.src = "/large/" + r.sha;
+}
+const inViewerChrome = t => t.closest(".v-info, .v-btn");
+v.addEventListener("pointerdown", e => {
+  if (e.pointerType === "mouse" || inViewerChrome(e.target)) return;
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  vPic.getAnimations().forEach(a => a.finish());
+  if (pts.size === 1) g = { mode: "", x0: e.clientX, y0: e.clientY, t0: performance.now(), zx: Z.x, zy: Z.y };
+  else if (pts.size === 2) {
+    const [a, b] = [...pts.values()];
+    g = { mode: "pinch", d0: Math.hypot(a.x - b.x, a.y - b.y), s0: Z.s, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, zx: Z.x, zy: Z.y };
+  }
+});
+v.addEventListener("pointermove", e => {
+  if (!pts.has(e.pointerId) || !g) return;
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (g.mode === "pinch" && pts.size >= 2) {
+    const [a, b] = [...pts.values()];
+    const s = g.s0 * Math.hypot(a.x - b.x, a.y - b.y) / g.d0, cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+    Z.s = g.s0; Z.x = g.zx + (cx - g.cx); Z.y = g.zy + (cy - g.cy);
+    zoomAt(g.cx + (cx - g.cx), g.cy + (cy - g.cy), s);
+    return applyZoom();
+  }
+  const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
+  if (!g.mode && Math.hypot(dx, dy) > 8) g.mode = Z.s > 1 ? "pan" : Math.abs(dx) > Math.abs(dy) ? "swipe" : dy > 0 ? "down" : "up";
+  if (g.mode === "pan") { Z.x = g.zx + dx; Z.y = g.zy + dy; applyZoom(); }
+  else if (g.mode === "swipe") vPic.style.transform = `translateX(${dx}px)`;
+  else if (g.mode === "down") {
+    const k = Math.max(.6, 1 - dy / innerHeight);
+    vPic.style.transform = `translate(${dx}px,${dy}px) scale(${k})`;
+    $("#vBg").style.opacity = Math.max(0, 1 - dy / (innerHeight * .6));
+    $("#vUi").style.opacity = dy > 20 ? 0 : 1;
+  }
+});
+function endGesture(e) {
+  if (!pts.has(e.pointerId)) return;
+  pts.delete(e.pointerId);
+  if (!g) return;
+  if (g.mode === "pinch") {
+    if (pts.size === 0) { if (Z.s < 1.05) { resetZoom(); return; } clampZoom(); animateTo(); g = null; }
+    else { const [a] = [...pts.values()]; g = { mode: "pan", x0: a.x, y0: a.y, zx: Z.x, zy: Z.y }; }
+    return;
+  }
+  if (pts.size) return;
+  const dx = e.clientX - g.x0, dy = e.clientY - g.y0, dt = performance.now() - (g.t0 || 0), mode = g.mode;
+  g = null;
+  if (!mode) {                                       // a tap: double tap zooms, single tap shows/hides the buttons
+    const now = performance.now();
+    if (now - lastTap < 300) { lastTap = 0; clearTimeout(tapTimer);
+      if (Z.s > 1) { resetZoomAnimated(); } else { zoomAt(e.clientX, e.clientY, 2.5); clampZoom(); animateTo(); } return; }
+    lastTap = now;
+    tapTimer = setTimeout(() => v.classList.toggle("bare"), 280);
+    return;
+  }
+  if (mode === "pan") { clampZoom(); animateTo(); return; }
+  const fast = dt < 250;
+  if (mode === "swipe") {
+    const d = dx < -60 || (fast && dx < -20) ? 1 : dx > 60 || (fast && dx > 20) ? -1 : 0;
+    const ok = d && vCur + d >= 0 && vCur + d < items.length;
+    vPic.style.transform = "";
+    if (ok) show(vCur + d, d);
+    else vPic.animate([{ transform: `translateX(${dx}px)` }, { transform: "none" }], { duration: 220, easing: EASE });
+  } else if (mode === "down") {
+    $("#vUi").style.opacity = "";
+    if (dy > 110 || (fast && dy > 40)) { vPic.style.transform = ""; $("#vBg").style.opacity = ""; closeViewer(); }
+    else {
+      const from = vPic.style.transform; vPic.style.transform = "";
+      vPic.animate([{ transform: from }, { transform: "none" }], { duration: 220, easing: EASE });
+      $("#vBg").animate([{ opacity: $("#vBg").style.opacity }, { opacity: 1 }], { duration: 220 }).finished.then(() => $("#vBg").style.opacity = "");
+    }
+  } else if (mode === "up" && innerWidth <= 760 && !V.info) toggleInfo();   // swipe up opens the details sheet
+}
+let tapTimer = 0;
+function animateTo() {
+  const from = getComputedStyle(vPic).transform; applyZoom();
+  vPic.animate([{ transform: from === "none" ? "none" : from }, { transform: vPic.style.transform || "none" }], { duration: 200, easing: EASE });
+}
+function resetZoomAnimated() { Z.s = 1; Z.x = Z.y = 0; animateTo(); }
+v.addEventListener("pointerup", endGesture);
+v.addEventListener("pointercancel", endGesture);
+
+/* ── save / share: the original file, so Save to Photos keeps its date and place ── */
+let shareFile = null;                                // fetched for the current photo, waiting for a second tap
+async function share() {
+  const r = items[vCur], btn = $("#vShare");
+  if (!r) return;
+  const name = (r.path || "").split("/").pop() || r.sha.slice(0, 12) + (r.ext || ".jpg");
+  if (!navigator.canShare) {                         // desktop browsers: just download it
+    const a = document.createElement("a"); a.href = "/original/" + r.sha; a.download = name; a.click(); return;
+  }
+  if (shareFile?.sha === r.sha) return doShare(shareFile.file);
+  btn.classList.add("busy");
+  try {
+    let res = await fetch("/original/" + r.sha);
+    let file = res.ok && new File([await res.blob()], name, { type: res.headers.get("Content-Type") });
+    if (!file || !navigator.canShare({ files: [file] })) {   // RAW, or a type the phone won't share: the large JPEG
+      res = await fetch("/large/" + r.sha);
+      file = new File([await res.blob()], name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+    }
+    if (items[vCur] !== r) return;
+    shareFile = { sha: r.sha, file };
+    await doShare(file);
+  } catch (e) {
+    $("#vCount").textContent = `${fmt(vCur + 1)} of ${fmt(D.matching)}  ·  couldn’t load the photo`;
+  } finally { btn.classList.remove("busy"); }
+}
+async function doShare(file) {
+  const btn = $("#vShare");
+  try { await navigator.share({ files: [file] }); btn.classList.remove("ready"); }
+  catch (e) {
+    // Safari only opens the share sheet straight from a tap; if the download took too long, ask for one more tap
+    if (e.name === "NotAllowedError") btn.classList.add("ready");
+  }
+}
+$("#vShare").onclick = share;
+
+/* ── page events ───────────────────────────────────────────────────── */
+$("#grid").addEventListener("click", e => { const t = e.target.closest(".t"); if (t) openViewer(+t.dataset.i); });
+document.addEventListener("click", e => {
+  if (e.target.closest("#clearAll")) { S = blank(); $("#q").value = ""; refresh(); }
+  if (e.target.closest("#sortBtn")) { S.sort = D.sort === "old" ? "new" : "old"; refresh(); }
+});
+document.addEventListener("keydown", e => {
+  const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
+  if (vCur >= 0) {
+    if (e.key === "Escape") closeViewer();
+    else if (e.key === "ArrowLeft") step(-1);
+    else if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); step(1); }
+    else if (e.key === "i") toggleInfo();
+    return;
+  }
+  if (e.key === "Escape" && pop) { closePop(); return; }
+  if (typing) return;
+  if (e.key === "/") { e.preventDefault(); $("#q").focus(); $("#q").select(); }
+  if (e.key === "Enter" && document.activeElement.classList.contains("t")) openViewer(+document.activeElement.dataset.i);
+});
+addEventListener("popstate", () => { closeViewer(true); document.documentElement.classList.toggle("deep", depth() > 0); S = fromParams(new URLSearchParams(location.search)); $("#q").value = S.q; refresh(false); });
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});   // the "can't reach" page
+(async function init() {
+  F = await getJSON("/api/info");                 // unfiltered counts double as the first facet state
+  INFO = { ...F, months: F.months.length };
+  S =fromParams(new URLSearchParams(location.search));
+  $("#q").value = S.q;
+  buildVocab(); buildTimeline(); renderTimeline();
+  refresh(false);
+})();
+</script>
+</body>
+</html>

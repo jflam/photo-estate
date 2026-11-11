@@ -1,0 +1,9 @@
+# personal data: never commit photos or catalogs
+photo-estate/bench-store/
+*.db
+*.db-*
+*.db.bak-*
+__pycache__/
+
+# per-machine tool config (holds this machine's tailnet URL)
+.claude/

@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Duplicate review</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e2e0da;
+  --accent: #2f6fde; --keep: #1f8a4c; --drop: #c2412d; --chip: #eeece6; --shadow: 0 1px 2px rgb(0 0 0 / .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --panel: #1f1f1d; --ink: #ecebe7; --muted: #9a9892; --line: #33322f;
+    --accent: #7aa7ff; --keep: #4cc37f; --drop: #ff7a63; --chip: #2a2a27; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161615; --panel: #1f1f1d; --ink: #ecebe7; --muted: #9a9892; --line: #33322f;
+  --accent: #7aa7ff; --keep: #4cc37f; --drop: #ff7a63; --chip: #2a2a27; --shadow: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); padding: 12px 16px 0; }
+.top { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+h1 { font-size: 18px; margin: 0; font-weight: 650; }
+.sub { color: var(--muted); font-size: 13px; }
+.status { font-size: 13px; color: var(--muted); }
+.status.err { color: var(--drop); }
+.bar { height: 4px; background: var(--chip); border-radius: 2px; margin: 10px 0 0; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--keep); width: 0; transition: width .3s; }
+nav { display: flex; gap: 6px; overflow-x: auto; padding: 10px 0; scrollbar-width: thin; }
+nav button { flex: none; }
+button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.count { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: 4px; }
+button.on .count { color: inherit; opacity: .75; }
+.tools { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 0 0 10px; font-size: 13px; }
+.tools label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+.catnote { color: var(--muted); font-size: 13px; }
+main { padding: 12px 16px 40px; max-width: 1400px; margin: 0 auto; }
+.group { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 0 0 12px; box-shadow: var(--shadow); }
+.group.focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.group.done { opacity: .78; }
+.ghead { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.ghead .meta { color: var(--muted); font-size: 13px; }
+.ghead .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.tick { color: var(--keep); font-weight: 600; font-size: 13px; }
+.items { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+figure { margin: 0; border: 2px solid transparent; border-radius: 10px; overflow: hidden; background: var(--chip); cursor: pointer; position: relative; }
+figure.keep { border-color: var(--keep); }
+figure.drop { border-color: var(--drop); }
+figure.drop img { opacity: .45; filter: grayscale(.6); }
+.thumb { aspect-ratio: 4 / 3; display: grid; place-items: center; background: var(--chip); }
+.thumb img { max-width: 100%; max-height: 100%; display: block; }
+.badge { position: absolute; top: 6px; left: 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px; color: #fff; }
+figure.keep .badge { background: var(--keep); }
+figure.drop .badge { background: var(--drop); }
+.zoom { position: absolute; top: 4px; right: 4px; padding: 2px 7px; font-size: 13px; border-radius: 6px; opacity: .85; }
+figcaption { padding: 6px 8px 8px; font-size: 12px; line-height: 1.35; background: var(--panel); }
+figcaption .name { font-weight: 600; overflow-wrap: anywhere; }
+figcaption .dim { color: var(--muted); }
+.tag { display: inline-block; font-size: 10.5px; padding: 0 5px; border-radius: 4px; background: var(--chip); color: var(--muted); margin-left: 3px; }
+.pager { display: flex; gap: 8px; align-items: center; justify-content: center; margin: 18px 0; flex-wrap: wrap; }
+.empty { text-align: center; color: var(--muted); padding: 60px 0; }
+.help { color: var(--muted); font-size: 12.5px; margin-top: 18px; text-align: center; }
+kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; background: var(--panel); }
+#overlay { position: fixed; inset: 0; background: rgb(0 0 0 / .88); display: none; z-index: 20; align-items: center; justify-content: center; flex-direction: column; gap: 10px; padding: 16px; }
+#overlay.show { display: flex; }
+#overlay img { max-width: 100%; max-height: calc(100vh - 80px); object-fit: contain; }
+#overlay .cap { color: #ddd; font-size: 13px; text-align: center; }
+@media (max-width: 600px) { .items { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div>
+      <h1>Duplicate review</h1>
+      <div class="sub" id="summary">Loading…</div>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+  <div class="bar"><i id="progress"></i></div>
+  <nav id="tabs"></nav>
+  <div class="tools">
+    <span class="catnote" id="catnote"></span>
+    <label><input type="checkbox" id="unreviewed"> Unreviewed only</label>
+    <button id="acceptPage">Accept this page as shown</button>
+  </div>
+</header>
+<main>
+  <div id="groups"></div>
+  <div class="pager" id="pager"></div>
+  <p class="help">Click a photo to switch it between <b>Keep</b> and <b>Drop</b>. Each group always keeps at least one photo.
+    Keys: <kbd>j</kbd>/<kbd>k</kbd> next/previous group, <kbd>l</kbd> keep largest only, <kbd>a</kbd> keep all,
+    <kbd>Enter</kbd> accept and move on, <kbd>Esc</kbd> close preview.<br>
+    Choices are saved to <code>review/decisions.json</code> next to the catalog. Nothing is deleted or moved.</p>
+</main>
+<div id="overlay"><img alt=""><div class="cap"></div></div>
+<script>
+const PAGE = 30;
+let groups = [], cats = {}, decisions = {}, cat = null, page = 0, focus = 0, pending = {}, saveTimer = null;
+const $ = s => document.querySelector(s);
+const fmtSize = b => b >= 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.round(b / 1e3) + " KB";
+const fmtDate = s => s ? s.replace("T", " ").slice(0, 16) + " UTC" : "no date";
+const fmtSpan = s => s < 1 ? "same second" : s < 120 ? Math.round(s) + " s apart" : s < 7200 ? Math.round(s / 60) + " min apart"
+  : s < 172800 ? (s / 3600).toFixed(1) + " h apart" : Math.round(s / 86400) + " days apart";
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function keepOf(g) { return new Set((decisions[g.id] && decisions[g.id].keep) || g.default_keep); }
+function reviewed(g) { return !!(decisions[g.id] && decisions[g.id].reviewed); }
+function visible() {
+  let gs = groups.filter(g => g.category === cat);
+  if ($("#unreviewed").checked) gs = gs.filter(g => !reviewed(g));
+  return gs;
+}
+
+function setDecision(g, keep, markReviewed = true) {
+  if (keep.size === 0) { status("A group must keep at least one photo.", true); return false; }
+  decisions[g.id] = { keep: [...keep], reviewed: markReviewed || reviewed(g), category: g.category };
+  pending[g.id] = decisions[g.id];
+  clearTimeout(saveTimer); saveTimer = setTimeout(save, 400);
+  status("Saving…");
+  return true;
+}
+
+async function save() {
+  const body = pending; pending = {};
+  try {
+    const r = await fetch("decisions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error(r.status);
+    status("All changes saved");
+  } catch (e) {
+    Object.assign(pending, body);
+    status("Couldn't save. Is estate.py review still running? Retrying…", true);
+    clearTimeout(saveTimer); saveTimer = setTimeout(save, 3000);
+  }
+  summary();
+}
+
+function status(t, err = false) { const s = $("#status"); s.textContent = t; s.classList.toggle("err", err); }
+
+function summary() {
+  const done = groups.filter(reviewed).length;
+  let drop = 0, dropBytes = 0;
+  for (const g of groups) { const k = keepOf(g); for (const m of g.members) if (!k.has(m.sha256)) { drop++; dropBytes += m.size; } }
+  $("#summary").textContent = `${done.toLocaleString()} of ${groups.length.toLocaleString()} groups reviewed · `
+    + `${drop.toLocaleString()} photos marked drop (${(dropBytes / 1e9).toFixed(1)} GB), defaults included`;
+  $("#progress").style.width = (groups.length ? 100 * done / groups.length : 0) + "%";
+  renderTabs();
+}
+
+function renderTabs() {
+  const nav = $("#tabs"); nav.innerHTML = "";
+  for (const [k, c] of Object.entries(cats)) {
+    const gs = groups.filter(g => g.category === k); if (!gs.length) continue;
+    const left = gs.filter(g => !reviewed(g)).length;
+    const b = document.createElement("button");
+    b.className = k === cat ? "on" : "";
+    b.innerHTML = `${esc(c.short)}<span class="count">${left ? left.toLocaleString() + " left" : "done"}</span>`;
+    b.onclick = () => { cat = k; page = 0; focus = 0; render(); };
+    nav.appendChild(b);
+  }
+  const c = cats[cat];
+  $("#catnote").textContent = c ? `${c.label}. Default: ${c.policy === "largest" ? "keep the largest copy only" : "keep every photo"}.` : "";
+}
+
+function render() {
+  renderTabs();
+  const gs = visible(), pages = Math.max(1, Math.ceil(gs.length / PAGE));
+  page = Math.min(page, pages - 1);
+  const slice = gs.slice(page * PAGE, page * PAGE + PAGE);
+  const box = $("#groups"); box.innerHTML = "";
+  if (!slice.length) box.innerHTML = `<div class="empty">Nothing left to review in this category.</div>`;
+  slice.forEach((g, gi) => box.appendChild(groupEl(g, gi)));
+  const pg = $("#pager"); pg.innerHTML = "";
+  if (pages > 1) {
+    const prev = document.createElement("button"); prev.textContent = "← Previous"; prev.disabled = page === 0;
+    prev.onclick = () => { page--; focus = 0; render(); scrollTo(0, 0); };
+    const next = document.createElement("button"); next.textContent = "Next →"; next.disabled = page >= pages - 1;
+    next.onclick = () => { page++; focus = 0; render(); scrollTo(0, 0); };
+    const t = document.createElement("span"); t.className = "sub"; t.textContent = `Page ${page + 1} of ${pages}`;
+    pg.append(prev, t, next);
+  }
+  markFocus(false);
+}
+
+function groupEl(g, gi) {
+  const el = document.createElement("section");
+  el.className = "group" + (reviewed(g) ? " done" : ""); el.dataset.i = gi;
+  const keep = keepOf(g), c = cats[g.category];
+  el.innerHTML = `<div class="ghead">
+      <div><span class="meta">${g.members.length} photos · ${fmtSpan(g.span_seconds)}</span>
+        ${reviewed(g) ? '<span class="tick"> ✓ reviewed</span>' : ""}</div>
+      <div class="acts"><button data-a="largest">Keep largest only</button><button data-a="all">Keep all</button>
+        <button data-a="ok" class="${reviewed(g) ? "" : "primary"}">${reviewed(g) ? "Reviewed" : "Accept"}</button></div>
+    </div><div class="items"></div>`;
+  const items = el.querySelector(".items");
+  g.members.forEach((m, mi) => {
+    const f = document.createElement("figure");
+    f.className = keep.has(m.sha256) ? "keep" : "drop";
+    const name = m.path.split("/").pop(), album = m.path.split("/").slice(-2, -1)[0];
+    f.innerHTML = `<div class="thumb"><img loading="lazy" src="thumb/${m.sha256}" alt="${esc(name)}"></div>
+      <span class="badge">${keep.has(m.sha256) ? "KEEP" : "DROP"}</span>
+      <button class="zoom" title="Larger preview">⤢</button>
+      <figcaption><div class="name">${esc(name)}${mi === 0 ? '<span class="tag">largest</span>' : ""}</div>
+        <div class="dim">${fmtDate(m.taken_at)}</div>
+        <div class="dim">${m.width}×${m.height} · ${fmtSize(m.size)} · ${esc(m.ext.slice(1).toUpperCase())}</div>
+        <div class="dim" title="${esc(m.path)}">${esc(album)}</div></figcaption>`;
+    f.querySelector(".zoom").onclick = e => { e.stopPropagation(); preview(m, name); };
+    f.onclick = () => {
+      const k = keepOf(g); k.has(m.sha256) ? k.delete(m.sha256) : k.add(m.sha256);
+      if (setDecision(g, k)) refresh(g, el);
+    };
+    items.appendChild(f);
+  });
+  el.querySelector('[data-a="largest"]').onclick = () => { if (setDecision(g, new Set([g.members[0].sha256]))) refresh(g, el); };
+  el.querySelector('[data-a="all"]').onclick = () => { if (setDecision(g, new Set(g.members.map(m => m.sha256)))) refresh(g, el); };
+  el.querySelector('[data-a="ok"]').onclick = () => { if (setDecision(g, keepOf(g))) refresh(g, el); };
+  el.addEventListener("mousedown", () => { focus = gi; markFocus(false); });
+  return el;
+}
+
+function refresh(g, el) { const n = groupEl(g, +el.dataset.i); el.replaceWith(n); markFocus(false); summary(); }
+
+function markFocus(scroll = true) {
+  const els = [...document.querySelectorAll(".group")];
+  els.forEach((e, i) => e.classList.toggle("focus", i === focus));
+  if (scroll && els[focus]) els[focus].scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+function preview(m, name) {
+  const o = $("#overlay"); o.querySelector("img").src = "preview/" + m.sha256;
+  o.querySelector(".cap").textContent = `${name} · ${m.width}×${m.height} · ${fmtSize(m.size)} · ${fmtDate(m.taken_at)}`;
+  o.classList.add("show");
+}
+$("#overlay").onclick = () => $("#overlay").classList.remove("show");
+
+$("#unreviewed").onchange = () => { page = 0; focus = 0; render(); };
+$("#acceptPage").onclick = () => {
+  const gs = visible().slice(page * PAGE, page * PAGE + PAGE);
+  gs.forEach(g => setDecision(g, keepOf(g)));
+  render(); summary();
+};
+
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input, textarea")) return;
+  if (e.key === "Escape") { $("#overlay").classList.remove("show"); return; }
+  const gs = visible().slice(page * PAGE, page * PAGE + PAGE), g = gs[focus];
+  const els = [...document.querySelectorAll(".group")];
+  if (e.key === "j") { focus = Math.min(focus + 1, gs.length - 1); markFocus(); }
+  else if (e.key === "k") { focus = Math.max(focus - 1, 0); markFocus(); }
+  else if (!g) return;
+  else if (e.key === "l") { if (setDecision(g, new Set([g.members[0].sha256]))) refresh(g, els[focus]); }
+  else if (e.key === "a") { if (setDecision(g, new Set(g.members.map(m => m.sha256)))) refresh(g, els[focus]); }
+  else if (e.key === "Enter") {
+    if (setDecision(g, keepOf(g))) { refresh(g, els[focus]); focus = Math.min(focus + 1, gs.length - 1); markFocus(); }
+  }
+});
+
+(async () => {
+  try {
+    const [r1, r2] = await Promise.all([fetch("groups.json"), fetch("decisions.json")]);
+    const data = await r1.json(); decisions = await r2.json();
+    groups = data.groups; cats = data.categories;
+    cat = Object.keys(cats).find(k => groups.some(g => g.category === k));
+    render(); summary(); status("All changes saved");
+  } catch (e) {
+    $("#summary").textContent = "Couldn't load the groups. Start the page with: uv run estate.py --db … review";
+  }
+})();
+</script>
+</body>
+</html>
