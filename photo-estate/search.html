@@ -508,7 +508,9 @@ async function refresh(push = true) {
   renderHead();
   window.scrollTo({ top: 0 });
   if (!data.results.length) {
-    grid.innerHTML = `<div class="empty"><h3>Nothing matches</h3>No photos fit everything you’ve chosen.${filtered() ? '<br><button id="clearAll">Clear filters</button>' : ""}</div>`;
+    grid.innerHTML = data.text && !S.sha
+      ? `<div class="empty"><h3>Nothing found</h3>No photo looks like “${esc(data.text)}”${filtered() ? " with these filters" : ""}.${filtered() ? '<br><button id="clearAll">Clear filters</button>' : ""}</div>`
+      : `<div class="empty"><h3>Nothing matches</h3>No photos fit everything you’ve chosen.${filtered() ? '<br><button id="clearAll">Clear filters</button>' : ""}</div>`;
     return;
   }
   append(data.results);
@@ -608,7 +610,7 @@ function renderHead() {
   let title, sub;
   const n = `<b>${fmt(D.matching)}</b> ${D.matching === 1 ? "photo" : "photos"}`;
   if (S.sha) { title = `<img src="/thumb/${S.sha}" alt="">More like this`; sub = `Closest in look and subject among ${n}`; }
-  else if (D.text) { title = `“${esc(D.text)}”`; sub = `Best matches among ${n}`; }
+  else if (D.text) { title = `“${esc(D.text)}”`; sub = D.matching ? `${n}, best match first` : "No matches"; }
   else if (D.scope) { title = esc(D.scope.title || "Untitled"); sub = `${esc(span(D.scope.start, D.scope.end))}<i>·</i>${n}`; }
   else if (filtered()) {
     const parts = [S.f.person.join(" & "), [...S.f.city, ...S.f.region, ...S.f.country].map(v => v.split(",")[0]).join(", "),
