@@ -36,6 +36,16 @@ CREATE TABLE IF NOT EXISTS embeddings(
   sha256 TEXT, model TEXT, dim INT, vec BLOB,   -- float16, L2-normalised; NULL when undecodable
   error TEXT, created_at TEXT, PRIMARY KEY(sha256, model));
 """
+# A typed search shows only photos that match it, not the whole library in ranked order. Measured
+# for siglip2-base-patch16-256 with the two-prompt average in text_vec (cosine between query and
+# photo), on the demo and on a 100k-photo library:
+#   - a photo of the thing scores 0.085-0.16; unrelated photos stay under ~0.07, so a search for
+#     something that isn't there ("kangaroo" in the demo: best 0.069) finds nothing;
+#   - in a big library scores fall smoothly with no gap, and ~0.04 below the best match is where
+#     results drift from the thing asked for to its surroundings ("latte art" -> plain coffee,
+#     "unicorn" -> horses). Narrower drops real matches from a small library.
+MATCH_FLOOR = 0.085
+MATCH_WINDOW = 0.04
 SKIP_EXT = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"}  # Pillow can't decode RAW
 
 
@@ -649,6 +659,8 @@ def cmd_serve(a) -> None:
                         sims = np.where(mask, M @ vec, -np.inf)
                         if u.path == "/api/similar":
                             sims[index[sha]] = -np.inf
+                        else:  # only what matches the words: near the best match, and above the floor
+                            sims[sims < max(a.match_floor, sims.max() - a.match_window)] = -np.inf
                         return np.argsort(-sims)[: int(np.isfinite(sims).sum())]
 
                     order = remember(key, ranked)
@@ -769,6 +781,10 @@ def main() -> None:
     s.add_argument("--cache", help="thumbnail cache dir (default: <db dir>/review, shared with estate.py review)")
     s.add_argument("--fast-cache", help="cache dir on a faster disk (e.g. the internal SSD), filled from --cache")
     s.add_argument("--no-pregenerate", action="store_true", help="don't build missing thumbnails in the background")
+    s.add_argument("--match-floor", type=float, default=MATCH_FLOOR,
+                   help="typed searches show no photo below this similarity (-1 = no floor)")
+    s.add_argument("--match-window", type=float, default=MATCH_WINDOW,
+                   help="...nor more than this below the best match (2 = show every photo, ranked)")
     s.add_argument("--query-log", help="where to record searches and photos opened (default: <db dir>/query-log.jsonl)")
     s.set_defaults(fn=cmd_serve)
     a = p.parse_args()
