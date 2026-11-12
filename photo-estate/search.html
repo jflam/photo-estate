@@ -35,7 +35,10 @@
   }
 }
 * { box-sizing: border-box; }
-html { background: var(--bg); scrollbar-gutter: stable; }
+/* Phones: the page only ever scrolls up and down. Text keeps its size in landscape, and nothing zooms the page
+   (photos zoom in the viewer); a zoomed page is what leaves everything a few pixels off to one side. */
+html { background: var(--bg); scrollbar-gutter: stable; -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
+  touch-action: pan-x pan-y; -webkit-tap-highlight-color: transparent; }
 body { margin: 0; color: var(--ink); font: 14px/1.4 var(--sans); letter-spacing: -.006em;
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 button, input { font: inherit; letter-spacing: inherit; color: inherit; }
@@ -48,7 +51,7 @@ svg { display: block; flex: none; }
 header { position: sticky; top: 0; z-index: 10; padding: 16px var(--pad) 0;
   background: color-mix(in srgb, var(--bg) 84%, transparent);
   -webkit-backdrop-filter: saturate(1.5) blur(20px); backdrop-filter: saturate(1.5) blur(20px);
-  box-shadow: 0 1px 0 transparent; transition: box-shadow .3s; }
+  box-shadow: 0 1px 0 transparent; transition: box-shadow .3s; overflow-x: clip; }
 header.scrolled { box-shadow: 0 1px 0 var(--line); }
 .bar { display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; }
 .search { position: relative; flex: 1 1 340px; max-width: 540px; height: 40px; display: flex; align-items: center;
@@ -56,7 +59,7 @@ header.scrolled { box-shadow: 0 1px 0 var(--line); }
   box-shadow: inset 0 0 0 1px transparent; transition: box-shadow .18s, background .18s; cursor: text; }
 .search:focus-within { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 4px var(--hover); }
 .search > svg { color: var(--muted); }
-.search input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none; font-size: 14.5px; }
+.search input { flex: 1 1 0; width: 0; min-width: 0; height: 100%; border: 0; outline: 0; background: none; font-size: 14.5px; }
 .search input::placeholder { color: var(--muted); }
 .search input::-webkit-search-cancel-button { display: none; }
 .search kbd { font: 500 11px var(--sans); color: var(--muted); border: 1px solid var(--line-2); border-radius: 5px;
@@ -119,17 +122,19 @@ header.scrolled { box-shadow: 0 1px 0 var(--line); }
 .tl-tip b { font-weight: 500; opacity: .6; margin-left: 6px; }
 
 /* ── page ───────────────────────────────────────────────────────────── */
-main { padding: 26px var(--pad) 96px; }
+main { padding: 26px var(--pad) 96px; overflow-x: clip; }
 .head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; min-height: 58px; }
+.head > div:first-child { min-width: 0; }
 .head h1 { margin: 0; font-size: 28px; line-height: 1.15; font-weight: 600; letter-spacing: -.028em;
-  display: flex; align-items: center; gap: 12px; }
+  display: flex; align-items: center; gap: 12px; overflow-wrap: anywhere; }
+.head h1 img { flex: none; }
 .head h1 img { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; }
 .head p { margin: 5px 0 0; color: var(--muted); font-size: 13.5px; }
 .head p b { font-weight: 500; color: var(--ink-2); }
 .head p i { font-style: normal; color: var(--faint); margin: 0 7px; }
-.head-r { display: flex; gap: 2px; padding-bottom: 1px; }
+.head-r { display: flex; flex: none; gap: 2px; padding-bottom: 1px; }
 .txt { height: 28px; padding: 0 9px; border-radius: 7px; color: var(--muted); font-size: 13px; font-weight: 500;
-  display: inline-flex; align-items: center; gap: 6px; transition: background .15s, color .15s; }
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; transition: background .15s, color .15s; }
 .txt:hover { background: var(--hover); color: var(--ink); }
 #grid { transition: opacity .2s; }
 #grid.stale { opacity: .45; }
@@ -143,7 +148,8 @@ section.flat { margin-top: 22px; }
 .sh .where { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sh .n { color: var(--muted); font-size: 12px; }
 .row { display: flex; gap: var(--gap); margin-bottom: var(--gap); content-visibility: auto; }
-.t { position: relative; flex: none; height: 100%; overflow: hidden; border-radius: 3px; background: var(--tile); cursor: pointer; }
+.t { position: relative; flex: none; height: 100%; overflow: hidden; border-radius: 3px; background: var(--tile); cursor: pointer;
+  -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .t img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0;
   transition: opacity .35s, filter .25s, transform .6s var(--ease); }
 .t img.in { opacity: 1; }
@@ -160,7 +166,7 @@ section.flat { margin-top: 22px; }
 #more { height: 1px; }
 
 /* ── popovers ───────────────────────────────────────────────────────── */
-.pop { position: fixed; z-index: 30; width: 300px; padding: 6px; border-radius: 12px; background: var(--raised);
+.pop { position: fixed; z-index: 30; width: 300px; max-width: calc(100vw - 16px); padding: 6px; border-radius: 12px; background: var(--raised);
   box-shadow: inset 0 0 0 1px var(--line), var(--shadow); transform-origin: 20px 0; animation: pop .16s var(--ease); }
 .pop.wide { width: 380px; }
 @keyframes pop { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
@@ -172,7 +178,7 @@ section.flat { margin-top: 22px; }
 .pop .find { width: 100%; height: 34px; padding: 0 10px; border: 0; outline: 0; background: none;
   border-bottom: 1px solid var(--line); margin-bottom: 6px; font-size: 13.5px; }
 .pop .find::placeholder { color: var(--muted); }
-.opts { max-height: min(360px, calc(100vh - 220px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--faint) transparent; }
+.opts { max-height: min(360px, calc(100vh - 220px)); max-height: min(360px, calc(100dvh - 220px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--faint) transparent; }
 .opt { width: 100%; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 8px;
   padding: 7px 10px 7px 8px; border-radius: 7px; text-align: left; font-size: 13.5px; }
 .opt:hover, .opt.cur { background: var(--hover); }
@@ -201,10 +207,11 @@ section.flat { margin-top: 22px; }
 .sw.on::after { transform: translateX(14px); background: var(--bg); }
 
 /* ── viewer ─────────────────────────────────────────────────────────── */
-.v { position: fixed; inset: 0; z-index: 50; display: none; color: #ececed; --vline: rgba(255,255,255,.09); --vmuted: #85858c; }
+.v { position: fixed; inset: 0; z-index: 50; display: none; overflow: hidden; color: #ececed; --vline: rgba(255,255,255,.09); --vmuted: #85858c; }
 .v.on { display: block; }
 .v-bg { position: absolute; inset: 0; background: #060607; }
-.v-pic { position: absolute; left: 0; top: 0; border-radius: 2px; overflow: hidden; background: #111; transform-origin: 0 0;
+.v-stage { position: absolute; inset: 0; pointer-events: none; will-change: transform; }   /* the photo and its neighbours, a page apart */
+.v-pic { position: absolute; left: 0; top: 0; pointer-events: auto; border-radius: 2px; overflow: hidden; background: #111; transform-origin: 0 0;
   will-change: transform; }
 .v-pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .v-pic .hi { opacity: 0; transition: opacity .3s; }
@@ -223,9 +230,10 @@ section.flat { margin-top: 22px; }
 .v.info #vNext { right: 378px; }
 .v-btn[disabled] { opacity: 0; pointer-events: none; }
 .v-count { position: absolute; top: 28px; left: 70px; font-size: 12.5px; color: var(--vmuted); font-variant-numeric: tabular-nums; }
+.v-title { display: none; }
 .v-info { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; padding: 30px 28px 40px; overflow-y: auto;
   background: #101012; box-shadow: -1px 0 0 var(--vline); transform: translateX(100%); transition: transform .3s var(--ease);
-  scrollbar-width: thin; scrollbar-color: #3a3a40 transparent; font-size: 13.5px; }
+  scrollbar-width: thin; scrollbar-color: #3a3a40 transparent; font-size: 13.5px; overscroll-behavior: contain; }
 .v.info .v-info { transform: none; }
 .v-info h3 { margin: 0; font-size: 19px; line-height: 1.25; font-weight: 600; letter-spacing: -.02em; color: #fff; }
 .v-info .sub { margin-top: 4px; color: var(--vmuted); }
@@ -259,16 +267,19 @@ section.flat { margin-top: 22px; }
 .v-info .cta:active { transform: scale(.985); }
 
 @media (max-width: 1100px) {      /* search and view options share the first row; filters get their own */
-  .search { order: 0; flex: 1 1 0; max-width: none; }
+  .search { order: 0; flex: 1 1 0; min-width: 0; max-width: none; }
   .tools { order: 1; margin-left: 0; }
-  .pills { order: 2; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-top: 4px; }
+  .pills { order: 2; flex: 1 0 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-top: 4px;
+    overscroll-behavior-x: contain; }
+  .pills::-webkit-scrollbar { display: none; }
 }
 @media (max-width: 760px) {
   :root { --pad: 14px; --gap: 3px; }
   .search kbd { display: none; }
+  .head { flex-wrap: wrap; gap: 4px 16px; }           /* a long title pushes Sort / Clear onto their own line */
+  .head > div:first-child { flex: 1 1 180px; max-width: 100%; }
+  .head-r { margin-left: auto; }
   .head h1 { font-size: 22px; }
-  .v-info { width: 100%; top: 45%; box-shadow: 0 -1px 0 var(--vline); transform: translateY(100%); }
-  .v.info #vInfoBtn, .v.info #vNext { right: 18px; }
 }
 /* ── phone: notch and home bar (insets are 0 in a normal browser tab), touch ── */
 header { padding-top: calc(16px + env(safe-area-inset-top)); padding-left: calc(var(--pad) + env(safe-area-inset-left));
@@ -280,7 +291,6 @@ main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right
 .v-count { top: calc(28px + env(safe-area-inset-top)); left: calc(70px + env(safe-area-inset-left));
   max-width: calc(100% - 190px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .v.info .v-count { max-width: calc(100% - 550px); }
-@media (max-width: 760px) { .v.info .v-count { max-width: calc(100% - 190px); } }
 .v-info { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
 .v { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .v-info { touch-action: pan-y; -webkit-user-select: text; user-select: text; }
@@ -289,7 +299,7 @@ main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right
 #vShare.busy svg { animation: pulse 1s ease-in-out infinite; }
 #vShare.ready { background: #ececed; color: #0c0c0d; }
 @keyframes pulse { 50% { opacity: .35; } }
-.v.bare .v-btn, .v.bare .v-count { opacity: 0; pointer-events: none; }
+.v.bare .v-btn, .v.bare .v-count, .v.bare .v-title { opacity: 0; pointer-events: none; }
 .back { display: none; }
 @media (display-mode: standalone) { html.deep .back { display: grid; margin-right: -6px; } }
 @media (pointer: coarse) {
@@ -297,8 +307,33 @@ main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right
   .t:hover img { filter: none; transform: none; }
   .pill { height: 36px; }
   .icon { width: 36px; height: 36px; }
+  .search input, .pop .find { font-size: 16px; }    /* under 16px, iOS zooms the page in when the field is focused */
 }
-@media (max-width: 760px) { .v.info #vShare { right: 64px; } }
+/* ── phone viewer: the photo fills the screen; date on top, share / count / details along the bottom;
+      details are a sheet that comes up from below (swipe up, or the button) ── */
+@media (max-width: 760px) {
+  .v-ui::before, .v-ui::after { content: ""; position: absolute; left: 0; right: 0; transition: opacity .25s; }
+  .v-ui::before { top: 0; height: calc(96px + env(safe-area-inset-top)); background: linear-gradient(rgba(0,0,0,.62), transparent); }
+  .v-ui::after { bottom: 0; height: calc(104px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.62)); }
+  .v.bare .v-ui::before, .v.bare .v-ui::after { opacity: 0; }
+  .v .v-btn { width: 44px; height: 44px; color: #fff; background: rgba(58,58,64,.55);
+    -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+  .v #vClose { top: calc(8px + env(safe-area-inset-top)); left: calc(12px + env(safe-area-inset-left)); }
+  .v-title { display: block; position: absolute; top: calc(11px + env(safe-area-inset-top)); left: 66px; right: 66px;
+    text-align: center; transition: opacity .2s; pointer-events: none; }
+  .v-title b, .v-title span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .v-title b { font-size: 15px; line-height: 20px; font-weight: 600; color: #fff; }
+  .v-title span { font-size: 12px; line-height: 16px; color: rgba(255,255,255,.72); }
+  .v #vShare, .v #vInfoBtn { top: auto; bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .v #vShare, .v.info #vShare { left: calc(14px + env(safe-area-inset-left)); right: auto; }
+  .v #vInfoBtn, .v.info #vInfoBtn { right: calc(14px + env(safe-area-inset-right)); }
+  .v.info #vNext { right: 18px; }
+  .v .v-count, .v.info .v-count { top: auto; bottom: calc(25px + env(safe-area-inset-bottom)); left: 70px; right: 70px; max-width: none;
+    text-align: center; color: rgba(255,255,255,.8); transition: opacity .2s; }
+  .v-info { width: 100%; top: 45%; padding-top: 12px; border-radius: 16px 16px 0 0; box-shadow: 0 -1px 0 var(--vline);
+    transform: translateY(100%); }
+  .v-info::before { content: ""; display: block; width: 36px; height: 5px; margin: 0 auto 16px; border-radius: 3px; background: rgba(255,255,255,.22); }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 </head>
@@ -337,9 +372,10 @@ main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right
 
 <div class="v" id="v" role="dialog" aria-modal="true" aria-label="Photo">
   <div class="v-bg" id="vBg"></div>
-  <div class="v-pic" id="vPic"><img class="lo" id="vLo" alt=""><img class="hi" id="vHi" alt=""></div>
+  <div class="v-stage" id="vStage"></div>
   <div class="v-ui" id="vUi">
     <button class="v-btn" id="vClose" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m3.5 3.5 9 9m0-9-9 9"/></svg></button>
+    <div class="v-title" id="vTitle"></div>
     <span class="v-count" id="vCount"></span>
     <button class="v-btn" id="vShare" aria-label="Save or share"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M5 4.8 8 2l3 2.8M5.5 7H4.2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h7.600a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1H10.500"/></svg></button>
     <button class="v-btn" id="vInfoBtn" aria-label="Details"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.3v3.6"/><circle cx="8" cy="5" r=".4" fill="currentColor"/></svg></button>
@@ -408,6 +444,7 @@ const fDay = DF({ weekday: "long", day: "numeric", month: "long" });
 const fTime = DF({ hour: "numeric", minute: "2-digit" });
 const fMed = DF({ day: "numeric", month: "short", year: "numeric" });
 const fMonth = DF({ month: "long" }), fMon = DF({ month: "short", year: "numeric" });
+const fTitle = DF({ day: "numeric", month: "long", year: "numeric" });
 const when = r => r.local || r.taken || "";
 function span(a, b) {
   const x = dParts(a), y = dParts(b || a);
@@ -434,7 +471,7 @@ const apiParams = () => { const p = toParams(S); p.set("dedupe", V.dedupe ? "1" 
 const depth = () => history.state?.d || 0;
 async function refresh(push = true) {
   const g = ++gen;
-  if (push) history.pushState({ d: depth() + 1 }, "", toParams(S).size ? "?" + toParams(S) : location.pathname);
+  if (push) history[push === "replace" ? "replaceState" : "pushState"]({ d: depth() + 1 }, "", toParams(S).size ? "?" + toParams(S) : location.pathname);
   document.documentElement.classList.toggle("deep", depth() > 0);
   closePop();
   renderPills(); renderLike();
@@ -463,7 +500,7 @@ async function loadMore() {
   busy = true; const g = gen;
   try {
     const data = await getJSON((S.sha ? "/api/similar?" : "/api/search?") + apiParams() + `&limit=200&cursor=${next}`);
-    if (g === gen) { next = data.next; append(data.results); if (vCur >= 0) vChrome(); }
+    if (g === gen) { next = data.next; append(data.results); if (vCur >= 0) { arrange(); vChrome(); } }
   } catch (e) {}
   busy = false;
   if (g === gen && next != null && $("#more").getBoundingClientRect().top < innerHeight + 1200) loadMore();
@@ -629,11 +666,11 @@ function openPop(anchor, build, cls = "") {
 }
 function placePop() {
   if (!pop) return;
+  if (pop.anchor.id === "search") pop.el.style.width = pop.anchor.offsetWidth + "px";
   const r = pop.anchor.getBoundingClientRect(), w = pop.el.offsetWidth;
   const right = pop.anchor.id === "viewBtn";
-  pop.el.style.left = Math.max(8, Math.min(right ? r.right - w : r.left, innerWidth - w - 8)) + "px";
+  pop.el.style.left = Math.max(8, Math.min(right ? r.right - w : r.left, document.documentElement.clientWidth - w - 8)) + "px";
   pop.el.style.top = r.bottom + 6 + "px";
-  if (pop.anchor.id === "search") pop.el.style.width = r.width + "px";
   if (right) pop.el.style.transformOrigin = "calc(100% - 20px) 0";
 }
 function closePop() { if (!pop) return; pop.anchor.classList.remove("open"); pop.el.remove(); pop = null; }
@@ -805,7 +842,10 @@ function layoutYears() {
   if (!INFO) return;
   const w = tl.clientWidth, per = w / INFO.months * 12, step = per >= 40 ? 1 : per >= 20 ? 2 : 5;
   tl.classList.toggle("gapped", w / INFO.months >= 3);
-  for (const s of $("#tlYears").children) s.style.display = +s.dataset.y % step === 0 && (INFO.months - ymOf(s.dataset.y + "-01")) / INFO.months * w > 30 ? "" : "none";
+  for (const s of $("#tlYears").children) {         // a label that would stick out past the right edge is left out
+    s.style.display = +s.dataset.y % step === 0 ? "" : "none";
+    if (!s.style.display && s.offsetLeft + s.offsetWidth > w) s.style.display = "none";
+  }
 }
 const selRange = () => S.from || S.to ? [S.from ? Math.max(0, ymOf(S.from)) : 0, S.to ? Math.min(INFO.months - 1, ymOf(S.to)) : INFO.months - 1] : null;
 function renderTimeline(range = selRange()) {
@@ -872,38 +912,76 @@ addEventListener("scroll", () => {
 }, { passive: true });
 
 /* ── viewer ────────────────────────────────────────────────────────── */
-const v = $("#v"), vPic = $("#vPic");
-let vCur = -1;
-const infoW = () => V.info && innerWidth > 760 ? 360 : 0;
+// Three slides sit side by side on the stage: the photo and its two neighbours, a page apart. A swipe moves the
+// stage; when it lands, the slides change roles, so a neighbour that has already loaded is never loaded again.
+const v = $("#v"), stage = $("#vStage"), GAP = 28;
+const mkSlide = () => { const el = document.createElement("div"); el.className = "v-pic";
+  el.innerHTML = '<img class="lo" alt="" draggable="false"><img class="hi" alt="" draggable="false">'; stage.append(el);
+  return { el, lo: el.firstChild, hi: el.lastChild, r: null, large: false, failed: false }; };
+const slides = [mkSlide(), mkSlide(), mkSlide()];
+let cur = slides[0], vPic = cur.el;
+let vCur = -1, sheet = false, vNote = "";            // sheet: details showing on a phone (never to begin with)
+let vHist = false, vBack = false;                    // an open photo is a history entry, so Back closes it
+let settle = null;                                   // finishes a swipe that is still sliding into place
+const narrow = matchMedia("(max-width: 760px)");
+const phone = () => narrow.matches;
+const vw = () => v.clientWidth, vh = () => v.clientHeight;
+const infoOn = () => phone() ? sheet : V.info;
+const infoW = () => !phone() && V.info ? 360 : 0;
+const pageW = () => vw() - infoW() + GAP;
 function fit(r) {
-  const W = innerWidth - infoW(), H = innerWidth > 760 ? innerHeight : innerHeight * (V.info ? .45 : 1), px = innerWidth > 760 ? 72 : 0, py = innerWidth > 760 ? 28 : 0;
+  const W = vw() - infoW(), H = phone() ? vh() * (sheet ? .45 : 1) : vh(), px = phone() ? 0 : 72, py = phone() ? 0 : 28;
   const ar = r.ar || 1.5; let w = W - px * 2, h = w / ar;
   if (h > H - py * 2) { h = H - py * 2; w = h * ar; }
   return { x: Math.round((W - w) / 2), y: Math.round((H - h) / 2), w: Math.round(w), h: Math.round(h) };
 }
 const place = (el, b) => Object.assign(el.style, { left: b.x + "px", top: b.y + "px", width: b.w + "px", height: b.h + "px" });
 const tileOf = i => $(`.t[data-i="${i}"]`);
+function fill(s, r, off) {                           // photo r in slide s, `off` pages to the right of the current one
+  s.el.style.display = r ? "" : "none";
+  if (!r) { s.r = null; return; }
+  const b = fit(r); b.x += off * pageW(); place(s.el, b);
+  if (s.r === r) return;
+  s.r = r; s.large = s.failed = false;
+  s.hi.classList.remove("in"); s.hi.removeAttribute("src"); s.lo.src = "/thumb/" + r.sha;
+  const im = new Image();                            // 1600 px first because it is quick
+  im.onload = () => { if (s.r !== r) return; s.hi.src = im.src;
+    (s.hi.decode?.() || Promise.resolve()).catch(() => {}).finally(() => { if (s.r === r) { s.hi.classList.add("in"); if (s === cur) sharpen(); } }); };
+  im.onerror = () => { if (s.r === r) { s.failed = true; if (s === cur && vCur >= 0) vChrome(); } };
+  im.src = "/preview/" + r.sha;
+}
+function sharpen(force = Z.s > 1.6) {                // then the 4096 px one, when the screen or the zoom can show more
+  const s = cur, r = s.r;
+  if (!r || s.large || !s.hi.classList.contains("in") || Math.max(r.w || 0, r.h || 0) <= 1700) return;
+  const b = fit(r);
+  if (!force && Math.max(b.w, b.h) * devicePixelRatio <= 1700) return;
+  s.large = true;
+  const im = new Image(); im.onload = () => { if (s.r === r) s.hi.src = im.src; }; im.src = "/large/" + r.sha;
+}
+function arrange() {                                 // the current photo and its neighbours, each in a slide
+  const want = [items[vCur], items[vCur - 1] || null, items[vCur + 1] || null];
+  const free = slides.filter(s => !s.r || !want.includes(s.r));
+  const use = want.map(r => (r && slides.find(s => s.r === r)) || free.pop());
+  cur = use[0]; vPic = cur.el;
+  use.forEach((s, k) => { s.el.style.zIndex = k ? "" : 1; fill(s, want[k], [0, -1, 1][k]); });
+}
 function show(i, dir = 0) {
-  const r = items[i]; vCur = i;
-  resetZoom(); shareFile = null; $("#vShare").classList.remove("ready", "busy");
-  place(vPic, fit(r));
-  const lo = $("#vLo"), hi = $("#vHi");
-  hi.classList.remove("in"); hi.removeAttribute("src"); lo.src = "/thumb/" + r.sha;
-  const box = fit(r), need = Math.max(box.w, box.h) * devicePixelRatio;       // device pixels the photo will cover
-  const swap = (src, then) => { const im = new Image();
-    im.onload = () => { if (items[vCur] !== r) return; hi.src = src; hi.decode?.().catch(() => {}).finally(() => { hi.classList.add("in"); then?.(); }); };
-    im.onerror = () => { if (items[vCur] === r) $("#vCount").textContent += "  ·  full-size image didn’t load"; };
-    im.src = src; };
-  // 1600 px first because it is quick; then the 4096 px one when the screen can actually show more
-  swap("/preview/" + r.sha, () => { if (need > 1700 && Math.max(r.w || 0, r.h || 0) > 1700) swap("/large/" + r.sha); });
-  if (items[i + 1]) new Image().src = "/preview/" + items[i + 1].sha;
+  vCur = i;
+  settle = null; stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
+  for (const s of slides) s.el.style.transform = "";
+  Z.s = 1; Z.x = Z.y = 0;
+  arrange();
+  shareFile = null; vNote = ""; $("#vShare").classList.remove("ready", "busy");
+  sharpen();
   if (dir) vPic.animate([{ opacity: 0, transform: `translateX(${dir * 28}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE });
-  $("#vCount").textContent = ""; vChrome(); drawInfo(r);
+  vChrome(); drawInfo(items[i]);
   if (i > items.length - 12) loadMore();
 }
 function vChrome() {
+  const r = items[vCur], d = dParts(when(r)), note = vNote || (cur.failed ? "full-size image didn’t load" : "");
   $("#vPrev").disabled = vCur <= 0; $("#vNext").disabled = vCur >= items.length - 1 && next == null;
-  $("#vCount").textContent = `${fmt(vCur + 1)} of ${fmt(D.matching)}`;
+  $("#vCount").textContent = `${fmt(vCur + 1)} of ${fmt(D.matching)}` + (note ? "  ·  " + note : "");
+  $("#vTitle").innerHTML = `<b>${d ? fTitle.format(d) : "Undated"}</b><span class="num">${esc([d && when(r).length > 10 && fTime.format(d), (r.city || "").split(",")[0]].filter(Boolean).join("  ·  "))}</span>`;
 }
 // Opening or sharing a photo says a search found something; the server keeps these with the searches.
 const logEvent = (ev, i) => { const r = items[i]; if (!r) return;
@@ -911,8 +989,10 @@ const logEvent = (ev, i) => { const r = items[i]; if (!r) return;
   fetch("/api/log?" + p, { keepalive: true }).catch(() => {}); };
 function openViewer(i) {
   logEvent("open", i);
-  v.classList.add("on"); v.classList.toggle("info", V.info);
+  sheet = false;
+  v.classList.add("on"); v.classList.remove("bare"); v.classList.toggle("info", infoOn());
   document.documentElement.style.overflow = "hidden";
+  if (!vHist) { history.pushState({ d: depth(), v: 1 }, ""); vHist = true; }
   show(i);
   const t = tileOf(i)?.getBoundingClientRect(), f = fit(items[i]);
   if (t) vPic.animate([{ transform: `translate(${t.x - f.x}px,${t.y - f.y}px) scale(${t.width / f.w},${t.height / f.h})` }, { transform: "none" }], { duration: 380, easing: EASE });
@@ -922,24 +1002,30 @@ function openViewer(i) {
 }
 function closeViewer(instant) {
   if (vCur < 0) return;
-  const i = vCur;
-  resetZoom(); v.classList.remove("bare"); vCur = -1;
-  const done = () => { v.classList.remove("on"); document.documentElement.style.overflow = ""; };
+  const i = vCur, bg = $("#vBg"), ui = $("#vUi");
+  const from = vPic.style.transform || "none", dim = bg.style.opacity || 1, hidden = ui.style.opacity === "0";   // where a drag left things
+  settle = null; stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
+  for (const s of slides) { s.el.style.transform = ""; if (s !== cur) s.el.style.display = "none"; }
+  Z.s = 1; Z.x = Z.y = 0; bg.style.opacity = ui.style.opacity = "";
+  v.classList.remove("bare"); vCur = -1;
+  if (vHist) { vHist = false; vBack = true; history.back(); }
+  const done = () => { if (vCur < 0) { v.classList.remove("on"); document.documentElement.style.overflow = ""; } };
   if (instant) return done();
   const el = tileOf(i);
   el?.scrollIntoView({ block: "nearest" });
   const t = el?.getBoundingClientRect(), f = fit(items[i]);
-  const a = t ? vPic.animate([{ transform: "none" }, { transform: `translate(${t.x - f.x}px,${t.y - f.y}px) scale(${t.width / f.w},${t.height / f.h})` }], { duration: 300, easing: EASE })
-              : vPic.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200 });
-  $("#vBg").animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: "ease-in", fill: "forwards" }).finished.then(x => x.cancel());
-  $("#vUi").animate([{ opacity: 1 }, { opacity: 0 }], { duration: 150, fill: "forwards" }).finished.then(x => setTimeout(() => x.cancel(), 200));
-  a.finished.then(done);
+  const a = t ? vPic.animate([{ transform: from }, { transform: `translate(${t.x - f.x}px,${t.y - f.y}px) scale(${t.width / f.w},${t.height / f.h})` }], { duration: 300, easing: EASE })
+              : vPic.animate([{ opacity: 1, transform: from }, { opacity: 0, transform: from }], { duration: 200 });
+  bg.animate([{ opacity: dim }, { opacity: 0 }], { duration: 300, easing: "ease-in", fill: "forwards" }).finished.then(x => x.cancel());
+  ui.animate([{ opacity: hidden ? 0 : 1 }, { opacity: 0 }], { duration: 150, fill: "forwards" }).finished.then(x => setTimeout(() => x.cancel(), 200));
+  a.finished.then(done, done);
 }
 const step = d => { const i = vCur + d; if (i >= 0 && i < items.length) show(i, d); };
 function toggleInfo() {
-  V.info = !V.info; saveView(); v.classList.toggle("info", V.info);
-  const a = vPic.getBoundingClientRect(), b = fit(items[vCur]);
-  place(vPic, b);
+  if (phone()) sheet = !sheet; else { V.info = !V.info; saveView(); }
+  v.classList.toggle("info", infoOn()); if (infoOn()) v.classList.remove("bare");
+  resetZoom();
+  const a = vPic.getBoundingClientRect(); arrange(); const b = fit(items[vCur]);
   vPic.animate([{ transform: `translate(${a.x - b.x}px,${a.y - b.y}px) scale(${a.width / b.w},${a.height / b.h})` }, { transform: "none" }], { duration: 300, easing: EASE });
 }
 
@@ -996,7 +1082,8 @@ $("#vInfo").addEventListener("click", e => {
   else if (k === "event" || k === "trip") S[k] = val;
   else if (k === "day") S.from = S.to = val;
   else S.f[k] = [val];
-  closeViewer(true); refresh();
+  const over = vHist; vHist = false;                 // the new search takes the open photo's place in history
+  closeViewer(true); refresh(over ? "replace" : true);
 });
 $("#vClose").onclick = () => closeViewer();
 let lastPointer = "mouse";
@@ -1006,18 +1093,21 @@ $("#vPrev").onclick = () => step(-1);
 $("#vNext").onclick = () => step(1);
 $("#vInfoBtn").onclick = toggleInfo;
 $("#backBtn").onclick = () => history.back();
-addEventListener("resize", () => { if (vCur >= 0) { resetZoom(); place(vPic, fit(items[vCur])); } });
+function vResize() { if (vCur < 0) return; v.classList.toggle("info", infoOn()); resetZoom(); arrange(); }
+addEventListener("resize", vResize);
+narrow.addEventListener("change", vResize);
 
-/* ── viewer on touch: swipe between photos, swipe down to close, pinch or double-tap to zoom, tap for chrome ── */
+/* ── viewer on touch: swipe between photos, swipe down to close, swipe up for details, pinch or double-tap to
+      zoom, tap to show or hide the buttons ── */
 const Z = { s: 1, x: 0, y: 0 };                      // zoom: scale and pan, applied on top of fit()
 const pts = new Map();
-let g = null, lastTap = 0;
+let g = null, lastTap = 0, tapTimer = 0;
 const applyZoom = () => { vPic.style.transform = Z.s === 1 ? "" : `translate(${Z.x}px,${Z.y}px) scale(${Z.s})`; };
 function resetZoom() { Z.s = 1; Z.x = Z.y = 0; applyZoom(); }
 function clampZoom() {                               // keep the photo covering the screen where it can
-  const b = fit(items[vCur]), w = b.w * Z.s, h = b.h * Z.s;   // on screen the photo spans b.x + Z.x … + w
-  Z.x = w <= innerWidth ? (innerWidth - w) / 2 - b.x : Math.min(-b.x, Math.max(innerWidth - w - b.x, Z.x));
-  Z.y = h <= innerHeight ? (innerHeight - h) / 2 - b.y : Math.min(-b.y, Math.max(innerHeight - h - b.y, Z.y));
+  const b = fit(items[vCur]), w = b.w * Z.s, h = b.h * Z.s, W = vw(), H = vh();   // on screen the photo spans b.x + Z.x … + w
+  Z.x = w <= W ? (W - w) / 2 - b.x : Math.min(-b.x, Math.max(W - w - b.x, Z.x));
+  Z.y = h <= H ? (H - h) / 2 - b.y : Math.min(-b.y, Math.max(H - h - b.y, Z.y));
 }
 function zoomAt(cx, cy, s) {                         // set scale s keeping screen point (cx, cy) still
   const b = fit(items[vCur]);
@@ -1025,21 +1115,25 @@ function zoomAt(cx, cy, s) {                         // set scale s keeping scre
   Z.s = Math.min(Math.max(s, 1), 6);
   Z.x = cx - b.x - px * Z.s; Z.y = cy - b.y - py * Z.s;
   if (Z.s === 1) Z.x = Z.y = 0;
-  if (Z.s > 1.6) wantLarge();
+  sharpen();
 }
-function wantLarge() {                               // zoomed in: the 4096 px version is worth fetching
-  const r = items[vCur], hi = $("#vHi");
-  if (!r || Math.max(r.w || 0, r.h || 0) <= 1700 || hi.dataset.large === r.sha) return;
-  hi.dataset.large = r.sha;
-  const im = new Image(); im.onload = () => { if (items[vCur] === r) hi.src = im.src; }; im.src = "/large/" + r.sha;
+function slideTo(d, x = 0) {                         // the neighbour slides in, then becomes the current photo
+  const a = stage.animate([{ transform: `translateX(${x}px)` }, { transform: `translateX(${-d * pageW()}px)` }],
+    { duration: 300, easing: EASE, fill: "forwards" });
+  stage.style.transform = "";
+  const fin = settle = () => { if (settle !== fin) return; settle = null; a.cancel(); show(vCur + d); };
+  a.onfinish = fin;
 }
 const inViewerChrome = t => t.closest(".v-info, .v-btn");
 v.addEventListener("pointerdown", e => {
-  if (e.pointerType === "mouse" || inViewerChrome(e.target)) return;
+  if (e.pointerType === "mouse" || inViewerChrome(e.target) || vCur < 0) return;
+  if (settle) settle();
   pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
   vPic.getAnimations().forEach(a => a.finish());
   if (pts.size === 1) g = { mode: "", x0: e.clientX, y0: e.clientY, t0: performance.now(), zx: Z.x, zy: Z.y };
   else if (pts.size === 2) {
+    stage.style.transform = ""; vPic.style.transform = ""; $("#vBg").style.opacity = $("#vUi").style.opacity = ""; applyZoom();
+    if (phone() && sheet) toggleInfo();              // the photo has the whole screen again before it zooms
     const [a, b] = [...pts.values()];
     g = { mode: "pinch", d0: Math.hypot(a.x - b.x, a.y - b.y), s0: Z.s, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, zx: Z.x, zy: Z.y };
   }
@@ -1057,11 +1151,13 @@ v.addEventListener("pointermove", e => {
   const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
   if (!g.mode && Math.hypot(dx, dy) > 8) g.mode = Z.s > 1 ? "pan" : Math.abs(dx) > Math.abs(dy) ? "swipe" : dy > 0 ? "down" : "up";
   if (g.mode === "pan") { Z.x = g.zx + dx; Z.y = g.zy + dy; applyZoom(); }
-  else if (g.mode === "swipe") vPic.style.transform = `translateX(${dx}px)`;
-  else if (g.mode === "down") {
-    const k = Math.max(.6, 1 - dy / innerHeight);
-    vPic.style.transform = `translate(${dx}px,${dy}px) scale(${k})`;
-    $("#vBg").style.opacity = Math.max(0, 1 - dy / (innerHeight * .6));
+  else if (g.mode === "swipe") {                     // the neighbours come along; past either end it only stretches
+    const end = dx > 0 ? vCur <= 0 : vCur >= items.length - 1;
+    stage.style.transform = `translateX(${end ? dx * .3 : dx}px)`;
+  } else if (g.mode === "down" && !(phone() && sheet)) {   // the photo follows the finger and shrinks about its centre
+    const k = Math.max(.6, 1 - dy / vh()), b = fit(items[vCur]);
+    vPic.style.transform = `translate(${dx + b.w * (1 - k) / 2}px,${dy + b.h * (1 - k) / 2}px) scale(${k})`;
+    $("#vBg").style.opacity = Math.max(0, 1 - dy / (vh() * .6));
     $("#vUi").style.opacity = dy > 20 ? 0 : 1;
   }
 });
@@ -1070,7 +1166,7 @@ function endGesture(e) {
   pts.delete(e.pointerId);
   if (!g) return;
   if (g.mode === "pinch") {
-    if (pts.size === 0) { if (Z.s < 1.05) { resetZoom(); return; } clampZoom(); animateTo(); g = null; }
+    if (pts.size === 0) { g = null; if (Z.s < 1.05) return resetZoomAnimated(); clampZoom(); animateTo(); }
     else { const [a] = [...pts.values()]; g = { mode: "pan", x0: a.x, y0: a.y, zx: Z.x, zy: Z.y }; }
     return;
   }
@@ -1080,30 +1176,32 @@ function endGesture(e) {
   if (!mode) {                                       // a tap: double tap zooms, single tap shows/hides the buttons
     const now = performance.now();
     if (now - lastTap < 300) { lastTap = 0; clearTimeout(tapTimer);
-      if (Z.s > 1) { resetZoomAnimated(); } else { zoomAt(e.clientX, e.clientY, 2.5); clampZoom(); animateTo(); } return; }
+      if (Z.s > 1) return resetZoomAnimated();
+      if (phone() && sheet) return toggleInfo();
+      const b = fit(items[vCur]), cover = Math.max(vw() / b.w, vh() / b.h);   // fill the screen, as Photos does
+      zoomAt(e.clientX, e.clientY, cover > 1.2 ? cover : 2.5); clampZoom(); animateTo(); return; }
     lastTap = now;
-    tapTimer = setTimeout(() => v.classList.toggle("bare"), 280);
+    tapTimer = setTimeout(() => { if (vCur < 0) return; if (phone() && sheet) toggleInfo(); else v.classList.toggle("bare"); }, 280);
     return;
   }
   if (mode === "pan") { clampZoom(); animateTo(); return; }
   const fast = dt < 250;
   if (mode === "swipe") {
     const d = dx < -60 || (fast && dx < -20) ? 1 : dx > 60 || (fast && dx > 20) ? -1 : 0;
-    const ok = d && vCur + d >= 0 && vCur + d < items.length;
-    vPic.style.transform = "";
-    if (ok) show(vCur + d, d);
-    else vPic.animate([{ transform: `translateX(${dx}px)` }, { transform: "none" }], { duration: 220, easing: EASE });
-  } else if (mode === "down") {
-    $("#vUi").style.opacity = "";
-    if (dy > 110 || (fast && dy > 40)) { vPic.style.transform = ""; $("#vBg").style.opacity = ""; closeViewer(); }
+    const x = new DOMMatrix(getComputedStyle(stage).transform).e;
+    if (d && items[vCur + d]) slideTo(d, x);
+    else { stage.style.transform = ""; stage.animate([{ transform: `translateX(${x}px)` }, { transform: "none" }], { duration: 260, easing: EASE }); }
+  } else if (phone() && sheet) { if (mode === "down" && (dy > 50 || fast)) toggleInfo(); }   // down puts the details away
+  else if (mode === "down") {
+    if (dy > 110 || (fast && dy > 40)) closeViewer();
     else {
-      const from = vPic.style.transform; vPic.style.transform = "";
+      const from = vPic.style.transform, bg = $("#vBg"), dim = bg.style.opacity || 1;
+      vPic.style.transform = ""; bg.style.opacity = $("#vUi").style.opacity = "";
       vPic.animate([{ transform: from }, { transform: "none" }], { duration: 220, easing: EASE });
-      $("#vBg").animate([{ opacity: $("#vBg").style.opacity }, { opacity: 1 }], { duration: 220 }).finished.then(() => $("#vBg").style.opacity = "");
+      bg.animate([{ opacity: dim }, { opacity: 1 }], { duration: 220 });
     }
-  } else if (mode === "up" && innerWidth <= 760 && !V.info) toggleInfo();   // swipe up opens the details sheet
+  } else if (mode === "up" && phone() && (dy < -50 || fast)) toggleInfo();   // swipe up brings the details up
 }
-let tapTimer = 0;
 function animateTo() {
   const from = getComputedStyle(vPic).transform; applyZoom();
   vPic.animate([{ transform: from === "none" ? "none" : from }, { transform: vPic.style.transform || "none" }], { duration: 200, easing: EASE });
@@ -1111,6 +1209,10 @@ function animateTo() {
 function resetZoomAnimated() { Z.s = 1; Z.x = Z.y = 0; animateTo(); }
 v.addEventListener("pointerup", endGesture);
 v.addEventListener("pointercancel", endGesture);
+// The details sheet scrolls by itself; pulled down from its top, it goes away.
+let sheetY = null;
+$("#vInfo").addEventListener("touchstart", e => { sheetY = phone() && sheet && e.currentTarget.scrollTop <= 0 ? e.touches[0].clientY : null; }, { passive: true });
+$("#vInfo").addEventListener("touchend", e => { if (sheetY != null && e.changedTouches[0].clientY - sheetY > 70 && sheet) toggleInfo(); sheetY = null; }, { passive: true });
 
 /* ── save / share: the original file, so Save to Photos keeps its date and place ── */
 let shareFile = null;                                // fetched for the current photo, waiting for a second tap
@@ -1135,7 +1237,7 @@ async function share() {
     shareFile = { sha: r.sha, file };
     await doShare(file);
   } catch (e) {
-    $("#vCount").textContent = `${fmt(vCur + 1)} of ${fmt(D.matching)}  ·  couldn’t load the photo`;
+    if (items[vCur] === r) { vNote = "couldn’t load the photo"; vChrome(); }
   } finally { btn.classList.remove("busy"); }
 }
 async function doShare(file) {
@@ -1168,7 +1270,14 @@ document.addEventListener("keydown", e => {
   if (e.key === "/") { e.preventDefault(); $("#q").focus(); $("#q").select(); }
   if (e.key === "Enter" && document.activeElement.classList.contains("t")) openViewer(+document.activeElement.dataset.i);
 });
-addEventListener("popstate", () => { closeViewer(true); document.documentElement.classList.toggle("deep", depth() > 0); S = fromParams(new URLSearchParams(location.search)); $("#q").value = S.q; refresh(false); });
+addEventListener("popstate", () => {
+  if (vBack) { vBack = false; return; }             // the viewer closed itself and took its entry back
+  if (vHist) { vHist = false; return closeViewer(); }   // Back, or a swipe from the screen edge, closes the photo
+  if (history.state?.v) return history.back();      // the entry left by a photo that is no longer open: step over it
+  closeViewer(true); document.documentElement.classList.toggle("deep", depth() > 0);
+  const to = fromParams(new URLSearchParams(location.search));
+  if (items.length && String(toParams(to)) === String(toParams(S))) return;   // already showing this search
+  S = to; $("#q").value = S.q; refresh(false); });
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});   // the "can't reach" page
 (async function init() {
