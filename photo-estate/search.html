@@ -214,8 +214,8 @@ section.flat { margin-top: 22px; }
 .v-pic { position: absolute; left: 0; top: 0; pointer-events: auto; border-radius: 2px; overflow: hidden; background: #111; transform-origin: 0 0;
   will-change: transform; }
 .v-pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.v-pic .hi { opacity: 0; transition: opacity .3s; }
-.v-pic .hi.in { opacity: 1; }
+.v-pic .hi { opacity: 0; }                          /* fades in; goes at once, so an emptied one never shows */
+.v-pic .hi.in { opacity: 1; transition: opacity .3s; }
 .v-ui { position: absolute; inset: 0; pointer-events: none; transition: opacity .25s; }
 .v-ui > * { pointer-events: auto; }
 .v-btn { position: absolute; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
@@ -291,7 +291,7 @@ main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right
 .v-count { top: calc(28px + env(safe-area-inset-top)); left: calc(70px + env(safe-area-inset-left));
   max-width: calc(100% - 190px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .v.info .v-count { max-width: calc(100% - 550px); }
-.v-info { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
+.v-info { padding-bottom: calc(40px + env(safe-area-inset-bottom)); padding-right: calc(28px + env(safe-area-inset-right)); }
 .v { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .v-info { touch-action: pan-y; -webkit-user-select: text; user-select: text; }
 #vShare { right: 64px; transition: right .3s var(--ease), background .15s, opacity .2s; }
@@ -309,12 +309,22 @@ main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right
   .icon { width: 36px; height: 36px; }
   .search input, .pop .find { font-size: 16px; }    /* under 16px, iOS zooms the page in when the field is focused */
 }
-/* ── phone viewer: the photo fills the screen; date on top, share / count / details along the bottom;
-      details are a sheet that comes up from below (swipe up, or the button) ── */
-@media (max-width: 760px) {
+/* ── phone viewer (any touch screen, either way up): the photo fills the screen; date on top; a strip of
+      thumbnails to scrub through, then share / count / details, along the bottom. Details are asked for (swipe
+      up, or the button): a sheet from below when upright, the panel on the right when on its side ── */
+.v-strip { display: none; }
+@media (max-width: 760px), (pointer: coarse) {
+  .v-strip { display: block; position: absolute; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom)); height: 44px;
+    overflow: hidden; touch-action: none; transition: opacity .2s;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 9%, #000 91%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 9%, #000 91%, transparent); }
+  .v-strip img { position: absolute; left: 0; top: 0; width: 30px; height: 44px; object-fit: cover; border-radius: 2px; background: #1b1b1e;
+    will-change: transform; transition: transform .25s var(--ease), width .25s var(--ease); }
+  .v-strip.drag img { transition: none; }
+  .v.bare .v-strip { opacity: 0; pointer-events: none; }
   .v-ui::before, .v-ui::after { content: ""; position: absolute; left: 0; right: 0; transition: opacity .25s; }
   .v-ui::before { top: 0; height: calc(96px + env(safe-area-inset-top)); background: linear-gradient(rgba(0,0,0,.62), transparent); }
-  .v-ui::after { bottom: 0; height: calc(104px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.62)); }
+  .v-ui::after { bottom: 0; height: calc(156px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.7)); }
   .v.bare .v-ui::before, .v.bare .v-ui::after { opacity: 0; }
   .v .v-btn { width: 44px; height: 44px; color: #fff; background: rgba(58,58,64,.55);
     -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
@@ -330,9 +340,17 @@ main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right
   .v.info #vNext { right: 18px; }
   .v .v-count, .v.info .v-count { top: auto; bottom: calc(25px + env(safe-area-inset-bottom)); left: 70px; right: 70px; max-width: none;
     text-align: center; color: rgba(255,255,255,.8); transition: opacity .2s; }
+}
+@media (max-width: 760px) {
   .v-info { width: 100%; top: 45%; padding-top: 12px; border-radius: 16px 16px 0 0; box-shadow: 0 -1px 0 var(--vline);
     transform: translateY(100%); }
   .v-info::before { content: ""; display: block; width: 36px; height: 5px; margin: 0 auto 16px; border-radius: 3px; background: rgba(255,255,255,.22); }
+}
+@media (pointer: coarse) and (min-width: 761px) {   /* on its side: the bottom row makes room for the panel */
+  .v.info #vInfoBtn { right: 374px; }
+  .v.info .v-count { right: 430px; }
+  .v.info .v-title { right: 426px; }
+  .v.info .v-strip { right: 360px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
@@ -377,6 +395,7 @@ main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right
     <button class="v-btn" id="vClose" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m3.5 3.5 9 9m0-9-9 9"/></svg></button>
     <div class="v-title" id="vTitle"></div>
     <span class="v-count" id="vCount"></span>
+    <div class="v-strip" id="vStrip"></div>
     <button class="v-btn" id="vShare" aria-label="Save or share"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M5 4.8 8 2l3 2.8M5.5 7H4.2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h7.600a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1H10.500"/></svg></button>
     <button class="v-btn" id="vInfoBtn" aria-label="Details"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.3v3.6"/><circle cx="8" cy="5" r=".4" fill="currentColor"/></svg></button>
     <button class="v-btn" id="vPrev" aria-label="Previous"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
@@ -917,20 +936,20 @@ addEventListener("scroll", () => {
 const v = $("#v"), stage = $("#vStage"), GAP = 28;
 const mkSlide = () => { const el = document.createElement("div"); el.className = "v-pic";
   el.innerHTML = '<img class="lo" alt="" draggable="false"><img class="hi" alt="" draggable="false">'; stage.append(el);
-  return { el, lo: el.firstChild, hi: el.lastChild, r: null, large: false, failed: false }; };
+  return { el, lo: el.firstChild, hi: el.lastChild, r: null, large: false, failed: false, asked: false }; };
 const slides = [mkSlide(), mkSlide(), mkSlide()];
 let cur = slides[0], vPic = cur.el;
 let vCur = -1, sheet = false, vNote = "";            // sheet: details showing on a phone (never to begin with)
 let vHist = false, vBack = false;                    // an open photo is a history entry, so Back closes it
 let settle = null;                                   // finishes a swipe that is still sliding into place
-const narrow = matchMedia("(max-width: 760px)");
-const phone = () => narrow.matches;
+const narrow = matchMedia("(max-width: 760px)"), coarse = matchMedia("(pointer: coarse)");
+const phone = () => narrow.matches || coarse.matches;   // full-screen photo, details only when asked for
 const vw = () => v.clientWidth, vh = () => v.clientHeight;
 const infoOn = () => phone() ? sheet : V.info;
-const infoW = () => !phone() && V.info ? 360 : 0;
+const infoW = () => !narrow.matches && infoOn() ? 360 : 0;   // narrow: details are a sheet from below instead
 const pageW = () => vw() - infoW() + GAP;
 function fit(r) {
-  const W = vw() - infoW(), H = phone() ? vh() * (sheet ? .45 : 1) : vh(), px = phone() ? 0 : 72, py = phone() ? 0 : 28;
+  const W = vw() - infoW(), H = narrow.matches ? vh() * (sheet ? .45 : 1) : vh(), px = phone() ? 0 : 72, py = phone() ? 0 : 28;
   const ar = r.ar || 1.5; let w = W - px * 2, h = w / ar;
   if (h > H - py * 2) { h = H - py * 2; w = h * ar; }
   return { x: Math.round((W - w) / 2), y: Math.round((H - h) / 2), w: Math.round(w), h: Math.round(h) };
@@ -941,10 +960,15 @@ function fill(s, r, off) {                           // photo r in slide s, `off
   s.el.style.display = r ? "" : "none";
   if (!r) { s.r = null; return; }
   const b = fit(r); b.x += off * pageW(); place(s.el, b);
-  if (s.r === r) return;
-  s.r = r; s.large = s.failed = false;
-  s.hi.classList.remove("in"); s.hi.removeAttribute("src"); s.lo.src = "/thumb/" + r.sha;
-  const im = new Image();                            // 1600 px first because it is quick
+  if (s.r !== r) {
+    s.r = r; s.large = s.failed = s.asked = false;
+    s.hi.classList.remove("in"); s.hi.removeAttribute("src"); s.lo.src = "/thumb/" + r.sha;
+  }
+  if (!quick && !s.asked) preview(s);                // while scrubbing, the thumbnail is all there is time for
+}
+function preview(s) {                                // 1600 px first because it is quick
+  const r = s.r; s.asked = true;
+  const im = new Image();
   im.onload = () => { if (s.r !== r) return; s.hi.src = im.src;
     (s.hi.decode?.() || Promise.resolve()).catch(() => {}).finally(() => { if (s.r === r) { s.hi.classList.add("in"); if (s === cur) sharpen(); } }); };
   im.onerror = () => { if (s.r === r) { s.failed = true; if (s === cur && vCur >= 0) vChrome(); } };
@@ -981,6 +1005,7 @@ function vChrome() {
   const r = items[vCur], d = dParts(when(r)), note = vNote || (cur.failed ? "full-size image didn’t load" : "");
   $("#vPrev").disabled = vCur <= 0; $("#vNext").disabled = vCur >= items.length - 1 && next == null;
   $("#vCount").textContent = `${fmt(vCur + 1)} of ${fmt(D.matching)}` + (note ? "  ·  " + note : "");
+  if (!scrub) drawStrip();
   $("#vTitle").innerHTML = `<b>${d ? fTitle.format(d) : "Undated"}</b><span class="num">${esc([d && when(r).length > 10 && fTime.format(d), (r.city || "").split(",")[0]].filter(Boolean).join("  ·  "))}</span>`;
 }
 // Opening or sharing a photo says a search found something; the server keeps these with the searches.
@@ -989,7 +1014,7 @@ const logEvent = (ev, i) => { const r = items[i]; if (!r) return;
   fetch("/api/log?" + p, { keepalive: true }).catch(() => {}); };
 function openViewer(i) {
   logEvent("open", i);
-  sheet = false;
+  sheet = false; strip.textContent = ""; thumbs.clear();
   v.classList.add("on"); v.classList.remove("bare"); v.classList.toggle("info", infoOn());
   document.documentElement.style.overflow = "hidden";
   if (!vHist) { history.pushState({ d: depth(), v: 1 }, ""); vHist = true; }
@@ -1007,7 +1032,7 @@ function closeViewer(instant) {
   settle = null; stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
   for (const s of slides) { s.el.style.transform = ""; if (s !== cur) s.el.style.display = "none"; }
   Z.s = 1; Z.x = Z.y = 0; bg.style.opacity = ui.style.opacity = "";
-  v.classList.remove("bare"); vCur = -1;
+  v.classList.remove("bare"); vCur = -1; scrubStop();
   if (vHist) { vHist = false; vBack = true; history.back(); }
   const done = () => { if (vCur < 0) { v.classList.remove("on"); document.documentElement.style.overflow = ""; } };
   if (instant) return done();
@@ -1025,7 +1050,7 @@ function toggleInfo() {
   if (phone()) sheet = !sheet; else { V.info = !V.info; saveView(); }
   v.classList.toggle("info", infoOn()); if (infoOn()) v.classList.remove("bare");
   resetZoom();
-  const a = vPic.getBoundingClientRect(); arrange(); const b = fit(items[vCur]);
+  const a = vPic.getBoundingClientRect(); arrange(); drawStrip(); const b = fit(items[vCur]);
   vPic.animate([{ transform: `translate(${a.x - b.x}px,${a.y - b.y}px) scale(${a.width / b.w},${a.height / b.h})` }, { transform: "none" }], { duration: 300, easing: EASE });
 }
 
@@ -1093,7 +1118,7 @@ $("#vPrev").onclick = () => step(-1);
 $("#vNext").onclick = () => step(1);
 $("#vInfoBtn").onclick = toggleInfo;
 $("#backBtn").onclick = () => history.back();
-function vResize() { if (vCur < 0) return; v.classList.toggle("info", infoOn()); resetZoom(); arrange(); }
+function vResize() { if (vCur < 0) return; v.classList.toggle("info", infoOn()); resetZoom(); arrange(); drawStrip(); }
 addEventListener("resize", vResize);
 narrow.addEventListener("change", vResize);
 
@@ -1124,7 +1149,7 @@ function slideTo(d, x = 0) {                         // the neighbour slides in,
   const fin = settle = () => { if (settle !== fin) return; settle = null; a.cancel(); show(vCur + d); };
   a.onfinish = fin;
 }
-const inViewerChrome = t => t.closest(".v-info, .v-btn");
+const inViewerChrome = t => t.closest(".v-info, .v-btn, .v-strip");
 v.addEventListener("pointerdown", e => {
   if (e.pointerType === "mouse" || inViewerChrome(e.target) || vCur < 0) return;
   if (settle) settle();
@@ -1211,8 +1236,72 @@ v.addEventListener("pointerup", endGesture);
 v.addEventListener("pointercancel", endGesture);
 // The details sheet scrolls by itself; pulled down from its top, it goes away.
 let sheetY = null;
-$("#vInfo").addEventListener("touchstart", e => { sheetY = phone() && sheet && e.currentTarget.scrollTop <= 0 ? e.touches[0].clientY : null; }, { passive: true });
+$("#vInfo").addEventListener("touchstart", e => { sheetY = narrow.matches && sheet && e.currentTarget.scrollTop <= 0 ? e.touches[0].clientY : null; }, { passive: true });
 $("#vInfo").addEventListener("touchend", e => { if (sheetY != null && e.changedTouches[0].clientY - sheetY > 70 && sheet) toggleInfo(); sheetY = null; }, { passive: true });
+
+
+/* ── scrubber: a strip of thumbnails under the photo. Drag it to run through the photos, flick it and it
+      coasts, tap a thumbnail to go there. Only the thumbnails near the current photo exist. ── */
+const strip = $("#vStrip"), thumbs = new Map(), TW = 30, TH = 44, STEP = TW + 2;
+let scrub = null, quick = false, coastId = 0, scrubT = 0;
+function drawStrip(pos = vCur, rest = true) {        // rest: the current photo stands apart, at its own shape
+  const W = strip.clientWidth;
+  if (!W || vCur < 0) return;
+  const c = Math.round(pos), K = Math.ceil(W / STEP / 2) + 3, lo = Math.max(0, c - K), hi = Math.min(items.length - 1, c + K);
+  const cw = rest ? Math.round(Math.min(72, Math.max(TW, TH * (items[c].ar || 1.5)))) : TW, side = rest ? (cw - TW) / 2 + 8 : 0;
+  for (const [i, el] of thumbs) if (i < lo || i > hi || el.dataset.sha !== items[i].sha) { el.remove(); thumbs.delete(i); }
+  for (let i = lo; i <= hi; i++) {
+    let el = thumbs.get(i);
+    if (!el) { el = new Image(); el.alt = ""; el.draggable = false; el.decoding = "async"; el.dataset.i = i; el.dataset.sha = items[i].sha;
+      el.src = "/thumb/" + items[i].sha; strip.append(el); thumbs.set(i, el); }
+    const x = W / 2 + (i - pos) * STEP - TW / 2 + (i > c ? side : i < c ? -side : -(cw - TW) / 2);
+    el.style.width = (i === c ? cw : TW) + "px"; el.style.transform = `translateX(${x}px)`;
+  }
+}
+function scrubTo(pos) {
+  pos = scrub.pos = Math.max(0, Math.min(items.length - 1, pos));
+  const i = Math.round(pos);
+  if (i !== vCur) { show(i); clearTimeout(scrubT); scrubT = setTimeout(() => { if (scrub && cur.r && !cur.asked) preview(cur); }, 180); }
+  drawStrip(pos, false);
+  return pos;
+}
+function scrubStop() {                               // back to rest: the photo sharpens, its neighbours load
+  cancelAnimationFrame(coastId); clearTimeout(scrubT);
+  const was = scrub; scrub = null; quick = false; strip.classList.remove("drag");
+  if (was && vCur >= 0) { arrange(); drawStrip(); }
+}
+strip.addEventListener("pointerdown", e => {
+  if (vCur < 0 || e.button) return;
+  if (settle) settle();
+  cancelAnimationFrame(coastId);                     // a touch stops a strip that is still coasting
+  scrub = { id: e.pointerId, x0: e.clientX, p0: scrub ? scrub.pos : vCur, pos: scrub ? scrub.pos : vCur, moved: !!scrub,
+    lx: e.clientX, lt: e.timeStamp, vx: 0, tap: e.target.dataset.i };
+  strip.setPointerCapture(e.pointerId);
+});
+strip.addEventListener("pointermove", e => {
+  if (!scrub || e.pointerId !== scrub.id) return;
+  const dx = e.clientX - scrub.x0;
+  if (!scrub.moved) { if (Math.abs(dx) < 5) return; scrub.moved = true; }
+  quick = true; strip.classList.add("drag");
+  const dt = e.timeStamp - scrub.lt;
+  if (dt > 0) { scrub.vx = .7 * (e.clientX - scrub.lx) / dt + .3 * scrub.vx; scrub.lx = e.clientX; scrub.lt = e.timeStamp; }
+  scrubTo(scrub.p0 - dx / STEP);
+});
+function scrubEnd(e) {
+  if (!scrub || e.pointerId !== scrub.id) return;
+  if (!scrub.moved) { const i = scrub.tap; scrub = null; if (i != null && +i !== vCur && items[+i]) show(+i); return; }
+  let vx = e.timeStamp - scrub.lt > 80 ? 0 : scrub.vx, last = performance.now();   // px per ms as the finger left
+  scrub.id = -1;
+  const tick = now => {
+    const dt = Math.min(40, now - last); last = now;
+    const p = scrubTo(scrub.pos - vx * dt / STEP);
+    vx *= Math.pow(.95, dt / 16);
+    if (Math.abs(vx) > .04 && p > 0 && p < items.length - 1) coastId = requestAnimationFrame(tick); else scrubStop();
+  };
+  if (Math.abs(vx) > .2) coastId = requestAnimationFrame(tick); else scrubStop();
+}
+strip.addEventListener("pointerup", scrubEnd);
+strip.addEventListener("pointercancel", scrubEnd);
 
 /* ── save / share: the original file, so Save to Photos keeps its date and place ── */
 let shareFile = null;                                // fetched for the current photo, waiting for a second tap
