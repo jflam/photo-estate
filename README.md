@@ -90,6 +90,12 @@ of those is a link to the photos that share it, and "More like this" finds look-
 Near-identical copies are hidden unless switched on. The typed filters still work in the search
 field: `sunset place:denmark`, `kids album:"Summer 2019"`, `camera:d300`, `date:2010-07`, `is:fav`.
 
+**Query log.** The app appends every search, every further page of results, every "More like this"
+and every photo opened or shared from a result list to `query-log.jsonl` next to the catalog
+(`--query-log` to move it), one JSON object per line, with the top 20 results each search showed
+and the position of each photo opened. It's there to pick evaluation queries from real use and to
+see which searches found something; nothing in the app reads it back.
+
 On a phone, use Share → **Add to Home Screen** to get it as an app with its own icon and no
 browser bars. In the photo viewer, swipe left and right between photos, swipe down to close, swipe
 up for details, and pinch or double-tap to zoom. The share button sends the original file to the

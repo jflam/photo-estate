@@ -34,6 +34,7 @@ search, and indexing 120k photos slows every big copy.
 | Code | `~/src/photo-estate` (a clone of this repo) |
 | launchd agent | `~/Library/LaunchAgents/com.jflam.photo-search.plist` (copy in this folder) |
 | Log | `~/Library/Logs/photo-search.log` |
+| Query log | `/Volumes/estate/query-log.jsonl` (next to the catalog) |
 | Local port | `127.0.0.1:8766` |
 | Tailnet | `tailscale serve --bg --https=8766 http://127.0.0.1:8766` |
 

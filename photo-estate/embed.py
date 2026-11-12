@@ -544,6 +544,23 @@ def cmd_serve(a) -> None:
                 return None
         return dest.read_bytes()
 
+    # Every search, page of results, and photo opened or shared from one, one JSON object per line.
+    # This is the raw material for choosing evaluation queries from real use; nothing reads it back.
+    qlog = Path(a.query_log or Path(a.db).resolve().parent / "query-log.jsonl")
+    qlog_lock = threading.Lock()
+    unlogged = {"cursor", "limit", "dedupe", "ev", "sha", "pos"}
+
+    def record(req, ev: str, qs: dict, **fields):
+        line = {"ts": now(), "ev": ev,
+                "params": {k: v if len(v) > 1 else v[0] for k, v in qs.items() if k not in unlogged},
+                **{k: v for k, v in fields.items() if v is not None},
+                "who": req.headers.get("Tailscale-User-Login"), "ua": req.headers.get("User-Agent")}
+        try:
+            with qlog_lock, qlog.open("a") as f:
+                f.write(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n")
+        except OSError as e:  # never fail a search because the log can't be written
+            print(f"query log: {e}", flush=True)
+
     class Handler(BaseHTTPRequestHandler):
         # HTTP/1.1 keeps connections open: `tailscale serve` (and browsers on plain http) reuse them
         # instead of paying a new connection and thread per request. Idle ones close after `timeout`.
@@ -620,9 +637,18 @@ def cmd_serve(a) -> None:
 
                     order = remember(key, ranked)
                     results, hidden, nxt = take(order, start, limit, one("dedupe", "1") == "1")
+                    record(self, "similar" if u.path == "/api/similar" else "search", qs, sha=one("sha") or None, text=text,
+                           filters=applied, cursor=start, matching=int(len(order)),
+                           ms=round((time.time() - t) * 1000),
+                           top=[r["sha"] for r in results[:20]] if start == 0 else None)
                     return self.json({"results": results, "next": nxt, "hidden": hidden, "total": N,
                                       "matching": int(len(order)), "text": text, "filters": applied,
                                       "scope": scope, "sort": sort, "ms": round((time.time() - t) * 1000)})
+                if u.path == "/api/log":  # the page reports photos opened or shared from a result list
+                    if one("ev") in ("open", "share") and sha_re.match(one("sha")):
+                        pos = one("pos")
+                        record(self, one("ev"), qs, sha=one("sha"), pos=int(pos) if pos.isdigit() else None)
+                    return self.send(204, b"", "text/plain")
                 if u.path == "/api/facets":
                     return self.json(facet_counts(select(qs)[0]))
                 if u.path == "/api/info":
@@ -724,6 +750,7 @@ def main() -> None:
     s.add_argument("--cache", help="thumbnail cache dir (default: <db dir>/review, shared with estate.py review)")
     s.add_argument("--fast-cache", help="cache dir on a faster disk (e.g. the internal SSD), filled from --cache")
     s.add_argument("--no-pregenerate", action="store_true", help="don't build missing thumbnails in the background")
+    s.add_argument("--query-log", help="where to record searches and photos opened (default: <db dir>/query-log.jsonl)")
     s.set_defaults(fn=cmd_serve)
     a = p.parse_args()
     a.fn(a)

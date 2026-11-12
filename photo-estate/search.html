@@ -905,7 +905,12 @@ function vChrome() {
   $("#vPrev").disabled = vCur <= 0; $("#vNext").disabled = vCur >= items.length - 1 && next == null;
   $("#vCount").textContent = `${fmt(vCur + 1)} of ${fmt(D.matching)}`;
 }
+// Opening or sharing a photo says a search found something; the server keeps these with the searches.
+const logEvent = (ev, i) => { const r = items[i]; if (!r) return;
+  const p = apiParams(); p.set("ev", ev); p.set("sha", r.sha); p.set("pos", i);
+  fetch("/api/log?" + p, { keepalive: true }).catch(() => {}); };
 function openViewer(i) {
+  logEvent("open", i);
   v.classList.add("on"); v.classList.toggle("info", V.info);
   document.documentElement.style.overflow = "hidden";
   show(i);
@@ -1112,6 +1117,7 @@ let shareFile = null;                                // fetched for the current 
 async function share() {
   const r = items[vCur], btn = $("#vShare");
   if (!r) return;
+  if (shareFile?.sha !== r.sha) logEvent("share", vCur);   // once per photo, not on the second tap
   const name = (r.path || "").split("/").pop() || r.sha.slice(0, 12) + (r.ext || ".jpg");
   if (!navigator.canShare) {                         // desktop browsers: just download it
     const a = document.createElement("a"); a.href = "/original/" + r.sha; a.download = name; a.click(); return;
