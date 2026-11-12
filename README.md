@@ -1,56 +1,121 @@
 # Photo Estate
 
-Every photo and video from Google Photos, iCloud Photos and Flickr, gathered onto one disk at
-home, de-duplicated, with each service's metadata kept and searchable by describing a photo in
-plain words. Everything runs locally; no photo leaves the house. It's the first step in getting a
-lifetime of personal data out of cloud services and into a form I own.
+**Your whole photo library, on your own disk, searchable by describing what's in a photo.**
 
-The archive is deliberately boring: **plain files plus one SQLite file.** No app, including this
-one, is needed to read it. If every script here disappeared, the photos would still be ordinary
-JPEG/HEIC/MP4 files in folders, and the catalog would still be readable with `sqlite3`. Nothing
-depends on a particular disk, filesystem, operating system or server: see
-[Where it runs](#where-it-runs) for what's required and what's just my setup.
+Photo Estate gathers every photo and video from Google Photos, iCloud Photos and Flickr onto one
+disk, removes the duplicates, keeps each service's metadata (dates, places, albums, people,
+favourites), and gives you a fast local app to browse and search it all. Type "latte art" or "dog
+in the snow" and it finds those photos, with no tags and nothing sent to the cloud.
 
-## Try it: the demo estate
+![Searching the demo library for "latte art"](docs/screenshots/search-latte-art.jpg)
 
-`photo-estate/demo/` is a complete little estate you can browse without any photos of your own:
-about 100 CC0 photos (Unsplash photos copied to Wikimedia Commons while Unsplash was CC0), run
-through the same pipeline as the real thing (ingest, link, exif, places, embeddings), checked in
-with the catalog beside them.
+Everything runs on your own machine. The archive is deliberately boring: **plain files plus one
+SQLite file.** No app, this one included, is needed to read it. If every script here disappeared,
+your photos would still be ordinary JPEG/HEIC/MP4 files in folders, and the catalog would still be
+readable with `sqlite3`.
+
+## Try it in two minutes
+
+The repo includes a small demo library: 104 CC0 photos, run through the full pipeline and
+checked in with their catalog. You need [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
+and git; uv fetches the right Python and every dependency.
 
 ```bash
-cd photo-estate
-uv run embed.py serve --demo        # http://127.0.0.1:8767/
+git clone https://github.com/jflam/photo-estate.git
+cd photo-estate/photo-estate
+uv run embed.py serve --demo
 ```
 
-The demo uses port 8767, so it can run beside the real app on 8766; it reads nothing outside
-`demo/`. On my Mac mini it runs as a second launchd agent (see
-[deploy/MAC-MINI.md](photo-estate/deploy/MAC-MINI.md#the-demo)).
+Open <http://127.0.0.1:8767/>. Browsing works immediately. The first typed search waits for a
+one-time download of PyTorch and the SigLIP 2 model (a few GB); after that, searches take
+milliseconds on a laptop CPU. No GPU needed.
 
-The photos were picked to show off search by meaning. They come in groups of eight that look
-alike (lighthouses, sunsets over the sea, coffee, kittens, snowy peaks, tulips, hot air balloons,
-dunes...), and nothing in the catalog says which group a photo is in. Type "latte art", "kitten"
-or "dog in the snow", or open a photo and press **More like this**. Each photo also keeps its
-real camera and date, and most their place, so the place and camera filters and the timeline
-have something to show. The demo is served from a scratch copy: nothing in the repo is written,
-and searches aren't logged. Typed searches need the SigLIP model, which is downloaded from Hugging
-Face the first time, as with a real estate.
+Things to try:
 
-`demo/photos.json` lists the photos; `demo/CREDITS.md` names each one's author and source.
-To rebuild it (after changing the list, say): `uv run tools/make_demo.py`.
+- Search for **latte art**, **kitten**, **dog in the snow**, **waterfall in autumn** or
+  **city at night**.
+- Search for something that isn't there, like **kangaroo**: you get "Nothing found", not the
+  least-bad guesses.
+- Open a photo, then press **More like this**.
+- Filter by **Where** or **Camera**, or drag across the timeline to pick a date range.
 
-## What's in the estate today
+The demo photos come in groups of eight that look alike (lighthouses, coffee, kittens, snowy
+peaks, hot air balloons, sand dunes...), and nothing in the catalog says which group a photo is
+in: search finds them from the pixels alone. The demo runs from a scratch copy, so it never writes
+to the repo, and it uses port 8767 so it can run beside a real library on 8766.
 
-| | |
-|---|---|
-| Sources | Google Takeout (9 × 50 GB zips), two iCloud Photos libraries, Flickr data download |
-| Unique assets | ~102k images + ~19k videos, ~485 GB on disk |
-| Duplicates collapsed | ~10k byte-identical copies (album copies, the same photo in two services) |
-| Dates | 2000–2026 on almost every asset; GPS on ~106k |
-| Metadata kept | Google sidecars (date, GPS, description, people, favourites, albums), iCloud XMP (date with timezone, GPS, favourites), Flickr (title, description, albums, tags, geo) |
-| Camera data | Full EXIF/XMP/QuickTime dump per asset via exiftool; camera, lens and exposure as columns |
-| Places and events | Town, county, state and country per photo; local time with its zone; ~7k events and ~130 trips |
-| Semantic search | SigLIP 2 embeddings for every decodable image |
+## A quick tour
+
+**Describe a photo to find it.** Search ranks every photo by how well it matches your words,
+using [SigLIP 2](https://huggingface.co/google/siglip2-base-patch16-256) embeddings, and stops
+where the matches stop: results that only resemble the surroundings ("latte art" drifting into
+plain coffee) are cut, and a search for something you never photographed says so.
+
+**More like this.** From any photo, find the ones closest in look and subject: here, other
+lighthouses first, then the sea and sunsets around them.
+
+![More like this, starting from a lighthouse](docs/screenshots/more-like-this.jpg)
+
+**Every photo's story.** The viewer shows local time and timezone, place (worked out offline from
+GPS), the event and trip it belongs to, camera, lens and exposure. Each of those is a link to the
+photos that share it.
+
+![The photo viewer with its details panel](docs/screenshots/viewer-details.jpg)
+
+**Filters with live counts.** Where, People, Albums, Trips, Camera and Favourites narrow whatever
+is showing, and combine with a description. Drag across the timeline to pick a date range, or
+click a year.
+
+![The Where filter over the library, grouped by month](docs/screenshots/library-filters.jpg)
+
+<img align="right" width="260" src="docs/screenshots/phone-kitten.jpg" alt="The app on a phone, searching for kitten">
+
+**At home on a phone.** Add it to your home screen and it behaves like an app: swipe between
+photos, swipe down to close, swipe up for details, and pinch or double-tap to zoom. Sharing sends
+the original file, so **Save Image** keeps its date and place. Put it behind
+[Tailscale](https://tailscale.com/kb/1312/serve) or any reverse proxy to use it away from home.
+
+**Typed filters** work in the search field too: `sunset place:denmark`,
+`kids album:"Summer 2019"`, `camera:d300`, `date:2010-07`, `is:fav`.
+
+<br clear="right">
+
+## Bring your own photos
+
+Every source goes through the same steps, and each step only does new work, so adding photos
+later is cheap: **ingest → link → exif → places → embed**. Run from `photo-estate/`, with `DB` and
+`STORE` set to where you want the catalog and the photos:
+
+```bash
+DB=~/estate/estate.db STORE=/Volumes/photos/store
+E="uv run estate.py --db $DB"
+
+$E ingest --store $STORE takeout-*.zip          # Takeout zips, Flickr zips, or any folder
+$E link                                         # attach each service's metadata
+$E exif --store $STORE                          # camera, lens, exposure (needs exiftool)
+uv run places.py --db $DB run                   # places, local time, events, trips (offline)
+uv run embed.py --db $DB run --store $STORE     # SigLIP 2 embeddings for search
+uv run embed.py --db $DB serve --store $STORE   # the app: http://127.0.0.1:8766/
+```
+
+Where to get your photos:
+
+- **Google Photos:** a [Google Takeout](https://takeout.google.com/) export (photos come as zips
+  with JSON sidecars). `pull-drive.sh` ingests Takeout zips straight from Google Drive with
+  rclone, one at a time, so you don't need room for all of them at once.
+- **iCloud Photos:** `pull-icloud.sh` mirrors your libraries with
+  [icloudpd](https://github.com/icloud-photos-downloader/icloud_photos_downloader) and ingests them.
+- **Flickr:** the zips from Flickr's "Download all your data".
+- **Anything else:** a folder of photos and videos works too; EXIF supplies the dates.
+
+The same photo in two services is stored once. Ingest is resumable, and nothing is ever modified
+or deleted: near-duplicates (resized copies, edits, bursts, RAW+JPEG pairs) are reported for you
+to review with `$E review --store $STORE`, never removed.
+
+[DISK-SETUP.md](photo-estate/DISK-SETUP.md) covers choosing storage and running a large pull
+overnight. [deploy/MAC-MINI.md](photo-estate/deploy/MAC-MINI.md) shows how to keep the app
+running all the time and reach it from your other devices, using a Mac mini as the example; on
+Linux the same thing is a systemd user service.
 
 ## How it works
 
@@ -65,14 +130,13 @@ To rebuild it (after changing the list, say): `uv run tools/make_demo.py`.
         estate.py exif ────────┤  every file's EXIF/XMP/QuickTime tags (exiftool); camera, lens, exposure
         places.py run ─────────┤  place names, local time, events, trips (offline, seconds)
         estate.py dupes/review ┤  exact + near-duplicate report, local review page
-        embed.py run ──────────┤  SigLIP 2 image embeddings (Tier 1)
-        embed.py serve ────────┘  local search page at http://127.0.0.1:8766/
+        embed.py run ──────────┤  SigLIP 2 image embeddings
+        embed.py serve ────────┘  the photo app at http://127.0.0.1:8766/
 ```
 
 **Ingest** streams each file out of a zip or folder while hashing it. A file whose SHA-256 is
 already in the store is recorded as another *occurrence* (source, path, album) of the same
-*asset*, and isn't written again. Ingest is resumable, and a zip that's already been ingested is
-skipped.
+*asset*, and isn't written again. A zip that's already been ingested is skipped.
 
 **Link** is where each service's quirks are handled:
 - *Google Takeout* puts metadata in JSON sidecars whose names are truncated, numbered and
@@ -87,9 +151,10 @@ be re-run at any time and gives the same result.
 
 **EXIF.** `estate.py exif` runs exiftool over every asset (images, RAW and video) and keeps the
 whole tag dump as JSON, minus maker notes and binary blobs. Camera, lens, focal length, aperture,
-shutter, ISO, software, and video duration and frame rate are also promoted to columns. Camera
-names are normalised ("NIKON CORPORATION / NIKON D300" becomes "Nikon D300") and are searchable.
-Needs exiftool (`brew install exiftool` on macOS, `sudo pacman -S perl-image-exiftool` on Arch).
+shutter, ISO, software, and video duration and frame rate are also promoted to columns, and camera
+names are normalised ("NIKON CORPORATION / NIKON D300" becomes "Nikon D300"). Needs exiftool
+(`brew install exiftool` on macOS, `sudo pacman -S perl-image-exiftool` on Arch,
+`sudo apt install libimage-exiftool-perl` on Debian/Ubuntu).
 
 **Places and events.** `places.py run` works out where and when from what's already in the
 catalog, with no network: GPS becomes a place name (offline GeoNames, with big cities winning over
@@ -99,164 +164,91 @@ iCloud become wall-clock time where the photo was taken; photos are grouped into
 Belgium"). Photos without GPS borrow their event's place and zone. Everything is recomputed on
 each run, in a few seconds.
 
-**Duplicates.** Exact duplicates collapse automatically. Near-duplicates (resized copies,
-re-encodes, edits, RAW+JPEG pairs, bursts) are found with a 64-bit perceptual hash and are
-*reported only*: `estate.py review` serves a page for deciding what to keep, and records
-decisions to a file. Nothing is ever deleted.
-
 **Search** has two layers: SQLite FTS5 over filenames, albums, people, descriptions and tags
-(`estate.py search`), and SigLIP 2 embeddings for "describe the photo" search
-(`embed.py search`, and the web page).
+(`estate.py search`), and SigLIP 2 embeddings for "describe the photo" search (`embed.py search`
+and the app). A typed search keeps the photos within 0.04 cosine similarity of its best match and
+above 0.085; both numbers were measured on the demo and on a 100k-photo library, and
+`--match-window` / `--match-floor` change them.
 
-**The app** (`embed.py serve`, one HTML file) is one search field, a row of filters and a timeline.
-Type a description to search by meaning, or start typing a place, person, album, trip or camera
-and pick it from the suggestions. Where, People, Albums, Trips, Camera and Favourites narrow
-whatever is showing, with live counts; drag across the timeline to pick a date range, or click a
-year. With no description the photos are in date order, grouped by month (by day inside a trip or
-event). A photo opens full-screen with its local time, place, camera, lens and exposure; every one
-of those is a link to the photos that share it, and "More like this" finds look-alikes.
-Near-identical copies are hidden unless switched on. The typed filters still work in the search
-field: `sunset place:denmark`, `kids album:"Summer 2019"`, `camera:d300`, `date:2010-07`, `is:fav`.
-
-**Query log.** The app appends every search, every further page of results, every "More like this"
-and every photo opened or shared from a result list to `query-log.jsonl` next to the catalog
-(`--query-log` to move it), one JSON object per line, with the top 20 results each search showed
-and the position of each photo opened. It's there to pick evaluation queries from real use and to
-see which searches found something; nothing in the app reads it back.
-
-On a phone, use Share → **Add to Home Screen** to get it as an app with its own icon and no
-browser bars. In the photo viewer, swipe left and right between photos, swipe down to close, swipe
-up for details, and pinch or double-tap to zoom. The share button sends the original file to the
-share sheet, so **Save Image** keeps its date and place. If the server can't be reached (on my
-phone, usually because Tailscale is off), the app says so instead of showing a browser error.
+**Query log.** The app appends every search and every photo opened from a result list to
+`query-log.jsonl` next to the catalog, on your machine only (`--query-log` to move it). It's there
+to pick evaluation queries from real use; nothing in the app reads it back.
 
 ## Where it runs
 
-The software makes very few assumptions about the machine and disks it runs on. Everything below
-the line is a choice you can make differently; my own setup is given as an example.
-
-**What the software needs:**
+The software makes very few assumptions about the machine and disks it runs on:
 
 | Piece | Requirement |
 |---|---|
-| **Store** (`--store`) | Any directory you can read and write: a USB disk, an internal drive, an SMB/NFS share on a NAS, an `rclone mount` of a bucket. Files are named by their SHA-256 in lowercase hex, so any filesystem works, case-insensitive ones included. Files are only ever added, never changed. |
+| **Store** (`--store`) | Any directory you can read and write: a USB disk, an internal drive, an SMB/NFS share on a NAS, an `rclone mount` of a bucket. Files are named by their SHA-256, so any filesystem works, case-insensitive ones included. Files are only ever added, never changed. |
 | **Catalog** (`--db`) | One SQLite file. **Keep it on a local disk, not a network share**: SQLite's locking isn't reliable over SMB or NFS. It's small (about 1 GB for 120k photos, mostly embeddings). |
-| **Thumbnail cache** | `review/` next to the catalog by default (`--cache` to move it). About 2.5 GB of small JPEGs for 100k photos, read 150 at a time as you scroll. If the catalog's disk is a spinning one, add `--fast-cache` on an SSD: it fills from `--cache` as photos are viewed. |
+| **Thumbnail cache** | `review/` next to the catalog by default (`--cache` to move it). About 2.5 GB for 100k photos. If the catalog's disk is a spinning one, add `--fast-cache` on an SSD. |
 | **A machine to run it** | Anything that runs Python through [`uv`](https://docs.astral.sh/uv/): macOS or Linux, Intel or ARM. 16 GB of RAM is enough to serve 100k photos. No GPU needed; SigLIP runs on the CPU. |
 | **Remote access** (optional) | The app listens on `127.0.0.1` only. Put whatever you like in front of it: [Tailscale](https://tailscale.com/kb/1312/serve) `serve`, Caddy, nginx, or nothing if you only use it on that machine. |
 
 `--db` and `--store` are separate arguments everywhere, so the catalog and the photos can live on
-different devices. The pull scripts default to `ROOT/estate.db` and `ROOT/store` but take `DB=` and
-`STORE=` overrides.
+different devices. Ingest and embedding read every original, so they run at the store's speed (a
+USB hard disk does about 150–200 MB/s); browsing and search only touch the catalog and thumbnail
+cache, which is why those should stay local.
 
-**My setups, as examples:**
-
-| | First (Nov 2026) | Now | Planned |
-|---|---|---|---|
-| Machine | Linux laptop (Arch, Apple M2 Max) | Mac mini (M1, 16 GB), always on | Same Mac mini |
-| Store | 8 TB USB disk, btrfs | Same disk, reformatted APFS | UniFi UNAS (network storage), over SMB |
-| Catalog + thumbnails | On the USB disk | On the USB disk | On the Mac mini's internal SSD |
-| Service | Run by hand | launchd agent | launchd agent |
-| Access | `127.0.0.1` on the laptop | `tailscale serve` on my tailnet only | Same |
-
-None of these moves changed the software, only paths and the service wrapper. Moving the store to
-the NAS means passing `--store /Volumes/photos/store --db ~/estate/estate.db` instead of putting both
-on one disk. Things that do change from one setup to another:
-
-- **Filesystem.** btrfs checksums every block, which is nice for an archive, but macOS can't read
-  it; that's why the disk became APFS when it moved to the Mac. Because every file is named by its
-  own SHA-256, you can check for silent corruption on any filesystem by re-hashing (see
-  [DISK-SETUP.md](photo-estate/DISK-SETUP.md#checking-the-archive)).
-- **macOS privacy prompts.** A background service touching an external or network volume triggers
-  a one-time "allow access" dialog that someone has to click at the Mac. See
-  [deploy/MAC-MINI.md](photo-estate/deploy/MAC-MINI.md).
-- **Speed.** Ingest and `embed.py run` read every original, so they're bound by the store's
-  throughput (a USB hard disk does about 150–200 MB/s; gigabit SMB about 110 MB/s). Browsing and
-  search only touch the catalog and thumbnail cache, which is why those stay local.
-- **The pull scripts** were written on Linux. On macOS they need a newer bash than the system's
-  3.2 (`brew install bash`), plus `rclone`, `icloudpd` and `sqlite3`.
+**At scale:** the author's own library is about 102k photos and 19k videos (485 GB) from all three
+services, with ~10k duplicates collapsed and ~130 trips found, served from an M1 Mac mini with
+16 GB of RAM and a USB hard disk.
 
 ## Layout
 
 ```
+docs/screenshots/      the screenshots in this README (tools/screenshots.py retakes them)
 photo-estate/
-  estate.py            ingest, link, dupes, review, tag (any OpenAI-compatible VLM), search, stats
-  embed.py             SigLIP 2 embeddings: run, search, serve
-  places.py            Tier 0: place names, local time, events, trips
+  estate.py            ingest, link, exif, dupes, review, tag (any OpenAI-compatible VLM), search, stats
+  embed.py             SigLIP 2 embeddings: run, search, serve (the photo app)
+  places.py            place names, local time, events, trips
   search.html          the photo app served by embed.py
-  app/                 home-screen app files: manifest, icons (tools/make_icons.py), service worker
+  app/                 home-screen app files: manifest, icons, service worker
   review.html          the near-duplicate review page served by estate.py
   pull-drive.sh        pull Takeout zips from Google Drive one at a time and ingest them
   pull-icloud.sh       mirror iCloud libraries with icloudpd and ingest them
-  demo/                ~100 CC0 photos as a ready-made estate (`embed.py serve --demo`)
-  tools/make_demo.py   builds demo/ from the list in demo/photos.json
+  demo/                104 CC0 photos as a ready-made library (`embed.py serve --demo`)
   tests/test_poc.py    end to end on a synthetic Takeout + iCloud + Flickr export
-  tools/sigbench.py    SigLIP speed benchmark
-  tools/bench_server.py, tools/thumb_burst.py   photo app latency benchmarks
+  tools/               demo builder, screenshots, icon maker, speed benchmarks
+  deploy/              running the app as an always-on service (launchd agents, Mac mini guide)
   PLAN.md              the overall plan and phases
   DISK-SETUP.md        choosing and preparing storage, the overnight pull, checking the archive
-  deploy/MAC-MINI.md   running the photo app as an always-on service (my Mac mini as the example)
-  deploy/*.plist       the launchd agents for that service and the demo
   TAGGING-RESEARCH.md  the tiered tagging pipeline (what comes after embeddings)
-  BENCHMARK.md         library stats and the benchmark album
-  PERFORMANCE.md       where the photo app's time goes, what was changed, open tasks
-
-ESTATE ROOT/          (wherever you keep it; never committed. Mine: /Volumes/estate)
-  store/               every unique file, exactly once
-  estate.db            the catalog (can live elsewhere; see Where it runs)
-  review/              thumbnail and preview cache for the app
-  flickr/, icloud/     raw exports kept as received
+  PERFORMANCE.md       where the photo app's time goes, and open tasks
+  BENCHMARK.md         library stats and the benchmark set used to compare models
 ```
 
-## Using it
+## Contributing
 
-Everything runs with [`uv`](https://docs.astral.sh/uv/); each script declares its own
-dependencies, so there is no environment to set up. Run from `photo-estate/`, with `DB` and `STORE`
-set to your paths:
+Contributions are welcome: bug reports, ideas, and pull requests. The demo library means you can
+work on the app without any photos of your own.
 
 ```bash
-DB=/Volumes/estate/estate.db STORE=/Volumes/estate/store    # mine; use your own
-E="uv run estate.py --db $DB"
-
-$E ingest --store $STORE takeout-*.zip          # or a folder, or Flickr zips
-$E link                                         # after every batch
-$E exif --store $STORE                          # camera/lens/exposure for new assets
-uv run places.py --db $DB run                   # places, local time, events, trips
-uv run places.py --db $DB events --trips
-$E stats
-$E dupes                                        # duplicate report
-$E review --store $STORE                        # http://127.0.0.1:8765/
-$E search "rialto OR olympic"                   # full-text
-
-uv run embed.py --db $DB run --store $STORE     # embed new images
-uv run embed.py --db $DB serve --store $STORE   # the photo app: http://127.0.0.1:8766/
+cd photo-estate
+uv run tests/test_poc.py          # end-to-end test; no accounts or models needed
+uv run embed.py serve --demo      # the app on the demo library
 ```
 
-To keep the app running all the time and reach it from your other devices, see
-[deploy/MAC-MINI.md](photo-estate/deploy/MAC-MINI.md). Mine runs on a Mac mini as a launchd agent,
-published to my devices only with `tailscale serve`. On Linux the same thing is a systemd user
-service plus whatever reverse proxy you like.
+Good places to start:
 
-Adding a new source follows the same steps every time: **ingest → link → exif → places → embed run**. Each one
-only does new work. For Google and iCloud, `pull-drive.sh` and `pull-icloud.sh` wrap the whole
-sequence and snapshot the catalog at the end.
+- **Open performance tasks** in [PERFORMANCE.md](photo-estate/PERFORMANCE.md), each written up
+  so it can be picked up as-is.
+- **Not yet supported:** RAW files and videos aren't embedded yet, and there are no faces.
+- **The next tagging tiers** (captions, objects, OCR) are designed in
+  [TAGGING-RESEARCH.md](photo-estate/TAGGING-RESEARCH.md).
+- **More sources:** Amazon Photos, OneDrive, Dropbox, or a phone's camera roll would each be a new
+  set of sidecar rules in `estate.py link`.
+- **Better demo photos:** `demo/photos.json` is the list; `uv run tools/make_demo.py` rebuilds it.
 
-Tests (no accounts or models needed):
+Each script declares its own dependencies inline, so there's no environment to set up. Please keep
+the archive's promise in any change: files are only added, never modified or deleted, and the
+catalog stays readable without this code.
 
-```bash
-uv run tests/test_poc.py
-```
+## Credits
 
-## Status and what's next
-
-Done: ingest from all three services, metadata merge, EXIF extraction, places/events/trips, exact and near-duplicate detection,
-near-dupe review page, Tier 1 embeddings with `siglip2-base-patch16-256`, the photo app, and
-running it as an always-on service on the Mac mini.
-
-Not yet: RAW files (~800) and videos aren't embedded, there are no faces,
-and nothing is backed up to a second location (the cloud services are still the backup).
-Next for storage is moving the store to a UniFi UNAS on the home network. [TAGGING-RESEARCH.md](photo-estate/TAGGING-RESEARCH.md)
-describes the next tiers; [PLAN.md](photo-estate/PLAN.md) has the phases.
-
-**Photo app performance** is written up in [PERFORMANCE.md](photo-estate/PERFORMANCE.md), with open
-tasks ready to pick up (each one can be handed to an agent as-is).
+The demo photos are CC0 Unsplash photos hosted on Wikimedia Commons; each one's author and source
+is in [photo-estate/demo/CREDITS.md](photo-estate/demo/CREDITS.md). Search uses Google's
+[SigLIP 2](https://huggingface.co/google/siglip2-base-patch16-256), places use
+[GeoNames](https://www.geonames.org/) through `reverse_geocode`, and metadata comes from
+[ExifTool](https://exiftool.org/).
