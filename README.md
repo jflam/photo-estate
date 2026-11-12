@@ -252,3 +252,8 @@ is in [photo-estate/demo/CREDITS.md](photo-estate/demo/CREDITS.md). Search uses 
 [SigLIP 2](https://huggingface.co/google/siglip2-base-patch16-256), places use
 [GeoNames](https://www.geonames.org/) through `reverse_geocode`, and metadata comes from
 [ExifTool](https://exiftool.org/).
+
+## License
+
+The code is [MIT](LICENSE). The demo photos are CC0 (public domain dedication), as listed in
+[CREDITS.md](photo-estate/demo/CREDITS.md).
