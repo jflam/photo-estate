@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Mirror both iCloud Photos libraries onto the estate disk and ingest them into the store.
+# Mirror iCloud Photos libraries onto the estate disk and ingest them into the store.
 #
-#   ./pull-icloud.sh /Volumes/estate
+#   ICLOUD_USER=you@example.com ./pull-icloud.sh /Volumes/estate
+#
+# - LIBRARIES defaults to your own library (PrimarySync). To include an iCloud Shared Photo Library,
+#   list the libraries with `icloudpd --username "$ICLOUD_USER" --list-libraries` and set, e.g.,
+#     LIBRARIES="PrimarySync SharedSync-<id>"
 #
 # - First sign in once (password + 2FA; the session then lasts about two months):
 #     icloudpd --username "$ICLOUD_USER" --auth-only
@@ -9,13 +13,14 @@
 # - The mirror in ROOT/icloud/<library>/YYYY/MM/DD is kept: icloudpd uses it to know what it already
 #   has, so re-running only fetches new photos. Files already in the store (most of them, from
 #   Google) are de-duplicated by hash at ingest.
-# - --adp-web-access is needed on this account: without it iCloud answers ACCESS_DENIED
-#   ("private db access disabled"). The first run asks you to approve a prompt on an Apple device.
+# - --adp-web-access is needed for accounts with Advanced Data Protection: without it iCloud answers
+#   ACCESS_DENIED ("private db access disabled"). The first run asks you to approve a prompt on an
+#   Apple device.
 set -euo pipefail
 
 ROOT=${1:?usage: pull-icloud.sh ESTATE_ROOT   (e.g. /Volumes/estate)}
 : "${ICLOUD_USER:?set ICLOUD_USER to your Apple ID}"
-LIBRARIES=${LIBRARIES:-"PrimarySync SharedSync-F64183F5-0137-4395-B0BE-927969E2FC13"}  # icloudpd --list-libraries
+LIBRARIES=${LIBRARIES:-PrimarySync}   # add shared libraries from `icloudpd --list-libraries` (see above)
 HERE=$(cd "$(dirname "$0")" && pwd)
 DB=${DB:-$ROOT/estate.db}      # override to keep the catalog on a local disk when the store is on a NAS
 STORE=${STORE:-$ROOT/store}
