@@ -14,6 +14,7 @@ catalog tools don't pull in PyTorch).
 
   uv run embed.py --db /Volumes/estate/estate.db run --store /Volumes/estate/store
   uv run embed.py --db /Volumes/estate/estate.db search "kids at the lake"
+  uv run embed.py serve --demo     # the photo app on the ~100 public-domain photos in demo/
 
 Vectors are L2-normalised float16, one row per (sha256, model), so a better model can be added
 later without touching the first. Queries must use the same model as the vectors they search.
@@ -215,6 +216,20 @@ def cmd_serve(a) -> None:
     pillow_heif.register_heif_opener()
     Image.MAX_IMAGE_PIXELS = None
 
+    if a.demo:  # the committed demo estate, served from a scratch copy so the repo is never written to
+        import atexit
+        import shutil
+        import tempfile
+        demo = Path(__file__).resolve().parent / "demo"
+        if not (demo / "estate.db").exists():
+            sys.exit(f"no demo estate in {demo}; build it with `uv run tools/make_demo.py`")
+        scratch = Path(tempfile.mkdtemp(prefix="photo-estate-demo-"))
+        atexit.register(shutil.rmtree, scratch, ignore_errors=True)
+        shutil.copyfile(demo / "estate.db", scratch / "estate.db")
+        a.db, a.store, a.cache, a.fast_cache = str(scratch / "estate.db"), str(demo / "store"), None, None
+        a.query_log = a.query_log or os.devnull
+    elif not a.store:
+        sys.exit("serve needs --store (or --demo)")
     store = Path(a.store)
     seed = Path(a.cache or Path(a.db).resolve().parent / "review")
     # On the Mac mini the estate disk is a USB hard disk: a cold thumbnail costs a ~9 ms seek, so a
@@ -384,7 +399,8 @@ def cmd_serve(a) -> None:
             cover = int(favs[len(favs) // 2]) if len(favs) else int(ids[len(ids) // 2])
             trip_list.append({"id": tid, "title": t["title"], "start": t["start"], "end": t["end"],
                               "n": int(len(ids)), "cover": shas[cover]})
-    info = {"total": N, "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list, **facet_counts({})}
+    info = {"total": N, "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
+            "demo": bool(a.demo), **facet_counts({})}
 
     # Importing PyTorch and loading the text encoder is most of the startup time, and only typed
     # queries need it, so it loads while the page, filters and thumbnails are already being served.
@@ -711,8 +727,9 @@ def cmd_serve(a) -> None:
         request_queue_size = 256
         daemon_threads = True
 
-    srv = Server(("127.0.0.1", a.port), Handler)
-    print(f"Open http://127.0.0.1:{a.port}/  (Ctrl-C to stop)", flush=True)
+    port = a.port or (8767 if a.demo else 8766)
+    srv = Server(("127.0.0.1", port), Handler)
+    print(f"Open http://127.0.0.1:{port}/  (Ctrl-C to stop)", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -745,8 +762,10 @@ def main() -> None:
     s.set_defaults(fn=cmd_search)
     sub.add_parser("stats").set_defaults(fn=cmd_stats)
     s = sub.add_parser("serve", help="local search page")
-    s.add_argument("--store", required=True)
-    s.add_argument("--port", type=int, default=8766)
+    s.add_argument("--store", help="the photo store (required unless --demo)")
+    s.add_argument("--demo", action="store_true",
+                   help="serve the ~100 public-domain photos in demo/ (--db, --store, --cache are ignored; nothing is logged)")
+    s.add_argument("--port", type=int, help="default 8766, or 8767 with --demo so it can run beside the real one")
     s.add_argument("--cache", help="thumbnail cache dir (default: <db dir>/review, shared with estate.py review)")
     s.add_argument("--fast-cache", help="cache dir on a faster disk (e.g. the internal SSD), filled from --cache")
     s.add_argument("--no-pregenerate", action="store_true", help="don't build missing thumbnails in the background")

@@ -3,6 +3,8 @@ photo-estate/bench-store/
 *.db
 *.db-*
 *.db.bak-*
+# except the demo catalog: ~100 public-domain photos (tools/make_demo.py)
+!photo-estate/demo/estate.db
 __pycache__/
 
 # per-machine tool config (holds this machine's tailnet URL)

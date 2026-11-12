@@ -97,6 +97,32 @@ If the service doesn't answer a minute after a restart, check for that dialog fi
 
 (Use `/usr/bin/log`: zsh has a builtin `log` that shadows it.)
 
+## The demo
+
+The demo estate (`embed.py serve --demo`, ~100 CC0 photos committed in `demo/`) runs beside the
+real app as a second agent, so it can be shown to anyone without opening the real library.
+
+| | |
+|---|---|
+| Code | `~/src/photo-estate-demo`, a worktree of the clone above (`git worktree add`), so the demo can run a different branch than the real app |
+| launchd agent | `~/Library/LaunchAgents/com.jflam.photo-search-demo.plist` ([copy](com.jflam.photo-search-demo.plist)) |
+| Log | `~/Library/Logs/photo-search-demo.log` |
+| Local port | `127.0.0.1:8767` |
+| Tailnet | `tailscale serve --bg --https=8767 http://127.0.0.1:8767` |
+
+It reads only the repo (the catalog is copied to a temporary folder at startup, thumbnails are
+made there, and no searches are logged), so it needs no disk permission and doesn't touch
+`/Volumes/estate`. It starts in a few seconds.
+
+```bash
+cd ~/src/photo-estate && git fetch && git worktree add ../photo-estate-demo origin/main   # once
+cp ~/src/photo-estate-demo/photo-estate/deploy/com.jflam.photo-search-demo.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jflam.photo-search-demo.plist
+tailscale serve --bg --https=8767 http://127.0.0.1:8767
+```
+
+With a default-deny tailnet policy, port 8767 needs its own grant, like 8766.
+
 ## Tailscale access
 
 With Tailscale's default allow-all policy there's nothing to do here. My tailnet policy is
