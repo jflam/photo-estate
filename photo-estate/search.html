@@ -843,7 +843,9 @@ $("#q").addEventListener("keydown", e => {
 function renderLike() {
   $("#like").classList.toggle("on", !!S.sha);
   if (S.sha) $("#like img").src = "/thumb/" + S.sha;
-  $("#q").placeholder = S.sha ? "Narrow with filters, or describe something else" : "Describe a photo, or find a place, person, trip or camera";
+  $("#q").placeholder = S.sha ? "Narrow with filters, or describe something else"
+    : F.demo ? "Try: latte art, kitten, waterfall in autumn, dog in the snow, city at night"   // demo: searches that find a group
+    : "Describe a photo, or find a place, person, trip or camera";
 }
 $("#like button").onclick = e => { e.preventDefault(); S.sha = ""; refresh(); };
 

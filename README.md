@@ -11,6 +11,34 @@ JPEG/HEIC/MP4 files in folders, and the catalog would still be readable with `sq
 depends on a particular disk, filesystem, operating system or server: see
 [Where it runs](#where-it-runs) for what's required and what's just my setup.
 
+## Try it: the demo estate
+
+`photo-estate/demo/` is a complete little estate you can browse without any photos of your own:
+about 100 CC0 photos (Unsplash photos copied to Wikimedia Commons while Unsplash was CC0), run
+through the same pipeline as the real thing (ingest, link, exif, places, embeddings), checked in
+with the catalog beside them.
+
+```bash
+cd photo-estate
+uv run embed.py serve --demo        # http://127.0.0.1:8767/
+```
+
+The demo uses port 8767, so it can run beside the real app on 8766; it reads nothing outside
+`demo/`. On my Mac mini it runs as a second launchd agent (see
+[deploy/MAC-MINI.md](photo-estate/deploy/MAC-MINI.md#the-demo)).
+
+The photos were picked to show off search by meaning. They come in groups of eight that look
+alike (lighthouses, sunsets over the sea, coffee, kittens, snowy peaks, tulips, hot air balloons,
+dunes...), and nothing in the catalog says which group a photo is in. Type "latte art", "kitten"
+or "dog in the snow", or open a photo and press **More like this**. Each photo also keeps its
+real camera and date, and most their place, so the place and camera filters and the timeline
+have something to show. The demo is served from a scratch copy: nothing in the repo is written,
+and searches aren't logged. Typed searches need the SigLIP model, which is downloaded from Hugging
+Face the first time, as with a real estate.
+
+`demo/photos.json` lists the photos; `demo/CREDITS.md` names each one's author and source.
+To rebuild it (after changing the list, say): `uv run tools/make_demo.py`.
+
 ## What's in the estate today
 
 | | |
@@ -160,13 +188,15 @@ photo-estate/
   review.html          the near-duplicate review page served by estate.py
   pull-drive.sh        pull Takeout zips from Google Drive one at a time and ingest them
   pull-icloud.sh       mirror iCloud libraries with icloudpd and ingest them
+  demo/                ~100 CC0 photos as a ready-made estate (`embed.py serve --demo`)
+  tools/make_demo.py   builds demo/ from the list in demo/photos.json
   tests/test_poc.py    end to end on a synthetic Takeout + iCloud + Flickr export
   tools/sigbench.py    SigLIP speed benchmark
   tools/bench_server.py, tools/thumb_burst.py   photo app latency benchmarks
   PLAN.md              the overall plan and phases
   DISK-SETUP.md        choosing and preparing storage, the overnight pull, checking the archive
   deploy/MAC-MINI.md   running the photo app as an always-on service (my Mac mini as the example)
-  deploy/*.plist       the launchd agent for that service
+  deploy/*.plist       the launchd agents for that service and the demo
   TAGGING-RESEARCH.md  the tiered tagging pipeline (what comes after embeddings)
   BENCHMARK.md         library stats and the benchmark album
   PERFORMANCE.md       where the photo app's time goes, what was changed, open tasks
