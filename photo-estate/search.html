@@ -988,12 +988,13 @@ function arrange() {                                 // the current photo and it
   const use = want.map(r => (r && slides.find(s => s.r === r)) || free.pop());
   cur = use[0]; vPic = cur.el;
   use.forEach((s, k) => { s.el.style.zIndex = k ? "" : 1; fill(s, want[k], [0, -1, 1][k]); });
+  if (Z.s !== 1) bake();
 }
 function show(i, dir = 0) {
   vCur = i;
   settle = null; stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
   for (const s of slides) s.el.style.transform = "";
-  Z.s = 1; Z.x = Z.y = 0;
+  Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0;
   arrange();
   shareFile = null; vNote = ""; $("#vShare").classList.remove("ready", "busy");
   sharpen();
@@ -1028,17 +1029,19 @@ function openViewer(i) {
 function closeViewer(instant) {
   if (vCur < 0) return;
   const i = vCur, bg = $("#vBg"), ui = $("#vUi");
-  const from = vPic.style.transform || "none", dim = bg.style.opacity || 1, hidden = ui.style.opacity === "0";   // where a drag left things
+  const dim = bg.style.opacity || 1, hidden = ui.style.opacity === "0";   // where a drag left things
   settle = null; stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
+  const at = vPic.getBoundingClientRect(), f = fit(items[i]);   // zoomed or dragged: it goes home from where it is
+  const from = `translate(${at.x - f.x}px,${at.y - f.y}px) scale(${at.width / f.w},${at.height / f.h})`;
   for (const s of slides) { s.el.style.transform = ""; if (s !== cur) s.el.style.display = "none"; }
-  Z.s = 1; Z.x = Z.y = 0; bg.style.opacity = ui.style.opacity = "";
+  Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0; place(vPic, f); bg.style.opacity = ui.style.opacity = "";
   v.classList.remove("bare"); vCur = -1; scrubStop();
   if (vHist) { vHist = false; vBack = true; history.back(); }
   const done = () => { if (vCur < 0) { v.classList.remove("on"); document.documentElement.style.overflow = ""; } };
   if (instant) return done();
   const el = tileOf(i);
   el?.scrollIntoView({ block: "nearest" });
-  const t = el?.getBoundingClientRect(), f = fit(items[i]);
+  const t = el?.getBoundingClientRect();
   const a = t ? vPic.animate([{ transform: from }, { transform: `translate(${t.x - f.x}px,${t.y - f.y}px) scale(${t.width / f.w},${t.height / f.h})` }], { duration: 300, easing: EASE })
               : vPic.animate([{ opacity: 1, transform: from }, { opacity: 0, transform: from }], { duration: 200 });
   bg.animate([{ opacity: dim }, { opacity: 0 }], { duration: 300, easing: "ease-in", fill: "forwards" }).finished.then(x => x.cancel());
@@ -1124,11 +1127,20 @@ narrow.addEventListener("change", vResize);
 
 /* ── viewer on touch: swipe between photos, swipe down to close, swipe up for details, pinch or double-tap to
       zoom, tap to show or hide the buttons ── */
-const Z = { s: 1, x: 0, y: 0 };                      // zoom: scale and pan, applied on top of fit()
+// Zoom is a scale and a pan on top of fit(). While fingers are moving it is a transform, which is cheap but only
+// stretches the pixels already drawn; once they stop, the photo is laid out at its zoomed size (baked), so the
+// browser draws it again from the full-size image and it is as sharp as the file allows.
+const Z = { s: 1, x: 0, y: 0 }, Zb = { s: 1, x: 0, y: 0 };   // Zb: the zoom the photo is laid out at
 const pts = new Map();
 let g = null, lastTap = 0, tapTimer = 0;
-const applyZoom = () => { vPic.style.transform = Z.s === 1 ? "" : `translate(${Z.x}px,${Z.y}px) scale(${Z.s})`; };
-function resetZoom() { Z.s = 1; Z.x = Z.y = 0; applyZoom(); }
+const applyZoom = () => { const k = Z.s / Zb.s, x = Z.x - Zb.x, y = Z.y - Zb.y;
+  vPic.style.transform = k === 1 && !x && !y ? "" : `translate(${x}px,${y}px) scale(${k})`; };
+function bake() {
+  const b = fit(items[vCur]);
+  place(vPic, { x: b.x + Z.x, y: b.y + Z.y, w: b.w * Z.s, h: b.h * Z.s });
+  Object.assign(Zb, Z); vPic.style.transform = "";
+}
+function resetZoom() { Z.s = 1; Z.x = Z.y = 0; bake(); }
 function clampZoom() {                               // keep the photo covering the screen where it can
   const b = fit(items[vCur]), w = b.w * Z.s, h = b.h * Z.s, W = vw(), H = vh();   // on screen the photo spans b.x + Z.x … + w
   Z.x = w <= W ? (W - w) / 2 - b.x : Math.min(-b.x, Math.max(W - w - b.x, Z.x));
@@ -1227,9 +1239,9 @@ function endGesture(e) {
     }
   } else if (mode === "up" && phone() && (dy < -50 || fast)) toggleInfo();   // swipe up brings the details up
 }
-function animateTo() {
-  const from = getComputedStyle(vPic).transform; applyZoom();
-  vPic.animate([{ transform: from === "none" ? "none" : from }, { transform: vPic.style.transform || "none" }], { duration: 200, easing: EASE });
+function animateTo() {                               // from where the gesture left it to where Z says, then sharp
+  const a = vPic.getBoundingClientRect(); bake(); const b = vPic.getBoundingClientRect();
+  vPic.animate([{ transform: `translate(${a.x - b.x}px,${a.y - b.y}px) scale(${a.width / b.width})` }, { transform: "none" }], { duration: 200, easing: EASE });
 }
 function resetZoomAnimated() { Z.s = 1; Z.x = Z.y = 0; animateTo(); }
 v.addEventListener("pointerup", endGesture);
