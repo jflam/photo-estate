@@ -114,6 +114,23 @@ input:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-
 .f.no img { filter: grayscale(1); opacity: .32; }
 .f.no::after { content: ""; position: absolute; inset: 0; border-radius: 12px; box-shadow: inset 0 0 0 2.5px var(--no); pointer-events: none;
   background: linear-gradient(to top right, transparent calc(50% - 1.5px), var(--no) calc(50% - 1.5px), var(--no) calc(50% + 1.5px), transparent calc(50% + 1.5px)); }
+.f.def .who { background: rgba(0,0,0,.55); color: #fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,.45); font-weight: 500; }
+.f.set .who { box-shadow: none; }
+.f.t-yes.set .who { background: var(--yes); color: #fff; }
+.f.t-yes.set::after { content: ""; position: absolute; inset: 0; border-radius: 12px; box-shadow: inset 0 0 0 2.5px var(--yes); pointer-events: none; }
+.f.t-stranger img { filter: grayscale(1); opacity: .35; }
+.f.t-later img { opacity: .7; }
+.f.t-later.set .who { background: var(--ask); color: #fff; }
+.f.t-else img { filter: grayscale(.6); opacity: .5; }
+.f.clash::after { content: ""; position: absolute; inset: 0; border-radius: 12px; box-shadow: inset 0 0 0 2.5px var(--no); pointer-events: none; }
+.chip .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--ask); margin-left: 6px; vertical-align: middle; }
+.defs { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--muted); font-size: 13px; }
+.seg { display: inline-flex; background: var(--line-2); border-radius: 10px; padding: 3px; }
+.seg button { height: 32px; padding: 0 12px; white-space: nowrap; border-radius: 8px; font-size: 13.5px; font-weight: 500; color: var(--ink-2); }
+.seg button.on { background: var(--inv); color: var(--inv-ink); }
+.menu small { color: var(--muted); font-size: 12px; margin-left: auto; }
+.toast button { margin-left: 14px; font-weight: 600; text-decoration: underline; color: inherit; }
+.sub kbd { font: 500 11.5px var(--sans); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 .f.yes::after { content: ""; position: absolute; inset: 0; border-radius: 12px; box-shadow: inset 0 0 0 2.5px var(--yes); pointer-events: none; }
 .f.yes .who { background: var(--yes); color: #fff; }
 .chip.skip { border: 1px dashed var(--line); }
@@ -168,9 +185,9 @@ input:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-
 .lb .btn:hover { background: rgba(255,255,255,.24); }
 .lb input[type=text] { background: rgba(255,255,255,.14); color: #fff; width: 190px; }
 .lb .close { position: absolute; top: 14px; right: 16px; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.14); font-size: 18px; color: #fff; }
-.toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 50; padding: 9px 16px; border-radius: 10px; background: var(--inv);
+.toast { position: fixed; left: 50%; bottom: 150px; transform: translateX(-50%); z-index: 50; padding: 9px 16px; border-radius: 10px; background: var(--inv);
   color: var(--inv-ink); font-weight: 500; font-size: 13.5px; box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .2s; }
-.toast.on { opacity: 1; }
+.toast.on { opacity: 1; pointer-events: auto; }
 @media (max-width: 640px) {
   :root { --pad: 16px; }
   h1 { font-size: 23px; }
@@ -204,10 +221,16 @@ const first = name => name.split(" ")[0];
 let O = null;                      // the overview: people, counts
 let view = { teardown: null };     // the current view's key handler
 
-function toast(msg) {
+function toast(msg, action) {
   const t = $("#toast");
   t.textContent = msg; t.classList.add("on");
-  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2200);
+  if (action) {
+    const b = document.createElement("button");
+    b.textContent = action.label;
+    b.onclick = () => { t.classList.remove("on"); action.fn(); };
+    t.append(b);
+  }
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), action ? 8000 : 2200);
 }
 const person = id => O.people.find(p => p.id === id);
 function age(p, f) {               // "3y", "8m" when their birth month is known
@@ -305,21 +328,31 @@ document.addEventListener("keydown", e => {
 });
 
 /* ── check: "is this Ben?" ──────────────────────────────────────────── */
-// Whatever you say about a face is saved the moment you say it, and stays on the face. The buttons
-// at the bottom are for the rest: yes, no, or skip them for now (unnamed, in "Skipped" for later).
+// Every face shows what it will be saved as: what you chose for it, or else the default for faces you
+// haven't marked (Ben, not sure or stranger). Nothing is saved until Save, and choices you haven't
+// saved survive moving between years. A stranger is never asked about again; "not sure" waits under
+// Skipped for you or someone else.
+const drafts = new Map();          // face id -> {k: "yes" | "else" | "stranger" | "later", to, pid, year}
+const defaults = {};               // "<pid>" or "s<pid>" -> the default for faces you haven't marked
+const KIND = { yes: "Ben", stranger: "Stranger", later: "Not sure" };
+addEventListener("beforeunload", e => { if (drafts.size) e.preventDefault(); });
+
 async function review(pid, year, skipped = false) {
   await refresh();
   const p = person(pid);
   if (!p) return location.hash = "#/";
   crumb(`<a href="#/">People</a>`, `<a href="#/person/${pid}">${esc(p.name)}</a>`, skipped ? "Skipped" : "Check");
   const r = await api(`/api/people/review?person=${pid}&limit=60${year != null ? `&year=${year}` : ""}${skipped ? "&skipped=1" : ""}`);
-  const name = first(p.name), tags = new Map();   // face id -> {k: "yes" | "no" | "else" | "ignore", label}
+  const name = first(p.name), dkey = (skipped ? "s" : "") + pid;
+  const label = t => t.k === "yes" ? name : t.k === "else" ? first(t.to) : KIND[t.k];
+  const pending = y => [...drafts.values()].some(d => d.pid === pid && d.year === y);
   const years = Object.entries(p.years).filter(([, [, q]]) => q).map(([y, [n, q]]) => [+y, n, q]).sort((a, b) => a[0] - b[0]);
-  let h = `<h1>${skipped ? "Skipped: is" : "Is"} this ${esc(name)}?</h1><p class="sub">${r.faces.length ? `Click a face that isn't ${esc(name)}, or ⋯ to say who it is. Each one is saved as you go; the buttons below are for the faces you haven't marked.` : ""}</p>`;
+  const hover = matchMedia("(hover: hover)").matches;
+  let h = `<h1>${skipped ? "Skipped: is" : "Is"} this ${esc(name)}?</h1><p class="sub">${r.faces.length ? `Each face is labelled with what it will be saved as. Click a face to change it${hover ? `, or point at it and press <kbd>B</kbd> ${esc(name)}, <kbd>S</kbd> stranger, <kbd>N</kbd> not sure` : ""}. Nothing is saved until you press Save.` : ""}</p>`;
   h += `<div class="chips"><a class="chip ${year == null && !skipped ? "on" : ""}" href="#/review/${pid}">All <span class="num">${fmt(p.pending)}</span></a>` +
-    years.map(([y, n, q]) => `<a class="chip ${n ? "" : "new"} ${year === y && !skipped ? "on" : ""}" href="#/review/${pid}/${y}" title="${n ? "" : `No named faces of ${esc(name)} from this year yet`}">${y || "No date"} <span class="num">${fmt(q)}</span></a>`).join("") +
+    years.map(([y, n, q]) => `<a class="chip ${n ? "" : "new"} ${year === y && !skipped ? "on" : ""}" href="#/review/${pid}/${y}" title="${n ? "" : `No named faces of ${esc(name)} from this year yet`}">${y || "No date"} <span class="num">${fmt(q)}</span>${pending(y) ? `<i class="dot" title="Choices not saved yet"></i>` : ""}</a>`).join("") +
     (r.skipped ? `<a class="chip skip ${skipped ? "on" : ""}" href="#/review/${pid}/skipped">Skipped <span class="num">${fmt(r.skipped)}</span></a>` : "") + `</div>`;
-  if (!skipped && r.matching > r.faces.length) h += `<p class="every"><button class="btn ask" id="every" title="Name every face waiting${year != null ? ` in ${year || "undated photos"}` : ""} except the ones you've marked or skipped, then look for the mistakes">Yes to all ${fmt(r.matching)}</button></p>`;
+  if (!skipped && r.matching > r.faces.length) h += `<p class="every"><button class="btn ask" id="every" title="Save this page, then name every other face waiting${year != null ? ` in ${year || "undated photos"}` : ""} as ${esc(name)} (not the skipped ones), and go looking for the mistakes">Yes to all ${fmt(r.matching)}</button></p>`;
   if (!r.faces.length) h += `<p class="empty">Nothing ${skipped ? "skipped" : "left to check"}${year != null ? ` in ${year || "undated photos"}` : ""}. <a class="btn" href="#/person/${pid}">See ${esc(name)} through the years</a></p>`;
   h += `<div class="grid" id="grid">${r.faces.map(f => tile(f, p)).join("")}</div>`;
   if (r.faces.length) h += `<div class="foot" id="foot"></div>`;
@@ -327,63 +360,105 @@ async function review(pid, year, skipped = false) {
   window.scrollTo(0, 0);
   if (!r.faces.length) return;
   const grid = $("#grid"), foot = $("#foot");
-  const rest = () => r.faces.filter(f => !tags.has(f.id)).map(f => f.id);
-  const paint = () => {
-    for (const el of grid.children) {
-      const t = tags.get(+el.dataset.id);
-      el.className = "f" + (!t ? "" : t.k === "no" ? " no" : t.k === "yes" ? " yes" : " else");
-      $(".who", el)?.remove();
-      if (t && t.k !== "no") el.insertAdjacentHTML("beforeend", `<span class="who">${esc(t.label)}</span>`);
+
+  // what each face will be saved as; a photo can't have Ben twice
+  const plan = () => {
+    const def = defaults[dkey] || (skipped ? "later" : "yes"), seen = new Map(), out = new Map();
+    let clash = false;
+    for (const f of r.faces) {
+      let t = drafts.get(f.id), set = !!t, note = "";
+      if (!t) {
+        t = { k: def };
+        if (def === "yes" && seen.has(f.sha)) { t = { k: "later" }; note = "same photo"; }
+      } else if (t.k === "yes" && seen.has(f.sha)) clash = true;
+      if (t.k === "yes") seen.set(f.sha, f.id);
+      out.set(f.id, { ...t, set, note });
     }
-    const n = rest().length, all = n === r.faces.length ? "all " : "the remaining ", N = `${n} ${n === 1 ? "is" : "are"}`;
-    foot.innerHTML = n
-      ? `<button class="btn" data-do="no">No, ${all}${n} ${n === 1 ? "isn't" : "aren't"} ${esc(name)}</button>` +
-        (skipped ? "" : `<button class="btn" data-do="later">Skip ${n} for now</button>`) +
-        `<button class="btn pri" data-do="yes">Yes, ${all}${N} ${esc(name)} <kbd>↵</kbd></button>` +
-        `<span class="hint">Skipped faces stay unnamed, under “Skipped”, for you or someone else to decide later</span>`
-      : `<button class="btn pri" data-do="next">Next <kbd>↵</kbd></button><span class="hint">Every face here is marked and saved</span>`;
+    return { def, out, clash };
   };
-  let busy = false;
-  const send = async body => { busy = true; try { return await api("/api/people/label", body); } finally { busy = false; } };
-  const mark = async (id, body, tag) => {          // replaces whatever was said about this face before
-    await send({ ...(tags.has(id) || skipped ? { undo: [id], undo_person: pid } : {}), ...body });
-    tag ? tags.set(id, tag) : tags.delete(id);
+  const paint = () => {
+    const { def, out, clash } = plan();
+    const counts = new Map();
+    for (const el of grid.children) {
+      const id = +el.dataset.id, t = out.get(id);
+      const dup = clash && t.k === "yes" && r.faces.filter(f => f.sha === r.faces.find(g => g.id === id).sha && out.get(f.id).k === "yes").length > 1;
+      el.className = `f t-${t.k} ${t.set ? "set" : "def"}${dup ? " clash" : ""}`;
+      $(".who", el)?.remove();
+      el.insertAdjacentHTML("beforeend", `<span class="who">${esc(label(t))}${t.note ? ` · ${t.note}` : ""}</span>`);
+      const c = label(t);
+      counts.set(c, (counts.get(c) || 0) + 1);
+    }
+    const sum = [...counts].map(([c, n]) => `${n} ${c === "Stranger" ? (n === 1 ? "stranger" : "strangers") : c === "Not sure" ? "not sure" : esc(c)}`).join(" · ");
+    foot.innerHTML = `<span class="defs" title="What the faces you haven't marked are saved as">Unmarked faces: <span class="seg">${["yes", "later", "stranger"].map(k =>
+        `<button data-def="${k}" class="${def === k ? "on" : ""}">${k === "yes" ? esc(name) : KIND[k]}</button>`).join("")}</span></span>` +
+      `<button class="btn pri" id="save" ${clash ? "disabled" : ""}>Save ${r.faces.length}: ${sum} <kbd>↵</kbd></button>` +
+      `<span class="hint">${clash ? `Two faces in one photo can't both be ${esc(name)}: change one` : "Strangers aren't asked about again. Not sure waits under “Skipped” for you or someone else."}</span>`;
+  };
+  const choose = (id, t) => {
+    const f = r.faces.find(g => g.id === id);
+    t ? drafts.set(id, { ...t, pid, year: f.year }) : drafts.delete(id);
     paint();
   };
-  const no = id => mark(id, { not: [id], not_person: pid }, { k: "no" });
-  grid.onclick = e => {
-    const el = e.target.closest(".f");
-    if (!el || busy) return;
+  const pick = (el, anchor) => {
     const id = +el.dataset.id;
-    if (e.target.closest(".more")) return faceMenu(e.target, id, {
-      not: p, onNot: () => no(id),
-      name: who => who.toLowerCase() === p.name.toLowerCase()
-        ? mark(id, { faces: [id], person: pid }, { k: "yes", label: p.name })
-        : mark(id, { faces: [id], person: who }, { k: "else", label: who }),
-      ignore: () => mark(id, { faces: [id], person: 0 }, { k: "ignore", label: "Unnamed" }) });
-    tags.has(id) ? mark(id, {}, null) : no(id);    // click: "not Ben"; click again: take it back
+    faceMenu(anchor, id, {
+      me: p, recent: true,
+      name: who => choose(id, who.toLowerCase() === p.name.toLowerCase() ? { k: "yes" } : { k: "else", to: who }),
+      ignore: () => choose(id, { k: "stranger" }), later: () => choose(id, { k: "later" }),
+      reset: drafts.has(id) ? () => choose(id, null) : null });
   };
-  const finish = async what => {
-    if (busy) return;
-    const ids = rest();
+  grid.onclick = e => { const el = e.target.closest(".f"); if (el) pick(el, e.target.closest(".more") || el); };
+  let over = null;
+  grid.onmouseover = e => { over = e.target.closest(".f"); };
+  grid.onmouseleave = () => { over = null; };
+
+  let busy = false;
+  const save = async (reload = true) => {
+    if (busy || plan().clash) return false;
+    busy = true;
     foot.querySelectorAll("button").forEach(b => b.disabled = true);
-    if (what === "yes") await send({ faces: ids, person: pid });
-    if (what === "no") await send({ not: ids, not_person: pid });
-    if (what === "later") await send({ later: ids, later_person: pid });
-    if (what !== "next") toast({ yes: `${ids.length} named ${name}`, no: `${ids.length} marked not ${name}`, later: `${ids.length} skipped for later` }[what]);
-    review(pid, year, skipped);
+    const { out } = plan(), ids = r.faces.map(f => f.id), to = new Map(), later = [];
+    for (const id of ids) {
+      const t = out.get(id), dest = t.k === "yes" ? pid : t.k === "else" ? t.to : t.k === "stranger" ? 0 : null;
+      if (dest === null) later.push(id); else to.set(dest, [...(to.get(dest) || []), id]);
+    }
+    const items = [];
+    if (skipped) items.push({ undo: ids.filter(i => !later.includes(i)), undo_person: pid });   // no longer skipped
+    for (const [dest, faces] of to) items.push({ faces, person: dest });
+    if (later.length && !skipped) items.push({ later, later_person: pid });
+    await api("/api/people/label-many", { items });
+    ids.forEach(i => drafts.delete(i));
+    delete defaults[dkey];             // each new page starts from the usual default again
+    const n = to.get(pid)?.length || 0;
+    toast(`Saved ${ids.length}${n ? `: ${n} ${name}` : ""}`, { label: "Undo", fn: async () => {
+      const back = [{ undo: ids, undo_person: pid }];
+      if (skipped) back.push({ later: ids, later_person: pid });
+      await api("/api/people/label-many", { items: back });
+      toast("Undone");
+      review(pid, year, skipped);
+    } });
+    busy = false;
+    if (reload) review(pid, year, skipped);
+    return true;
   };
-  foot.onclick = e => { const b = e.target.closest("[data-do]"); if (b) finish(b.dataset.do); };
+  foot.onclick = e => {
+    const d = e.target.closest("[data-def]");
+    if (d) { defaults[dkey] = d.dataset.def; return paint(); }
+    if (e.target.closest("#save")) save();
+  };
   if ($("#every")) $("#every").onclick = async () => {
-    if (busy) return;
-    $("#every").disabled = true;
-    const n = r.matching - [...tags.values()].length;
-    await send({ pending: { person: pid, year }, person: pid });
-    toast(`${fmt(n)} named ${name}. The least likely are first here`);
+    if (busy || !(await save(false))) return;
+    busy = true;
+    await api("/api/people/label", { pending: { person: pid, year }, person: pid });
+    toast(`Everything waiting${year != null ? ` in ${year || "undated photos"}` : ""} named ${name}. The least likely are first here`);
     location.hash = `#/odd/${pid}${year != null ? `/${year}` : ""}`;
   };
   view.teardown = on("keydown", e => {
-    if (e.key === "Enter" && !e.target.matches("input") && !$(".lb") && !$(".menu")) { e.preventDefault(); finish(rest().length ? "yes" : "next"); }
+    if (e.target.matches("input") || $(".lb") || $(".menu") || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "Enter") { e.preventDefault(); return save(); }
+    const k = { b: "yes", s: "stranger", n: "later" }[e.key.toLowerCase()];
+    if (k && over) choose(+over.dataset.id, { k });
+    if (e.key === "Backspace" && over) choose(+over.dataset.id, null);
   });
   paint();
 }
@@ -413,7 +488,7 @@ async function odd(pid, year, offset = 0) {
       const m = marks.get(+el.dataset.id);
       el.className = "f" + (m === "no" ? " no" : m !== undefined ? " else" : "");
       $(".who", el)?.remove();
-      if (m !== undefined && m !== "no") el.insertAdjacentHTML("beforeend", `<span class="who">${m === 0 ? "Unnamed" : esc(m)}</span>`);
+      if (m !== undefined && m !== "no") el.insertAdjacentHTML("beforeend", `<span class="who">${m === 0 ? "Stranger" : esc(m)}</span>`);
     }
     const n = marks.size, what = last ? "and finish" : "and show more";
     $("#next").innerHTML = n ? `Take ${n} off ${esc(name)} ${what} <kbd>↵</kbd>` : `All ${esc(name)}, ${last ? "done" : "show more"} <kbd>↵</kbd>`;
@@ -501,11 +576,14 @@ async function personView(pid) {
 }
 
 /* ── the ⋯ menu on a face ───────────────────────────────────────────── */
+const recentNames = [];           // the names you picked lately, offered first
 function faceMenu(anchor, id, act) {
   $(".menu")?.remove();
   const m = document.createElement("div");
   m.className = "menu";
-  const list = q => O.people.filter(p => p.name.toLowerCase().includes(q.toLowerCase())).slice(0, 7);
+  const rank = p => p === act.me ? 0 : recentNames.includes(p.name) ? 1 + recentNames.indexOf(p.name) : 99;
+  const list = q => O.people.filter(p => p.name.toLowerCase().includes(q.toLowerCase()))
+    .sort((a, b) => rank(a) - rank(b)).slice(0, 7);
   const draw = q => {
     const hits = list(q), exact = hits.some(p => p.name.toLowerCase() === q.trim().toLowerCase());
     $(".opts", m).innerHTML = hits.map(p => `<button data-name="${esc(p.name)}">${esc(p.name)}</button>`).join("") +
@@ -513,7 +591,10 @@ function faceMenu(anchor, id, act) {
   };
   m.innerHTML = `<input type="text" placeholder="This is…" autocomplete="off" spellcheck="false"><div class="opts"></div><hr>` +
     (act.not ? `<button data-not>Not ${esc(first(act.not.name))}</button>` : "") +
-    `<button data-ignore class="dim">Don't name this face</button><button data-photo-open>See the photo</button>`;
+    `<button data-ignore>Stranger <small>don't ask again</small></button>` +
+    (act.later ? `<button data-later>Not sure <small>ask later</small></button>` : "") +
+    (act.reset ? `<button data-reset class="dim">Back to the default</button>` : "") +
+    `<button data-photo-open class="dim">See the photo</button>`;
   document.body.append(m);
   const r = anchor.getBoundingClientRect();
   m.style.left = Math.max(8, Math.min(r.left, innerWidth - 240)) + "px";
@@ -530,8 +611,13 @@ function faceMenu(anchor, id, act) {
     const b = e.target.closest("button");
     if (!b) return;
     close();
-    if (b.dataset.name) act.name(b.dataset.name);
+    if (b.dataset.name) {
+      recentNames.splice(0, recentNames.length, b.dataset.name, ...recentNames.filter(n => n !== b.dataset.name).slice(0, 4));
+      act.name(b.dataset.name);
+    }
     else if (b.hasAttribute("data-ignore")) act.ignore();
+    else if (b.hasAttribute("data-later")) act.later();
+    else if (b.hasAttribute("data-reset")) act.reset();
     else if (b.hasAttribute("data-not") && act.onNot) act.onNot();
     else if (b.hasAttribute("data-not")) { await api("/api/people/label", { faces: [id], person: null }); toast(`Not ${first(act.not.name)}`); act.saved?.(); }
     else openPhoto(id, act.saved);
@@ -551,12 +637,12 @@ async function openPhoto(id, changed) {
       d.faces.map(x => `<div class="bx ${x.id === sel ? "on" : ""}" data-id="${x.id}" style="left:${x.box[0] * 100}%;top:${x.box[1] * 100}%;width:${x.box[2] * 100}%;height:${x.box[3] * 100}%">` +
         `<span>${x.person > 0 ? esc(first(x.name)) : x.person === 0 ? "unnamed" : "?"}</span></div>`).join("") +
       `</div><button class="close" aria-label="Close">✕</button></div>
-      <div class="bar"><span class="t">${f.date || "No date"} · ${f.person > 0 ? `${esc(f.name)} (${{ you: "named by you", google: "from Google's tag", auto: "matched automatically" }[f.src]})` : f.person === 0 ? "left unnamed" : "not named"}</span>
+      <div class="bar"><span class="t">${f.date || "No date"} · ${f.person > 0 ? `${esc(f.name)} (${{ you: "named by you", google: "from Google's tag", auto: "matched automatically" }[f.src]})` : f.person === 0 ? "a stranger" : "not named"}</span>
         <input type="text" list="names" placeholder="This is…" autocomplete="off" spellcheck="false">
         <button class="btn" data-set>Name</button>
         ${f.person > 0 ? `<button class="btn" data-not>Not ${esc(first(f.name))}</button>` : ""}
         ${f.person > 0 && f.src !== "you" ? `<button class="btn" data-yes>Yes, ${esc(first(f.name))}</button>` : ""}
-        <button class="btn" data-ignore>Don't name</button></div>`;
+        <button class="btn" data-ignore title="Leave this face unnamed and don't ask about it again">Stranger</button></div>`;
   };
   const close = () => { lb.remove(); off(); if (dirty) changed ? changed() : route(); };
   const send = async body => {
