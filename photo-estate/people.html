@@ -70,7 +70,7 @@ input:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-
 .card img { width: 84px; height: 84px; border-radius: 50%; object-fit: cover; background: var(--tile); grid-row: span 2; }
 .card h3 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.015em; }
 .card p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
-.card .acts { display: flex; gap: 8px; align-items: center; }
+.card .acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .years { grid-column: 1 / -1; display: flex; align-items: flex-end; gap: 2px; height: 44px; margin-top: 8px; }
 .years div { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; gap: 1px; position: relative; }
 .years i { display: block; border-radius: 2px; min-height: 0; }
@@ -254,7 +254,7 @@ async function home() {
       <img src="/face/${p.cover}" alt="">
       <div><h3>${esc(p.name)}</h3><p class="num">${fmt(p.named)} named${p.pending ? ` · ${fmt(p.pending)} to check` : ""}</p></div>
       <div class="acts">${p.pending ? `<a class="btn ask" href="#/review/${p.id}">Check ${fmt(p.pending)}</a>` : ""}
-        <a class="btn" href="#/person/${p.id}">Through the years</a></div>
+        <a class="btn" href="#/person/${p.id}">Through the years</a>${p.named ? `<a class="btn" href="#/odd/${p.id}">Find mistakes</a>` : ""}</div>
       <div class="years">${yearStrip(p, lo, hi)}</div><div class="yl num"><span>${lo}</span><span>${hi}</span></div>
     </div>`).join("") + `</div>`;
   if (O.people.length) h += `<div class="legend"><span><i></i>named</span><span><i class="p"></i>waiting for you</span><span><i class="g"></i>no faces found that year</span></div>`;
@@ -314,7 +314,9 @@ async function review(pid, year) {
     years.map(([y, n, q]) => `<a class="chip ${n ? "" : "new"} ${year === y ? "on" : ""}" href="#/review/${pid}/${y}" title="${n ? "" : `No named faces of ${esc(name)} from this year yet`}">${y || "No date"} <span class="num">${fmt(q)}</span></a>`).join("") + `</div>`;
   if (!r.faces.length) h += `<p class="empty">Nothing left to check${year != null ? ` in ${year || "undated photos"}` : ""}. <a class="btn" href="#/person/${pid}">See ${esc(name)} through the years</a></p>`;
   h += `<div class="grid" id="grid">${r.faces.map(f => tile(f, p)).join("")}</div>`;
+  const more = r.matching > r.faces.length;
   if (r.faces.length) h += `<div class="foot"><button class="btn" id="none">None of these</button>
+    ${more ? `<button class="btn ask" id="every" title="Name every face waiting${year != null ? ` in ${year || "undated photos"}` : ""}, less the ones you clicked, then look for the mistakes">Yes to all ${fmt(r.matching)}</button>` : ""}
     <button class="btn pri" id="yes"></button><span class="hint">Click a face to mark it "not ${esc(name)}" · ⋯ to say who it is or see the photo</span></div>`;
   $("#main").innerHTML = h;
   window.scrollTo(0, 0);
@@ -328,6 +330,7 @@ async function review(pid, year) {
       if (m !== undefined && m !== "no") el.insertAdjacentHTML("beforeend", `<span class="who">${m === 0 ? "Unnamed" : esc(m)}</span>`);
     }
     const yes = r.faces.length - marks.size;
+    if ($("#every")) $("#every").textContent = `Yes to all ${fmt(r.matching - marks.size)}`;
     $("#yes").innerHTML = yes ? `Yes, ${yes === r.faces.length ? "all " : ""}${yes} ${yes === 1 ? "is" : "are"} ${esc(name)} <kbd>↵</kbd>` : `Save and continue <kbd>↵</kbd>`;
   };
   grid.onclick = e => {
@@ -349,6 +352,70 @@ async function review(pid, year) {
     review(pid, year);
   };
   $("#yes").onclick = save;
+  if ($("#every")) $("#every").onclick = async () => {
+    $("#every").disabled = $("#yes").disabled = true;
+    const not = r.faces.map(f => f.id).filter(i => marks.has(i));
+    for (const [id, m] of marks) if (m !== "no") await api("/api/people/label", { faces: [id], person: m });
+    const n = r.matching - not.length;
+    await api("/api/people/label", { pending: { person: pid, year }, person: pid, not, not_person: pid });
+    toast(`${fmt(n)} named ${name}. The least likely are first here`);
+    location.hash = `#/odd/${pid}${year != null ? `/${year}` : ""}`;
+  };
+  view.teardown = on("keydown", e => {
+    if (e.key === "Enter" && !e.target.matches("input") && !$(".lb") && !$(".menu")) { e.preventDefault(); save(); }
+  });
+  paint();
+}
+
+/* ── mistakes: "is anyone here not Ben?" ────────────────────────────── */
+async function odd(pid, year, offset = 0) {
+  await refresh();
+  const p = person(pid);
+  if (!p) return location.hash = "#/";
+  crumb(`<a href="#/">People</a>`, `<a href="#/person/${pid}">${esc(p.name)}</a>`, "Find mistakes");
+  const r = await api(`/api/people/odd?person=${pid}&limit=60&offset=${offset}${year != null ? `&year=${year}` : ""}`);
+  const name = first(p.name), marks = new Map();   // face id -> "no" | a name (someone else) | 0 (don't name)
+  const years = Object.entries(p.years).filter(([, [n]]) => n).map(([y, [n]]) => [+y, n]).sort((a, b) => a[0] - b[0]);
+  let h = `<h1>Is anyone here not ${esc(name)}?</h1><p class="sub">${esc(name)}'s named faces, the least like ${esc(name)}'s other faces from the same years first. Click the ones that aren't ${esc(name)}; when the faces all look right, you're past the mistakes.</p>`;
+  h += `<div class="chips"><a class="chip ${year == null ? "on" : ""}" href="#/odd/${pid}">All <span class="num">${fmt(p.named)}</span></a>` +
+    years.map(([y, n]) => `<a class="chip ${year === y ? "on" : ""}" href="#/odd/${pid}/${y}">${y || "No date"} <span class="num">${fmt(n)}</span></a>`).join("") + `</div>`;
+  if (!r.faces.length) h += `<p class="empty">${offset ? "That's all of them." : `No named faces of ${esc(name)}${year != null ? ` in ${year || "undated photos"}` : ""}.`} <a class="btn" href="#/person/${pid}">See ${esc(name)} through the years</a></p>`;
+  h += `<div class="grid" id="grid">${r.faces.map(f => tile(f, p)).join("")}</div>`;
+  if (r.faces.length) h += `<div class="foot"><span class="hint num">${fmt(offset + 1)}–${fmt(offset + r.faces.length)} of ${fmt(r.matching)}, least alike first</span>
+    <button class="btn pri" id="next"></button><span class="hint">Click a face to mark it "not ${esc(name)}" · ⋯ to say who it is or see the photo</span></div>`;
+  $("#main").innerHTML = h;
+  window.scrollTo(0, 0);
+  if (!r.faces.length) return;
+  const grid = $("#grid"), last = offset + r.faces.length >= r.matching;
+  const paint = () => {
+    for (const el of grid.children) {
+      const m = marks.get(+el.dataset.id);
+      el.className = "f" + (m === "no" ? " no" : m !== undefined ? " else" : "");
+      $(".who", el)?.remove();
+      if (m !== undefined && m !== "no") el.insertAdjacentHTML("beforeend", `<span class="who">${m === 0 ? "Unnamed" : esc(m)}</span>`);
+    }
+    const n = marks.size, what = last ? "and finish" : "and show more";
+    $("#next").innerHTML = n ? `Take ${n} off ${esc(name)} ${what} <kbd>↵</kbd>` : `All ${esc(name)}, ${last ? "done" : "show more"} <kbd>↵</kbd>`;
+  };
+  grid.onclick = e => {
+    const el = e.target.closest(".f");
+    if (!el) return;
+    const id = +el.dataset.id;
+    if (e.target.closest(".more")) return faceMenu(e.target, id, {
+      name: who => { marks.set(id, who); paint(); }, ignore: () => { marks.set(id, 0); paint(); } });
+    marks.has(id) ? marks.delete(id) : marks.set(id, "no");
+    paint();
+  };
+  const save = async () => {
+    $("#next").disabled = true;
+    const no = [...marks].filter(([, m]) => m === "no").map(([id]) => id);
+    for (const [id, m] of marks) if (m !== "no") await api("/api/people/label", { faces: [id], person: m, not: [id], not_person: pid });
+    if (no.length) await api("/api/people/label", { faces: no, person: null });
+    if (marks.size) toast(`${marks.size} taken off ${name}`);
+    if (last) return location.hash = `#/person/${pid}`;
+    odd(pid, year, offset + r.faces.length - marks.size);   // the ones taken off are gone from the list
+  };
+  $("#next").onclick = save;
   view.teardown = on("keydown", e => {
     if (e.key === "Enter" && !e.target.matches("input") && !$(".lb") && !$(".menu")) { e.preventDefault(); save(); }
   });
@@ -368,7 +435,8 @@ async function personView(pid) {
     <input class="name" type="text" value="${esc(p.name)}" aria-label="Name" spellcheck="false" autocomplete="off">
     <p class="sub num">${fmt(p.named)} faces named: ${fmt(p.you)} by you, ${fmt(p.google)} from Google's tags, ${fmt(p.auto)} matched to those${p.pending ? ` · ${fmt(p.pending)} waiting for you` : ""}</p>
     <p style="margin:12px 0 0"><label>Born <input type="month" id="born" value="${p.born && p.born.length > 4 ? p.born : ""}"></label>
-    ${p.pending ? `<a class="btn ask" href="#/review/${pid}">Check ${fmt(p.pending)}</a>` : ""}</p></div></div>`;
+    ${p.pending ? `<a class="btn ask" href="#/review/${pid}">Check ${fmt(p.pending)}</a>` : ""}
+    ${p.named ? `<a class="btn" href="#/odd/${pid}">Find mistakes</a>` : ""}</p></div></div>`;
   const row = y => {
     const [n, q] = p.years[y] || [0, 0], fs = r.years[y] || [];
     const a = p.born && y ? y - +p.born.slice(0, 4) : null;
@@ -502,6 +570,7 @@ function route() {
   const [, name, a, b] = location.hash.split("/");
   if (name === "review" && a) return review(+a, b != null ? +b : null);
   if (name === "person" && a) return personView(+a);
+  if (name === "odd" && a) return odd(+a, b != null ? +b : null);
   home();
 }
 addEventListener("hashchange", route);

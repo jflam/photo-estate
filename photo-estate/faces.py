@@ -597,6 +597,30 @@ class People:
                 out[int(y)] = [self.face(k) for k in sorted(rows, key=lambda k: self.date[k])]
             return {"person": {"id": p, **self.persons[p]}, "years": out}
 
+    def odd(self, p: int, year, offset: int, limit: int) -> dict:
+        """A person's named faces, least like the rest of them first: each face against the mean of their
+        other named faces from within WINDOW years (every year, if the photo is undated). A face with no
+        others near it in time comes first too. This is where the mistakes are."""
+        np = self.np
+        with self.lock:
+            mine = np.flatnonzero(self.pid == p)
+            ys = self.year[mine]
+            sums = {int(y): self.V[mine[ys == y]].sum(0) for y in np.unique(ys)}
+            total = sum(sums.values()) if sums else np.zeros(self.V.shape[1], np.float32)
+            fit = np.empty(len(mine), np.float32)
+            for y in sums:
+                at = np.flatnonzero(ys == y)
+                W = total if y == 0 else sum(v for yy, v in sums.items() if yy and abs(yy - y) <= WINDOW)
+                v = self.V[mine[at]]
+                dot, vv = v @ W, (v * v).sum(1)
+                rest = np.sqrt(np.maximum(float(W @ W) - 2 * dot + vv, 0))     # |W - v|: the others, without this face
+                fit[at] = np.where(rest > 1e-3, (dot - vv) / (np.sqrt(vv) * np.maximum(rest, 1e-3)), -1)
+            sel = np.ones(len(mine), bool) if year is None else ys == year
+            order = np.flatnonzero(sel)[np.argsort(fit[sel], kind="stable")]
+            page = order[offset:offset + limit]
+            return {"person": {"id": p, **self.persons[p]}, "matching": int(sel.sum()),
+                    "faces": [dict(self.face(mine[i]), fit=round(float(fit[i]), 3)) for i in page]}
+
     def unknown(self, limit: int) -> dict:
         np = self.np
         with self.lock:
@@ -649,10 +673,19 @@ class People:
         return p
 
     def label(self, body: dict) -> dict:
-        """{faces: [ids], person: id | "name" | 0 (don't name) | null (forget), cluster: n, not: [ids], not_person: id}"""
+        """{faces: [ids], person: id | "name" | 0 (don't name) | null (forget), cluster: n, not: [ids], not_person: id}.
+        {pending: {person: id, year: y | null}} in place of faces: every face waiting for that person (in that
+        year), less the ones in `not`, so you can say yes to all of them and find the mistakes afterwards."""
         with self.lock:
             con = connect(self.db)
             rows = [self.row[i] for i in body.get("faces") or [] if i in self.row]
+            pend = body.get("pending")
+            if isinstance(pend, dict) and pend.get("person") in self.persons:
+                m = self.pending(pend["person"])
+                if pend.get("year") is not None:
+                    m = m & (self.year == int(pend["year"]))
+                skip = {self.row[i] for i in body.get("not") or [] if i in self.row}
+                rows = [int(k) for k in self.np.flatnonzero(m) if int(k) not in skip]
             if body.get("cluster") is not None and 0 <= body["cluster"] < len(self.clusters):
                 c = self.clusters[body["cluster"]]      # the whole group, not just the faces shown
                 rows = [int(k) for k in c[(self.pid[c] == -1) & (self.sug_score[c] < SUGGEST)]]
@@ -754,6 +787,8 @@ class People:
                 return js(self.review(num("person"), num("year"), min(num("limit") or 60, 400)))
             if path == "/api/people/person" and num("person") in self.persons:
                 return js(self.person_faces(num("person"), num("year"), min(num("limit") or 12, 2000)))
+            if path == "/api/people/odd" and num("person") in self.persons:
+                return js(self.odd(num("person"), num("year"), max(num("offset") or 0, 0), min(num("limit") or 60, 400)))
             if path == "/api/people/unknown":
                 return js(self.unknown(min(num("limit") or 12, 100)))
             if path == "/api/people/photo" and num("face") in self.row:
