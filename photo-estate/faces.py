@@ -42,6 +42,8 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
+from collections import deque
+from itertools import islice
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -228,6 +230,20 @@ class Models:
         return v / np.linalg.norm(v, axis=1, keepdims=True)
 
 
+def _bounded(pool, jobs, ahead: int):
+    """Decoded images, in order, with at most `ahead` decoded or decoding at once. Pool.imap queues
+    every job up front and the decoders outrun the models, so its finished images pile up in memory
+    until macOS kills the process."""
+    it, pending = iter(jobs), deque()
+    for job in islice(it, ahead):
+        pending.append(pool.apply_async(_decode, (job,)))
+    while pending:
+        result = pending.popleft().get()
+        for job in islice(it, 1):
+            pending.append(pool.apply_async(_decode, (job,)))
+        yield result
+
+
 def cmd_run(a) -> None:
     import numpy as np
     from PIL import Image
@@ -256,7 +272,7 @@ def cmd_run(a) -> None:
         scans, rows = [], []
 
     with Pool(a.workers) as pool:
-        for sha, size, raw, err in pool.imap(_decode, jobs, chunksize=2):
+        for sha, size, raw, err in _bounded(pool, jobs, ahead=4 * a.workers):
             n += 1
             if err:
                 errors += 1
