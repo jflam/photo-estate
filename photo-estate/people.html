@@ -12,7 +12,7 @@
   --bg: #fbfbfa; --surface: #f1f1ef; --raised: #ffffff; --hover: rgba(0,0,0,.05);
   --line: rgba(0,0,0,.08); --line-2: rgba(0,0,0,.14);
   --ink: #131314; --ink-2: #4b4b51; --muted: #86868d; --faint: #c9c9cd;
-  --tile: #ececea; --inv: #131314; --inv-ink: #ffffff; --no: #e5484d; --ask: #c2710c; --ask-bg: rgba(217,119,6,.12);
+  --tile: #ececea; --inv: #131314; --inv-ink: #ffffff; --no: #e5484d; --yes: #18794e; --ask: #c2710c; --ask-bg: rgba(217,119,6,.12);
   --shadow: 0 1px 2px rgba(0,0,0,.06), 0 12px 36px rgba(0,0,0,.14);
   --pad: 32px; --ease: cubic-bezier(.2,.7,.2,1);
   --sans: "Inter Variable", "Inter", "Adwaita Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -22,7 +22,7 @@
     --bg: #0c0c0d; --surface: #18181a; --raised: #1c1c1f; --hover: rgba(255,255,255,.06);
     --line: rgba(255,255,255,.08); --line-2: rgba(255,255,255,.14);
     --ink: #f1f1f2; --ink-2: #b7b7bc; --muted: #7d7d85; --faint: #45454b;
-    --tile: #17171a; --inv: #f1f1f2; --inv-ink: #0c0c0d; --no: #ff6b6b; --ask: #f5a524; --ask-bg: rgba(245,165,36,.14);
+    --tile: #17171a; --inv: #f1f1f2; --inv-ink: #0c0c0d; --no: #ff6b6b; --yes: #30a46c; --ask: #f5a524; --ask-bg: rgba(245,165,36,.14);
     --shadow: 0 0 0 1px rgba(0,0,0,.4), 0 16px 48px rgba(0,0,0,.55);
   }
 }
@@ -114,6 +114,10 @@ input:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-
 .f.no img { filter: grayscale(1); opacity: .32; }
 .f.no::after { content: ""; position: absolute; inset: 0; border-radius: 12px; box-shadow: inset 0 0 0 2.5px var(--no); pointer-events: none;
   background: linear-gradient(to top right, transparent calc(50% - 1.5px), var(--no) calc(50% - 1.5px), var(--no) calc(50% + 1.5px), transparent calc(50% + 1.5px)); }
+.f.yes::after { content: ""; position: absolute; inset: 0; border-radius: 12px; box-shadow: inset 0 0 0 2.5px var(--yes); pointer-events: none; }
+.f.yes .who { background: var(--yes); color: #fff; }
+.chip.skip { border: 1px dashed var(--line); }
+.every { margin: 10px 0 0; }
 .f.else img { filter: grayscale(.6); opacity: .5; }
 .f .who { position: absolute; top: 6px; left: 6px; max-width: calc(100% - 40px); padding: 2px 7px; border-radius: 6px; background: var(--inv);
   color: var(--inv-ink); font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -253,7 +257,7 @@ async function home() {
     <div class="card" data-go="#/person/${p.id}">
       <img src="/face/${p.cover}" alt="">
       <div><h3>${esc(p.name)}</h3><p class="num">${fmt(p.named)} named${p.pending ? ` · ${fmt(p.pending)} to check` : ""}</p></div>
-      <div class="acts">${p.pending ? `<a class="btn ask" href="#/review/${p.id}">Check ${fmt(p.pending)}</a>` : ""}
+      <div class="acts">${p.pending ? `<a class="btn ask" href="#/review/${p.id}">Check ${fmt(p.pending)}</a>` : ""}${p.skipped ? `<a class="btn" href="#/review/${p.id}/skipped">Skipped ${fmt(p.skipped)}</a>` : ""}
         <a class="btn" href="#/person/${p.id}">Through the years</a>${p.named ? `<a class="btn" href="#/odd/${p.id}">Find mistakes</a>` : ""}</div>
       <div class="years">${yearStrip(p, lo, hi)}</div><div class="yl num"><span>${lo}</span><span>${hi}</span></div>
     </div>`).join("") + `</div>`;
@@ -301,68 +305,85 @@ document.addEventListener("keydown", e => {
 });
 
 /* ── check: "is this Ben?" ──────────────────────────────────────────── */
-async function review(pid, year) {
+// Whatever you say about a face is saved the moment you say it, and stays on the face. The buttons
+// at the bottom are for the rest: yes, no, or skip them for now (unnamed, in "Skipped" for later).
+async function review(pid, year, skipped = false) {
   await refresh();
   const p = person(pid);
   if (!p) return location.hash = "#/";
-  crumb(`<a href="#/">People</a>`, `<a href="#/person/${pid}">${esc(p.name)}</a>`, "Check");
-  const r = await api(`/api/people/review?person=${pid}&limit=60${year != null ? `&year=${year}` : ""}`);
-  const name = first(p.name), marks = new Map();   // face id -> "no" | a name (someone else) | 0 (don't name)
+  crumb(`<a href="#/">People</a>`, `<a href="#/person/${pid}">${esc(p.name)}</a>`, skipped ? "Skipped" : "Check");
+  const r = await api(`/api/people/review?person=${pid}&limit=60${year != null ? `&year=${year}` : ""}${skipped ? "&skipped=1" : ""}`);
+  const name = first(p.name), tags = new Map();   // face id -> {k: "yes" | "no" | "else" | "ignore", label}
   const years = Object.entries(p.years).filter(([, [, q]]) => q).map(([y, [n, q]]) => [+y, n, q]).sort((a, b) => a[0] - b[0]);
-  let h = `<h1>Is this ${esc(name)}?</h1><p class="sub">${r.faces.length ? `Click the faces that aren't ${esc(name)}, then confirm the rest. The most likely come first.` : ""}</p>`;
-  h += `<div class="chips"><a class="chip ${year == null ? "on" : ""}" href="#/review/${pid}">All <span class="num">${fmt(r.total)}</span></a>` +
-    years.map(([y, n, q]) => `<a class="chip ${n ? "" : "new"} ${year === y ? "on" : ""}" href="#/review/${pid}/${y}" title="${n ? "" : `No named faces of ${esc(name)} from this year yet`}">${y || "No date"} <span class="num">${fmt(q)}</span></a>`).join("") + `</div>`;
-  if (!r.faces.length) h += `<p class="empty">Nothing left to check${year != null ? ` in ${year || "undated photos"}` : ""}. <a class="btn" href="#/person/${pid}">See ${esc(name)} through the years</a></p>`;
+  let h = `<h1>${skipped ? "Skipped: is" : "Is"} this ${esc(name)}?</h1><p class="sub">${r.faces.length ? `Click a face that isn't ${esc(name)}, or ⋯ to say who it is. Each one is saved as you go; the buttons below are for the faces you haven't marked.` : ""}</p>`;
+  h += `<div class="chips"><a class="chip ${year == null && !skipped ? "on" : ""}" href="#/review/${pid}">All <span class="num">${fmt(p.pending)}</span></a>` +
+    years.map(([y, n, q]) => `<a class="chip ${n ? "" : "new"} ${year === y && !skipped ? "on" : ""}" href="#/review/${pid}/${y}" title="${n ? "" : `No named faces of ${esc(name)} from this year yet`}">${y || "No date"} <span class="num">${fmt(q)}</span></a>`).join("") +
+    (r.skipped ? `<a class="chip skip ${skipped ? "on" : ""}" href="#/review/${pid}/skipped">Skipped <span class="num">${fmt(r.skipped)}</span></a>` : "") + `</div>`;
+  if (!skipped && r.matching > r.faces.length) h += `<p class="every"><button class="btn ask" id="every" title="Name every face waiting${year != null ? ` in ${year || "undated photos"}` : ""} except the ones you've marked or skipped, then look for the mistakes">Yes to all ${fmt(r.matching)}</button></p>`;
+  if (!r.faces.length) h += `<p class="empty">Nothing ${skipped ? "skipped" : "left to check"}${year != null ? ` in ${year || "undated photos"}` : ""}. <a class="btn" href="#/person/${pid}">See ${esc(name)} through the years</a></p>`;
   h += `<div class="grid" id="grid">${r.faces.map(f => tile(f, p)).join("")}</div>`;
-  const more = r.matching > r.faces.length;
-  if (r.faces.length) h += `<div class="foot"><button class="btn" id="none">None of these</button>
-    ${more ? `<button class="btn ask" id="every" title="Name every face waiting${year != null ? ` in ${year || "undated photos"}` : ""}, less the ones you clicked, then look for the mistakes">Yes to all ${fmt(r.matching)}</button>` : ""}
-    <button class="btn pri" id="yes"></button><span class="hint">Click a face to mark it "not ${esc(name)}" · ⋯ to say who it is or see the photo</span></div>`;
+  if (r.faces.length) h += `<div class="foot" id="foot"></div>`;
   $("#main").innerHTML = h;
   window.scrollTo(0, 0);
   if (!r.faces.length) return;
-  const grid = $("#grid");
+  const grid = $("#grid"), foot = $("#foot");
+  const rest = () => r.faces.filter(f => !tags.has(f.id)).map(f => f.id);
   const paint = () => {
     for (const el of grid.children) {
-      const m = marks.get(+el.dataset.id);
-      el.className = "f" + (m === "no" ? " no" : m !== undefined ? " else" : "");
+      const t = tags.get(+el.dataset.id);
+      el.className = "f" + (!t ? "" : t.k === "no" ? " no" : t.k === "yes" ? " yes" : " else");
       $(".who", el)?.remove();
-      if (m !== undefined && m !== "no") el.insertAdjacentHTML("beforeend", `<span class="who">${m === 0 ? "Unnamed" : esc(m)}</span>`);
+      if (t && t.k !== "no") el.insertAdjacentHTML("beforeend", `<span class="who">${esc(t.label)}</span>`);
     }
-    const yes = r.faces.length - marks.size;
-    if ($("#every")) $("#every").textContent = `Yes to all ${fmt(r.matching - marks.size)}`;
-    $("#yes").innerHTML = yes ? `Yes, ${yes === r.faces.length ? "all " : ""}${yes} ${yes === 1 ? "is" : "are"} ${esc(name)} <kbd>↵</kbd>` : `Save and continue <kbd>↵</kbd>`;
+    const n = rest().length, all = n === r.faces.length ? "all " : "the remaining ", N = `${n} ${n === 1 ? "is" : "are"}`;
+    foot.innerHTML = n
+      ? `<button class="btn" data-do="no">No, ${all}${n} ${n === 1 ? "isn't" : "aren't"} ${esc(name)}</button>` +
+        (skipped ? "" : `<button class="btn" data-do="later">Skip ${n} for now</button>`) +
+        `<button class="btn pri" data-do="yes">Yes, ${all}${N} ${esc(name)} <kbd>↵</kbd></button>` +
+        `<span class="hint">Skipped faces stay unnamed, under “Skipped”, for you or someone else to decide later</span>`
+      : `<button class="btn pri" data-do="next">Next <kbd>↵</kbd></button><span class="hint">Every face here is marked and saved</span>`;
   };
-  grid.onclick = e => {
-    const el = e.target.closest(".f");
-    if (!el) return;
-    const id = +el.dataset.id;
-    if (e.target.closest(".more")) return faceMenu(e.target, id, {
-      name: who => { marks.set(id, who); paint(); }, ignore: () => { marks.set(id, 0); paint(); } });
-    marks.has(id) ? marks.delete(id) : marks.set(id, "no");
+  let busy = false;
+  const send = async body => { busy = true; try { return await api("/api/people/label", body); } finally { busy = false; } };
+  const mark = async (id, body, tag) => {          // replaces whatever was said about this face before
+    await send({ ...(tags.has(id) || skipped ? { undo: [id], undo_person: pid } : {}), ...body });
+    tag ? tags.set(id, tag) : tags.delete(id);
     paint();
   };
-  $("#none").onclick = () => { r.faces.forEach(f => marks.has(f.id) || marks.set(f.id, "no")); paint(); };
-  const save = async () => {
-    $("#yes").disabled = true;
-    const ids = r.faces.map(f => f.id), yes = ids.filter(i => !marks.has(i)), not = ids.filter(i => marks.has(i));
-    for (const [id, m] of marks) if (m !== "no") await api("/api/people/label", { faces: [id], person: m });
-    await api("/api/people/label", { faces: yes, person: pid, not, not_person: pid });
-    toast(yes.length ? `${yes.length} named ${name}` : "Saved");
-    review(pid, year);
+  const no = id => mark(id, { not: [id], not_person: pid }, { k: "no" });
+  grid.onclick = e => {
+    const el = e.target.closest(".f");
+    if (!el || busy) return;
+    const id = +el.dataset.id;
+    if (e.target.closest(".more")) return faceMenu(e.target, id, {
+      not: p, onNot: () => no(id),
+      name: who => who.toLowerCase() === p.name.toLowerCase()
+        ? mark(id, { faces: [id], person: pid }, { k: "yes", label: p.name })
+        : mark(id, { faces: [id], person: who }, { k: "else", label: who }),
+      ignore: () => mark(id, { faces: [id], person: 0 }, { k: "ignore", label: "Unnamed" }) });
+    tags.has(id) ? mark(id, {}, null) : no(id);    // click: "not Ben"; click again: take it back
   };
-  $("#yes").onclick = save;
+  const finish = async what => {
+    if (busy) return;
+    const ids = rest();
+    foot.querySelectorAll("button").forEach(b => b.disabled = true);
+    if (what === "yes") await send({ faces: ids, person: pid });
+    if (what === "no") await send({ not: ids, not_person: pid });
+    if (what === "later") await send({ later: ids, later_person: pid });
+    if (what !== "next") toast({ yes: `${ids.length} named ${name}`, no: `${ids.length} marked not ${name}`, later: `${ids.length} skipped for later` }[what]);
+    review(pid, year, skipped);
+  };
+  foot.onclick = e => { const b = e.target.closest("[data-do]"); if (b) finish(b.dataset.do); };
   if ($("#every")) $("#every").onclick = async () => {
-    $("#every").disabled = $("#yes").disabled = true;
-    const not = r.faces.map(f => f.id).filter(i => marks.has(i));
-    for (const [id, m] of marks) if (m !== "no") await api("/api/people/label", { faces: [id], person: m });
-    const n = r.matching - not.length;
-    await api("/api/people/label", { pending: { person: pid, year }, person: pid, not, not_person: pid });
+    if (busy) return;
+    $("#every").disabled = true;
+    const n = r.matching - [...tags.values()].length;
+    await send({ pending: { person: pid, year }, person: pid });
     toast(`${fmt(n)} named ${name}. The least likely are first here`);
     location.hash = `#/odd/${pid}${year != null ? `/${year}` : ""}`;
   };
   view.teardown = on("keydown", e => {
-    if (e.key === "Enter" && !e.target.matches("input") && !$(".lb") && !$(".menu")) { e.preventDefault(); save(); }
+    if (e.key === "Enter" && !e.target.matches("input") && !$(".lb") && !$(".menu")) { e.preventDefault(); finish(rest().length ? "yes" : "next"); }
   });
   paint();
 }
@@ -511,6 +532,7 @@ function faceMenu(anchor, id, act) {
     close();
     if (b.dataset.name) act.name(b.dataset.name);
     else if (b.hasAttribute("data-ignore")) act.ignore();
+    else if (b.hasAttribute("data-not") && act.onNot) act.onNot();
     else if (b.hasAttribute("data-not")) { await api("/api/people/label", { faces: [id], person: null }); toast(`Not ${first(act.not.name)}`); act.saved?.(); }
     else openPhoto(id, act.saved);
   };
@@ -568,7 +590,7 @@ function route() {
   $(".lb")?.remove();
   $("#main").onclick = null;
   const [, name, a, b] = location.hash.split("/");
-  if (name === "review" && a) return review(+a, b != null ? +b : null);
+  if (name === "review" && a) return b === "skipped" ? review(+a, null, true) : review(+a, b != null ? +b : null);
   if (name === "person" && a) return personView(+a);
   if (name === "odd" && a) return odd(+a, b != null ? +b : null);
   home();
