@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>People · Photo Estate</title>
+<meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c0c0d" media="(prefers-color-scheme: dark)">
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fbfbfa; --surface: #f1f1ef; --raised: #ffffff; --hover: rgba(0,0,0,.05);
+  --line: rgba(0,0,0,.08); --line-2: rgba(0,0,0,.14);
+  --ink: #131314; --ink-2: #4b4b51; --muted: #86868d; --faint: #c9c9cd;
+  --tile: #ececea; --inv: #131314; --inv-ink: #ffffff; --no: #e5484d; --ask: #c2710c; --ask-bg: rgba(217,119,6,.12);
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 12px 36px rgba(0,0,0,.14);
+  --pad: 32px; --ease: cubic-bezier(.2,.7,.2,1);
+  --sans: "Inter Variable", "Inter", "Adwaita Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0c0d; --surface: #18181a; --raised: #1c1c1f; --hover: rgba(255,255,255,.06);
+    --line: rgba(255,255,255,.08); --line-2: rgba(255,255,255,.14);
+    --ink: #f1f1f2; --ink-2: #b7b7bc; --muted: #7d7d85; --faint: #45454b;
+    --tile: #17171a; --inv: #f1f1f2; --inv-ink: #0c0c0d; --no: #ff6b6b; --ask: #f5a524; --ask-bg: rgba(245,165,36,.14);
+    --shadow: 0 0 0 1px rgba(0,0,0,.4), 0 16px 48px rgba(0,0,0,.55);
+  }
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
+body { margin: 0; color: var(--ink); font: 14px/1.4 var(--sans); letter-spacing: -.006em; -webkit-font-smoothing: antialiased; }
+button, input { font: inherit; letter-spacing: inherit; color: inherit; }
+button { background: none; border: 0; padding: 0; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+.num { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+header { position: sticky; top: 0; z-index: 10; padding: 14px var(--pad); display: flex; align-items: center; gap: 14px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent); border-bottom: 1px solid var(--line);
+  -webkit-backdrop-filter: saturate(1.5) blur(20px); backdrop-filter: saturate(1.5) blur(20px); }
+header .crumb { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; min-width: 0; }
+header .crumb a { color: var(--muted); font-weight: 500; }
+header .crumb a:hover { color: var(--ink); }
+header .crumb i { color: var(--faint); font-style: normal; }
+header .sum { margin-left: auto; color: var(--muted); font-size: 13px; text-align: right; }
+header .sum b { color: var(--ask); font-weight: 600; }
+main { padding: 28px var(--pad) 140px; max-width: 1500px; margin: 0 auto; }
+h1 { margin: 0; font-size: 28px; line-height: 1.15; font-weight: 600; letter-spacing: -.028em; }
+h2 { margin: 44px 0 4px; font-size: 18px; font-weight: 600; letter-spacing: -.015em; }
+.sub { color: var(--muted); margin: 6px 0 0; max-width: 68ch; }
+.btn { height: 34px; padding: 0 14px; border-radius: 9px; font-weight: 500; font-size: 13.5px; display: inline-flex;
+  align-items: center; gap: 7px; white-space: nowrap; background: var(--surface); transition: background .15s, opacity .15s; }
+.btn:hover { background: var(--line-2); }
+.btn.pri { background: var(--inv); color: var(--inv-ink); }
+.btn.pri:hover { opacity: .86; }
+.btn.ask { background: var(--ask-bg); color: var(--ask); }
+.btn.ask:hover { background: color-mix(in srgb, var(--ask) 24%, transparent); }
+.btn:disabled { opacity: .4; pointer-events: none; }
+.btn kbd { font: 500 11px var(--sans); opacity: .6; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; }
+input[type=text], input[type=month] { height: 34px; padding: 0 10px; border-radius: 9px; border: 0; outline: 0; background: var(--surface);
+  box-shadow: inset 0 0 0 1px transparent; min-width: 0; }
+input:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 4px var(--hover); }
+
+/* ── home ───────────────────────────────────────────────────────────── */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; margin-top: 18px; }
+.card { display: grid; grid-template-columns: 84px 1fr; gap: 6px 16px; padding: 16px; border-radius: 16px; background: var(--surface);
+  align-items: center; cursor: pointer; transition: background .15s, transform .2s var(--ease); }
+.card:hover { background: color-mix(in srgb, var(--surface) 70%, var(--line-2)); }
+.card img { width: 84px; height: 84px; border-radius: 50%; object-fit: cover; background: var(--tile); grid-row: span 2; }
+.card h3 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.015em; }
+.card p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.card .acts { display: flex; gap: 8px; align-items: center; }
+.years { grid-column: 1 / -1; display: flex; align-items: flex-end; gap: 2px; height: 44px; margin-top: 8px; }
+.years div { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; gap: 1px; position: relative; }
+.years i { display: block; border-radius: 2px; min-height: 0; }
+.years i.n { background: var(--ink); opacity: .78; }
+.years i.p { background: var(--ask); }
+.years .gap::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 2px; background: var(--line-2); }
+.yl { grid-column: 1 / -1; display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
+.legend { display: flex; gap: 16px; color: var(--muted); font-size: 12.5px; margin-top: 10px; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; background: var(--ink); opacity: .78; }
+.legend i.p { background: var(--ask); opacity: 1; }
+.legend i.g { background: var(--line-2); opacity: 1; height: 3px; vertical-align: middle; }
+
+.group { display: grid; grid-template-columns: 1fr; gap: 10px; padding: 16px; border-radius: 16px; background: var(--surface); margin-top: 12px; }
+.group .strip { display: flex; gap: 6px; overflow: hidden; }
+.group .strip img { width: 76px; height: 76px; border-radius: 10px; object-fit: cover; background: var(--tile); flex: none; cursor: zoom-in; }
+.group .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.group .meta { color: var(--muted); font-size: 13px; margin-right: auto; }
+.group input { width: 200px; }
+.empty { color: var(--muted); padding: 28px 0; }
+
+/* ── faces ──────────────────────────────────────────────────────────── */
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 18px 0 4px; }
+.chip { height: 30px; padding: 0 11px; border-radius: 8px; font-size: 13px; font-weight: 500; color: var(--ink-2);
+  display: inline-flex; align-items: center; gap: 6px; background: var(--surface); }
+.chip:hover { background: var(--line-2); }
+.chip.on { background: var(--inv); color: var(--inv-ink); }
+.chip span { opacity: .6; font-weight: 400; }
+.chip.new { box-shadow: inset 0 0 0 1.5px var(--ask); color: var(--ask); background: none; }
+.chip.new.on { background: var(--ask); color: #fff; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; margin-top: 16px; }
+.f { position: relative; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: var(--tile); cursor: pointer;
+  user-select: none; -webkit-user-select: none; transition: transform .15s var(--ease), opacity .15s; }
+.f img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; transition: filter .15s, opacity .15s; }
+.f .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 8px 5px; font-size: 11.5px; font-weight: 500; color: #fff;
+  background: linear-gradient(transparent, rgba(0,0,0,.6)); display: flex; justify-content: space-between; pointer-events: none; }
+.f .cap em { font-style: normal; opacity: .75; }
+.f .more { position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; border-radius: 8px; background: rgba(0,0,0,.5); color: #fff;
+  display: grid; place-items: center; opacity: 0; transition: opacity .15s; font-size: 15px; line-height: 1; }
+.f:hover .more, .f:focus-within .more { opacity: 1; }
+@media (hover: none) { .f .more { opacity: .85; } }
+.f.no img { filter: grayscale(1); opacity: .32; }
+.f.no::after { content: ""; position: absolute; inset: 0; border-radius: 12px; box-shadow: inset 0 0 0 2.5px var(--no); pointer-events: none;
+  background: linear-gradient(to top right, transparent calc(50% - 1.5px), var(--no) calc(50% - 1.5px), var(--no) calc(50% + 1.5px), transparent calc(50% + 1.5px)); }
+.f.else img { filter: grayscale(.6); opacity: .5; }
+.f .who { position: absolute; top: 6px; left: 6px; max-width: calc(100% - 40px); padding: 2px 7px; border-radius: 6px; background: var(--inv);
+  color: var(--inv-ink); font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.f .src { position: absolute; top: 6px; left: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--ask); box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
+.foot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 9; padding: 14px var(--pad) calc(14px + env(safe-area-inset-bottom));
+  display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap;
+  background: color-mix(in srgb, var(--bg) 88%, transparent); border-top: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); }
+.foot .btn { height: 42px; padding: 0 20px; font-size: 14.5px; border-radius: 11px; }
+.foot .hint { color: var(--muted); font-size: 13px; flex-basis: 100%; text-align: center; }
+
+/* ── person ─────────────────────────────────────────────────────────── */
+.who-head { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.who-head > img { width: 112px; height: 112px; border-radius: 50%; object-fit: cover; background: var(--tile); }
+.who-head input.name { font-size: 28px; font-weight: 600; letter-spacing: -.028em; height: 44px; background: none; padding: 0 8px; margin-left: -8px; width: min(100%, 420px); }
+.who-head input.name:hover { background: var(--surface); }
+.who-head label { color: var(--muted); font-size: 13px; display: inline-flex; align-items: center; gap: 8px; margin-right: 12px; }
+.yr { display: grid; grid-template-columns: 96px 1fr; gap: 14px; padding: 14px 0; border-top: 1px solid var(--line); align-items: start; }
+.yr:first-of-type { margin-top: 26px; }
+.yr .y { font-size: 20px; font-weight: 600; letter-spacing: -.02em; }
+.yr .y small { display: block; font-size: 12.5px; font-weight: 400; color: var(--muted); letter-spacing: 0; margin-top: 2px; }
+.yr .strip { display: flex; gap: 6px; flex-wrap: wrap; }
+.yr .strip .f { width: 84px; flex: none; border-radius: 10px; }
+.yr .strip.all .f { width: 104px; }
+.yr .links { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.yr.none .y { color: var(--muted); }
+.yr.none .strip { color: var(--muted); font-size: 13px; padding-top: 4px; }
+
+/* ── popover menu and photo ─────────────────────────────────────────── */
+.menu { position: fixed; z-index: 40; width: 232px; padding: 6px; border-radius: 12px; background: var(--raised); box-shadow: var(--shadow); }
+.menu input { width: 100%; margin-bottom: 4px; }
+.menu button { display: flex; width: 100%; height: 32px; align-items: center; padding: 0 10px; border-radius: 7px; text-align: left; gap: 8px; }
+.menu button:hover, .menu button.hi { background: var(--hover); }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 5px 0; }
+.menu .dim { color: var(--muted); }
+.lb { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.95); display: grid; grid-template-rows: 1fr auto; color: #fff; }
+.lb .stage { position: relative; min-height: 0; display: grid; place-items: center; padding: 20px; }
+.lb .wrap { position: relative; max-width: 100%; max-height: 100%; }
+.lb .wrap img { display: block; max-width: calc(100vw - 40px); max-height: calc(100vh - 150px); border-radius: 6px; }
+.lb .bx { position: absolute; border: 2px solid rgba(255,255,255,.55); border-radius: 8px; cursor: pointer; }
+.lb .bx.on { border-color: #ffd60a; box-shadow: 0 0 0 9999px rgba(0,0,0,.28); }
+.lb .bx span { position: absolute; left: 50%; top: 100%; transform: translate(-50%, 5px); padding: 1px 7px; border-radius: 6px; font-size: 12px;
+  font-weight: 600; white-space: nowrap; background: rgba(0,0,0,.72); }
+.lb .bx.on span { background: #ffd60a; color: #111; }
+.lb .bar { padding: 14px 20px calc(14px + env(safe-area-inset-bottom)); display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.lb .bar .t { color: rgba(255,255,255,.7); font-size: 13.5px; margin-right: 6px; }
+.lb .btn { background: rgba(255,255,255,.14); color: #fff; }
+.lb .btn:hover { background: rgba(255,255,255,.24); }
+.lb input[type=text] { background: rgba(255,255,255,.14); color: #fff; width: 190px; }
+.lb .close { position: absolute; top: 14px; right: 16px; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.14); font-size: 18px; color: #fff; }
+.toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 50; padding: 9px 16px; border-radius: 10px; background: var(--inv);
+  color: var(--inv-ink); font-weight: 500; font-size: 13.5px; box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .2s; }
+.toast.on { opacity: 1; }
+@media (max-width: 640px) {
+  :root { --pad: 16px; }
+  h1 { font-size: 23px; }
+  .cards { grid-template-columns: 1fr; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 6px; }
+  .yr { grid-template-columns: 1fr; gap: 8px; }
+  .yr .y small { display: inline; margin-left: 8px; }
+  header .sum { display: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="crumb" id="crumb"></div>
+  <div class="sum num" id="sum"></div>
+</header>
+<main id="main"></main>
+<datalist id="names"></datalist>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt = n => Number(n).toLocaleString("en-US");
+const api = async (path, body) => {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  if (!r.ok) throw new Error(`${path}: ${r.status}`);
+  return r.json();
+};
+const first = name => name.split(" ")[0];
+let O = null;                      // the overview: people, counts
+let view = { teardown: null };     // the current view's key handler
+
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("on");
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2200);
+}
+const person = id => O.people.find(p => p.id === id);
+function age(p, f) {               // "3y", "8m" when their birth month is known
+  if (!p?.born || !f.date) return "";
+  const [by, bm = 7] = p.born.split("-").map(Number), [y, m] = f.date.split("-").map(Number);
+  const months = (y - by) * 12 + (m - bm);
+  return months < 0 ? "" : months < 24 && p.born.length > 4 ? `${months}m` : `${Math.floor(months / 12)}y`;
+}
+async function refresh() {
+  O = await api("/api/people");
+  $("#names").innerHTML = O.people.map(p => `<option value="${esc(p.name)}">`).join("");
+  $("#sum").innerHTML = `${fmt(O.faces)} faces in ${fmt(O.photos)} photos · ${fmt(O.named)} named` +
+    (O.pending ? ` · <b>${fmt(O.pending)} to check</b>` : "");
+}
+function crumb(...parts) {
+  $("#crumb").innerHTML = [`<a href="/">Photos</a>`, ...parts].join("<i>/</i>");
+}
+function tile(f, p, extra = "") {
+  const a = age(p, f);
+  return `<div class="f" data-id="${f.id}" tabindex="0"><img loading="lazy" src="/face/${f.id}" alt="">` +
+    `<div class="cap"><span>${f.year || "No date"}</span><em>${a}</em></div>${extra}` +
+    `<button class="more" title="More" aria-label="More">⋯</button></div>`;
+}
+
+/* ── home ───────────────────────────────────────────────────────────── */
+function yearStrip(p, lo, hi) {
+  const max = Math.max(1, ...Object.values(p.years).map(([n, q]) => n + q));
+  let h = "";
+  for (let y = lo; y <= hi; y++) {
+    const [n, q] = p.years[y] || [0, 0];
+    const born = p.born ? +p.born.slice(0, 4) : -1;
+    const px = v => v ? Math.max(3, Math.round(40 * Math.sqrt(v / max))) : 0;
+    h += `<div title="${y}: ${fmt(n)} named${q ? `, ${fmt(q)} to check` : ""}" class="${!n && !q && y >= born ? "gap" : ""}">` +
+      (q ? `<i class="p" style="height:${px(q)}px"></i>` : "") + (n ? `<i class="n" style="height:${px(n)}px"></i>` : "") + `</div>`;
+  }
+  return h;
+}
+async function home() {
+  crumb("People");
+  await refresh();
+  const ys = O.people.flatMap(p => Object.keys(p.years).map(Number)).filter(y => y > 0);
+  const lo = Math.min(...ys), hi = Math.max(...ys);
+  let h = `<h1>People</h1><p class="sub">Each person is recognised from their own named faces of about the same time, so a child is followed year by year.
+    Confirm the faces in amber and the years next to them open up.</p>`;
+  if (!O.people.length) h += `<p class="empty">No faces yet. Run <code>faces.py run</code> first.</p>`;
+  h += `<div class="cards">` + O.people.map(p => `
+    <div class="card" data-go="#/person/${p.id}">
+      <img src="/face/${p.cover}" alt="">
+      <div><h3>${esc(p.name)}</h3><p class="num">${fmt(p.named)} named${p.pending ? ` · ${fmt(p.pending)} to check` : ""}</p></div>
+      <div class="acts">${p.pending ? `<a class="btn ask" href="#/review/${p.id}">Check ${fmt(p.pending)}</a>` : ""}
+        <a class="btn" href="#/person/${p.id}">Through the years</a></div>
+      <div class="years">${yearStrip(p, lo, hi)}</div><div class="yl num"><span>${lo}</span><span>${hi}</span></div>
+    </div>`).join("") + `</div>`;
+  if (O.people.length) h += `<div class="legend"><span><i></i>named</span><span><i class="p"></i>waiting for you</span><span><i class="g"></i>no faces found that year</span></div>`;
+  h += `<h2>Who is this?</h2><p class="sub">Faces that turn up often and don't look like anyone named yet. Name the ones you care about; the rest can stay unnamed.</p><div id="unknown"><p class="empty">Looking…</p></div>`;
+  $("#main").innerHTML = h;
+  loadUnknown();
+}
+async function loadUnknown() {
+  const u = await api("/api/people/unknown?limit=14");
+  const el = $("#unknown");
+  if (!el) return;
+  if (u.state !== "ready") { el.innerHTML = `<p class="empty">Grouping the unnamed faces…</p>`; return setTimeout(loadUnknown, 1500); }
+  if (!u.groups.length) { el.innerHTML = `<p class="empty">Nobody unnamed turns up often.</p>`; return; }
+  el.innerHTML = u.groups.map(g => `
+    <div class="group" data-cluster="${g.cluster}">
+      <div class="strip">${g.faces.map(f => `<img loading="lazy" src="/face/${f.id}" data-photo="${f.id}" alt="">`).join("")}</div>
+      <div class="row">
+        <span class="meta num">${fmt(g.n)} faces · ${g.from && g.from !== g.to ? `${g.from}–${g.to}` : g.to || "no date"}</span>
+        ${g.guess ? `<button class="btn" data-name="${esc(g.guess.name)}">${esc(first(g.guess.name))}?</button>` : ""}
+        <input type="text" list="names" placeholder="Name" autocomplete="off" spellcheck="false">
+        <button class="btn pri" data-save>Name</button>
+        <button class="btn" data-ignore>Not someone I know</button>
+      </div>
+    </div>`).join("");
+}
+document.addEventListener("click", async e => {
+  const g = e.target.closest(".group");
+  if (g && e.target.closest("[data-save],[data-ignore],[data-name]")) {
+    const b = e.target.closest("button"), cluster = +g.dataset.cluster;
+    const name = b.dataset.name || (b.hasAttribute("data-save") ? $("input", g).value.trim() : null);
+    if (b.hasAttribute("data-save") && !name) return $("input", g).focus();
+    g.style.opacity = .4;
+    await api("/api/people/label", { cluster, person: name ?? 0 });
+    toast(name ? `Named ${name}` : "Left unnamed");
+    home();
+  }
+  const go = e.target.closest("[data-go]");
+  if (go && !e.target.closest("a,button")) location.hash = go.dataset.go;
+  const ph = e.target.closest("[data-photo]");
+  if (ph) openPhoto(+ph.dataset.photo);
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.matches(".group input")) $("[data-save]", e.target.closest(".group")).click();
+});
+
+/* ── check: "is this Ben?" ──────────────────────────────────────────── */
+async function review(pid, year) {
+  await refresh();
+  const p = person(pid);
+  if (!p) return location.hash = "#/";
+  crumb(`<a href="#/">People</a>`, `<a href="#/person/${pid}">${esc(p.name)}</a>`, "Check");
+  const r = await api(`/api/people/review?person=${pid}&limit=60${year != null ? `&year=${year}` : ""}`);
+  const name = first(p.name), marks = new Map();   // face id -> "no" | a name (someone else) | 0 (don't name)
+  const years = Object.entries(p.years).filter(([, [, q]]) => q).map(([y, [n, q]]) => [+y, n, q]).sort((a, b) => a[0] - b[0]);
+  let h = `<h1>Is this ${esc(name)}?</h1><p class="sub">${r.faces.length ? `Click the faces that aren't ${esc(name)}, then confirm the rest. The most likely come first.` : ""}</p>`;
+  h += `<div class="chips"><a class="chip ${year == null ? "on" : ""}" href="#/review/${pid}">All <span class="num">${fmt(r.total)}</span></a>` +
+    years.map(([y, n, q]) => `<a class="chip ${n ? "" : "new"} ${year === y ? "on" : ""}" href="#/review/${pid}/${y}" title="${n ? "" : `No named faces of ${esc(name)} from this year yet`}">${y || "No date"} <span class="num">${fmt(q)}</span></a>`).join("") + `</div>`;
+  if (!r.faces.length) h += `<p class="empty">Nothing left to check${year != null ? ` in ${year || "undated photos"}` : ""}. <a class="btn" href="#/person/${pid}">See ${esc(name)} through the years</a></p>`;
+  h += `<div class="grid" id="grid">${r.faces.map(f => tile(f, p)).join("")}</div>`;
+  if (r.faces.length) h += `<div class="foot"><button class="btn" id="none">None of these</button>
+    <button class="btn pri" id="yes"></button><span class="hint">Click a face to mark it "not ${esc(name)}" · ⋯ to say who it is or see the photo</span></div>`;
+  $("#main").innerHTML = h;
+  window.scrollTo(0, 0);
+  if (!r.faces.length) return;
+  const grid = $("#grid");
+  const paint = () => {
+    for (const el of grid.children) {
+      const m = marks.get(+el.dataset.id);
+      el.className = "f" + (m === "no" ? " no" : m !== undefined ? " else" : "");
+      $(".who", el)?.remove();
+      if (m !== undefined && m !== "no") el.insertAdjacentHTML("beforeend", `<span class="who">${m === 0 ? "Unnamed" : esc(m)}</span>`);
+    }
+    const yes = r.faces.length - marks.size;
+    $("#yes").innerHTML = yes ? `Yes, ${yes === r.faces.length ? "all " : ""}${yes} ${yes === 1 ? "is" : "are"} ${esc(name)} <kbd>↵</kbd>` : `Save and continue <kbd>↵</kbd>`;
+  };
+  grid.onclick = e => {
+    const el = e.target.closest(".f");
+    if (!el) return;
+    const id = +el.dataset.id;
+    if (e.target.closest(".more")) return faceMenu(e.target, id, {
+      name: who => { marks.set(id, who); paint(); }, ignore: () => { marks.set(id, 0); paint(); } });
+    marks.has(id) ? marks.delete(id) : marks.set(id, "no");
+    paint();
+  };
+  $("#none").onclick = () => { r.faces.forEach(f => marks.has(f.id) || marks.set(f.id, "no")); paint(); };
+  const save = async () => {
+    $("#yes").disabled = true;
+    const ids = r.faces.map(f => f.id), yes = ids.filter(i => !marks.has(i)), not = ids.filter(i => marks.has(i));
+    for (const [id, m] of marks) if (m !== "no") await api("/api/people/label", { faces: [id], person: m });
+    await api("/api/people/label", { faces: yes, person: pid, not, not_person: pid });
+    toast(yes.length ? `${yes.length} named ${name}` : "Saved");
+    review(pid, year);
+  };
+  $("#yes").onclick = save;
+  view.teardown = on("keydown", e => {
+    if (e.key === "Enter" && !e.target.matches("input") && !$(".lb") && !$(".menu")) { e.preventDefault(); save(); }
+  });
+  paint();
+}
+
+/* ── one person, through the years ──────────────────────────────────── */
+async function personView(pid) {
+  await refresh();
+  const p = person(pid);
+  if (!p) return location.hash = "#/";
+  crumb(`<a href="#/">People</a>`, esc(p.name));
+  const r = await api(`/api/people/person?person=${pid}&limit=14`);
+  const ys = Object.keys(p.years).map(Number).filter(y => y > 0);
+  const lo = Math.min(...ys, p.born ? +p.born.slice(0, 4) : 9999), hi = Math.max(...ys);
+  let h = `<div class="who-head"><img src="/face/${p.cover}" alt=""><div>
+    <input class="name" type="text" value="${esc(p.name)}" aria-label="Name" spellcheck="false" autocomplete="off">
+    <p class="sub num">${fmt(p.named)} faces named: ${fmt(p.you)} by you, ${fmt(p.google)} from Google's tags, ${fmt(p.auto)} matched to those${p.pending ? ` · ${fmt(p.pending)} waiting for you` : ""}</p>
+    <p style="margin:12px 0 0"><label>Born <input type="month" id="born" value="${p.born && p.born.length > 4 ? p.born : ""}"></label>
+    ${p.pending ? `<a class="btn ask" href="#/review/${pid}">Check ${fmt(p.pending)}</a>` : ""}</p></div></div>`;
+  const row = y => {
+    const [n, q] = p.years[y] || [0, 0], fs = r.years[y] || [];
+    const a = p.born && y ? y - +p.born.slice(0, 4) : null;
+    return `<div class="yr ${n ? "" : "none"}" data-y="${y}"><div class="y num">${y || "No date"}<small>${a != null && a >= 0 ? `age ${a} · ` : ""}${n ? fmt(n) : "none"} named</small></div><div>
+      <div class="strip">${fs.length ? fs.map(f => tile(f, p)).join("") : q ? `No named faces yet.` : `No faces of ${esc(first(p.name))} found.`}</div>
+      <div class="links">${q ? `<a class="btn ask" href="#/review/${pid}/${y}">Check ${fmt(q)}</a>` : ""}${n > fs.length ? `<button class="btn" data-all="${y}">All ${fmt(n)}</button>` : ""}</div></div></div>`;
+  };
+  for (let y = lo; y <= hi; y++) h += row(y);
+  if (p.years[0]) h += row(0);
+  $("#main").innerHTML = h;
+  window.scrollTo(0, 0);
+  const rename = async el => {
+    const name = el.value.trim();
+    if (!name || name === p.name) return el.value = p.name;
+    const other = O.people.find(q => q.id !== pid && q.name.toLowerCase() === name.toLowerCase());
+    if (other && !confirm(`${other.name} already exists. Merge ${p.name} into ${other.name}?`)) return el.value = p.name;
+    const got = await api("/api/people/person", { id: pid, name });
+    toast(other ? `Merged into ${other.name}` : "Renamed");
+    got.id === pid ? personView(pid) : location.hash = `#/person/${got.id}`;
+  };
+  $("input.name").onchange = e => rename(e.target);
+  $("#born").onchange = async e => { await api("/api/people/person", { id: pid, born: e.target.value }); personView(pid); };
+  $("#main").onclick = async e => {
+    const all = e.target.closest("[data-all]");
+    if (all) {
+      const y = +all.dataset.all, got = await api(`/api/people/person?person=${pid}&year=${y}&limit=2000`);
+      const strip = $(".strip", all.closest(".yr"));
+      strip.classList.add("all");
+      strip.innerHTML = got.faces.map(f => tile(f, p)).join("");
+      return all.remove();
+    }
+    const el = e.target.closest(".f");
+    if (!el) return;
+    const id = +el.dataset.id, done = () => personView(pid);
+    if (e.target.closest(".more")) return faceMenu(e.target, id, {
+      not: p, saved: done,
+      name: async who => { await api("/api/people/label", { faces: [id], person: who, not: [id], not_person: pid }); toast(`Named ${who}`); done(); },
+      ignore: async () => { await api("/api/people/label", { faces: [id], person: 0 }); done(); } });
+    openPhoto(id, done);
+  };
+}
+
+/* ── the ⋯ menu on a face ───────────────────────────────────────────── */
+function faceMenu(anchor, id, act) {
+  $(".menu")?.remove();
+  const m = document.createElement("div");
+  m.className = "menu";
+  const list = q => O.people.filter(p => p.name.toLowerCase().includes(q.toLowerCase())).slice(0, 7);
+  const draw = q => {
+    const hits = list(q), exact = hits.some(p => p.name.toLowerCase() === q.trim().toLowerCase());
+    $(".opts", m).innerHTML = hits.map(p => `<button data-name="${esc(p.name)}">${esc(p.name)}</button>`).join("") +
+      (q.trim() && !exact ? `<button data-name="${esc(q.trim())}">New person “${esc(q.trim())}”</button>` : "");
+  };
+  m.innerHTML = `<input type="text" placeholder="This is…" autocomplete="off" spellcheck="false"><div class="opts"></div><hr>` +
+    (act.not ? `<button data-not>Not ${esc(first(act.not.name))}</button>` : "") +
+    `<button data-ignore class="dim">Don't name this face</button><button data-photo-open>See the photo</button>`;
+  document.body.append(m);
+  const r = anchor.getBoundingClientRect();
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - 240)) + "px";
+  m.style.top = Math.min(r.bottom + 6, innerHeight - m.offsetHeight - 8) + "px";
+  const inp = $("input", m);
+  draw("");
+  inp.oninput = () => draw(inp.value);
+  inp.onkeydown = e => { if (e.key === "Enter") $(".opts button", m)?.click(); if (e.key === "Escape") close(); };
+  if (matchMedia("(hover: hover)").matches) inp.focus();
+  const close = () => { m.remove(); document.removeEventListener("pointerdown", away, true); };
+  const away = e => { if (!m.contains(e.target)) close(); };
+  setTimeout(() => document.addEventListener("pointerdown", away, true));
+  m.onclick = async e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    close();
+    if (b.dataset.name) act.name(b.dataset.name);
+    else if (b.hasAttribute("data-ignore")) act.ignore();
+    else if (b.hasAttribute("data-not")) { await api("/api/people/label", { faces: [id], person: null }); toast(`Not ${first(act.not.name)}`); act.saved?.(); }
+    else openPhoto(id, act.saved);
+  };
+}
+
+/* ── the whole photo, with every face in it ─────────────────────────── */
+async function openPhoto(id, changed) {
+  $(".lb")?.remove();
+  const d = await api(`/api/people/photo?face=${id}`);
+  const lb = document.createElement("div");
+  lb.className = "lb";
+  let sel = id, dirty = false;
+  const draw = () => {
+    const f = d.faces.find(x => x.id === sel);
+    lb.innerHTML = `<div class="stage"><div class="wrap"><img src="/preview/${d.face.sha}" alt="">` +
+      d.faces.map(x => `<div class="bx ${x.id === sel ? "on" : ""}" data-id="${x.id}" style="left:${x.box[0] * 100}%;top:${x.box[1] * 100}%;width:${x.box[2] * 100}%;height:${x.box[3] * 100}%">` +
+        `<span>${x.person > 0 ? esc(first(x.name)) : x.person === 0 ? "unnamed" : "?"}</span></div>`).join("") +
+      `</div><button class="close" aria-label="Close">✕</button></div>
+      <div class="bar"><span class="t">${f.date || "No date"} · ${f.person > 0 ? `${esc(f.name)} (${{ you: "named by you", google: "from Google's tag", auto: "matched automatically" }[f.src]})` : f.person === 0 ? "left unnamed" : "not named"}</span>
+        <input type="text" list="names" placeholder="This is…" autocomplete="off" spellcheck="false">
+        <button class="btn" data-set>Name</button>
+        ${f.person > 0 ? `<button class="btn" data-not>Not ${esc(first(f.name))}</button>` : ""}
+        ${f.person > 0 && f.src !== "you" ? `<button class="btn" data-yes>Yes, ${esc(first(f.name))}</button>` : ""}
+        <button class="btn" data-ignore>Don't name</button></div>`;
+  };
+  const close = () => { lb.remove(); off(); if (dirty) changed ? changed() : route(); };
+  const send = async body => {
+    await api("/api/people/label", body);
+    dirty = true;
+    Object.assign(d, await api(`/api/people/photo?face=${sel}`));
+    await refresh();
+    draw();
+  };
+  lb.onclick = e => {
+    const f = d.faces.find(x => x.id === sel), bx = e.target.closest(".bx");
+    if (bx) { sel = +bx.dataset.id; return draw(); }
+    if (e.target.closest("[data-set]")) { const v = $("input", lb).value.trim(); return v ? send({ faces: [sel], person: v, ...(f.person > 0 ? { not: [sel], not_person: f.person } : {}) }) : $("input", lb).focus(); }
+    if (e.target.closest("[data-not]")) return send({ faces: [sel], person: null });
+    if (e.target.closest("[data-yes]")) return send({ faces: [sel], person: f.person });
+    if (e.target.closest("[data-ignore]")) return send({ faces: [sel], person: 0 });
+    if (e.target.closest(".close") || e.target.classList.contains("stage")) close();
+  };
+  const off = on("keydown", e => {
+    if (e.key === "Escape") close();
+    if (e.key === "Enter" && e.target.matches(".lb input")) $("[data-set]", lb).click();
+  });
+  draw();
+  document.body.append(lb);
+}
+
+function on(type, fn) { document.addEventListener(type, fn); return () => document.removeEventListener(type, fn); }
+function route() {
+  view.teardown?.(); view.teardown = null;
+  $(".menu")?.remove();
+  $(".lb")?.remove();
+  $("#main").onclick = null;
+  const [, name, a, b] = location.hash.split("/");
+  if (name === "review" && a) return review(+a, b != null ? +b : null);
+  if (name === "person" && a) return personView(+a);
+  home();
+}
+addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>
