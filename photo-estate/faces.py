@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS persons(
   id INTEGER PRIMARY KEY, name TEXT UNIQUE, born TEXT, created_at TEXT);   -- born: 'YYYY' or 'YYYY-MM'
 CREATE TABLE IF NOT EXISTS face_not(     -- "this face is not that person", so it's never suggested again
   face_id INT, person_id INT, PRIMARY KEY(face_id, person_id));
+CREATE TABLE IF NOT EXISTS face_later(   -- "is this ...?" skipped for now: still unnamed, asked again later
+  face_id INT, person_id INT, created_at TEXT, PRIMARY KEY(face_id, person_id));
 """
 SKIP_EXT = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf", ".gif"}
 SIDE = 1280        # images are read at this size (longer side): enough for faces a few % of the frame
@@ -351,6 +353,10 @@ class People:
         for f, p in con.execute("SELECT face_id, person_id FROM face_not"):
             if f in self.row:
                 self.nots.setdefault(p, set()).add(self.row[f])
+        self.later = {}
+        for f, p in con.execute("SELECT face_id, person_id FROM face_later"):
+            if f in self.row:
+                self.later.setdefault(p, set()).add(self.row[f])
         self.sug = np.full(n, -1, np.int32)        # the person a face most resembles, of those not ruled out
         self.sug_score = np.zeros(n, np.float32)
         self.sug_far = np.zeros(n, bool)           # ...judged from named faces more than WINDOW years away
@@ -437,6 +443,12 @@ class People:
                 con.commit()
                 if own:
                     con.close()
+
+    def skipped(self, p):
+        """Faces you put off deciding about for this person."""
+        m = self.np.zeros(self.n, bool)
+        m[list(self.later.get(p, ()))] = True
+        return m
 
     def pending(self, p=None):
         """Faces worth asking you about: they resemble someone, and nobody has said who they are."""
@@ -545,8 +557,9 @@ class People:
         with self.lock:
             people = []
             for p, info in self.persons.items():
-                mine, pend = self.pid == p, self.pending(p)
-                if not mine.any() and not pend.any():
+                later = self.pending(p) & self.skipped(p)
+                mine, pend = self.pid == p, self.pending(p) & ~later
+                if not mine.any() and not pend.any() and not later.any():
                     continue
                 years = {}
                 for y, c in zip(*np.unique(self.year[mine], return_counts=True)):
@@ -555,30 +568,33 @@ class People:
                     years.setdefault(int(y), [0, 0])[1] = int(c)
                 best = np.flatnonzero(mine & (self.src >= GOOGLE))
                 if not len(best):
-                    best = np.flatnonzero(mine | pend)
+                    best = np.flatnonzero(mine | pend | later)
                 recent = best[self.year[best] >= self.year[best].max() - 1]
                 cover = recent[np.argmax(self.px[recent] * self.score[recent])]
                 people.append({"id": p, "name": info["name"], "born": info.get("born"),
                                "named": int(mine.sum()), "you": int((mine & (self.src == YOU)).sum()),
                                "google": int((mine & (self.src == GOOGLE)).sum()),
                                "auto": int((mine & (self.src == AUTO_SRC)).sum()),
-                               "pending": int(pend.sum()), "years": years, "cover": int(self.ids[cover])})
+                               "pending": int(pend.sum()), "skipped": int(later.sum()),
+                               "years": years, "cover": int(self.ids[cover])})
             people.sort(key=lambda x: -x["named"] - x["pending"])
             return {"faces": self.n, "photos": len(self.by_sha), "named": int((self.pid > 0).sum()),
                     "ignored": int((self.pid == 0).sum()), "pending": int(self.pending().sum()),
                     "people": people, "unknown": self.clusters_state}
 
-    def review(self, p: int, year, limit: int) -> dict:
+    def review(self, p: int, year, limit: int, skipped: bool = False) -> dict:
+        """Faces waiting for p, most likely first; the ones you skipped are kept apart (skipped=True)."""
         np = self.np
         with self.lock:
-            m = self.pending(p)
+            pend, later = self.pending(p), self.skipped(p)
+            m = pend & later if skipped else pend & ~later
             total = int(m.sum())
             if year is not None:
                 m = m & (self.year == year)
             rows = np.flatnonzero(m)
             rows = rows[np.argsort(-self.sug_score[rows])][:limit]
             return {"person": {"id": p, **self.persons[p]}, "total": total, "matching": int(m.sum()),
-                    "faces": [self.face(k) for k in rows]}
+                    "skipped": int((pend & later).sum()), "faces": [self.face(k) for k in rows]}
 
     def person_faces(self, p: int, year, limit: int) -> dict:
         """A person's named faces: a few per year for the timeline, or all of one year."""
@@ -675,13 +691,16 @@ class People:
     def label(self, body: dict) -> dict:
         """{faces: [ids], person: id | "name" | 0 (don't name) | null (forget), cluster: n, not: [ids], not_person: id}.
         {pending: {person: id, year: y | null}} in place of faces: every face waiting for that person (in that
-        year), less the ones in `not`, so you can say yes to all of them and find the mistakes afterwards."""
+        year), less the ones in `not`, so you can say yes to all of them and find the mistakes afterwards.
+        undo: [ids] takes back what was said about those faces first: their name, and "not" or "later" for
+        undo_person (for everyone, without it).
+        later: [ids], later_person: id puts those faces aside, unnamed, to be asked about again later."""
         with self.lock:
             con = connect(self.db)
             rows = [self.row[i] for i in body.get("faces") or [] if i in self.row]
             pend = body.get("pending")
             if isinstance(pend, dict) and pend.get("person") in self.persons:
-                m = self.pending(pend["person"])
+                m = self.pending(pend["person"]) & ~self.skipped(pend["person"])
                 if pend.get("year") is not None:
                     m = m & (self.year == int(pend["year"]))
                 skip = {self.row[i] for i in body.get("not") or [] if i in self.row}
@@ -689,6 +708,20 @@ class People:
             if body.get("cluster") is not None and 0 <= body["cluster"] < len(self.clusters):
                 c = self.clusters[body["cluster"]]      # the whole group, not just the faces shown
                 rows = [int(k) for k in c[(self.pid[c] == -1) & (self.sug_score[c] < SUGGEST)]]
+            undo = [self.row[i] for i in body.get("undo") or [] if i in self.row]
+            if undo:                                    # take back whatever was said about these faces
+                up = body.get("undo_person")             # only what was said about this person, if given
+                for k in undo:
+                    for q in [up] if up is not None else list(self.nots) + list(self.later):
+                        self.nots.get(q, set()).discard(k)
+                        self.later.get(q, set()).discard(k)
+                    self.pid[k], self.src[k] = -1, NONE
+                where, extra = ("face_id=? AND person_id=?", (up,)) if up is not None else ("face_id=?", ())
+                for t in ("face_not", "face_later"):
+                    con.executemany(f"DELETE FROM {t} WHERE {where}", [(int(self.ids[k]), *extra) for k in undo])
+                con.executemany("UPDATE faces SET person_id=NULL, source=NULL, labeled_at=? WHERE id=?",
+                                [(now(), int(self.ids[k])) for k in undo])
+                self.log("undo", undo)
             who = body.get("person")
             if rows and who is None:
                 for k in rows:                          # "that's not them": forget the name, and don't offer it again
@@ -706,6 +739,11 @@ class People:
                 con.executemany("UPDATE faces SET person_id=?, source='you', labeled_at=? WHERE id=?",
                                 [(p, now(), int(self.ids[k])) for k in rows])
                 self.log("name", rows, person=self.persons[p]["name"] if p else None)
+            later, lp = [self.row[i] for i in body.get("later") or [] if i in self.row], body.get("later_person")
+            if later and lp in self.persons:
+                self.later.setdefault(lp, set()).update(later)
+                con.executemany("INSERT OR IGNORE INTO face_later VALUES (?,?,?)", [(int(self.ids[k]), lp, now()) for k in later])
+                self.log("later", later, person=self.persons[lp]["name"])
             wrong, np_ = [self.row[i] for i in body.get("not") or [] if i in self.row], body.get("not_person")
             if wrong and np_ in self.persons:
                 self.nots.setdefault(np_, set()).update(wrong)
@@ -784,7 +822,7 @@ class People:
             if path == "/api/people":
                 return js(self.overview())
             if path == "/api/people/review" and num("person") in self.persons:
-                return js(self.review(num("person"), num("year"), min(num("limit") or 60, 400)))
+                return js(self.review(num("person"), num("year"), min(num("limit") or 60, 400), one("skipped") == "1"))
             if path == "/api/people/person" and num("person") in self.persons:
                 return js(self.person_faces(num("person"), num("year"), min(num("limit") or 12, 2000)))
             if path == "/api/people/odd" and num("person") in self.persons:
