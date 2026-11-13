@@ -109,8 +109,12 @@ input:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-
 .f .cap em { font-style: normal; opacity: .75; }
 .f .more { position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; border-radius: 8px; background: rgba(0,0,0,.5); color: #fff;
   display: grid; place-items: center; opacity: 0; transition: opacity .15s; font-size: 15px; line-height: 1; }
-.f:hover .more, .f:focus-within .more { opacity: 1; }
-@media (hover: none) { .f .more { opacity: .85; } }
+.f .view { position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; border-radius: 8px; background: rgba(0,0,0,.5); color: #fff;
+  display: grid; place-items: center; opacity: 0; transition: opacity .15s; }
+.f .view + .more { right: 35px; }
+.f .view:hover, .f .more:hover { background: rgba(0,0,0,.75); }
+.f:hover .more, .f:focus-within .more, .f:hover .view, .f:focus-within .view { opacity: 1; }
+@media (hover: none) { .f .more, .f .view { opacity: .85; } }
 .f.no img { filter: grayscale(1); opacity: .32; }
 .f.no::after { content: ""; position: absolute; inset: 0; border-radius: 12px; box-shadow: inset 0 0 0 2.5px var(--no); pointer-events: none;
   background: linear-gradient(to top right, transparent calc(50% - 1.5px), var(--no) calc(50% - 1.5px), var(--no) calc(50% + 1.5px), transparent calc(50% + 1.5px)); }
@@ -186,6 +190,19 @@ input:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-
 .lb .btn:hover { background: rgba(255,255,255,.24); }
 .lb input[type=text] { background: rgba(255,255,255,.14); color: #fff; width: 190px; }
 .lb .close { position: absolute; top: 14px; right: 16px; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.14); font-size: 18px; color: #fff; }
+.lb.peek .stage { padding: 20px 68px; }
+.lb.peek .wrap img { max-width: calc(100vw - 136px); }
+.lb.peek .bx span:empty { display: none; }
+.lb.peek .bx:not(.pg) { cursor: default; border-style: dashed; border-color: rgba(255,255,255,.35); }
+.lb .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.14);
+  color: #fff; font-size: 26px; line-height: 1; display: grid; place-items: center; }
+.lb .nav:hover:not(:disabled) { background: rgba(255,255,255,.26); }
+.lb .nav:disabled { opacity: .25; cursor: default; }
+.lb .nav.prev { left: 12px; } .lb .nav.next { right: 12px; }
+.lb .btn.on { background: #fff; color: #111; }
+.lb .btn kbd { font: 500 11px var(--sans); border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; margin-left: 6px; opacity: .6; }
+.lb .acts { display: contents; }
+@media (max-width: 640px) { .lb.peek .stage { padding: 12px; } .lb.peek .wrap img { max-width: calc(100vw - 24px); } .lb .nav { top: auto; bottom: 8px; transform: none; } .lb .btn kbd { display: none; } }
 .toast { position: fixed; left: 50%; bottom: 150px; transform: translateX(-50%); z-index: 50; padding: 9px 16px; border-radius: 10px; background: var(--inv);
   color: var(--inv-ink); font-weight: 500; font-size: 13.5px; box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: opacity .2s; }
 .toast.on { opacity: 1; pointer-events: auto; }
@@ -249,11 +266,13 @@ async function refresh() {
 function crumb(...parts) {
   $("#crumb").innerHTML = [`<a href="/">Photos</a>`, ...parts].join("<i>/</i>");
 }
-function tile(f, p, extra = "") {
+const VIEW = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9"/></svg>`;
+function tile(f, p, extra = "", o = {}) {
   const a = age(p, f);
   return `<div class="f" data-id="${f.id}" tabindex="0"><img loading="lazy" src="/face/${f.id}" alt="">` +
     `<div class="cap"><span>${f.year || "No date"}</span><em>${a}</em></div>${extra}` +
-    `<button class="more" title="More" aria-label="More">⋯</button></div>`;
+    (o.view ? `<button class="view" title="See it in the photo (Space)" aria-label="See it in the photo">${VIEW}</button>` : "") +
+    (o.more === false ? "" : `<button class="more" title="More" aria-label="More">⋯</button>`) + `</div>`;
 }
 
 /* ── home ───────────────────────────────────────────────────────────── */
@@ -349,13 +368,13 @@ async function review(pid, year, skipped = false) {
   const pending = y => [...drafts.values()].some(d => d.pid === pid && d.year === y);
   const years = Object.entries(p.years).filter(([, [, q]]) => q).map(([y, [n, q]]) => [+y, n, q]).sort((a, b) => a[0] - b[0]);
   const hover = matchMedia("(hover: hover)").matches;
-  let h = `<h1>${skipped ? "Skipped: is" : "Is"} this ${esc(name)}?</h1><p class="sub">${r.faces.length ? `Each face is labelled with what it will be saved as. Click a face to change it${hover ? `, or point at it and press <kbd>B</kbd> ${esc(name)}, <kbd>S</kbd> stranger, <kbd>N</kbd> not sure` : ""}. Nothing is saved until you press Save.` : ""}</p>`;
+  let h = `<h1>${skipped ? "Skipped: is" : "Is"} this ${esc(name)}?</h1><p class="sub">${r.faces.length ? `Each face is labelled with what it will be saved as. Click a face to change it${hover ? `, or point at it and press <kbd>B</kbd> ${esc(name)}, <kbd>S</kbd> stranger, <kbd>N</kbd> not sure, <kbd>Space</kbd> to see it in its photo` : ", or its corner button to see it in its photo"}. Nothing is saved until you press Save.` : ""}</p>`;
   h += `<div class="chips"><a class="chip ${year == null && !skipped ? "on" : ""}" href="#/review/${pid}">All <span class="num">${fmt(p.pending)}</span></a>` +
     years.map(([y, n, q]) => `<a class="chip ${n ? "" : "new"} ${year === y && !skipped ? "on" : ""}" href="#/review/${pid}/${y}" title="${n ? "" : `No named faces of ${esc(name)} from this year yet`}">${y || "No date"} <span class="num">${fmt(q)}</span>${pending(y) ? `<i class="dot" title="Choices not saved yet"></i>` : ""}</a>`).join("") +
     (r.skipped ? `<a class="chip skip ${skipped ? "on" : ""}" href="#/review/${pid}/skipped">Skipped <span class="num">${fmt(r.skipped)}</span></a>` : "") + `</div>`;
   if (!skipped && r.matching > r.faces.length) h += `<p class="every"><button class="btn ask" id="every" title="Save this page, then name every other face waiting${year != null ? ` in ${year || "undated photos"}` : ""} as ${esc(name)} (not the skipped ones), and go looking for the mistakes">Yes to all ${fmt(r.matching)}</button></p>`;
   if (!r.faces.length) h += `<p class="empty">Nothing ${skipped ? "skipped" : "left to check"}${year != null ? ` in ${year || "undated photos"}` : ""}. <a class="btn" href="#/person/${pid}">See ${esc(name)} through the years</a></p>`;
-  h += `<div class="grid" id="grid">${r.faces.map(f => tile(f, p)).join("")}</div>`;
+  h += `<div class="grid" id="grid">${r.faces.map(f => tile(f, p, "", { view: true, more: false })).join("")}</div>`;
   if (r.faces.length) h += `<div class="foot" id="foot"></div>`;
   $("#main").innerHTML = h;
   window.scrollTo(0, 0);
@@ -408,7 +427,22 @@ async function review(pid, year, skipped = false) {
       ignore: () => choose(id, { k: "stranger" }), later: () => choose(id, { k: "later" }),
       reset: drafts.has(id) ? () => choose(id, null) : null });
   };
-  grid.onclick = e => { const el = e.target.closest(".f"); if (el) pick(el, e.target.closest(".more") || el); };
+  grid.onclick = e => {
+    const el = e.target.closest(".f");
+    if (!el) return;
+    if (e.target.closest(".view")) return look(+el.dataset.id);
+    pick(el, el);
+  };
+  const look = id => peek(r.faces.map(f => f.id), id, {
+    label: i => { const t = plan().out.get(i); return label(t) + (t.note ? ` · ${t.note}` : ""); },
+    choices: i => { const t = plan().out.get(i); return [
+      { k: "yes", text: name, key: "b", on: t.k === "yes" },
+      { k: "later", text: "Not sure", key: "n", on: t.k === "later" },
+      { k: "stranger", text: "Stranger", key: "s", on: t.k === "stranger" },
+      ...(drafts.has(i) ? [{ k: "reset", text: "Back to the default", key: "Backspace" }] : [])]; },
+    choose: (i, k) => choose(i, k === "reset" ? null : { k }),
+    name: (i, who) => choose(i, who.toLowerCase() === p.name.toLowerCase() ? { k: "yes" } : { k: "else", to: who }),
+    done: i => grid.querySelector(`[data-id="${i}"]`)?.scrollIntoView({ block: "nearest" }) });
   let over = null;
   grid.onmouseover = e => { over = e.target.closest(".f"); };
   grid.onmouseleave = () => { over = null; };
@@ -460,6 +494,7 @@ async function review(pid, year, skipped = false) {
     const k = { b: "yes", s: "stranger", n: "later" }[e.key.toLowerCase()];
     if (k && over) choose(+over.dataset.id, { k });
     if (e.key === "Backspace" && over) choose(+over.dataset.id, null);
+    if (e.key === " " && over) { e.preventDefault(); look(+over.dataset.id); }
   });
   paint();
 }
@@ -477,9 +512,9 @@ async function odd(pid, year, offset = 0) {
   h += `<div class="chips"><a class="chip ${year == null ? "on" : ""}" href="#/odd/${pid}">All <span class="num">${fmt(p.named)}</span></a>` +
     years.map(([y, n]) => `<a class="chip ${year === y ? "on" : ""}" href="#/odd/${pid}/${y}">${y || "No date"} <span class="num">${fmt(n)}</span></a>`).join("") + `</div>`;
   if (!r.faces.length) h += `<p class="empty">${offset ? "That's all of them." : `No named faces of ${esc(name)}${year != null ? ` in ${year || "undated photos"}` : ""}.`} <a class="btn" href="#/person/${pid}">See ${esc(name)} through the years</a></p>`;
-  h += `<div class="grid" id="grid">${r.faces.map(f => tile(f, p)).join("")}</div>`;
+  h += `<div class="grid" id="grid">${r.faces.map(f => tile(f, p, "", { view: true })).join("")}</div>`;
   if (r.faces.length) h += `<div class="foot"><span class="hint num">${fmt(offset + 1)}–${fmt(offset + r.faces.length)} of ${fmt(r.matching)}, least alike first</span>
-    <button class="btn pri" id="next"></button><span class="hint">Click a face to mark it "not ${esc(name)}" · ⋯ to say who it is or see the photo</span></div>`;
+    <button class="btn pri" id="next"></button><span class="hint">Click a face to mark it "not ${esc(name)}" · ⋯ to say who it is · <kbd>Space</kbd> or the corner button to see it in its photo</span></div>`;
   $("#main").innerHTML = h;
   window.scrollTo(0, 0);
   if (!r.faces.length) return;
@@ -498,11 +533,24 @@ async function odd(pid, year, offset = 0) {
     const el = e.target.closest(".f");
     if (!el) return;
     const id = +el.dataset.id;
+    if (e.target.closest(".view")) return look(id);
     if (e.target.closest(".more")) return faceMenu(e.target, id, {
       name: who => { marks.set(id, who); paint(); }, ignore: () => { marks.set(id, 0); paint(); } });
     marks.has(id) ? marks.delete(id) : marks.set(id, "no");
     paint();
   };
+  let over = null;
+  grid.onmouseover = e => { over = e.target.closest(".f"); };
+  grid.onmouseleave = () => { over = null; };
+  const look = id => peek(r.faces.map(f => f.id), id, {
+    label: i => { const m = marks.get(i); return m === undefined ? name : m === "no" ? `Not ${name}` : m === 0 ? "Stranger" : first(m); },
+    choices: i => { const m = marks.get(i); return [
+      { k: "keep", text: name, key: "b", on: m === undefined },
+      { k: "no", text: `Not ${name}`, key: "n", on: m === "no" },
+      { k: "stranger", text: "Stranger", key: "s", on: m === 0 }]; },
+    choose: (i, k) => { k === "keep" ? marks.delete(i) : marks.set(i, k === "no" ? "no" : 0); paint(); },
+    name: (i, who) => { who.toLowerCase() === p.name.toLowerCase() ? marks.delete(i) : marks.set(i, who); paint(); },
+    done: i => grid.querySelector(`[data-id="${i}"]`)?.scrollIntoView({ block: "nearest" }) });
   const save = async () => {
     $("#next").disabled = true;
     const no = [...marks].filter(([, m]) => m === "no").map(([id]) => id);
@@ -514,7 +562,9 @@ async function odd(pid, year, offset = 0) {
   };
   $("#next").onclick = save;
   view.teardown = on("keydown", e => {
-    if (e.key === "Enter" && !e.target.matches("input") && !$(".lb") && !$(".menu")) { e.preventDefault(); save(); }
+    if (e.target.matches("input") || $(".lb") || $(".menu")) return;
+    if (e.key === "Enter") { e.preventDefault(); save(); }
+    if (e.key === " " && over) { e.preventDefault(); look(+over.dataset.id); }
   });
   paint();
 }
@@ -674,6 +724,70 @@ async function openPhoto(id, changed) {
   });
   draw();
   document.body.append(lb);
+}
+
+/* ── a face in its photo, stepping through the faces on the page ───── */
+// For the check and mistakes pages: choices made here are the page's own (nothing is saved until the
+// page is), so ctx says how each face is labelled, what can be chosen for it, and how to choose.
+function peek(ids, id, ctx) {
+  $(".lb")?.remove(); $(".menu")?.remove();
+  const lb = document.createElement("div");
+  lb.className = "lb peek";
+  document.body.append(lb);
+  const got = new Map();
+  const load = i => { if (!got.has(i)) got.set(i, api(`/api/people/photo?face=${i}`)); return got.get(i); };
+  let cur = id, d = null, n = 0;
+  const go = async i => {
+    if (i == null) return;
+    cur = i;
+    const k = ++n, x = await load(i);
+    if (k !== n || !lb.isConnected) return;
+    d = x; draw();
+    const j = ids[ids.indexOf(i) + 1];    // warm the next one
+    if (j != null) load(j).then(y => { new Image().src = `/preview/${y.face.sha}`; });
+  };
+  const tag = x => ids.includes(x.id) ? ctx.label(x.id) : x.person > 0 ? first(x.name) : x.person === 0 ? "stranger" : "";
+  const draw = () => {
+    const at = ids.indexOf(cur);
+    lb.innerHTML = `<div class="stage">
+      <button class="nav prev" ${at > 0 ? "" : "disabled"} aria-label="Previous face">‹</button>
+      <div class="wrap"><img src="/preview/${d.face.sha}" alt="">` +
+      d.faces.map(x => `<div class="bx ${x.id === cur ? "on" : ""} ${ids.includes(x.id) ? "pg" : ""}" data-id="${x.id}" style="left:${x.box[0] * 100}%;top:${x.box[1] * 100}%;width:${x.box[2] * 100}%;height:${x.box[3] * 100}%"><span></span></div>`).join("") +
+      `</div><button class="nav next" ${at < ids.length - 1 ? "" : "disabled"} aria-label="Next face">›</button>
+      <button class="close" aria-label="Close (Esc)">✕</button></div>
+      <div class="bar"><span class="t num">${at + 1} of ${ids.length} · ${d.face.date || "No date"}</span><span class="acts"></span>
+        <input type="text" list="names" placeholder="Someone else…" autocomplete="off" spellcheck="false"></div>`;
+    marks();
+  };
+  const marks = () => {
+    for (const b of lb.querySelectorAll(".bx")) $("span", b).textContent = tag(d.faces.find(x => x.id === +b.dataset.id));
+    $(".acts", lb).innerHTML = ctx.choices(cur).map(c => `<button class="btn ${c.on ? "on" : ""}" data-k="${c.k}">${esc(c.text)}${c.key.length === 1 ? `<kbd>${c.key.toUpperCase()}</kbd>` : ""}</button>`).join("");
+  };
+  const step = by => go(ids[ids.indexOf(cur) + by]);
+  const close = () => { lb.remove(); off(); ctx.done?.(cur); };
+  lb.onclick = e => {
+    const b = e.target.closest("[data-k]"), bx = e.target.closest(".bx.pg");
+    if (b) { ctx.choose(cur, b.dataset.k); return marks(); }
+    if (bx) return go(+bx.dataset.id);
+    if (e.target.closest(".prev")) return step(-1);
+    if (e.target.closest(".next")) return step(1);
+    if (e.target.closest(".close") || e.target.classList.contains("stage")) close();
+  };
+  const off = on("keydown", e => {
+    if (!lb.isConnected) return off();
+    if (e.target.matches(".lb input")) {
+      if (e.key === "Enter" && e.target.value.trim()) { ctx.name(cur, e.target.value.trim()); e.target.value = ""; e.target.blur(); marks(); }
+      if (e.key === "Escape") e.target.blur();
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey || !d) return;
+    if (e.key === "Escape" || e.key === " ") { e.preventDefault(); return close(); }
+    if (e.key === "ArrowLeft") return step(-1);
+    if (e.key === "ArrowRight") return step(1);
+    const c = ctx.choices(cur).find(c => c.key.toLowerCase() === e.key.toLowerCase());
+    if (c) { e.preventDefault(); ctx.choose(cur, c.k); marks(); }
+  });
+  go(id);
 }
 
 function on(type, fn) { document.addEventListener(type, fn); return () => document.removeEventListener(type, fn); }
