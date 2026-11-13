@@ -424,6 +424,13 @@ class People:
                 for j, p in enumerate(pids):
                     ks = [at[r] for r in self.nots.get(p, ()) if r in at]
                     S[ks, j] = -1
+                col = {p: j for j, p in enumerate(pids)}
+                for k in np.flatnonzero((self.src >= GOOGLE) & (self.pid > 0)):   # nobody is in a photo twice
+                    j = col.get(int(self.pid[k]))
+                    if j is not None:
+                        for o in self.by_sha[self.sha[k]]:
+                            if o != k and o in at:
+                                S[at[o], j] = -1
                 best = S.argmax(1)
                 top = S[np.arange(len(rows)), best]
                 S[np.arange(len(rows)), best] = -1
@@ -432,6 +439,13 @@ class People:
                 self.sug_score[rows] = top
                 self.sug_far[rows] = far[np.arange(len(rows)), best]
                 sure = (top >= AUTO) & (top - second >= AUTO_MARGIN) & ~self.sug_far[rows] & (self.px[rows] >= 40)
+                keep = {}                                   # two sure faces of one person in a photo: only the closer
+                for i in np.flatnonzero(sure):
+                    key = (self.sha[rows[i]], int(self.sug[rows[i]]))
+                    if key not in keep or top[i] > top[keep[key]]:
+                        keep[key] = i
+                sure[:] = False
+                sure[list(keep.values())] = True
                 self.pid[rows[sure]], self.src[rows[sure]] = self.sug[rows[sure]], AUTO_SRC
             changed = rows[self.pid[rows] != old]
             if len(changed):
@@ -631,6 +645,9 @@ class People:
                 dot, vv = v @ W, (v * v).sum(1)
                 rest = np.sqrt(np.maximum(float(W @ W) - 2 * dot + vv, 0))     # |W - v|: the others, without this face
                 fit[at] = np.where(rest > 1e-3, (dot - vv) / (np.sqrt(vv) * np.maximum(rest, 1e-3)), -1)
+            for i, k in enumerate(mine):                 # named twice in one photo: one of them is wrong
+                if any(o != k and self.pid[o] == p for o in self.by_sha[self.sha[k]]):
+                    fit[i] = -2
             sel = np.ones(len(mine), bool) if year is None else ys == year
             order = np.flatnonzero(sel)[np.argsort(fit[sel], kind="stable")]
             page = order[offset:offset + limit]
@@ -688,7 +705,16 @@ class People:
         self.persons[p] = {"name": name, "born": None}
         return p
 
-    def label(self, body: dict) -> dict:
+    def label_many(self, body: dict) -> dict:
+        """{items: [label bodies]}: a page of decisions, applied in order, then one rescore."""
+        with self.lock:
+            for item in body.get("items") or []:
+                if isinstance(item, dict):
+                    self.label(item, rescore=False)
+            self.rescore()
+            return {"ok": True, "pending": int(self.pending().sum())}
+
+    def label(self, body: dict, rescore: bool = True) -> dict:
         """{faces: [ids], person: id | "name" | 0 (don't name) | null (forget), cluster: n, not: [ids], not_person: id}.
         {pending: {person: id, year: y | null}} in place of faces: every face waiting for that person (in that
         year), less the ones in `not`, so you can say yes to all of them and find the mistakes afterwards.
@@ -750,7 +776,8 @@ class People:
                 con.executemany("INSERT OR IGNORE INTO face_not VALUES (?,?)", [(int(self.ids[k]), np_) for k in wrong])
                 self.log("not", wrong, person=self.persons[np_]["name"])
             con.commit()
-            self.rescore(con)
+            if rescore:
+                self.rescore(con)
             con.close()
             return {"ok": True, "pending": int(self.pending().sum())}
 
@@ -834,6 +861,8 @@ class People:
         elif method == "POST" and body is not None:
             if path == "/api/people/label":
                 return js(self.label(body))
+            if path == "/api/people/label-many":
+                return js(self.label_many(body))
             if path == "/api/people/person":
                 return js(self.edit_person(body))
         return None
