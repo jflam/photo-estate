@@ -513,7 +513,7 @@ async function refresh(push = true) {
   window.scrollTo({ top: 0 });
   if (!data.results.length) {
     grid.innerHTML = data.text && !S.sha
-      ? `<div class="empty"><h3>Nothing found</h3>No photo${data.people?.length && !S.plain ? ` of ${esc(data.people.join(" & "))}` : ""} looks like “${esc(data.text)}”${filtered() ? " with these filters" : ""}.${filtered() ? '<br><button id="clearAll">Clear filters</button>' : ""}</div>`
+      ? `<div class="empty"><h3>Nothing found</h3>No photo${data.people?.length && !S.plain ? ` of ${esc(data.people.join(" & "))}` : ""}${data.places?.length && !S.plain ? ` in ${esc(data.places.join(" or "))}` : ""} looks like “${esc(data.text)}”${filtered() ? " with these filters" : ""}.${filtered() ? '<br><button id="clearAll">Clear filters</button>' : ""}</div>`
       : `<div class="empty"><h3>Nothing matches</h3>No photos fit everything you’ve chosen.${filtered() ? '<br><button id="clearAll">Clear filters</button>' : ""}</div>`;
     return;
   }
@@ -613,9 +613,12 @@ function renderCounts() {
 function renderHead() {
   let title, sub;
   const n = `<b>${fmt(D.matching)}</b> ${D.matching === 1 ? "photo" : "photos"}`;
-  const read = !S.sha && !S.plain && D.people?.length ? D.people : null;     // names read as people
-  const both = ns => ns.length > 1 ? `${ns.slice(0, -1).join(", ")} & ${ns.at(-1)}` : ns[0];
-  if (read && !D.text) { title = esc(both(read)); sub = n; }
+  // names and places in the typed words, read as people and places (unless "search the words" was chosen)
+  const could = !S.sha && (D.people?.length || D.places?.length), read = could && !S.plain;
+  const both = (ns, w = "&") => ns.length > 1 ? `${ns.slice(0, -1).join(", ")} ${w} ${ns.at(-1)}` : ns[0];
+  const who = D.people?.length ? both(D.people) : "", where = D.places?.length ? both(D.places, "or") : "";
+  const reading = [who, where && (who ? "in " : "") + where].filter(Boolean).join(" ");
+  if (read && !D.text) { title = esc(reading); sub = n; }
   else if (S.sha) { title = `<img src="/thumb/${S.sha}" alt="">More like this`; sub = `Closest in look and subject among ${n}`; }
   else if (D.text) { title = `“${esc(D.text)}”`; sub = D.matching ? `${n}, best match first` : "No matches"; }
   else if (D.scope) { title = esc(D.scope.title || "Untitled"); sub = `${esc(span(D.scope.start, D.scope.end))}<i>·</i>${n}`; }
@@ -627,10 +630,11 @@ function renderHead() {
     title = "Library";
     sub = `${n}<i>·</i>${Math.floor(INFO.m0 / 12)} – ${Math.floor((INFO.m0 + INFO.months - 1) / 12)}`;
   }
-  if (read && D.text) sub = `with ${esc(both(read))}<i>·</i>` + sub;
+  if (read && D.text) sub = esc([who && `with ${who}`, where && `in ${where}`].filter(Boolean).join(", ")) + `<i>·</i>` + sub;
   for (const f of D.filters || []) sub += `<i>·</i>${esc(f)}`;
-  if (read) sub += `<i>·</i><button class="txt inl" id="namesBtn" title="Search for the words you typed instead of these people">Not ${read.length > 1 ? "them" : esc(read[0].split(" ")[0])}?</button>`;
-  else if (!S.sha && S.plain && D.people?.length) sub += `<i>·</i><button class="txt inl" id="namesBtn">Search for ${esc(both(D.people))} instead</button>`;
+  if (read) sub += `<i>·</i><button class="txt inl" id="namesBtn" title="Search for the words you typed instead">${
+    !where ? `Not ${D.people.length > 1 ? "them" : esc(D.people[0].split(" ")[0])}?` : "Search the words instead"}</button>`;
+  else if (could) sub += `<i>·</i><button class="txt inl" id="namesBtn">Search for ${esc(reading)} instead</button>`;
   sub += `<i>·</i>${D.ms} ms`;
   $("#title").innerHTML = title; $("#sub").innerHTML = sub;
   document.title = ($("#title").textContent === "Library" ? "" : $("#title").textContent + " — ") + "Photo Estate";

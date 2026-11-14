@@ -52,6 +52,8 @@ COMMON_WORDS = set("""sunny lily rose rosie daisy iris violet ivy holly heather 
     honey candy ginger pepper cookie buddy rocky max jack bill mark will pat sue bob rob rod guy ray art
     frank earl duke king prince queen bishop hunter chase page brook river sky storm rain snow forest
     glen dale cliff rocco sandy dusty misty penny chip bud bunny kitty angel star sterling destiny""".split())
+# Countries and states that are also everyday words: read as a place only when capitalized
+COMMON_PLACES = {"china", "turkey", "chad", "jordan", "georgia", "guinea", "japan", "chile", "cuba", "wales", "jersey"}
 SKIP_EXT = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"}  # Pillow can't decode RAW
 
 
@@ -491,41 +493,74 @@ def cmd_serve(a) -> None:
         got = (events if kind == "event" else trips).get(ident)
         return {"kind": kind, "id": ident, **got} if got else None
 
-    # Names in a typed search ("ben and matthew on a beach") are people, not words for the image model,
-    # which doesn't know who anyone is. A full name always counts; a first name only when one person has
-    # it; a name that's also an everyday word ("sunny", "lily") only when typed with a capital or as
-    # "Sunny's". Each name is a person filter (photos with all of them); the rest is the description.
+    # Names and places in a typed search ("ben and matthew on a beach", "ben san diego") are filters, not
+    # words for the image model: it doesn't know who anyone is, and it can only guess a place from how it
+    # looks (a sunny Florida street passes for San Diego). A person's full name always counts, and a
+    # first name when one person has it. A place counts if the library has photos there: a city, region
+    # or country. A name or place that's also an everyday word ("sunny", "celebration", "golden") counts
+    # only when capitalized ("Sunny's" too). People: photos with all of them; places: any of them.
     people_ix = multi["person"]["ix"]
     firsts = {}
     for n in people_ix:
         firsts.setdefault(n.split()[0].lower(), []).append(n)
     who = {f: ns[0] for f, ns in firsts.items() if len(ns) == 1}
     who.update({n.lower(): n for n in people_ix})
-    name_re = re.compile(r"(?<![\w'’])(" + "|".join(re.escape(k) for k in sorted(who, key=len, reverse=True)) +
-                         r")(['’]s)?(?![\w'’])", re.I) if who else None
-    joiners = {"and", "&", "+", "with", ","}
-    filler = {"photo", "photos", "picture", "pictures", "pic", "pics", "of", "the", "all", "show", "me", "find"}
+    where, cities = {}, set()
+    for k in ("city", "region", "country"):
+        for label in single[k]["labels"]:
+            name = label.split(",")[0].strip()
+            where.setdefault(name.lower(), name)
+            if k == "city":
+                cities.add(name.lower())
+    for k in [k for k in where if k in who]:   # a person first
+        del where[k]
+    try:
+        lower_words = {w for w in Path("/usr/share/dict/words").read_text().split() if w.islower()}
+    except OSError:
+        lower_words = set()
+    common_place = {k for k in where if " " not in k and (k in COMMON_WORDS or k in COMMON_PLACES
+                                                          or (k in cities and k in lower_words))}
 
-    def read_names(text: str):
-        """'ben and matthew on a beach' -> (['Ben Lam', 'Matthew Lam'], 'on a beach')."""
-        if not name_re:
-            return [], text
-        names, parts, at = [], [], 0
-        for m in name_re.finditer(text):
-            word = m.group(1)
-            if word.lower() in COMMON_WORDS and not (word[0].isupper() or m.group(2)):
-                continue
-            parts += [text[at:m.start()], "\0"]
+    def alt(keys):
+        return "|".join(re.escape(k) for k in sorted(keys, key=len, reverse=True))
+    word_re = re.compile(r"(?<![\w'’])(?:(?P<who>" + (alt(who) or "(?!)") + r")|(?P<where>" + (alt(where) or "(?!)") +
+                         r"))(['’]s)?(?![\w'’])", re.I)
+    joiners = {"\0": {"and", "&", "+", "with", ","}, "\1": {"in", "at", "from", "near", "around", "to", "and", "or", ","}}
+    filler = {"photo", "photos", "picture", "pictures", "pic", "pics", "of", "the", "all", "show", "me", "find",
+              "trip", "trips", "visit"}
+
+    def read_words(text: str):
+        """'ben and matthew in san diego' -> (['Ben Lam', 'Matthew Lam'], ['San Diego'], '')."""
+        names, places, parts, at = [], [], [], 0
+        for m in word_re.finditer(text):
+            word = m.group("who") or m.group("where")
+            key, capital = word.lower(), word[0].isupper() or m.group(3)
+            if m.group("who"):
+                if key in COMMON_WORDS and not capital:
+                    continue
+                mark, got, val = "\0", names, who[key]
+            else:
+                if key in common_place and not capital:
+                    continue
+                mark, got, val = "\1", places, where[key]
+            parts += [text[at:m.start()], mark]
             at = m.end()
-            if who[word.lower()] not in names:
-                names.append(who[word.lower()])
-        if not names:
-            return [], text
-        toks = re.findall(r"\0|,|[^\s,]+", " ".join(parts + [text[at:]]))
-        keep = [t for i, t in enumerate(toks) if t != "\0" and not (
-            t.lower() in joiners and "\0" in toks[max(0, i - 1):i] + toks[i + 1:i + 2])]
+            if val not in got:
+                got.append(val)
+        if not names and not places:
+            return [], [], text
+        toks = re.findall(r"[\0\1]|,|[^\s,\0\1]+", " ".join(parts + [text[at:]]))
+        keep = [t for i, t in enumerate(toks) if t not in "\0\1" and not any(
+            t.lower() in joiners[mk] for mk in toks[max(0, i - 1):i] + toks[i + 1:i + 2] if mk in joiners)]
         rest = " ".join(keep).strip(" ,")
-        return names, "" if all(t.lower() in filler | joiners for t in rest.split()) else rest
+        everything = filler | joiners["\0"] | joiners["\1"]
+        return names, places, "" if all(t.lower() in everything for t in rest.split()) else rest
+
+    def place_mask(place: str):
+        def make():
+            rx = re.compile(r"(?<!\w)" + re.escape(place.lower()) + r"(?!\w)")
+            return np.fromiter((bool(rx.search(x)) for x in cols["place"]), bool, N)
+        return remember(("place", place), make)
 
     def person_mask(name: str):
         m = np.zeros(N, bool)
@@ -595,11 +630,14 @@ def cmd_serve(a) -> None:
         text, typed, applied, typed_scope = parse((qs.get("q") or [""])[0].strip())
         if applied:
             masks["typed"] = typed
-        names, rest = read_names(text)
-        if names and (qs.get("names") or ["1"])[0] != "0":
-            masks["names"] = np.logical_and.reduce([person_mask(n) for n in names])
+        names, places, rest = read_words(text)
+        if (names or places) and (qs.get("names") or ["1"])[0] != "0":
+            if names:
+                masks["names"] = np.logical_and.reduce([person_mask(n) for n in names])
+            if places:
+                masks["places"] = np.logical_or.reduce([place_mask(p) for p in places])
             text = rest
-        return masks, text, applied, scope or typed_scope, names
+        return masks, text, applied, scope or typed_scope, names, places
 
     def take(order, start: int, limit: int, dedupe: bool):
         """One page from a ranked list, skipping copies of a shot just shown (Google + iCloud, bursts)."""
@@ -730,7 +768,7 @@ def cmd_serve(a) -> None:
                     t = time.time()
                     limit = max(1, min(int(one("limit", "120")), 500))
                     start = max(0, int(one("cursor", "0")))
-                    masks, text, applied, scope, names = select(qs)
+                    masks, text, applied, scope, names, places = select(qs)
                     mask = combine(masks)
                     sha = one("sha")
                     if u.path == "/api/similar" and sha not in index:
@@ -757,11 +795,11 @@ def cmd_serve(a) -> None:
                     order = remember(key, ranked)
                     results, hidden, nxt = take(order, start, limit, one("dedupe", "1") == "1")
                     record(self, "similar" if u.path == "/api/similar" else "search", qs, sha=one("sha") or None, text=text,
-                           filters=applied, people=names, cursor=start, matching=int(len(order)),
+                           filters=applied, people=names, places=places, cursor=start, matching=int(len(order)),
                            ms=round((time.time() - t) * 1000),
                            top=[r["sha"] for r in results[:20]] if start == 0 else None)
                     return self.json({"results": results, "next": nxt, "hidden": hidden, "total": N,
-                                      "matching": int(len(order)), "text": text, "filters": applied, "people": names,
+                                      "matching": int(len(order)), "text": text, "filters": applied, "people": names, "places": places,
                                       "scope": scope, "sort": sort, "ms": round((time.time() - t) * 1000)})
                 if u.path == "/api/log":  # the page reports photos opened or shared from a result list
                     if one("ev") in ("open", "share") and sha_re.match(one("sha")):
