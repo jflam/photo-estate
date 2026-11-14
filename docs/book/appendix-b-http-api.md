@@ -19,6 +19,15 @@ only):
 | `GET /manifest.webmanifest`, `/icon-180.png`, `/icon-192.png`, `/icon-512.png`, `/icon-maskable-512.png`, `/sw.js` | The files in `app/`, served from the site root |
 | `GET /people`, `/people/` | `people.html`, once faces exist and `People` has loaded (else 503) |
 
+### Uploads from the phone
+
+| Request | Returns |
+|---|---|
+| `PUT /api/upload/<YYYY/MM/DD/name.ext>` | Saves the body to the inbox (`--inbox`, default `<db dir>/iphone`; none with `--demo`). `Content-Length` is required; an optional `X-Content-SHA256` is checked against the bytes received. `201 {"status":"stored"}`; `200 "exists"` if the same path and size is already there (so retries are safe); `409` if the path exists with a different size; `400` for a bad path, short body or wrong checksum; `403` if `--upload-user` is set and `Tailscale-User-Login` is not one of them; `411` without a length |
+
+The extension must be a photo or video type, or `X.<media ext>.xmp` for a sidecar. The server never
+writes the catalog: `ingest-iphone.sh` ingests the inbox ([upload.py](../../photo-estate/upload.py)).
+
 ### Search and browse
 
 `GET /api/search` and `GET /api/similar` take the same parameters; `/api/similar` additionally
@@ -142,6 +151,7 @@ Returns `{"ok": true, "pending": N}`.
 | 200 | OK |
 | 204 | `/api/log` |
 | 304 | A conditional request matched the `ETag` |
-| 400 | A malformed review decision |
+| 201 | `PUT /api/upload/...` stored a new file |
+| 400 | A malformed review decision, or a refused upload |
 | 404 | Unknown sha, unknown path, or `/api/similar` with an unknown photo |
 | 503 | `/people` before the face data has loaded |
