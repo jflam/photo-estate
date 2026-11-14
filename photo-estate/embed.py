@@ -46,6 +46,12 @@ CREATE TABLE IF NOT EXISTS embeddings(
 #     "unicorn" -> horses). Narrower drops real matches from a small library.
 MATCH_FLOOR = 0.085
 MATCH_WINDOW = 0.04
+# First names that are also everyday words: read as a person only when capitalized ("Sunny") or "Sunny's"
+COMMON_WORDS = set("""sunny lily rose rosie daisy iris violet ivy holly heather hazel jasmine poppy ruby amber pearl
+    jade crystal coral olive berry autumn summer winter april may june august dawn eve faith hope joy grace
+    honey candy ginger pepper cookie buddy rocky max jack bill mark will pat sue bob rob rod guy ray art
+    frank earl duke king prince queen bishop hunter chase page brook river sky storm rain snow forest
+    glen dale cliff rocco sandy dusty misty penny chip bud bunny kitty angel star sterling destiny""".split())
 SKIP_EXT = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"}  # Pillow can't decode RAW
 
 
@@ -485,6 +491,47 @@ def cmd_serve(a) -> None:
         got = (events if kind == "event" else trips).get(ident)
         return {"kind": kind, "id": ident, **got} if got else None
 
+    # Names in a typed search ("ben and matthew on a beach") are people, not words for the image model,
+    # which doesn't know who anyone is. A full name always counts; a first name only when one person has
+    # it; a name that's also an everyday word ("sunny", "lily") only when typed with a capital or as
+    # "Sunny's". Each name is a person filter (photos with all of them); the rest is the description.
+    people_ix = multi["person"]["ix"]
+    firsts = {}
+    for n in people_ix:
+        firsts.setdefault(n.split()[0].lower(), []).append(n)
+    who = {f: ns[0] for f, ns in firsts.items() if len(ns) == 1}
+    who.update({n.lower(): n for n in people_ix})
+    name_re = re.compile(r"(?<![\w'’])(" + "|".join(re.escape(k) for k in sorted(who, key=len, reverse=True)) +
+                         r")(['’]s)?(?![\w'’])", re.I) if who else None
+    joiners = {"and", "&", "+", "with", ","}
+    filler = {"photo", "photos", "picture", "pictures", "pic", "pics", "of", "the", "all", "show", "me", "find"}
+
+    def read_names(text: str):
+        """'ben and matthew on a beach' -> (['Ben Lam', 'Matthew Lam'], 'on a beach')."""
+        if not name_re:
+            return [], text
+        names, parts, at = [], [], 0
+        for m in name_re.finditer(text):
+            word = m.group(1)
+            if word.lower() in COMMON_WORDS and not (word[0].isupper() or m.group(2)):
+                continue
+            parts += [text[at:m.start()], "\0"]
+            at = m.end()
+            if who[word.lower()] not in names:
+                names.append(who[word.lower()])
+        if not names:
+            return [], text
+        toks = re.findall(r"\0|,|[^\s,]+", " ".join(parts + [text[at:]]))
+        keep = [t for i, t in enumerate(toks) if t != "\0" and not (
+            t.lower() in joiners and "\0" in toks[max(0, i - 1):i] + toks[i + 1:i + 2])]
+        rest = " ".join(keep).strip(" ,")
+        return names, "" if all(t.lower() in filler | joiners for t in rest.split()) else rest
+
+    def person_mask(name: str):
+        m = np.zeros(N, bool)
+        m[multi["person"]["rows"][multi["person"]["codes"] == people_ix[name]]] = True
+        return m
+
     def parse(q: str):
         """Split 'beach place:oregon year:2010' into the free text and a mask for the typed filters."""
         mask, applied, scope = np.ones(N, bool), [], None
@@ -548,7 +595,11 @@ def cmd_serve(a) -> None:
         text, typed, applied, typed_scope = parse((qs.get("q") or [""])[0].strip())
         if applied:
             masks["typed"] = typed
-        return masks, text, applied, scope or typed_scope
+        names, rest = read_names(text)
+        if names and (qs.get("names") or ["1"])[0] != "0":
+            masks["names"] = np.logical_and.reduce([person_mask(n) for n in names])
+            text = rest
+        return masks, text, applied, scope or typed_scope, names
 
     def take(order, start: int, limit: int, dedupe: bool):
         """One page from a ranked list, skipping copies of a shot just shown (Google + iCloud, bursts)."""
@@ -679,7 +730,7 @@ def cmd_serve(a) -> None:
                     t = time.time()
                     limit = max(1, min(int(one("limit", "120")), 500))
                     start = max(0, int(one("cursor", "0")))
-                    masks, text, applied, scope = select(qs)
+                    masks, text, applied, scope, names = select(qs)
                     mask = combine(masks)
                     sha = one("sha")
                     if u.path == "/api/similar" and sha not in index:
@@ -706,11 +757,11 @@ def cmd_serve(a) -> None:
                     order = remember(key, ranked)
                     results, hidden, nxt = take(order, start, limit, one("dedupe", "1") == "1")
                     record(self, "similar" if u.path == "/api/similar" else "search", qs, sha=one("sha") or None, text=text,
-                           filters=applied, cursor=start, matching=int(len(order)),
+                           filters=applied, people=names, cursor=start, matching=int(len(order)),
                            ms=round((time.time() - t) * 1000),
                            top=[r["sha"] for r in results[:20]] if start == 0 else None)
                     return self.json({"results": results, "next": nxt, "hidden": hidden, "total": N,
-                                      "matching": int(len(order)), "text": text, "filters": applied,
+                                      "matching": int(len(order)), "text": text, "filters": applied, "people": names,
                                       "scope": scope, "sort": sort, "ms": round((time.time() - t) * 1000)})
                 if u.path == "/api/log":  # the page reports photos opened or shared from a result list
                     if one("ev") in ("open", "share") and sha_re.match(one("sha")):

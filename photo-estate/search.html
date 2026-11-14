@@ -133,6 +133,7 @@ main { padding: 26px var(--pad) 96px; overflow-x: clip; }
 .head p b { font-weight: 500; color: var(--ink-2); }
 .head p i { font-style: normal; color: var(--faint); margin: 0 7px; }
 .head-r { display: flex; flex: none; gap: 2px; padding-bottom: 1px; }
+.txt.inl { height: auto; padding: 0; color: inherit; text-decoration: underline; text-underline-offset: 2px; font: inherit; }
 .txt { height: 28px; padding: 0 9px; border-radius: 7px; color: var(--muted); font-size: 13px; font-weight: 500;
   display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; transition: background .15s, color .15s; }
 .txt:hover { background: var(--hover); color: var(--ink); }
@@ -362,7 +363,7 @@ main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right
     <label class="search" id="search">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14"/></svg>
       <span class="like" id="like"><img alt=""><span>Similar photos</span><button type="button" aria-label="Clear similar photos"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m4 4 8 8m0-8-8 8"/></svg></button></span>
-      <input id="q" type="search" placeholder="Describe a photo, or find a place, person, trip or camera" autocomplete="off" spellcheck="false" aria-label="Search photos">
+      <input id="q" type="search" placeholder="Describe a photo, or find a place, person, trip or camera" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search photos">
       <kbd>/</kbd>
     </label>
     <div class="pills" id="pills"></div>
@@ -427,7 +428,7 @@ const IDEAS = ["sunset over water", "kids playing in the snow", "birthday cake w
 /* ── state ─────────────────────────────────────────────────────────── */
 const KEYS = ["country", "region", "city", "person", "album", "camera", "lens"];
 const KIND = { country: "Country", region: "Region", city: "Place", person: "Person", album: "Album", camera: "Camera", lens: "Lens", trip: "Trip" };
-const blank = () => ({ q: "", sha: "", trip: "", event: "", fav: false, from: "", to: "", sort: "",
+const blank = () => ({ q: "", plain: false, sha: "", trip: "", event: "", fav: false, from: "", to: "", sort: "",
   f: Object.fromEntries(KEYS.map(k => [k, []])) });
 let S = blank();
 let V = { size: "m", dedupe: true, info: true };
@@ -440,6 +441,7 @@ let D = {}, items = [], sections = [], next = null, ranked = false, gen = 0, bus
 function toParams(s) {
   const p = new URLSearchParams();
   if (s.q) p.set("q", s.q);
+  if (s.q && s.plain) p.set("names", "0");        // names typed in the search are words, not people
   if (s.sha) p.set("sha", s.sha);
   for (const k of KEYS) for (const v of s.f[k]) p.append(k, v);
   for (const k of ["trip", "event", "from", "to", "sort"]) if (s[k]) p.set(k, s[k]);
@@ -451,6 +453,7 @@ function fromParams(p) {
   for (const k of ["q", "sha", "trip", "event", "from", "to", "sort"]) s[k] = p.get(k) || "";
   for (const k of KEYS) s.f[k] = p.getAll(k);
   s.fav = p.get("fav") === "1";
+  s.plain = p.get("names") === "0";
   return s;
 }
 const filtered = () => KEYS.some(k => S.f[k].length) || S.trip || S.event || S.fav || S.from || S.to;
@@ -510,7 +513,7 @@ async function refresh(push = true) {
   window.scrollTo({ top: 0 });
   if (!data.results.length) {
     grid.innerHTML = data.text && !S.sha
-      ? `<div class="empty"><h3>Nothing found</h3>No photo looks like “${esc(data.text)}”${filtered() ? " with these filters" : ""}.${filtered() ? '<br><button id="clearAll">Clear filters</button>' : ""}</div>`
+      ? `<div class="empty"><h3>Nothing found</h3>No photo${data.people?.length && !S.plain ? ` of ${esc(data.people.join(" & "))}` : ""} looks like “${esc(data.text)}”${filtered() ? " with these filters" : ""}.${filtered() ? '<br><button id="clearAll">Clear filters</button>' : ""}</div>`
       : `<div class="empty"><h3>Nothing matches</h3>No photos fit everything you’ve chosen.${filtered() ? '<br><button id="clearAll">Clear filters</button>' : ""}</div>`;
     return;
   }
@@ -610,7 +613,10 @@ function renderCounts() {
 function renderHead() {
   let title, sub;
   const n = `<b>${fmt(D.matching)}</b> ${D.matching === 1 ? "photo" : "photos"}`;
-  if (S.sha) { title = `<img src="/thumb/${S.sha}" alt="">More like this`; sub = `Closest in look and subject among ${n}`; }
+  const read = !S.sha && !S.plain && D.people?.length ? D.people : null;     // names read as people
+  const both = ns => ns.length > 1 ? `${ns.slice(0, -1).join(", ")} & ${ns.at(-1)}` : ns[0];
+  if (read && !D.text) { title = esc(both(read)); sub = n; }
+  else if (S.sha) { title = `<img src="/thumb/${S.sha}" alt="">More like this`; sub = `Closest in look and subject among ${n}`; }
   else if (D.text) { title = `“${esc(D.text)}”`; sub = D.matching ? `${n}, best match first` : "No matches"; }
   else if (D.scope) { title = esc(D.scope.title || "Untitled"); sub = `${esc(span(D.scope.start, D.scope.end))}<i>·</i>${n}`; }
   else if (filtered()) {
@@ -621,7 +627,10 @@ function renderHead() {
     title = "Library";
     sub = `${n}<i>·</i>${Math.floor(INFO.m0 / 12)} – ${Math.floor((INFO.m0 + INFO.months - 1) / 12)}`;
   }
+  if (read && D.text) sub = `with ${esc(both(read))}<i>·</i>` + sub;
   for (const f of D.filters || []) sub += `<i>·</i>${esc(f)}`;
+  if (read) sub += `<i>·</i><button class="txt inl" id="namesBtn" title="Search for the words you typed instead of these people">Not ${read.length > 1 ? "them" : esc(read[0].split(" ")[0])}?</button>`;
+  else if (!S.sha && S.plain && D.people?.length) sub += `<i>·</i><button class="txt inl" id="namesBtn">Search for ${esc(both(D.people))} instead</button>`;
   sub += `<i>·</i>${D.ms} ms`;
   $("#title").innerHTML = title; $("#sub").innerHTML = sub;
   document.title = ($("#title").textContent === "Library" ? "" : $("#title").textContent + " — ") + "Photo Estate";
@@ -818,7 +827,7 @@ function drawSug() {
 }
 function pick(s) {
   const q = $("#q");
-  if (s.type === "idea" || s.type === "text") { S.q = s.label; S.sha = ""; q.value = S.q; }
+  if (s.type === "idea" || s.type === "text") { S.q = s.label; S.plain = false; S.sha = ""; q.value = S.q; }
   else {
     q.value = S.q;                                  // the typed word became a filter, not a description
     if (s.type === "year") { S.from = `${s.y}-01`; S.to = `${s.y}-12`; }
@@ -839,7 +848,7 @@ $("#q").addEventListener("keydown", e => {
   } else if (e.key === "Enter") {
     e.preventDefault();
     if (open && !ideas && sug[sugCur]) return pick(sug[sugCur]);
-    S.q = q.value.trim(); if (S.q) S.sha = ""; q.blur(); refresh();
+    S.q = q.value.trim(); S.plain = false; if (S.q) S.sha = ""; q.blur(); refresh();
   } else if (e.key === "Escape") { q.value = S.q; q.blur(); }
   else if (e.key === "Backspace" && !q.value && S.sha) { S.sha = ""; refresh(); }
 });
@@ -1360,6 +1369,7 @@ $("#vShare").onclick = share;
 $("#grid").addEventListener("click", e => { const t = e.target.closest(".t"); if (t) openViewer(+t.dataset.i); });
 document.addEventListener("click", e => {
   if (e.target.closest("#clearAll")) { S = blank(); $("#q").value = ""; refresh(); }
+  if (e.target.closest("#namesBtn")) { S.plain = !S.plain; refresh(); }
   if (e.target.closest("#sortBtn")) { S.sort = D.sort === "old" ? "new" : "old"; refresh(); }
 });
 document.addEventListener("keydown", e => {
