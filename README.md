@@ -50,6 +50,10 @@ to the repo, and it uses port 8767 so it can run beside a real library on 8766.
 using [SigLIP 2](https://huggingface.co/google/siglip2-base-patch16-256) embeddings, and stops
 where the matches stop: results that only resemble the surroundings ("latte art" drifting into
 plain coffee) are cut, and a search for something you never photographed says so.
+Names in a search are read as people, not words: "ben and matthew on a beach" finds photos with
+both of them in it (from Google's tags and the faces you've named) and ranks those by "on a beach".
+A name that's also an everyday word, like Sunny or Lily, counts only when you capitalize it, and
+"Not them?" under the title searches the words you typed instead.
 
 **More like this.** From any photo, find the ones closest in look and subject: here, other
 lighthouses first, then the sea and sunsets around them.
