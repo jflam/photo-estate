@@ -250,6 +250,7 @@ services, with ~10k duplicates collapsed and ~130 trips found, served from an M1
 ## Layout
 
 ```
+docs/book/             a technical book on how it all works, with diagrams (start at docs/book/README.md)
 docs/screenshots/      the screenshots in this README (tools/screenshots.py retakes them)
 photo-estate/
   estate.py            ingest, link, exif, dupes, review, tag (any OpenAI-compatible VLM), search, stats
