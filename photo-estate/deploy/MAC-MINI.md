@@ -146,6 +146,11 @@ To accept uploads only from your own login, add `--upload-user you@example.com` 
 `serve` arguments in the plist. `tailscale serve` sets the `Tailscale-User-Login` header the app
 checks, and the app listens only on `127.0.0.1`, so nothing else can set it from the network.
 
+The **Library info** page (`/stats`, the bar-chart icon) shows what is waiting and has a
+**Catalogue new photos** button that runs the script and shows its output, then **Restart to show
+them** (the app reads the catalogue at startup; the restart works because launchd's `KeepAlive`
+relaunches it). The same from a terminal:
+
 ```bash
 RESTART=com.jflam.photo-search ./photo-estate/ingest-iphone.sh /Volumes/estate
 ```

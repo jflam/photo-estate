@@ -6,14 +6,14 @@
 """Phone uploads: the inbox rules in upload.py, then an uploaded photo + sidecar through the real
 `estate.py ingest` and `link`, to check it arrives with its date, place and favourite, and that a
 second run (and the same photo under another name) adds nothing."""
-import hashlib, io, random, sqlite3, subprocess, sys, tempfile
+import hashlib, io, os, random, sqlite3, subprocess, sys, tempfile, time
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from upload import clean_path, save_upload  # noqa: E402
+from upload import IngestJob, clean_path, save_upload  # noqa: E402
 
 ESTATE = HERE.parent / "estate.py"
 
@@ -89,6 +89,27 @@ def main():
         assert con.execute("SELECT count(*) FROM assets").fetchone()[0] == 2
         blobs = [p for p in store.rglob("*") if p.is_file() and ".tmp" not in p.parts]
         assert len(blobs) == 2, blobs
+
+        # the page's "Catalogue new photos" button: one run at a time, output kept, waiting counted
+        fake = td / "fake.sh"
+        fake.write_text("#!/usr/bin/env bash\necho \"inbox=$INBOX root=$1 restart=${RESTART:-unset}\"; sleep 1\n"
+                        "echo '== 2 new assets and sidecars: link'\n")
+        fake.chmod(0o755)
+        os.environ["RESTART"] = "com.example.should-not-leak"
+        job = IngestJob(fake, td, db, store, inbox)
+        w = job.status()["waiting"]
+        assert w["files"] == 0, "everything in the inbox is already catalogued"
+        assert put(inbox, "2026/11/16/IMG_0045-2222222.JPG", jpeg(3))[0] == 201
+        assert job.status()["waiting"]["files"] == 1
+        assert job.start() is True and job.start() is False, "a second run while one is going is refused"
+        assert job.status()["running"]
+        for _ in range(100):
+            if not job.status()["running"]:
+                break
+            time.sleep(0.1)
+        st = job.status()
+        assert st["exit_code"] == 0 and st["restart_needed"], st
+        assert st["log"][0] == f"inbox={inbox} root={td} restart=unset", st["log"]
     print("ALL CHECKS PASSED")
 
 

@@ -85,3 +85,76 @@ def save_upload(inbox: Path, rel: str, fp, length: int, sha256: str | None = Non
         return 201, "stored"
     finally:
         tmp.unlink(missing_ok=True)
+
+
+# ----------------------------------------------------------------------------- running the ingest
+
+class IngestJob:
+    """Runs ingest-iphone.sh from the web page, one run at a time, and keeps its output to show.
+
+    The script does the work (ingest, link, exif, places, embeddings, faces); this only starts it,
+    follows its output and says what is waiting in the inbox. It is started with fixed arguments, so
+    nothing a client sends reaches the command line."""
+
+    def __init__(self, script: Path, root: Path, db: str, store: Path, inbox: Path):
+        import collections
+        import threading
+        self.script, self.root, self.db, self.store, self.inbox = script, root, db, store, inbox
+        self.lock = threading.Lock()
+        self.log = collections.deque(maxlen=300)
+        self.proc = None
+        self.started = self.finished = self.code = None
+        self.fresh = False        # a run added photos, so the app has not loaded them yet
+
+    def waiting(self) -> dict:
+        """Photos and videos in the inbox that the catalog has not recorded yet."""
+        import sqlite3
+        have = set()
+        try:
+            c = sqlite3.connect(f"file:{self.db}?mode=ro", uri=True, timeout=10)
+            try:
+                have = {r[0] for r in c.execute("SELECT path FROM occurrences WHERE source=?", (self.inbox.name,))}
+            finally:
+                c.close()
+        except sqlite3.Error:
+            pass                  # no catalog yet: everything is waiting
+        files = size = 0
+        if self.inbox.is_dir():
+            for p in self.inbox.rglob("*"):
+                if p.suffix.lower() in MEDIA_EXT and p.is_file() and p.relative_to(self.inbox).as_posix() not in have:
+                    files += 1
+                    size += p.stat().st_size
+        return {"files": files, "bytes": size}
+
+    def status(self) -> dict:
+        waiting = self.waiting()       # walks the inbox: not under the lock
+        with self.lock:
+            running = self.proc is not None and self.proc.poll() is None
+            return {"enabled": True, "running": running, "started_at": self.started, "finished_at": self.finished,
+                    "exit_code": self.code, "log": list(self.log), "restart_needed": self.fresh,
+                    "waiting": waiting}
+
+    def start(self) -> bool:
+        """Start a run; False if one is already going."""
+        import subprocess
+        import threading
+        with self.lock:
+            if self.proc is not None and self.proc.poll() is None:
+                return False
+            env = dict(os.environ, DB=str(self.db), STORE=str(self.store), INBOX=str(self.inbox))
+            env.pop("RESTART", None)   # the page asks for a restart separately: it would kill this run's output
+            self.log.clear()
+            self.started, self.finished, self.code = time.time(), None, None
+            self.proc = subprocess.Popen([str(self.script), str(self.root)], stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT, text=True, env=env, stdin=subprocess.DEVNULL)
+            threading.Thread(target=self._follow, args=(self.proc,), daemon=True).start()
+            return True
+
+    def _follow(self, proc) -> None:
+        for line in proc.stdout:
+            self.log.append(line.rstrip())
+        code = proc.wait()
+        with self.lock:
+            self.code, self.finished = code, time.time()
+            if code == 0 and any("new assets and sidecars" in x for x in self.log):
+                self.fresh = True

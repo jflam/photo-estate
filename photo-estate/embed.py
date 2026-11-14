@@ -228,7 +228,7 @@ def cmd_serve(a) -> None:
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, quote, unquote, urlparse
 
-    from upload import save_upload
+    from upload import IngestJob, save_upload
     import numpy as np
     from PIL import Image, ImageOps
     import pillow_heif
@@ -253,6 +253,8 @@ def cmd_serve(a) -> None:
     # Phone uploads land in a plain folder that `estate.py ingest` reads like any other source. The demo
     # takes none unless --inbox says where; otherwise the inbox sits beside the catalog.
     inbox = Path(a.inbox) if a.inbox else None if a.demo else Path(a.db).resolve().parent / "iphone"
+    ingest = (IngestJob(Path(a.ingest_script or Path(__file__).with_name("ingest-iphone.sh")), Path(a.db).resolve().parent,
+                        a.db, store, inbox) if inbox else None)
     seed = Path(a.cache or Path(a.db).resolve().parent / "review")
     # On the Mac mini the estate disk is a USB hard disk: a cold thumbnail costs a ~9 ms seek, so a
     # screenful of 150 takes most of a second. --fast-cache puts the cache on the internal SSD and
@@ -763,6 +765,8 @@ def cmd_serve(a) -> None:
                         "query_log_bytes": qsize, "query_log_lines": qlines, "cache_dir": str(cache),
                         "store": str(store), "db": str(a.db)}}
 
+    under_launchd = os.environ.get("XPC_SERVICE_NAME", "0") not in ("", "0")   # the job's label, only when launchd started us
+
     class Handler(BaseHTTPRequestHandler):
         # HTTP/1.1 keeps connections open: `tailscale serve` (and browsers on plain http) reuse them
         # instead of paying a new connection and thread per request. Idle ones close after `timeout`.
@@ -815,6 +819,8 @@ def cmd_serve(a) -> None:
 
         def do_POST(self):
             u = urlparse(self.path)
+            if u.path in ("/api/ingest", "/api/restart"):
+                return self.admin(u.path)
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             except ValueError:
@@ -825,6 +831,28 @@ def cmd_serve(a) -> None:
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
+        def who(self) -> str:
+            # `tailscale serve` adds the caller's identity; the app itself is bound to 127.0.0.1
+            return self.headers.get("Tailscale-User-Login", "")
+
+        def allowed(self) -> bool:
+            return not a.upload_user or self.who() in a.upload_user
+
+        def admin(self, path: str):
+            """POST /api/ingest runs ingest-iphone.sh; POST /api/restart relaunches the app (launchd only)."""
+            if ingest is None:
+                return self.send(404, b"not found", "text/plain")
+            if not self.allowed():
+                return self.send(403, b"not allowed", "text/plain")
+            if path == "/api/ingest":
+                started = ingest.start()
+                return self.json({"started": started}, 202 if started else 409)
+            if not under_launchd:   # run by hand, nothing would bring it back
+                return self.json({"error": "not running under launchd"}, 409)
+            print(f"restart requested by {self.who() or 'local'}", flush=True)
+            self.json({"restarting": True}, 202)
+            threading.Timer(0.5, os._exit, (0,)).start()   # KeepAlive starts it again
+
         def do_PUT(self):
             """PUT /api/upload/<YYYY/MM/DD/name.ext>: one file from the phone into the inbox (upload.py)."""
             u = urlparse(self.path)
@@ -832,9 +860,8 @@ def cmd_serve(a) -> None:
             self.close_connection = True   # every early answer below leaves the body unread
             if not u.path.startswith(prefix) or inbox is None:
                 return self.send(404, b"not found", "text/plain")
-            # `tailscale serve` adds the caller's identity; the app itself is bound to 127.0.0.1
-            who = self.headers.get("Tailscale-User-Login", "")
-            if a.upload_user and who not in a.upload_user:
+            who = self.who()
+            if not self.allowed():
                 return self.send(403, b"not allowed", "text/plain")
             try:
                 length = int(self.headers.get("Content-Length", ""))
@@ -909,6 +936,8 @@ def cmd_serve(a) -> None:
                     body = Path(__file__).with_name("stats.html").read_bytes()
                     return self.send(200, body, "text/html; charset=utf-8", "no-cache",
                                      etag=f'"{hashlib.md5(body).hexdigest()}"')
+                if u.path == "/api/ingest":
+                    return self.json(ingest.status() | {"can_restart": under_launchd} if ingest else {"enabled": False})
                 if u.path == "/api/stats":
                     return self.json(stats_payload(one("refresh") == "1"))
                 if u.path == "/api/info":
@@ -1018,6 +1047,7 @@ def main() -> None:
     s.add_argument("--match-window", type=float, default=MATCH_WINDOW,
                    help="...nor more than this below the best match (2 = show every photo, ranked)")
     s.add_argument("--inbox", help="where phone uploads (PUT /api/upload/...) are saved; default <db dir>/iphone (none with --demo)")
+    s.add_argument("--ingest-script", help="script the Library info page runs to catalogue uploads (default: ingest-iphone.sh)")
     s.add_argument("--upload-user", action="append", default=[],
                    help="Tailscale login allowed to upload (repeatable); default: anyone who can reach the app")
     s.add_argument("--query-log", help="where to record searches and photos opened (default: <db dir>/query-log.jsonl)")
