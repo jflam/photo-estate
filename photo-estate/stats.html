@@ -145,7 +145,10 @@ function render(d) {
     fact("Image model", esc(A.model)) + fact("Query log", A.query_log_lines != null ? `${fmt(A.query_log_lines)} lines, ${bytes(A.query_log_bytes)}` : "–") +
     fact("Python", esc(A.python)) + fact("Catalog", `<span title="${esc(A.db)}">${esc(A.db.split("/").slice(-2).join("/"))}</span>`) +
     (A.demo ? fact("Mode", "demo library") : ""));
-  h += `</div><p class="note" style="margin-top:28px">Disk figures were measured ${new Date(d.computed_at * 1000).toLocaleTimeString()} in ${D.took_s} s and are kept for ten minutes. Library figures are read when the server starts.</p>`;
+  const when = new Date(d.computed_at * 1000), nowN = d.catalog_assets_now, thenN = total;
+  const changed = nowN != null && nowN !== thenN;
+  h += `</div><p class="note" style="margin-top:28px">Last recomputed on ${when.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })} at ${when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} (took ${D.took_s} s). Disk figures stay as measured until you press Recompute; they change when photos are imported. People and photo counts above are read when the server starts.</p>`
+    + (changed ? `<p class="note"><b>The catalog now has ${fmt(nowN)} files, but these figures counted ${fmt(thenN)}.</b> Press Recompute to update them.</p>` : "");
   $("#out").innerHTML = h;
   $("#sub").textContent = `${fmt(total)} files · ${bytes(D.bytes_stored)} · ${y0 && y1 ? `${y0} – ${y1}` : ""}`;
 }
