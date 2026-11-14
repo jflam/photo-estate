@@ -1,11 +1,12 @@
 # Photo Estate
 
-**Your whole photo library, on your own disk, searchable by describing what's in a photo.**
+**Your whole photo library, on your own disk, searchable by what's in a photo, who's in it and where it was taken.**
 
 Photo Estate gathers every photo and video from Google Photos, iCloud Photos and Flickr onto one
 disk, removes the duplicates, keeps each service's metadata (dates, places, albums, people,
 favourites), and gives you a fast local app to browse and search it all. Type "latte art" or "dog
-in the snow" and it finds those photos, with no tags and nothing sent to the cloud.
+in the snow" and it finds those photos, with no tags and nothing sent to the cloud. Name the people
+in your photos once, and "ben and matthew on a beach" or "ben san diego" finds exactly them, there.
 
 ![Searching the demo library for "latte art"](docs/screenshots/search-latte-art.jpg)
 
@@ -50,11 +51,38 @@ to the repo, and it uses port 8767 so it can run beside a real library on 8766.
 using [SigLIP 2](https://huggingface.co/google/siglip2-base-patch16-256) embeddings, and stops
 where the matches stop: results that only resemble the surroundings ("latte art" drifting into
 plain coffee) are cut, and a search for something you never photographed says so.
-Names and places in a search are read as filters, not words: "ben and matthew on a beach" finds
-photos with both of them in it (from Google's tags and the faces you've named) and ranks those by
-"on a beach"; "ben san diego" is Ben's photos taken in or around San Diego, not ones that just look
-like it. A name or place that's also an everyday word (Sunny, Celebration, Golden) counts only when
-you capitalize it, and a link under the title searches the words you typed instead.
+
+**Search by who and where.** An image model can't know who your kids are, and it can only guess
+a place from how it looks (a sunny street near Disney World passes for San Diego). So names and
+places in a search are read as filters before anything is ranked:
+
+| You type | Read as |
+|---|---|
+| ben and matthew on a beach | photos with both Ben and Matthew, ranked by "on a beach" |
+| matthew's birthday | Matthew's photos, ranked by "birthday" |
+| ben san diego | Ben's photos taken in or around San Diego (La Jolla and Carlsbad too), newest first |
+| seattle skyline | photos taken in Seattle, ranked by "skyline" |
+| trip to florida | every photo taken in Florida |
+
+People come from the service's tags and the faces you've named; places from the photo's GPS. A
+name or place that's also an everyday word (Sunny, Celebration, Golden) only counts when you
+capitalize it, and the title says how a search was read, with a link to search your exact words
+instead.
+
+**Name the people in your photos.** The People page (`/people`) starts from Google's people tags
+and finds the same faces everywhere else, following children from baby to adult a couple of years
+at a time. You confirm in bulk and fix the exceptions:
+
+- **Is this Ben?** shows the faces that might be, least certain first. Every face is labelled with
+  what it will be saved as; click the few that are wrong (someone else, a stranger, or not sure
+  yet), then save the page. Strangers are never asked about again; "not sure" waits for later, or
+  for someone else in the family.
+- **Yes to all**, then **Find mistakes**: name everything waiting at once, then review Ben's faces
+  least like his others first, which is where wrong matches end up.
+- **See it in the photo.** Space (or the corner button) opens the whole photo with that face
+  highlighted, for the ones a face crop can't settle; the arrow keys step through the page.
+- Two faces in one photo are never the same person, and every decision is kept in a plain log
+  file next to the catalog.
 
 **More like this.** From any photo, find the ones closest in look and subject: here, other
 lighthouses first, then the sea and sunsets around them.
@@ -80,7 +108,7 @@ photos, swipe down to close, swipe up for details, and pinch or double-tap to zo
 the original file, so **Save Image** keeps its date and place. Put it behind
 [Tailscale](https://tailscale.com/kb/1312/serve) or any reverse proxy to use it away from home.
 
-**Typed filters** work in the search field too: `sunset place:denmark`,
+**Typed filters** work in the search field too, for anything names and places don't cover: `sunset place:denmark`,
 `kids album:"Summer 2019"`, `camera:d300`, `date:2010-07`, `is:fav`.
 
 <br clear="right">
@@ -173,8 +201,11 @@ each run, in a few seconds.
 
 **Search** has two layers: SQLite FTS5 over filenames, albums, people, descriptions and tags
 (`estate.py search`), and SigLIP 2 embeddings for "describe the photo" search (`embed.py search`
-and the app). A typed search keeps the photos within 0.04 cosine similarity of its best match and
-above 0.085; both numbers were measured on the demo and on a 100k-photo library, and
+and the app). In the app, a search is read before it's ranked: typed filters (`place:`, `year:`
+...) come out first, then the names of people (full names, or a first name only one person has)
+and places (any city, region or country the library has photos from), and only the words left
+over go to SigLIP. A typed search keeps the photos within 0.04 cosine similarity of its best match
+and above 0.085; both numbers were measured on the demo and on a 100k-photo library, and
 `--match-window` / `--match-floor` change them.
 
 **Faces.** `faces.py run` finds and embeds every face (InsightFace `buffalo_l` on the CPU, about
@@ -185,11 +216,15 @@ what lets a child be followed from a baby to an adult: each year you confirm at 
 the next year recognisable, and siblings who looked alike at the same age are never compared.
 Sure matches are named automatically, likely ones wait for a yes or no, and people who turn up
 often but have no name are grouped for you to name. Everything you decide is also written to
-`face-labels.jsonl` next to the catalog. The model weights are for non-commercial use.
+`face-labels.jsonl` next to the catalog. A person is in a photo at most once, so a second face
+in a photo already settled for someone is never suggested as them. The model weights are for
+non-commercial use.
 
 **Query log.** The app appends every search and every photo opened from a result list to
 `query-log.jsonl` next to the catalog, on your machine only (`--query-log` to move it). It's there
-to pick evaluation queries from real use; nothing in the app reads it back.
+to pick evaluation queries from real use: each search keeps its top 20 results and how it was
+read, and each opened photo keeps the search it came from and its position. Nothing in the app
+reads it back.
 
 ## Where it runs
 
@@ -238,6 +273,31 @@ photo-estate/
   BENCHMARK.md         library stats and the benchmark set used to compare models
 ```
 
+## What's next
+
+Roughly in order. Each one is independent.
+
+1. **Dates in a search.** "ben 2019", "christmas 2019" and "summer 2022" should become date
+   filters the way names and places do. Today the year goes to the image model, which can't read
+   dates.
+2. **Score search on real queries.** A small page that shows the top results of searches from the
+   query log and lets you mark the wrong ones, giving a score that every later change to search is
+   checked against, instead of judging by eye.
+3. **A bigger image model.** Compare SigLIP 2 so400m with the base model on that score. Switching
+   means embedding every photo again (overnight or longer on a CPU), and re-measuring the match
+   floor and window.
+4. **Text in photos.** OCR (PP-OCRv5) on photos that look like documents, receipts, signs and
+   screenshots, with the text added to search.
+5. **Videos.** Most videos from a phone are Live Photo clips that duplicate their still; the rest
+   need keyframes embedded so they show up in search, and faces found in them.
+6. **Event captions.** A local vision-language model writing one caption per event ("Matthew's
+   10th birthday at home"), so every photo in it can be found by the occasion.
+7. **Backups built in.** The store only ever grows, which makes `rsync` to a second disk or
+   `restic` to a bucket simple; a command that sets one up and checks it would make it the default
+   rather than something to remember.
+8. **Less memory.** The app uses about 1.7 GB serving 100k photos; the open tasks in
+   [PERFORMANCE.md](photo-estate/PERFORMANCE.md) cover that and faster restarts.
+
 ## Contributing
 
 Contributions are welcome: bug reports, ideas, and pull requests. The demo library means you can
@@ -251,6 +311,7 @@ uv run embed.py serve --demo      # the app on the demo library
 
 Good places to start:
 
+- **Anything in [What's next](#whats-next).** Dates in a search is the smallest.
 - **Open performance tasks** in [PERFORMANCE.md](photo-estate/PERFORMANCE.md), each written up
   so it can be picked up as-is.
 - **Not yet supported:** RAW files and videos aren't embedded yet, and faces in them aren't found.
