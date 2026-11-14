@@ -226,8 +226,9 @@ def cmd_serve(a) -> None:
     from collections import OrderedDict
     from concurrent.futures import ThreadPoolExecutor
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from urllib.parse import parse_qs, quote, urlparse
+    from urllib.parse import parse_qs, quote, unquote, urlparse
 
+    from upload import save_upload
     import numpy as np
     from PIL import Image, ImageOps
     import pillow_heif
@@ -249,6 +250,9 @@ def cmd_serve(a) -> None:
     elif not a.store:
         sys.exit("serve needs --store (or --demo)")
     store = Path(a.store)
+    # Phone uploads land in a plain folder that `estate.py ingest` reads like any other source. The demo
+    # takes none unless --inbox says where; otherwise the inbox sits beside the catalog.
+    inbox = Path(a.inbox) if a.inbox else None if a.demo else Path(a.db).resolve().parent / "iphone"
     seed = Path(a.cache or Path(a.db).resolve().parent / "review")
     # On the Mac mini the estate disk is a USB hard disk: a cold thumbnail costs a ~9 ms seek, so a
     # screenful of 150 takes most of a second. --fast-cache puts the cache on the internal SSD and
@@ -821,6 +825,31 @@ def cmd_serve(a) -> None:
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
+        def do_PUT(self):
+            """PUT /api/upload/<YYYY/MM/DD/name.ext>: one file from the phone into the inbox (upload.py)."""
+            u = urlparse(self.path)
+            prefix = "/api/upload/"
+            self.close_connection = True   # every early answer below leaves the body unread
+            if not u.path.startswith(prefix) or inbox is None:
+                return self.send(404, b"not found", "text/plain")
+            # `tailscale serve` adds the caller's identity; the app itself is bound to 127.0.0.1
+            who = self.headers.get("Tailscale-User-Login", "")
+            if a.upload_user and who not in a.upload_user:
+                return self.send(403, b"not allowed", "text/plain")
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                return self.send(411, b"Content-Length required", "text/plain")
+            try:
+                code, msg = save_upload(inbox, unquote(u.path[len(prefix):]), self.rfile, length,
+                                        self.headers.get("X-Content-SHA256"))
+                self.close_connection = code >= 400   # a refused body may still be on the wire
+            except OSError as e:
+                code, msg = 500, f"could not write: {e.strerror}"
+            if code == 201:
+                print(f"upload: {u.path[len(prefix):]} ({length / 1e6:.1f} MB) from {who or 'local'}", flush=True)
+            self.json({"status": msg}, code)
+
         def do_GET(self):
             u = urlparse(self.path)
             qs = parse_qs(u.query)
@@ -988,6 +1017,9 @@ def main() -> None:
                    help="typed searches show no photo below this similarity (-1 = no floor)")
     s.add_argument("--match-window", type=float, default=MATCH_WINDOW,
                    help="...nor more than this below the best match (2 = show every photo, ranked)")
+    s.add_argument("--inbox", help="where phone uploads (PUT /api/upload/...) are saved; default <db dir>/iphone (none with --demo)")
+    s.add_argument("--upload-user", action="append", default=[],
+                   help="Tailscale login allowed to upload (repeatable); default: anyone who can reach the app")
     s.add_argument("--query-log", help="where to record searches and photos opened (default: <db dir>/query-log.jsonl)")
     s.set_defaults(fn=cmd_serve)
     a = p.parse_args()

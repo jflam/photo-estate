@@ -134,3 +134,22 @@ default-deny, so two grants cover the Mac mini, both added 2026-11-11:
 
 Both have tests in the policy, so a later edit that breaks them is refused on save. Pick a port
 for the app that no other service on the machine uses.
+
+## Photos uploaded from the phone
+
+The photo app accepts `PUT /api/upload/<YYYY/MM/DD/name>` and saves files into `/Volumes/estate/iphone`
+(`--inbox` changes it). It never touches the catalog: `ingest-iphone.sh` does, in the same way
+`pull-icloud.sh` does for iCloud, and only runs the slow stages (embeddings, faces) when something
+new arrived.
+
+To accept uploads only from your own login, add `--upload-user you@example.com` (repeatable) to the
+`serve` arguments in the plist. `tailscale serve` sets the `Tailscale-User-Login` header the app
+checks, and the app listens only on `127.0.0.1`, so nothing else can set it from the network.
+
+```bash
+RESTART=com.jflam.photo-search ./photo-estate/ingest-iphone.sh /Volumes/estate
+```
+
+`RESTART` restarts the app at the end, because it reads the catalog at startup. A launchd timer
+(`StartInterval`, say 900 seconds) can run the same command; a second run while one is going exits at
+once. `SKIP_MODELS=1` catalogues without embedding.
