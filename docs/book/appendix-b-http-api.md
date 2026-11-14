@@ -74,6 +74,8 @@ Response:
 |---|---|
 | `GET /api/facets?...` (same filter parameters) | `{"facets": {country, region, city, camera, lens, trip, album, person: [[label, count], ...]}, "months": [counts], "fav": N, "matching": N}` (each facet's counts ignore its own selection; `person` counts include it) |
 | `GET /api/info` | `{"total", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
+| `GET /stats` | The library info page ([stats.html](../../photo-estate/stats.html)) |
+| `GET /api/stats[?refresh=1]` | `{state: working|ready|error, library, disk, app}`: library figures from memory, disk figures (catalog tables, cache folders, free space) computed in a background thread and kept ten minutes; `refresh=1` recomputes. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
 | `GET /api/log?ev=open|share&sha=...&pos=N` plus the search's parameters | Appends an event to the query log; `204` |
 
 ### Images

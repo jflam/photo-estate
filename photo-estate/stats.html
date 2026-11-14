@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Library info — Photo Estate</title>
+<meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c0c0d" media="(prefers-color-scheme: dark)">
+<style>
+:root { color-scheme: light dark; --bg:#fbfbfa; --surface:#f1f1ef; --raised:#fff; --line:rgba(0,0,0,.08); --ink:#131314; --ink-2:#4b4b51;
+  --muted:#86868d; --bar:#131314; --bar-2:#c9c9cd; --accent:#e5484d; --sans:"Inter Variable","Inter",system-ui,-apple-system,"Segoe UI",sans-serif; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0c0c0d; --surface:#18181a; --raised:#1c1c1f; --line:rgba(255,255,255,.08); --ink:#f1f1f2;
+  --ink-2:#b7b7bc; --muted:#7d7d85; --bar:#f1f1f2; --bar-2:#45454b; --accent:#ff6b6b; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 var(--sans); letter-spacing:-.006em; -webkit-font-smoothing:antialiased;
+  padding:max(24px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) 80px max(20px,env(safe-area-inset-left)); }
+main { max-width: 1040px; margin: 0 auto; }
+a { color: inherit; }
+.top { display:flex; justify-content:space-between; align-items:center; gap:12px; color:var(--muted); font-size:13px; }
+.top a { text-decoration:none; } .top a:hover, .top button:hover { color:var(--ink); }
+button { font:inherit; color:inherit; background:none; border:0; cursor:pointer; padding:0; }
+h1 { margin:14px 0 4px; font-size:30px; letter-spacing:-.03em; font-weight:600; }
+.sub { margin:0 0 26px; color:var(--muted); }
+h2 { margin:34px 0 12px; font-size:13px; font-weight:500; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
+.cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; }
+.card { background:var(--surface); border-radius:12px; padding:14px 16px; }
+.card b { display:block; font-size:26px; font-weight:600; letter-spacing:-.03em; font-variant-numeric:tabular-nums; }
+.card span { color:var(--muted); font-size:12.5px; }
+.card small { display:block; margin-top:2px; color:var(--ink-2); font-size:12px; }
+.grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:26px 32px; }
+.panel h3 { margin:0 0 10px; font-size:14px; font-weight:600; }
+.row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 12px; padding:5px 0; align-items:baseline; font-variant-numeric:tabular-nums; }
+.row .l { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.row .v { color:var(--ink-2); }
+.row i { grid-column:1/-1; display:block; height:5px; border-radius:3px; background:var(--bar-2); overflow:hidden; }
+.row i u { display:block; height:100%; background:var(--bar); border-radius:3px; }
+.cols { display:flex; align-items:flex-end; gap:2px; height:96px; }
+.cols div { flex:1; background:var(--bar); border-radius:2px 2px 0 0; min-height:2px; opacity:.88; position:relative; }
+.cols div:hover { opacity:1; }
+.axis { display:flex; justify-content:space-between; color:var(--muted); font-size:11.5px; margin-top:4px; font-variant-numeric:tabular-nums; }
+.fact { display:flex; justify-content:space-between; gap:16px; padding:7px 0; border-top:1px solid var(--line); }
+.fact:first-child { border-top:0; } .fact span:first-child { color:var(--muted); } .fact span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
+.meter { height:12px; border-radius:6px; background:var(--bar-2); overflow:hidden; display:flex; }
+.meter u { display:block; background:var(--bar); } .meter u + u { background:var(--accent); }
+.note { color:var(--muted); font-size:12.5px; }
+.wait { padding:60px 0; text-align:center; color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <div class="top"><a href="/">← Library</a><button id="refresh">Recompute</button></div>
+  <h1>Library info</h1>
+  <p class="sub" id="sub">Counting…</p>
+  <div id="out"><div class="wait">Reading the catalog and measuring the disk…</div></div>
+</main>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = n => Number(n).toLocaleString();
+const bytes = n => { if (n == null) return "–"; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; n = +n;
+  while (n >= 1000 && i < 4) { n /= 1000; i++; } return (n >= 100 || i === 0 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2)) + " " + u[i]; };
+const pct = (a, b) => b ? (100 * a / b).toFixed(a / b < .1 ? 1 : 0) + "%" : "–";
+const dur = s => { s = Math.round(s); const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`; };
+const day = s => { const m = /^(\d{4})-(\d\d)-(\d\d)/.exec(s || ""); return m ? new Date(+m[1], m[2] - 1, +m[3]).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "–"; };
+const card = (big, label, small) => `<div class="card"><b>${big}</b><span>${label}</span>${small ? `<small>${small}</small>` : ""}</div>`;
+const fact = (k, v) => `<div class="fact"><span>${k}</span><span>${v}</span></div>`;
+function bars(rows, fmtV = fmt, label = x => x) {            // rows: [[name, value], ...]
+  const max = Math.max(1, ...rows.map(r => r[1]));
+  return rows.map(([k, v]) => `<div class="row"><span class="l" title="${esc(k)}">${esc(label(k))}</span><span class="v">${fmtV(v)}</span><i><u style="width:${100 * v / max}%"></u></i></div>`).join("") || `<p class="note">Nothing yet.</p>`;
+}
+function cols(vals, labels, tip) {
+  const max = Math.max(1, ...vals);
+  return `<div class="cols">${vals.map((v, i) => `<div title="${esc(tip(i, v))}" style="height:${Math.max(2, 100 * v / max)}%"></div>`).join("")}</div>
+    <div class="axis"><span>${labels[0]}</span><span>${labels[1]}</span><span>${labels[2]}</span></div>`;
+}
+const panel = (t, h) => `<div class="panel"><h3>${t}</h3>${h}</div>`;
+
+function render(d) {
+  const L = d.library, D = d.disk, A = d.app;
+  if (!L || !D) return;
+  const photos = D.kinds.image || { n: 0, bytes: 0 }, videos = D.kinds.video || { n: 0, bytes: 0 };
+  const total = photos.n + videos.n, C = D.counts, cacheBytes = Object.values(D.cache).reduce((a, c) => a + c.bytes, 0);
+  const fs = D.filesystem;
+  let h = `<div class="cards">
+    ${card(fmt(photos.n), "photos", bytes(photos.bytes))}
+    ${card(fmt(videos.n), "videos", bytes(videos.bytes) + (D.video_seconds ? ` · ${dur(D.video_seconds)} of footage` : ""))}
+    ${card(bytes(D.bytes_stored), "originals on disk", `${fmt(total)} files, each stored once`)}
+    ${card(bytes(D.database.bytes), "catalog (SQLite)", "one file; table sizes below")}
+    ${card(bytes(cacheBytes), "thumbnail cache", "disposable, refills itself")}
+    ${card(fmt(L.photos), "searchable photos", `${fmt(C.embeddings)} embedded`)}
+    ${card(pct(L.with_gps, L.photos), "have GPS", `${fmt(L.countries)} countries · ${fmt(L.cities)} places`)}
+    ${card(fmt(L.trips), "trips", `${fmt(L.events)} events`)}
+    ${card(fmt(L.people), "people", C.faces != null ? `${fmt(C.faces)} faces found, ${fmt(C.faces_named)} named` : "no face scan yet")}
+    ${card(fmt(L.favourites), "favourites", `${fmt(L.albums)} albums`)}
+  </div>`;
+
+  h += `<h2>Storage</h2><div class="grid2">`;
+  if (fs) h += panel("The disk holding the originals",
+    `<div class="meter" title="used"><u style="width:${100 * fs.used / fs.total}%"></u></div>
+     <p class="note">${bytes(fs.used)} used of ${bytes(fs.total)} · <b>${bytes(fs.free)} free</b>. This library is ${pct(D.bytes_stored, fs.total)} of the disk.</p>`);
+  h += panel("Originals by type", bars(D.by_ext.map(e => [`${e[0].slice(1).toUpperCase()}  (${fmt(e[2])})`, e[3]]), bytes));
+  h += panel("Catalog by table", bars(D.database.tables, bytes) +
+    `<p class="note">${bytes(D.database.bytes)} file${D.database.wal_bytes ? ` + ${bytes(D.database.wal_bytes)} write-ahead log` : ""}.${D.database.tables.length ? "" : " (This SQLite build cannot report per-table sizes.)"}</p>`);
+  h += panel("Cache folders", bars(Object.entries(D.cache).map(([k, c]) => [`${k} (${fmt(c.files)} files)`, c.bytes]), bytes));
+  h += panel("De-duplication", fact("Files found in the exports", fmt(D.occurrences)) + fact("Unique files stored", fmt(total)) +
+    fact("Found more than once", fmt(Math.max(D.occurrences - total, 0))) + fact("Space saved by exact matches", bytes(D.bytes_saved_by_exact_dedupe)) +
+    fact("Sources ingested", fmt(D.sources)) + fact("Average file", bytes(D.bytes_stored / Math.max(total, 1))));
+  h += panel("Biggest files", bars(D.biggest_files.map(f => [f[2] || f[1], f[0]]), bytes));
+  h += `</div>`;
+
+  h += `<h2>When</h2><div class="grid2">`;
+  const ys = L.years.filter(y => y[0] > 1900), y0 = ys.length ? ys[0][0] : 0, y1 = ys.length ? ys.at(-1)[0] : 0, byY = Object.fromEntries(ys);
+  const yy = []; for (let y = y0; y <= y1; y++) yy.push(y);
+  h += panel("Photos per year", cols(yy.map(y => byY[y] || 0), [y0, Math.round((y0 + y1) / 2), y1], (i, v) => `${yy[i]}: ${fmt(v)}`));
+  h += panel("Time of day (local)", cols(L.hours, ["midnight", "noon", "11 pm"], (i, v) => `${i}:00: ${fmt(v)}`));
+  const wd = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  h += panel("Day of the week", cols(L.weekdays, ["Mon", "Thu", "Sun"], (i, v) => `${wd[i]}: ${fmt(v)}`));
+  h += panel("Records", fact("First photo", day(L.first)) + fact("Latest photo", day(L.last)) +
+    fact("Days with at least one photo", fmt(L.days_with_photos)) +
+    fact("Busiest day", L.busiest_day ? `${day(L.busiest_day[0])} · ${fmt(L.busiest_day[1])} photos` : "–") +
+    fact("Longest streak", L.longest_streak.days ? `${fmt(L.longest_streak.days)} days, ending ${day(L.longest_streak.ends)}` : "–") +
+    fact("Total megapixels", `${fmt(Math.round(D.megapixels))} MP`));
+  h += `</div>`;
+
+  h += `<h2>What and where</h2><div class="grid2">`;
+  h += panel("Cameras", bars(L.cameras));
+  h += panel("Lenses", bars(L.lenses));
+  h += panel("Favourite focal lengths (35mm equivalent)", bars(L.focal_lengths, fmt, x => x + " mm"));
+  h += panel("Countries", bars(L.countries_top));
+  h += panel("Places", bars(L.cities_top));
+  h += panel("Biggest trips", bars(L.biggest_trips.map(t => [t[0].replace(/^Trip to /, "") + "  ·  " + day(t[2]), t[1]])));
+  h += panel("People", bars(L.people_top));
+  h += panel("Albums", bars(L.albums_top));
+  h += `</div>`;
+
+  h += `<h2>How far the pipeline has got</h2><div class="grid2">`;
+  const step = (name, n, of) => `<div class="row"><span class="l">${name}</span><span class="v">${fmt(n)} of ${fmt(of)}</span><i><u style="width:${of ? 100 * Math.min(n, of) / of : 0}%"></u></i></div>`;
+  h += panel("Coverage", step("Searchable (embedded)", C.embeddings, photos.n) + step("Camera data (exif)", C.exif, total) +
+    (C.images_scanned_for_faces != null ? step("Scanned for faces", C.images_scanned_for_faces, photos.n) : "") +
+    step("With a place name", L.with_place, L.photos) + step("With a person tagged", L.with_people_tagged, L.photos) +
+    (C.embedding_errors ? `<p class="note">${fmt(C.embedding_errors)} images could not be decoded.</p>` : ""));
+  h += panel("The server", fact("Running for", dur(A.uptime_s)) + fact("Memory", A.rss_bytes ? bytes(A.rss_bytes) + " (peak)" : "–") +
+    fact("Image model", esc(A.model)) + fact("Query log", A.query_log_lines != null ? `${fmt(A.query_log_lines)} lines, ${bytes(A.query_log_bytes)}` : "–") +
+    fact("Python", esc(A.python)) + fact("Catalog", `<span title="${esc(A.db)}">${esc(A.db.split("/").slice(-2).join("/"))}</span>`) +
+    (A.demo ? fact("Mode", "demo library") : ""));
+  h += `</div><p class="note" style="margin-top:28px">Disk figures were measured ${new Date(d.computed_at * 1000).toLocaleTimeString()} in ${D.took_s} s and are kept for ten minutes. Library figures are read when the server starts.</p>`;
+  $("#out").innerHTML = h;
+  $("#sub").textContent = `${fmt(total)} files · ${bytes(D.bytes_stored)} · ${y0 && y1 ? `${y0} – ${y1}` : ""}`;
+}
+
+let timer = 0;
+async function load(refresh) {
+  clearTimeout(timer);
+  let d;
+  try { d = await (await fetch("/api/stats" + (refresh ? "?refresh=1" : ""))).json(); }
+  catch (e) { $("#sub").textContent = "Could not reach the server."; return; }
+  if (d.state === "error") { $("#out").innerHTML = `<div class="wait">Could not compute: ${esc(d.error)}</div>`; return; }
+  if (d.disk && d.library) render(d);
+  if (d.state === "working") { if (!d.disk) $("#sub").textContent = "Measuring the disk…"; timer = setTimeout(() => load(false), 1500); }
+}
+$("#refresh").onclick = () => { $("#sub").textContent = "Measuring the disk…"; load(true); };
+load(false);
+</script>
+</body>
+</html>

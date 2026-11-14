@@ -691,6 +691,46 @@ def cmd_serve(a) -> None:
         except OSError as e:  # never fail a search because the log can't be written
             print(f"query log: {e}", flush=True)
 
+    # /stats: what the library is and what it costs (stats.py). The library numbers come from memory and
+    # never change until a restart; the disk numbers walk the cache folders and read the catalog, which
+    # takes seconds on a hard disk, so they are computed in a thread and kept for ten minutes.
+    started = time.time()
+    st = {"lib": None, "disk": None, "at": 0.0, "running": False, "error": None}
+    st_lock = threading.Lock()
+
+    def stats_job():
+        try:
+            import stats
+            if st["lib"] is None:
+                st["lib"] = stats.library_stats(meta, list(when), people_ix, trips, events)
+            st["disk"] = stats.disk_stats(a.db, a.store, [cache] if cache == seed else [cache, seed])
+            st["at"], st["error"] = time.time(), None
+        except Exception as e:  # the page says so; the rest of the app is unaffected
+            st["error"] = f"{type(e).__name__}: {e}"
+        finally:
+            st["running"] = False
+
+    def stats_payload(refresh: bool):
+        with st_lock:
+            if not st["running"] and (refresh or st["disk"] is None or time.time() - st["at"] > 600):
+                st["running"] = True
+                threading.Thread(target=stats_job, daemon=True).start()
+        import stats
+        qlines = qsize = None
+        try:
+            qsize = qlog.stat().st_size
+            if qsize < 64 << 20:
+                with qlog.open("rb") as f:
+                    qlines = sum(1 for _ in f)
+        except OSError:
+            pass
+        return {"state": "working" if st["running"] else "error" if st["error"] and not st["disk"] else "ready",
+                "error": st["error"], "computed_at": st["at"] or None, "library": st["lib"], "disk": st["disk"],
+                "app": {"uptime_s": round(time.time() - started), "rss_bytes": stats.rss_bytes(), "model": a.model,
+                        "demo": bool(a.demo), "python": sys.version.split()[0], "faces_ready": "p" in people,
+                        "query_log_bytes": qsize, "query_log_lines": qlines, "cache_dir": str(cache),
+                        "store": str(store), "db": str(a.db)}}
+
     class Handler(BaseHTTPRequestHandler):
         # HTTP/1.1 keeps connections open: `tailscale serve` (and browsers on plain http) reuse them
         # instead of paying a new connection and thread per request. Idle ones close after `timeout`.
@@ -808,6 +848,12 @@ def cmd_serve(a) -> None:
                     return self.send(204, b"", "text/plain")
                 if u.path == "/api/facets":
                     return self.json(facet_counts(select(qs)[0]))
+                if u.path in ("/stats", "/stats.html"):
+                    body = Path(__file__).with_name("stats.html").read_bytes()
+                    return self.send(200, body, "text/html; charset=utf-8", "no-cache",
+                                     etag=f'"{hashlib.md5(body).hexdigest()}"')
+                if u.path == "/api/stats":
+                    return self.json(stats_payload(one("refresh") == "1"))
                 if u.path == "/api/info":
                     return self.json(info)
                 if u.path in app_files:

@@ -108,6 +108,11 @@ photos, swipe down to close, swipe up for details, and pinch or double-tap to zo
 the original file, so **Save Image** keeps its date and place. Put it behind
 [Tailscale](https://tailscale.com/kb/1312/serve) or any reverse proxy to use it away from home.
 
+**Library info.** The chart icon in the header (`/stats`) shows what the library is and what it costs:
+photos, videos and gigabytes on disk, the size of the catalog by table, cache and free space, photos per
+year and by hour and weekday, busiest day and longest streak, top cameras, lenses, places and people,
+and how far the pipeline has got.
+
 **Typed filters** work in the search field too, for anything names and places don't cover: `sunset place:denmark`,
 `kids album:"Summer 2019"`, `camera:d300`, `date:2010-07`, `is:fav`.
 
@@ -254,6 +259,8 @@ docs/book/             a technical book on how it all works, with diagrams (star
 docs/screenshots/      the screenshots in this README (tools/screenshots.py retakes them)
 photo-estate/
   estate.py            ingest, link, exif, dupes, review, tag (any OpenAI-compatible VLM), search, stats
+  stats.py             the numbers behind the /stats page (also runs on its own)
+  stats.html           the library info page
   embed.py             SigLIP 2 embeddings: run, search, serve (the photo app)
   places.py            place names, local time, events, trips
   search.html          the photo app served by embed.py
