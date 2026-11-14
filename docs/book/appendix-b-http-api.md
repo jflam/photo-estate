@@ -28,6 +28,14 @@ only):
 The extension must be a photo or video type, or `X.<media ext>.xmp` for a sidecar. The server never
 writes the catalog: `ingest-iphone.sh` ingests the inbox ([upload.py](../../photo-estate/upload.py)).
 
+`GET /api/ingest` reports the inbox and the last run; `POST /api/ingest` runs `ingest-iphone.sh`
+(one at a time: `202`, or `409` if a run is going) and `POST /api/restart` relaunches the app, but
+only when launchd started it (else `409`). The Library info page (`/stats`) has the buttons for
+these. All three honour `--upload-user`, and none take a body: the script and its arguments are fixed.
+
+`GET /api/ingest` returns `{enabled, running, started_at, finished_at, exit_code, log: [last 300
+lines], restart_needed, waiting: {files, bytes}, can_restart}`; `{"enabled": false}` with `--demo`.
+
 ### Search and browse
 
 `GET /api/search` and `GET /api/similar` take the same parameters; `/api/similar` additionally

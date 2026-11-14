@@ -43,6 +43,16 @@ h2 { margin:34px 0 12px; font-size:13px; font-weight:500; letter-spacing:.06em; 
 .meter { height:12px; border-radius:6px; background:var(--bar-2); overflow:hidden; display:flex; }
 .meter u { display:block; background:var(--bar); } .meter u + u { background:var(--accent); }
 .note { color:var(--muted); font-size:12.5px; }
+.up { background:var(--surface); border-radius:12px; padding:14px 16px; margin:0 0 6px; }
+.up[hidden] { display:none; }
+.up h3 { margin:0 0 4px; font-size:14px; font-weight:600; }
+.up p { margin:0 0 10px; color:var(--ink-2); }
+.up .acts { display:flex; gap:8px; flex-wrap:wrap; }
+.up .btn { height:34px; padding:0 14px; border-radius:9px; background:var(--ink); color:var(--bg); font-weight:600; }
+.up .btn.alt { background:var(--raised); color:var(--ink); box-shadow:inset 0 0 0 1px var(--line); }
+.up .btn:disabled { opacity:.45; cursor:default; }
+.up pre { margin:12px 0 0; max-height:220px; overflow:auto; padding:10px 12px; border-radius:9px; background:var(--bg); color:var(--ink-2);
+  font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; word-break:break-word; }
 .wait { padding:60px 0; text-align:center; color:var(--muted); }
 </style>
 </head>
@@ -51,6 +61,12 @@ h2 { margin:34px 0 12px; font-size:13px; font-weight:500; letter-spacing:.06em; 
   <div class="top"><a href="/">← Library</a><button id="refresh">Recompute</button></div>
   <h1>Library info</h1>
   <p class="sub" id="sub">Counting…</p>
+  <section class="up" id="up" hidden>
+    <h3>Photos from your phone</h3>
+    <p id="upText"></p>
+    <div class="acts"><button class="btn" id="upRun">Catalogue new photos</button><button class="btn alt" id="upRestart" hidden>Restart to show them</button></div>
+    <pre id="upLog" hidden></pre>
+  </section>
   <div id="out"><div class="wait">Reading the catalog and measuring the disk…</div></div>
 </main>
 <script>
@@ -76,6 +92,34 @@ function cols(vals, labels, tip) {
     <div class="axis"><span>${labels[0]}</span><span>${labels[1]}</span><span>${labels[2]}</span></div>`;
 }
 const panel = (t, h) => `<div class="panel"><h3>${t}</h3>${h}</div>`;
+
+// Photos uploaded from the phone wait in a folder until the catalogue step reads them in.
+let upTimer = null;
+async function uploads() {
+  let d;
+  try { d = await (await fetch("/api/ingest")).json(); } catch { return; }
+  if (!d.enabled) return;
+  $("#up").hidden = false;
+  const w = d.waiting, ago = d.finished_at ? new Date(d.finished_at * 1000).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : null;
+  let t;
+  if (d.running) t = "Cataloguing… finding places, then searching and faces for the new photos. This can take a while; you can leave this page.";
+  else if (d.exit_code != null && d.exit_code !== 0) t = `The last run stopped with an error (exit ${d.exit_code}); the log is below. Running it again picks up where it left off.`;
+  else if (d.restart_needed) t = "New photos are catalogued. The app reads the catalogue when it starts, so restart it to see them in search.";
+  else t = w.files ? `${fmt(w.files)} new ${w.files === 1 ? "file" : "files"} (${bytes(w.bytes)}) waiting to be catalogued.` : "Nothing waiting. New photos from your phone show up here.";
+  if (ago && !d.running && d.exit_code === 0) t += ` Last run finished ${ago}.`;
+  $("#upText").textContent = t;
+  $("#upRun").disabled = d.running;
+  $("#upRun").textContent = d.running ? "Running…" : "Catalogue new photos";
+  $("#upRestart").hidden = !(d.restart_needed && d.can_restart && !d.running);
+  const log = $("#upLog"); log.hidden = !d.log.length; log.textContent = d.log.join("\n"); log.scrollTop = log.scrollHeight;
+  clearTimeout(upTimer); upTimer = setTimeout(uploads, d.running ? 2000 : 15000);
+}
+$("#upRun").onclick = async () => { $("#upRun").disabled = true; await fetch("/api/ingest", { method: "POST" }); uploads(); };
+$("#upRestart").onclick = async () => {
+  $("#upRestart").disabled = true; $("#upText").textContent = "Restarting… the app takes about a minute to load the catalogue.";
+  await fetch("/api/restart", { method: "POST" }).catch(() => {});
+  const wait = setInterval(async () => { try { if ((await fetch("/api/info", { cache: "no-store" })).ok) { clearInterval(wait); location.reload(); } } catch {} }, 4000);
+};
 
 function render(d) {
   const L = d.library, D = d.disk, A = d.app;
@@ -165,6 +209,7 @@ async function load(refresh) {
 }
 $("#refresh").onclick = () => { $("#sub").textContent = "Measuring the disk…"; load(true); };
 load(false);
+uploads();
 </script>
 </body>
 </html>
