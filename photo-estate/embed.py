@@ -692,27 +692,54 @@ def cmd_serve(a) -> None:
             print(f"query log: {e}", flush=True)
 
     # /stats: what the library is and what it costs (stats.py). The library numbers come from memory and
-    # never change until a restart; the disk numbers walk the cache folders and read the catalog, which
-    # takes seconds on a hard disk, so they are computed in a thread and kept for ten minutes.
+    # never change until a restart. The disk numbers walk the cache folders and read the catalog, which
+    # takes a couple of minutes on a hard disk, so they are measured once, saved next to the catalog
+    # (stats-cache.json) and only measured again when you press Recompute. They change when photos are
+    # imported, which today means running the scripts.
     started = time.time()
     st = {"lib": None, "disk": None, "at": 0.0, "running": False, "error": None}
     st_lock = threading.Lock()
+    st_file = Path(a.db).resolve().parent / "stats-cache.json"
+    try:
+        saved = json.loads(st_file.read_text())
+        st["disk"], st["at"] = saved["disk"], saved["at"]
+    except (OSError, ValueError, KeyError):
+        pass
 
     def stats_job():
         try:
             import stats
             if st["lib"] is None:
                 st["lib"] = stats.library_stats(meta, list(when), people_ix, trips, events)
-            st["disk"] = stats.disk_stats(a.db, a.store, [cache] if cache == seed else [cache, seed])
-            st["at"], st["error"] = time.time(), None
+            disk = stats.disk_stats(a.db, a.store, [cache] if cache == seed else [cache, seed])
+            st["disk"], st["at"], st["error"] = disk, time.time(), None
+            try:
+                tmp = st_file.with_suffix(".tmp")
+                tmp.write_text(json.dumps({"at": st["at"], "disk": disk}))
+                os.replace(tmp, st_file)
+            except OSError:
+                pass
         except Exception as e:  # the page says so; the rest of the app is unaffected
             st["error"] = f"{type(e).__name__}: {e}"
         finally:
             st["running"] = False
 
+    def assets_now():
+        try:
+            c = sqlite3.connect(a.db, timeout=10)
+            try:
+                return c.execute("SELECT count(*) FROM assets").fetchone()[0]
+            finally:
+                c.close()
+        except sqlite3.Error:
+            return None
+
     def stats_payload(refresh: bool):
         with st_lock:
-            if not st["running"] and (refresh or st["disk"] is None or time.time() - st["at"] > 600):
+            if st["lib"] is None:
+                import stats
+                st["lib"] = stats.library_stats(meta, list(when), people_ix, trips, events)
+            if not st["running"] and (refresh or st["disk"] is None):
                 st["running"] = True
                 threading.Thread(target=stats_job, daemon=True).start()
         import stats
@@ -726,6 +753,7 @@ def cmd_serve(a) -> None:
             pass
         return {"state": "working" if st["running"] else "error" if st["error"] and not st["disk"] else "ready",
                 "error": st["error"], "computed_at": st["at"] or None, "library": st["lib"], "disk": st["disk"],
+                "catalog_assets_now": assets_now(),
                 "app": {"uptime_s": round(time.time() - started), "rss_bytes": stats.rss_bytes(), "model": a.model,
                         "demo": bool(a.demo), "python": sys.version.split()[0], "faces_ready": "p" in people,
                         "query_log_bytes": qsize, "query_log_lines": qlines, "cache_dir": str(cache),
