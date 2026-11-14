@@ -70,6 +70,17 @@ def main():
                "<exif:GPSLatitude>48.8584</exif:GPSLatitude><exif:GPSLongitude>2.2945</exif:GPSLongitude>"
                "<xmp:Rating>5</xmp:Rating></rdf:Description></x:xmpmeta>").encode()
         assert put(inbox, rel + ".xmp", xmp)[0] == 201
+        # the same metadata as headers on a single request: the server writes the sidecar itself
+        meta = {"taken": "2026-11-14T10:00:00-08:00", "lat": "48.8584", "lon": "2.2945", "fav": "true"}
+        b = jpeg(9)
+        assert save_upload(inbox, "2026/11/14/IMG_0050-9999999.JPG", io.BytesIO(b), len(b), None, meta)[0] == 201
+        side = (inbox / "2026/11/14/IMG_0050-9999999.JPG.xmp").read_text()
+        assert "<photoshop:DateCreated>2026-11-14T10:00:00-0800</" in side and "<xmp:Rating>5<" in side and "48.858400" in side, side
+        b = jpeg(10)
+        assert save_upload(inbox, "2026/11/14/IMG_0051-8888888.JPG", io.BytesIO(b), len(b), None, {"lat": "0", "lon": "0"})[0] == 201
+        assert not (inbox / "2026/11/14/IMG_0051-8888888.JPG.xmp").exists(), "no usable metadata, no sidecar"
+        for f in ("IMG_0050-9999999.JPG", "IMG_0051-8888888.JPG", "IMG_0050-9999999.JPG.xmp"):
+            (inbox / "2026/11/14" / f).unlink()
         assert put(inbox, "2026/11/14/IMG_0043-FFFFFFF.JPG", a)[0] == 201, "same bytes, other name"
 
         D = ("--db", db)

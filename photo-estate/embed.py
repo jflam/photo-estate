@@ -821,6 +821,8 @@ def cmd_serve(a) -> None:
             u = urlparse(self.path)
             if u.path in ("/api/ingest", "/api/restart"):
                 return self.admin(u.path)
+            if u.path.startswith("/api/upload/"):   # the system uploader POSTs
+                return self.upload()
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             except ValueError:
@@ -854,7 +856,18 @@ def cmd_serve(a) -> None:
             threading.Timer(0.5, os._exit, (0,)).start()   # KeepAlive starts it again
 
         def do_PUT(self):
-            """PUT /api/upload/<YYYY/MM/DD/name.ext>: one file from the phone into the inbox (upload.py)."""
+            self.upload()
+
+        def do_OPTIONS(self):
+            # The phone's background uploader asks first whether the server can resume interrupted uploads.
+            # It can't: 501 means "send each file in one request".
+            if urlparse(self.path).path.startswith("/api/upload"):
+                self.extra_headers = {"Allow": "OPTIONS, PUT, POST"}
+                return self.send(501, b"", "text/plain")
+            self.send(404, b"not found", "text/plain")
+
+        def upload(self):
+            """PUT or POST /api/upload/<YYYY/MM/DD/name.ext>: one file from the phone into the inbox (upload.py)."""
             u = urlparse(self.path)
             prefix = "/api/upload/"
             self.close_connection = True   # every early answer below leaves the body unread
@@ -868,13 +881,16 @@ def cmd_serve(a) -> None:
             except ValueError:
                 return self.send(411, b"Content-Length required", "text/plain")
             try:
+                h = self.headers
+                meta = {"taken": h.get("X-Taken"), "lat": h.get("X-Latitude"), "lon": h.get("X-Longitude"),
+                        "fav": h.get("X-Favorite")}
                 code, msg = save_upload(inbox, unquote(u.path[len(prefix):]), self.rfile, length,
-                                        self.headers.get("X-Content-SHA256"))
+                                        h.get("X-Content-SHA256"), meta)
                 self.close_connection = code >= 400   # a refused body may still be on the wire
             except OSError as e:
                 code, msg = 500, f"could not write: {e.strerror}"
             if code == 201:
-                print(f"upload: {u.path[len(prefix):]} ({length / 1e6:.1f} MB) from {who or 'local'}", flush=True)
+                print(f"upload: {self.command} {u.path[len(prefix):]} ({length / 1e6:.1f} MB) from {who or 'local'}", flush=True)
             self.json({"status": msg}, code)
 
         def do_GET(self):

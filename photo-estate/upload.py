@@ -47,8 +47,39 @@ def staging_dir(inbox: Path) -> Path:
     return inbox.with_name(inbox.name + ".partial")
 
 
-def save_upload(inbox: Path, rel: str, fp, length: int, sha256: str | None = None) -> tuple[int, str]:
+TAKEN = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(Z|[+-]\d\d:?\d\d)$")
+
+
+def xmp_for(meta: dict) -> str | None:
+    """The sidecar `link` reads (flat tags, as icloudpd writes them) from what the phone sent about a
+    photo: {"taken": ISO 8601 with offset, "lat", "lon", "fav"}. None if nothing usable came."""
+    tags = []
+    if TAKEN.match(meta.get("taken") or ""):
+        t = meta["taken"]
+        t = t[:-1] + "+0000" if t.endswith("Z") else t[:-3] + t[-2:] if t[-3] == ":" else t
+        tags.append(f"<photoshop:DateCreated>{t}</photoshop:DateCreated>")
+    try:
+        lat, lon = float(meta["lat"]), float(meta["lon"])
+        if -90 <= lat <= 90 and -180 <= lon <= 180 and (lat or lon):
+            tags += [f"<exif:GPSLatitude>{lat:.6f}</exif:GPSLatitude>", f"<exif:GPSLongitude>{lon:.6f}</exif:GPSLongitude>"]
+    except (KeyError, TypeError, ValueError):
+        pass
+    if str(meta.get("fav")).lower() in ("1", "true", "yes"):
+        tags.append("<xmp:Rating>5</xmp:Rating>")
+    if not tags:
+        return None
+    return ('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+            '<rdf:Description xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/" '
+            'xmlns:exif="http://ns.adobe.com/exif/1.0/" xmlns:xmp="http://ns.adobe.com/xap/1.0/">'
+            + "".join(tags) + "</rdf:Description></rdf:RDF></x:xmpmeta>\n")
+
+
+def save_upload(inbox: Path, rel: str, fp, length: int, sha256: str | None = None,
+                meta: dict | None = None) -> tuple[int, str]:
     """Stream `length` bytes from fp to <inbox>/<rel>. Returns (http status, message).
+
+    `meta` (taken/lat/lon/fav, from request headers) becomes the file's `.xmp` sidecar, written after
+    the file, because background uploads from the phone send one resource per request.
 
     Idempotent: sending a file that is already there, with the same size, is a 200. The same path
     with a different size is a 409, because ingest keys on the path and must never see it change.
@@ -82,6 +113,12 @@ def save_upload(inbox: Path, rel: str, fp, length: int, sha256: str | None = Non
             return 400, "sha256 does not match the bytes received"
         dest.parent.mkdir(parents=True, exist_ok=True)
         os.replace(tmp, dest)
+        xmp = xmp_for(meta or {}) if dest.suffix.lower() in MEDIA_EXT else None
+        if xmp:
+            side = dest.with_name(dest.name + ".xmp")
+            side_tmp = stage / f"{os.getpid()}.{time.time_ns()}.xmp"
+            side_tmp.write_text(xmp)
+            os.replace(side_tmp, side)
         return 201, "stored"
     finally:
         tmp.unlink(missing_ok=True)

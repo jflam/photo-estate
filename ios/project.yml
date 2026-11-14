@@ -1,0 +1,50 @@
+name: PhotoEstate
+options:
+  bundleIdPrefix: com.jflam
+  deploymentTarget:
+    iOS: "26.1"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: M52ASUK669
+    CODE_SIGN_STYLE: Automatic
+    # The photo app, as `tailscale serve` publishes it. Override for the Simulator against a local server:
+    #   xcodebuild ... SERVER_BASE=http://127.0.0.1:8791
+    SERVER_BASE: https://johns-mac-mini.taila5abb.ts.net:8766
+targets:
+  PhotoEstate:
+    type: application
+    platform: iOS
+    sources: [PhotoEstate, Shared]
+    info:
+      path: PhotoEstate/Info.plist
+      properties:
+        CFBundleDisplayName: Photo Estate
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        NSPhotoLibraryUsageDescription: Photo Estate uploads the photos and videos you take to your own server.
+        BackgroundUploadURLBase: $(SERVER_BASE)
+        NSAppTransportSecurity: { NSAllowsLocalNetworking: true }
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jflam.photoestate
+        TARGETED_DEVICE_FAMILY: "1"
+    dependencies:
+      - target: UploadExtension
+  UploadExtension:
+    type: extensionkit-extension
+    platform: iOS
+    sources: [UploadExtension, Shared]
+    info:
+      path: UploadExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Photo Estate Upload
+        EXAppExtensionAttributes:
+          EXExtensionPointIdentifier: com.apple.photos.background-upload
+        BackgroundUploadURLBase: $(SERVER_BASE)
+        NSPhotoLibraryUsageDescription: Photo Estate uploads the photos and videos you take to your own server.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jflam.photoestate.upload
+        TARGETED_DEVICE_FAMILY: "1"
