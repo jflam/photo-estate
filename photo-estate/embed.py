@@ -304,6 +304,11 @@ def cmd_serve(a) -> None:
                              county=" ".join(x for x in (locality, admin2) if x), place_inferred=psrc == "event",
                              event=eid, event_title=ev.get("title"),
                              trip=ev.get("trip"), trip_title=(trips.get(ev.get("trip")) or {}).get("title"))
+    # Faces named on the People page (faces.py) count as people in the photo, alongside Google's tags.
+    for sha, name in optional("SELECT DISTINCT f.sha256, p.name FROM faces f JOIN persons p ON p.id=f.person_id"):
+        if sha in meta and name not in meta[sha]["people"]:
+            meta[sha]["people"].append(name)
+    has_faces = bool(optional("SELECT 1 FROM faces LIMIT 1"))
     con.close()
 
     # Thumbnails are upright; the catalog's width/height are not always. The grid needs the real shape.
@@ -410,7 +415,17 @@ def cmd_serve(a) -> None:
             trip_list.append({"id": tid, "title": t["title"], "start": t["start"], "end": t["end"],
                               "n": int(len(ids)), "cover": shas[cover]})
     info = {"total": N, "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
-            "demo": bool(a.demo), **facet_counts({})}
+            "demo": bool(a.demo), "faces": has_faces, **facet_counts({})}
+
+    # The People page (/people): who each face is, and the questions worth asking. It's faces.py's,
+    # mounted here so naming works wherever the app does. Loads in the background, like the encoder.
+    people = {}
+    if has_faces:
+        def load_people():
+            from faces import People
+            people["p"] = People(a.db, a.store, [cache] if cache == seed else [cache, seed],
+                                 log=lambda msg: print(msg, flush=True))
+        threading.Thread(target=load_people, daemon=True).start()
 
     # Importing PyTorch and loading the text encoder is most of the startup time, and only typed
     # queries need it, so it loads while the page, filters and thumbnails are already being served.
@@ -626,11 +641,36 @@ def cmd_serve(a) -> None:
         def json(self, body, code: int = 200):
             self.send(code, json.dumps(body, separators=(",", ":")).encode(), "application/json")
 
+        def people_page(self, method: str, u, qs: dict, body) -> bool:
+            """Answer a People page request; False if the path isn't one."""
+            if not has_faces or not u.path.startswith(("/people", "/face/", "/api/people")):
+                return False
+            if "p" not in people:
+                self.send(503, b"Faces are still loading; try again in a moment.", "text/plain")
+                return True
+            got = people["p"].handle(method, u.path, qs, body)
+            self.send(*(got or (404, b"not found", "text/plain", "no-store")))
+            return True
+
+        def do_POST(self):
+            u = urlparse(self.path)
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            except ValueError:
+                body = None
+            try:
+                if not self.people_page("POST", u, parse_qs(u.query), body):
+                    self.send(404, b"not found", "text/plain")
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
         def do_GET(self):
             u = urlparse(self.path)
             qs = parse_qs(u.query)
             one = lambda k, d="": (qs.get(k) or [d])[0]
             try:
+                if self.people_page("GET", u, qs, None):
+                    return
                 if u.path in ("/", "/index.html"):  # revalidated each load, so edits show up at once
                     body = page.read_bytes()
                     return self.send(200, body, "text/html; charset=utf-8", "no-cache",

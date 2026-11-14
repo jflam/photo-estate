@@ -96,6 +96,7 @@ $E exif --store $STORE                          # camera, lens, exposure (needs 
 uv run places.py --db $DB run                   # places, local time, events, trips (offline)
 uv run embed.py --db $DB run --store $STORE     # SigLIP 2 embeddings for search
 uv run embed.py --db $DB serve --store $STORE   # the app: http://127.0.0.1:8766/
+uv run faces.py --db $DB run --store $STORE     # optional: find every face, then name people at /people
 ```
 
 Where to get your photos:
@@ -131,6 +132,7 @@ Linux the same thing is a systemd user service.
         places.py run ─────────┤  place names, local time, events, trips (offline, seconds)
         estate.py dupes/review ┤  exact + near-duplicate report, local review page
         embed.py run ──────────┤  SigLIP 2 image embeddings
+        faces.py run ──────────┤  every face, embedded; named from Google's tags and by you at /people
         embed.py serve ────────┘  the photo app at http://127.0.0.1:8766/
 ```
 
@@ -170,6 +172,16 @@ and the app). A typed search keeps the photos within 0.04 cosine similarity of i
 above 0.085; both numbers were measured on the demo and on a 100k-photo library, and
 `--match-window` / `--match-floor` change them.
 
+**Faces.** `faces.py run` finds and embeds every face (InsightFace `buffalo_l` on the CPU, about
+as fast as the SigLIP pass). Names start from Google's people tags, which are per photo: a photo
+with one tag and one face names that face, and the rest are matched from those. After that a face
+is only ever compared with a person's named faces from within two years of the photo, which is
+what lets a child be followed from a baby to an adult: each year you confirm at `/people` makes
+the next year recognisable, and siblings who looked alike at the same age are never compared.
+Sure matches are named automatically, likely ones wait for a yes or no, and people who turn up
+often but have no name are grouped for you to name. Everything you decide is also written to
+`face-labels.jsonl` next to the catalog. The model weights are for non-commercial use.
+
 **Query log.** The app appends every search and every photo opened from a result list to
 `query-log.jsonl` next to the catalog, on your machine only (`--query-log` to move it). It's there
 to pick evaluation queries from real use; nothing in the app reads it back.
@@ -204,6 +216,8 @@ photo-estate/
   embed.py             SigLIP 2 embeddings: run, search, serve (the photo app)
   places.py            place names, local time, events, trips
   search.html          the photo app served by embed.py
+  faces.py             faces: run (detect and embed), serve; who is who, with your help
+  people.html          the page for naming people, at /people in the photo app
   app/                 home-screen app files: manifest, icons, service worker
   review.html          the near-duplicate review page served by estate.py
   pull-drive.sh        pull Takeout zips from Google Drive one at a time and ingest them
@@ -234,7 +248,7 @@ Good places to start:
 
 - **Open performance tasks** in [PERFORMANCE.md](photo-estate/PERFORMANCE.md), each written up
   so it can be picked up as-is.
-- **Not yet supported:** RAW files and videos aren't embedded yet, and there are no faces.
+- **Not yet supported:** RAW files and videos aren't embedded yet, and faces in them aren't found.
 - **The next tagging tiers** (captions, objects, OCR) are designed in
   [TAGGING-RESEARCH.md](photo-estate/TAGGING-RESEARCH.md).
 - **More sources:** Amazon Photos, OneDrive, Dropbox, or a phone's camera roll would each be a new
