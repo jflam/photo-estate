@@ -9,3 +9,7 @@ __pycache__/
 
 # per-machine tool config (holds this machine's tailnet URL)
 .claude/
+
+# Xcode
+ios/*.xcodeproj/xcuserdata/
+ios/build/

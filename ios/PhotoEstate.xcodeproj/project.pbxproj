@@ -1,0 +1,439 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		35CE5A370192488149A5A29B /* UploadRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49009F7D6AE27A66198655FD /* UploadRequest.swift */; };
+		5849B82EBB4FF63BC7F05628 /* UploadRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49009F7D6AE27A66198655FD /* UploadRequest.swift */; };
+		6609B17342C482D0197A6F10 /* WebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2383C462B3C446A1E06644F7 /* WebView.swift */; };
+		94AA6DA1AE07270F45E33766 /* ForegroundUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDFDD9520B743A0331D2FCF8 /* ForegroundUploader.swift */; };
+		9536C3D5DD7F27FFD25DA1B2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13DA59C97BB2529E43D3813A /* ContentView.swift */; };
+		B5B8A9CA5FB59F7C93EB62D2 /* UploadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2D5A1D8D1E8B9DAE50D5508 /* UploadsView.swift */; };
+		C2C6BB4833851DD603965909 /* UploadExtension.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 4D60A82DDFE17E182160CBAB /* UploadExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		C767DF4E23F7FE4C51F17991 /* PhotoEstateApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FD21ED368938DA62FCF458 /* PhotoEstateApp.swift */; };
+		F58F69FB3166A10E8F99D0D4 /* UploadExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DF2FAB3068A53E42312D37B /* UploadExtension.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		1F71F5E19D74706AF9EE565B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 799CECE2E7E580D08B62997C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0851487B5B964CEDE924A83F;
+			remoteInfo = UploadExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		704257342A98DD6466C08BAD /* Embed ExtensionKit Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(EXTENSIONS_FOLDER_PATH)";
+			dstSubfolderSpec = 16;
+			files = (
+				C2C6BB4833851DD603965909 /* UploadExtension.appex in Embed ExtensionKit Extensions */,
+			);
+			name = "Embed ExtensionKit Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		13DA59C97BB2529E43D3813A /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		2383C462B3C446A1E06644F7 /* WebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebView.swift; sourceTree = "<group>"; };
+		24FD21ED368938DA62FCF458 /* PhotoEstateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoEstateApp.swift; sourceTree = "<group>"; };
+		49009F7D6AE27A66198655FD /* UploadRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadRequest.swift; sourceTree = "<group>"; };
+		4D60A82DDFE17E182160CBAB /* UploadExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = UploadExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		5DF2FAB3068A53E42312D37B /* UploadExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadExtension.swift; sourceTree = "<group>"; };
+		9A7D1C8FD4E917F7BA7F1D67 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		A21B86D5141AD45EB40AB504 /* PhotoEstate.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PhotoEstate.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D138D459277DE48E8CDA729B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		D2D5A1D8D1E8B9DAE50D5508 /* UploadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadsView.swift; sourceTree = "<group>"; };
+		FDFDD9520B743A0331D2FCF8 /* ForegroundUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundUploader.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		2E84FDAD0CE3EB95C63FDE48 /* UploadExtension */ = {
+			isa = PBXGroup;
+			children = (
+				9A7D1C8FD4E917F7BA7F1D67 /* Info.plist */,
+				5DF2FAB3068A53E42312D37B /* UploadExtension.swift */,
+			);
+			path = UploadExtension;
+			sourceTree = "<group>";
+		};
+		47D5DB2143C9210C7AE35EBE /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A21B86D5141AD45EB40AB504 /* PhotoEstate.app */,
+				4D60A82DDFE17E182160CBAB /* UploadExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		4AFBFCE31200FAC33ADADF84 /* PhotoEstate */ = {
+			isa = PBXGroup;
+			children = (
+				13DA59C97BB2529E43D3813A /* ContentView.swift */,
+				FDFDD9520B743A0331D2FCF8 /* ForegroundUploader.swift */,
+				D138D459277DE48E8CDA729B /* Info.plist */,
+				24FD21ED368938DA62FCF458 /* PhotoEstateApp.swift */,
+				D2D5A1D8D1E8B9DAE50D5508 /* UploadsView.swift */,
+				2383C462B3C446A1E06644F7 /* WebView.swift */,
+			);
+			path = PhotoEstate;
+			sourceTree = "<group>";
+		};
+		64E0EFE6199B846405246807 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				49009F7D6AE27A66198655FD /* UploadRequest.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		C4A7309D54CDA677D45CDA52 = {
+			isa = PBXGroup;
+			children = (
+				4AFBFCE31200FAC33ADADF84 /* PhotoEstate */,
+				64E0EFE6199B846405246807 /* Shared */,
+				2E84FDAD0CE3EB95C63FDE48 /* UploadExtension */,
+				47D5DB2143C9210C7AE35EBE /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0851487B5B964CEDE924A83F /* UploadExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 23830CC3A2EF36D43C918131 /* Build configuration list for PBXNativeTarget "UploadExtension" */;
+			buildPhases = (
+				919F5C65424A56C3892836A1 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = UploadExtension;
+			packageProductDependencies = (
+			);
+			productName = UploadExtension;
+			productReference = 4D60A82DDFE17E182160CBAB /* UploadExtension.appex */;
+			productType = "com.apple.product-type.extensionkit-extension";
+		};
+		6EF4AFF36B9658A72A01CB31 /* PhotoEstate */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 21152BC025EB57CA304F1301 /* Build configuration list for PBXNativeTarget "PhotoEstate" */;
+			buildPhases = (
+				D99C115490FACA86E3C20CA0 /* Sources */,
+				704257342A98DD6466C08BAD /* Embed ExtensionKit Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				CE5E9412B105D9F33FDC49CD /* PBXTargetDependency */,
+			);
+			name = PhotoEstate;
+			packageProductDependencies = (
+			);
+			productName = PhotoEstate;
+			productReference = A21B86D5141AD45EB40AB504 /* PhotoEstate.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		799CECE2E7E580D08B62997C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					0851487B5B964CEDE924A83F = {
+						DevelopmentTeam = M52ASUK669;
+						ProvisioningStyle = Automatic;
+					};
+					6EF4AFF36B9658A72A01CB31 = {
+						DevelopmentTeam = M52ASUK669;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 297BC851C5CFB11711C47205 /* Build configuration list for PBXProject "PhotoEstate" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = C4A7309D54CDA677D45CDA52;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				6EF4AFF36B9658A72A01CB31 /* PhotoEstate */,
+				0851487B5B964CEDE924A83F /* UploadExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		919F5C65424A56C3892836A1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F58F69FB3166A10E8F99D0D4 /* UploadExtension.swift in Sources */,
+				35CE5A370192488149A5A29B /* UploadRequest.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D99C115490FACA86E3C20CA0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9536C3D5DD7F27FFD25DA1B2 /* ContentView.swift in Sources */,
+				94AA6DA1AE07270F45E33766 /* ForegroundUploader.swift in Sources */,
+				C767DF4E23F7FE4C51F17991 /* PhotoEstateApp.swift in Sources */,
+				5849B82EBB4FF63BC7F05628 /* UploadRequest.swift in Sources */,
+				B5B8A9CA5FB59F7C93EB62D2 /* UploadsView.swift in Sources */,
+				6609B17342C482D0197A6F10 /* WebView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		CE5E9412B105D9F33FDC49CD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0851487B5B964CEDE924A83F /* UploadExtension */;
+			targetProxy = 1F71F5E19D74706AF9EE565B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		00D7E349B2AC1C2EBEECBD6B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = PhotoEstate/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jflam.photoestate;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		25FDD1BF8C60B12C879DC245 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = M52ASUK669;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SERVER_BASE = "https://johns-mac-mini.taila5abb.ts.net:8766";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		6F7D024115D8403D881F19C2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = UploadExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jflam.photoestate.upload;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		9CBF7D5D3859C0C805F9677B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = UploadExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jflam.photoestate.upload;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		DFF8D21B902EFD3ABCEF06B8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = PhotoEstate/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jflam.photoestate;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		F86F6ECA70ED933E88DB2165 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = M52ASUK669;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SERVER_BASE = "https://johns-mac-mini.taila5abb.ts.net:8766";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		21152BC025EB57CA304F1301 /* Build configuration list for PBXNativeTarget "PhotoEstate" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DFF8D21B902EFD3ABCEF06B8 /* Debug */,
+				00D7E349B2AC1C2EBEECBD6B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		23830CC3A2EF36D43C918131 /* Build configuration list for PBXNativeTarget "UploadExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6F7D024115D8403D881F19C2 /* Debug */,
+				9CBF7D5D3859C0C805F9677B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		297BC851C5CFB11711C47205 /* Build configuration list for PBXProject "PhotoEstate" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				25FDD1BF8C60B12C879DC245 /* Debug */,
+				F86F6ECA70ED933E88DB2165 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 799CECE2E7E580D08B62997C /* Project object */;
+}
