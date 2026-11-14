@@ -28,7 +28,7 @@ mkdir "$LOCK" 2>/dev/null || { echo "already running ($LOCK)"; exit 0; }
 trap 'rmdir "$LOCK"' EXIT
 
 run() { local s=$1; shift; uv run --quiet --script "$HERE/$s" --db "$DB" "$@"; }
-count() { sqlite3 "$DB" "SELECT (SELECT count(*) FROM assets) + (SELECT count(*) FROM xmp)"; }
+count() { sqlite3 "$DB" "SELECT (SELECT count(*) FROM assets) + (SELECT count(*) FROM xmp)" 2>/dev/null || echo 0; }
 
 before=$(count)
 echo "== $(date +%T) ingest $INBOX"
@@ -41,7 +41,11 @@ fi
 
 echo "== $(date +%T) $((after - before)) new assets and sidecars: link, exif, places"
 run estate.py link
-run estate.py exif --store "$STORE"
+if command -v exiftool >/dev/null; then
+  run estate.py exif --store "$STORE"
+else
+  echo "warning: exiftool not installed (brew install exiftool): skipping camera, lens and exposure"
+fi
 run places.py run
 if [[ -z ${SKIP_MODELS:-} ]]; then
   echo "== $(date +%T) embeddings, faces"
