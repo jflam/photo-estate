@@ -1075,8 +1075,6 @@ def cmd_serve(a) -> None:
                         st["lib"] = None
                     reload_state.update(at=time.time(), seconds=time.time() - t, error=None)
                     print(f"catalog reloaded: {N} images in {time.time() - t:.1f}s", flush=True)
-                    if has_faces:
-                        threading.Thread(target=load_people, daemon=True).start()
                     if not a.no_pregenerate:
                         threading.Thread(target=pregenerate, daemon=True).start()
                 except Exception as e:   # keep serving the old catalog
@@ -1092,6 +1090,7 @@ def cmd_serve(a) -> None:
 
     if ingest:
         ingest.on_added = reload_catalog
+        ingest.on_faces = lambda: has_faces and load_people()   # the run's faces are in: rebuild the People page
         threading.Thread(target=ingest.sweep, daemon=True).start()   # uploads left from before this start
 
     pregen_lock = threading.Lock()

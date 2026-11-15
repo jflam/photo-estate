@@ -8,8 +8,8 @@
 # touches what is new: link is limited to the inbox, exif/embed/faces skip finished photos, and places
 # reuses the place names and zones it already worked out (events and trips are rebuilt, in seconds). Nothing is deleted.
 #
-# - Set RESTART=com.jflam.photo-search to restart the photo app at the end: it reads the catalog at
-#   startup, so new photos appear in search only after that.
+# - The photo app runs this itself and reloads its catalog at "catalog ready". Run by hand, set
+#   RESTART=com.jflam.photo-search to restart the app at the end instead.
 # - Set SKIP_MODELS=1 to catalogue only (ingest, link, exif, places) and leave embeddings and faces
 #   for later, e.g. while the Mac is busy.
 # - Safe to run while the photo app is up (the catalog is in WAL mode), and safe to overlap: a second
@@ -48,11 +48,11 @@ else
   echo "warning: exiftool not installed (brew install exiftool): skipping camera, lens and exposure"
 fi
 run places.py run
-if [[ -z ${SKIP_MODELS:-} ]]; then
-  echo "== $(date +%T) embeddings, faces"
-  run embed.py run --store "$STORE"
-  run faces.py run --store "$STORE"
-fi
+if [[ -z ${SKIP_MODELS:-} ]]; then run embed.py run --store "$STORE"; fi
+# The photo app reloads its catalog when it reads this line: the new photos are searchable now, and
+# faces (slow, and only the People page needs them) carry on while it does.
+echo "== $(date +%T) catalog ready"
+if [[ -z ${SKIP_MODELS:-} ]]; then run faces.py run --store "$STORE"; fi
 if [[ -n ${RESTART:-} ]]; then
   echo "== $(date +%T) restart $RESTART"
   launchctl kickstart -k "gui/$(id -u)/$RESTART"
