@@ -28,7 +28,7 @@ LOCK=${TMPDIR:-/tmp}/photo-estate-ingest-iphone.lock
 mkdir "$LOCK" 2>/dev/null || { echo "already running ($LOCK)"; exit 0; }
 trap 'rmdir "$LOCK"' EXIT
 
-run() { local s=$1; shift; uv run --quiet --script "$HERE/$s" --db "$DB" "$@"; }
+run() { local s=$1; shift; echo "== $(date +%T) ${s%.py} $1"; uv run --quiet --script "$HERE/$s" --db "$DB" "$@"; }
 count() { sqlite3 "$DB" "SELECT (SELECT count(*) FROM assets) + (SELECT count(*) FROM xmp)" 2>/dev/null || echo 0; }
 
 before=$(count)
