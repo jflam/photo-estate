@@ -133,10 +133,17 @@ class IngestJob:
     follows its output and says what is waiting in the inbox. It is started with fixed arguments, so
     nothing a client sends reaches the command line."""
 
-    def __init__(self, script: Path, root: Path, db: str, store: Path, inbox: Path):
+    def __init__(self, script: Path, root: Path, db: str, store: Path, inbox: Path,
+                 quiet: float = 60.0, max_wait: float = 600.0):
         import collections
         import threading
         self.script, self.root, self.db, self.store, self.inbox = script, root, db, store, inbox
+        self.quiet, self.max_wait = quiet, max_wait   # seconds; quiet = 0 turns the automatic runs off
+        self.on_added = None      # called after a run that added photos (the app reloads its catalog)
+        self.timer = None
+        self.first_poke = None    # when the current burst of uploads began
+        self.again = False        # an upload arrived while a run was going
+        self.failures = 0
         self.lock = threading.Lock()
         self.log = collections.deque(maxlen=300)
         self.proc = None
@@ -187,11 +194,64 @@ class IngestJob:
             threading.Thread(target=self._follow, args=(self.proc,), daemon=True).start()
             return True
 
+    # -- running by itself: an upload starts (or restarts) a quiet period, and when it ends the ingest runs
+
+    def poke(self) -> None:
+        """An upload arrived. Run the ingest once uploads have been quiet for `quiet` seconds, but no later
+        than `max_wait` after the first of the burst, so a long upload still gets catalogued as it goes."""
+        if not self.quiet:
+            return
+        with self.lock:
+            if self.proc is not None and self.proc.poll() is None:
+                self.again = True       # picked up when the running one finishes
+                return
+            now = time.time()
+            if self.first_poke is None:
+                self.first_poke = now
+            self._arm(min(self.quiet, max(0.0, self.first_poke + self.max_wait - now)))
+
+    def sweep(self) -> None:
+        """At startup: uploads that were waiting when the app last stopped."""
+        if self.quiet and self.waiting()["files"]:
+            print("ingest: uploads waiting from before the start", flush=True)
+            self.poke()
+
+    def _arm(self, delay: float) -> None:      # lock held
+        import threading
+        if self.timer:
+            self.timer.cancel()
+        self.timer = threading.Timer(delay, self._fire)
+        self.timer.daemon = True
+        self.timer.start()
+
+    def _fire(self) -> None:
+        with self.lock:
+            self.timer, self.first_poke = None, None
+        print("ingest: uploads have gone quiet, cataloguing", flush=True)
+        if not self.start():            # one is already going (started by hand): look again when it ends
+            with self.lock:
+                self.again = True
+
     def _follow(self, proc) -> None:
         for line in proc.stdout:
             self.log.append(line.rstrip())
         code = proc.wait()
+        added = False
         with self.lock:
             self.code, self.finished = code, time.time()
             if code == 0 and any("new assets and sidecars" in x for x in self.log):
-                self.fresh = True
+                self.fresh = added = True
+            self.failures = 0 if code == 0 else self.failures + 1
+            if code != 0:
+                print(f"ingest failed (exit {code}), failure {self.failures}", flush=True)
+            if self.quiet:
+                if code != 0 and self.failures < 3:
+                    self._arm(600)             # try again later, a few times
+                elif self.again:
+                    self._arm(self.quiet)
+            self.again = False
+        if added and self.on_added:
+            try:
+                self.on_added()
+            except Exception as e:             # the run itself succeeded
+                print(f"ingest: reload after run failed: {e}", flush=True)
