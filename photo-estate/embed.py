@@ -1057,7 +1057,10 @@ def cmd_serve(a) -> None:
             if not has_faces or not u.path.startswith(("/people", "/face/", "/api/people")):
                 return False
             if "p" not in people:
-                self.send(503, b"Faces are still loading; try again in a moment.", "text/plain")
+                if method == "GET" and u.path.rstrip("/") == "/people":   # the page itself: wait, and ask again
+                    self.send(503, pages.waiting("Finding everyone", "Faces load after the library does. This takes under a minute; the page opens by itself."), "text/html; charset=utf-8")
+                else:
+                    self.send(503, b"Faces are still loading; try again in a moment.", "text/plain")
                 return True
             got = people["p"].handle(method, u.path, qs, body)
             self.send(*(got or (404, b"not found", "text/plain", "no-store")))
