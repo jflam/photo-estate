@@ -135,6 +135,7 @@ def main() -> None:
     p.add_argument("--quiet", type=float, default=60, help="the server's --ingest-quiet")
     p.add_argument("--runs", type=int, default=1)
     p.add_argument("--port", type=int, default=8798)
+    p.add_argument("--json", help="also write every run's numbers here")
     p.add_argument("--check", action="store_true", help="the app also does a full reload and compares (slower)")
     a = p.parse_args()
     work = a.work.expanduser().resolve()
@@ -192,14 +193,15 @@ def main() -> None:
             stamps = [(m.group(1), m.group(2)) for x in st["log"] if (m := re.match(r"== (\d\d:\d\d:\d\d) (\S+)", x))]
             txt = (run / "serve.log").read_text()
             reload_s = [float(x) for x in re.findall(r"catalog reloaded: \d+ images in ([\d.]+)s", txt)]
+            startup = float((re.findall(r"\d+ images loaded in ([\d.]+)s", txt) or ["nan"])[0])
             r = {"upload": t_up - t0, "visible": t_vis - t_up, "thumb_max": max(th), "thumb_sum": sum(th),
                  "run": st["finished_at"] - st["started_at"], "run_start": st["started_at"] - t_up,
-                 "reload": reload_s, "stages": stamps, "exit": st["exit_code"]}
+                 "reload": reload_s, "stages": stamps, "exit": st["exit_code"], "startup": startup}
             results.append(r)
             print(f"run {k + 1}: upload {r['upload']:.1f}s | visible {r['visible']:.1f}s after the last upload"
                   f" | thumbs slowest {r['thumb_max'] * 1000:.0f} ms, all {r['thumb_sum']:.2f}s"
                   f" | script started {r['run_start']:.1f}s after, ran {r['run']:.1f}s (exit {r['exit']})"
-                  f" | reload {', '.join(f'{x:.1f}s' for x in reload_s)}", flush=True)
+                  f" | reload {', '.join(f'{x:.1f}s' for x in reload_s)} | startup load {startup:.1f}s", flush=True)
             print("   stages: " + "  ".join(f"{t} {s}" for t, s in stamps), flush=True)
             for line in re.findall(r"reload check: .*", txt):
                 print("   " + line, flush=True)
@@ -207,6 +209,8 @@ def main() -> None:
             os.killpg(srv.pid, signal.SIGTERM)
             srv.wait()
             log.close()
+    if a.json:
+        Path(a.json).write_text(json.dumps(results, indent=1))
     if a.runs > 1:
         med = lambda k: sorted(r[k] for r in results)[len(results) // 2]
         print(f"median: visible {med('visible'):.1f}s, run {med('run'):.1f}s, thumbs slowest {med('thumb_max') * 1000:.0f} ms")
