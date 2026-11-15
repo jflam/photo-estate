@@ -35,6 +35,7 @@ search, and indexing 120k photos slows every big copy.
 | launchd agent | `~/Library/LaunchAgents/com.jflam.photo-search.plist` (copy in this folder) |
 | Log | `~/Library/Logs/photo-search.log` |
 | Query log | `/Volumes/estate/query-log.jsonl` (next to the catalog) |
+| Catalog backups | `/Volumes/estate/catalog-backups/` (`--backup-dir`): the app copies `estate.db` and `face-labels.jsonl` there daily and keeps 7 |
 | Local port | `127.0.0.1:8766` |
 | Tailnet | `tailscale serve --bg --https=8766 http://127.0.0.1:8766` |
 
