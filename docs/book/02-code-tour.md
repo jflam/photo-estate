@@ -43,6 +43,20 @@ A few things stand out:
   (README plus `PLAN.md`, `DISK-SETUP.md`, `PERFORMANCE.md`, `BENCHMARK.md`, `TAGGING-RESEARCH.md`
   and the deploy guide) add up to roughly 1,100 lines.
 
+### The iPhone app, measured on 2026-11-14
+
+The table above is the server and web pages as first written. The iPhone app ([chapter 19](19-iphone-app.md))
+came after it:
+
+| | Files | Code lines | Total lines |
+|---|---:|---:|---:|
+| Swift (`ios/`) | 23 | 3,481 | 4,093 |
+| Python added for it: `sync.py`, `upload.py`, and tests | 3 | about 460 | about 500 |
+
+The repository's Python as a whole is now 5,267 lines of code in 17 files (`embed.py` has grown from 801 to
+1,280, `estate.py` from 933 to 989, `faces.py` from 890 to 895 and `places.py` from 314 to 383; the rest is
+`sync.py`, `upload.py`, `stats.py`, tests and tools).
+
 ## File by file
 
 ```
@@ -62,6 +76,17 @@ photo-estate/
   tools/                   make_demo, screenshots, icons, three benchmark scripts (~540)
   deploy/                  launchd plists and the Mac mini guide
   demo/                    104 CC0 photos, their catalog, and credits
+  sync.py              100  the change feed a phone syncs from (chapter 20)
+  upload.py            309  receives phone uploads, runs the ingest by itself (chapter 24)
+  stats.py             197  the numbers behind the /stats page
+  ingest-iphone.sh          catalogue what the phone uploaded, touching only the new photos
+
+ios/                    the iPhone app, 23 Swift files (chapters 19-24)
+  PhotoEstate/Catalog/      the replica of the catalog, and reading a search
+  PhotoEstate/Images/       thumbnails and kept photos
+  PhotoEstate/Library/      grid, viewer, search page, filter sheets
+  UploadExtension/          the background upload extension
+  Shared/                   the server's address, the upload request, the extension's log
 ```
 
 ### estate.py: the catalog tool

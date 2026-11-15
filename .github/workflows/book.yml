@@ -1,0 +1,46 @@
+# Publishes the book (docs/book) as a website: https://jflam.github.io/photo-estate/
+# The pages are built by photo-estate/tools/build_book.py; nothing is committed to a branch.
+name: Book
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/book/**"
+      - "docs/screenshots/**"
+      - "photo-estate/tools/build_book.py"
+      - "photo-estate/tools/book_site/**"
+      - ".github/workflows/book.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Build the site
+        run: uv run photo-estate/tools/build_book.py "$RUNNER_TEMP/site"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

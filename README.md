@@ -2,13 +2,15 @@
 
 **Your whole photo library, on your own disk, searchable by what's in a photo, who's in it and where it was taken.**
 
-Photo Estate gathers every photo and video from Google Photos, iCloud Photos and Flickr onto one
-disk, removes the duplicates, keeps each service's metadata (dates, places, albums, people,
+Photo Estate gathers every photo and video from Google Photos, iCloud Photos, Flickr and your
+iPhone onto one disk, removes the duplicates, keeps each service's metadata (dates, places, albums, people,
 favourites), and gives you a fast local app to browse and search it all. Type "latte art" or "dog
 in the snow" and it finds those photos, with no tags and nothing sent to the cloud. Name the people
 in your photos once, and "ben and matthew on a beach" or "ben san diego" finds exactly them, there.
 
 ![Searching the demo library for "latte art"](docs/screenshots/search-latte-art.jpg)
+
+**📖 [Read the book](https://jflam.github.io/photo-estate/)**: a technical book on how it all works, chapter by chapter, with diagrams. It covers the pipeline, the search, the faces and the native iPhone app.
 
 Everything runs on your own machine. The archive is deliberately boring: **plain files plus one
 SQLite file.** No app, this one included, is needed to read it. If every script here disappeared,
@@ -118,6 +120,38 @@ and how far the pipeline has got.
 
 <br clear="right">
 
+## A native iPhone app
+
+Beyond the home-screen web app there is a real iPhone app in [`ios/`](ios/), and it works with no
+network at all. The server is the only writer, so the phone keeps a read-only copy of the catalog
+(synced from `GET /api/sync`, a change feed) in its own SQLite file, plus a thumbnail of every photo
+and full-screen copies of favourites and anything you've opened, within a size cap you choose.
+
+<table>
+<tr>
+<td width="25%"><img src="docs/screenshots/ios-library.jpg" alt="The Library tab: photos grouped by month and place"></td>
+<td width="25%"><img src="docs/screenshots/ios-search.jpg" alt="The Search tab: trips, photos through the years"></td>
+<td width="25%"><img src="docs/screenshots/ios-kitten.jpg" alt="Searching for kitten"></td>
+<td width="25%"><img src="docs/screenshots/ios-details.jpg" alt="A photo's details: date, camera, exposure"></td>
+</tr>
+</table>
+
+- **Library** is a justified grid grouped by month and place, with a viewer (zoom, swipe, share)
+  and details like the back of a print: date, camera and exposure, with a tap to "everything
+  taken around then".
+- **Search** runs on the phone against its own copy: people, places, dates, albums, cameras and
+  typed filters (`place:denmark`), with the same live-count filters as the web app. Trips and a
+  photos-per-year chart sit under the search field.
+- **Offline.** Everything above works on a plane. Describing a photo ("dog in the snow", "More like
+  this") needs the image model, so online it asks your server; offline it falls back to matching
+  words in names, places, albums and captions, and says so.
+- **Uploads.** An optional upload extension sends new photos from the phone to your server in the
+  background (see [Bring your own photos](#bring-your-own-photos)).
+
+To try it against the demo library, run `uv run embed.py serve --demo --port 8791` and build
+`ios/project-sim.yml` for the Simulator (see the comments at the top of that file). To use it for
+real, set `SERVER_BASE` in `ios/project.yml` to your server's address.
+
 ## Bring your own photos
 
 Every source goes through the same steps, and each step only does new work, so adding photos
@@ -145,6 +179,11 @@ Where to get your photos:
 - **iCloud Photos:** `pull-icloud.sh` mirrors your libraries with
   [icloudpd](https://github.com/icloud-photos-downloader/icloud_photos_downloader) and ingests them.
 - **Flickr:** the zips from Flickr's "Download all your data".
+- **Your iPhone:** the [native app](#a-native-iphone-app) uploads new photos to your server in the
+  background (`PUT /api/upload`, into an inbox folder). The server then catalogues just the new
+  ones by itself: link, exif, places, embeddings and faces each skip everything already done, so a
+  photo is searchable within seconds to a minute of arriving, and the app reloads its catalog
+  without restarting. `ingest-iphone.sh` does the same from a timer if you'd rather.
 - **Anything else:** a folder of photos and videos works too; EXIF supplies the dates.
 
 The same photo in two services is stored once. Ingest is resumable, and nothing is ever modified
@@ -161,7 +200,8 @@ Linux the same thing is a systemd user service.
 ```
  Google Takeout zips ─┐
  iCloud (icloudpd)  ──┼─▶ estate.py ingest ─▶ store/ab/cd/<sha256>.<ext>   every unique file, once
- Flickr data zips   ──┘        │                       (content-addressed, never modified)
+ Flickr data zips   ──┤
+ iPhone uploads     ──┘        │                       (content-addressed, never modified)
                                ▼
                          estate.db (SQLite)
                                │
@@ -238,7 +278,8 @@ The software makes very few assumptions about the machine and disks it runs on:
 | Piece | Requirement |
 |---|---|
 | **Store** (`--store`) | Any directory you can read and write: a USB disk, an internal drive, an SMB/NFS share on a NAS, an `rclone mount` of a bucket. Files are named by their SHA-256, so any filesystem works, case-insensitive ones included. Files are only ever added, never changed. |
-| **Catalog** (`--db`) | One SQLite file. **Keep it on a local disk, not a network share**: SQLite's locking isn't reliable over SMB or NFS. It's small (about 1 GB for 120k photos, mostly embeddings). |
+| **Catalog** (`--db`) | One SQLite file. **Keep it on a local disk, not a network share**: SQLite's locking isn't reliable over SMB or NFS. It can live on a different disk from the store (an internal SSD beside a USB hard disk, say). It's small (about 1 GB for 120k photos, mostly embeddings). |
+| **Backups** | The store only ever grows, so `rsync` or `restic` it. The catalog is the one thing that changes: `--backup-dir DIR` makes the app copy it (and the face-label journal) every `--backup-every` hours, keeping `--backup-keep` copies, using SQLite's backup API so it is consistent while the app runs. |
 | **Thumbnail cache** | `review/` next to the catalog by default (`--cache` to move it). About 2.5 GB for 100k photos. If the catalog's disk is a spinning one, add `--fast-cache` on an SSD. |
 | **A machine to run it** | Anything that runs Python through [`uv`](https://docs.astral.sh/uv/): macOS or Linux, Intel or ARM. 16 GB of RAM is enough to serve 100k photos. No GPU needed; SigLIP runs on the CPU. |
 | **Remote access** (optional) | The app listens on `127.0.0.1` only. Put whatever you like in front of it: [Tailscale](https://tailscale.com/kb/1312/serve) `serve`, Caddy, nginx, or nothing if you only use it on that machine. |
@@ -255,8 +296,10 @@ services, with ~10k duplicates collapsed and ~130 trips found, served from an M1
 ## Layout
 
 ```
-docs/book/             a technical book on how it all works, with diagrams (start at docs/book/README.md)
-docs/screenshots/      the screenshots in this README (tools/screenshots.py retakes them)
+docs/book/             a technical book on how it all works, with diagrams; published as a website
+                       (photo-estate/tools/build_book.py builds it, .github/workflows/book.yml deploys it)
+docs/screenshots/      the screenshots in this README (tools/screenshots.py retakes the web ones)
+ios/                   the native iPhone app: offline catalog, search, photo cache, uploads
 photo-estate/
   estate.py            ingest, link, exif, dupes, review, tag (any OpenAI-compatible VLM), search, stats
   stats.py             the numbers behind the /stats page (also runs on its own)
@@ -264,6 +307,9 @@ photo-estate/
   embed.py             SigLIP 2 embeddings: run, search, serve (the photo app)
   places.py            place names, local time, events, trips
   search.html          the photo app served by embed.py
+  sync.py              GET /api/sync: the catalog as a change feed, for devices that keep a copy
+  upload.py            receives phone uploads into an inbox folder (PUT /api/upload)
+  ingest-iphone.sh     catalogue what the phone uploaded, touching only the new photos
   faces.py             faces: run (detect and embed), serve; who is who, with your help
   people.html          the page for naming people, at /people in the photo app
   app/                 home-screen app files: manifest, icons, service worker
@@ -272,6 +318,7 @@ photo-estate/
   pull-icloud.sh       mirror iCloud libraries with icloudpd and ingest them
   demo/                104 CC0 photos as a ready-made library (`embed.py serve --demo`)
   tests/test_poc.py    end to end on a synthetic Takeout + iCloud + Flickr export
+  tests/test_sync.py   the change feed: full fetch, deltas, deletions, resuming, restart
   tools/               demo builder, screenshots, icon maker, speed benchmarks
   deploy/              running the app as an always-on service (launchd agents, Mac mini guide)
   PLAN.md              the overall plan and phases
@@ -300,9 +347,9 @@ Roughly in order. Each one is independent.
    need keyframes embedded so they show up in search, and faces found in them.
 6. **Event captions.** A local vision-language model writing one caption per event ("Matthew's
    10th birthday at home"), so every photo in it can be found by the occasion.
-7. **Backups built in.** The store only ever grows, which makes `rsync` to a second disk or
-   `restic` to a bucket simple; a command that sets one up and checks it would make it the default
-   rather than something to remember.
+7. **Backups of the store.** The app already copies the catalog on a schedule. The store only ever
+   grows, which makes `rsync` to a second disk or `restic` to a bucket simple; a command that sets
+   one up and checks it would make it the default rather than something to remember.
 8. **Less memory.** The app uses about 1.7 GB serving 100k photos; the open tasks in
    [PERFORMANCE.md](photo-estate/PERFORMANCE.md) cover that and faster restarts.
 

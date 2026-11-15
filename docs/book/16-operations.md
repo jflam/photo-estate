@@ -18,7 +18,8 @@ requirements, by component:
 | **Remote access** (optional) | The app listens on `127.0.0.1` only; put Tailscale `serve`, Caddy, nginx, or nothing in front |
 
 `--db` and `--store` are **separate arguments everywhere**, so the catalog and the photos can live on
-different devices. Ingest and embedding read every original, so they run at the store's speed (a USB
+different devices: the catalog can sit on an internal SSD while the store stays on a USB hard disk
+(`ingest-iphone.sh` takes the store and the catalog from different places for exactly this). Ingest and embedding read every original, so they run at the store's speed (a USB
 hard disk does about 150-200 MB/s); browsing and search touch only the catalog and cache, which is why
 those should be local and fast.
 
@@ -46,6 +47,9 @@ ROOT/                                  e.g. /Volumes/estate
     decisions.json                     your near-duplicate choices
   query-log.jsonl                      searches and photos opened
   face-labels.jsonl                    your face decisions (a journal)
+  sync-feed.db                         the change feed's versions (chapter 20); safe to delete
+  iphone/YYYY/MM/DD/...                the inbox: what the phone uploaded (chapter 24); keep it
+  catalog-backups/                     daily copies of estate.db and face-labels.jsonl (--backup-dir)
   icloud/<library>/YYYY/MM/DD/...      the icloudpd mirror (keep it)
   pull.log
 ~/Library/Caches/photo-estate/         the --fast-cache on the internal SSD (disposable)
@@ -93,7 +97,7 @@ Each does only new work. For Google, request a Takeout of just the newest "Photo
 and use `PATTERN` to pick up the new zips; for iCloud, re-run `pull-icloud.sh` (the mirror makes it
 incremental). For imports run by hand, restart the app to load the new photos.
 
-**Phone uploads need none of this.** The phone tags each file with the batch it belongs to and how
+**Phone uploads need none of this** ([chapter 24](24-uploading.md)). The phone tags each file with the batch it belongs to and how
 many files that batch has (`X-Batch: <id>/<count>`), so when the last one is in, the app starts
 cataloguing at once. Otherwise (an upload failed, or an older app) an upload starts a quiet period
 (`--ingest-quiet`, 60 s; 0 turns automatic runs off). Further uploads restart it, but a run starts at the latest
@@ -220,13 +224,15 @@ Because the store is append-only and content-addressed, backing it up is unusual
 |---|---|
 | The store to a second disk or NAS | `rsync -a ROOT/ BACKUP/`: only new files are copied each time |
 | Off-site, encrypted | `restic` to object storage (Backblaze B2 is about $6/TB/month) |
-| The catalog | `sqlite3 estate.db ".backup 'estate.db.bak'"` (the pull scripts do this); also `rsync` it. It is small and holds all the metadata, places and embeddings |
+| The catalog | **Built in:** `serve --backup-dir DIR` copies `estate.db` and `face-labels.jsonl` into `DIR` every `--backup-every` hours (default 24), keeping `--backup-keep` (default 7), using SQLite's backup API so the copy is consistent while the app and an ingest keep writing; the files open read-only with no `-shm` beside them. The pull scripts also run `sqlite3 estate.db ".backup 'estate.db.bak'"`. It is small and holds all the metadata, places and embeddings |
 | Detecting corruption | Re-hash every file in `store/` and compare with its name (a snippet is in DISK-SETUP.md). About an hour per 500 GB on a USB hard disk. Works on any filesystem, with or without checksums |
 | A filesystem with checksums | btrfs `scrub` monthly, or ZFS |
 | Moving an estate | It is just files: `rsync`, then compare file counts, total bytes and the SHA-256 of `estate.db` before erasing the old disk |
 
-What to back up, in priority order: the **store**; the **catalog**; `face-labels.jsonl` and
-`review/decisions.json` (your work); everything else can be regenerated.
+What to back up, in priority order: the **store** (which includes what phones uploaded, once ingested);
+the **inbox** `iphone/` until it has been ingested and the store copied; the **catalog**;
+`face-labels.jsonl` and `review/decisions.json` (your work); everything else can be regenerated, including
+`sync-feed.db` (a lost one costs each phone one full sync) and everything on the phone itself.
 
 ### The README's promise, as an operating rule
 

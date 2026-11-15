@@ -232,6 +232,7 @@ def cmd_serve(a) -> None:
     from urllib.parse import parse_qs, quote, unquote, urlparse
 
     from estate import facts_of as estate_facts
+    from sync import Feed
     from upload import IngestJob, save_upload, staging_dir
     import numpy as np
     from PIL import Image, ImageOps
@@ -639,6 +640,29 @@ def cmd_serve(a) -> None:
         print(f"text encoder ready in {time.time() - t:.1f}s", flush=True)
 
     threading.Thread(target=load_encoder, daemon=True).start()
+
+    # Devices that keep their own copy of the catalog (the iPhone app) follow it through a change feed
+    # (sync.py). The feed's versions live beside the catalog, never in it.
+    feed = Feed(Path(a.db).resolve().parent / "sync-feed.db")
+    feed_dups = set()
+
+    def feed_update():
+        """Tell the feed what the catalog now holds. A row is the photo's search result, plus `dup` for a
+        shot the library view hides as near-identical to the one before it (take(), newest first), which a
+        device cannot work out without the vectors."""
+        nonlocal feed_dups
+        t, S, V, mt, kept, dups = time.time(), shas, M, meta, [], set()
+        for i in newest:
+            i = int(i)
+            if kept and float(np.max(V[kept[-8:]] @ V[i])) > 0.97:
+                dups.add(S[i])
+            else:
+                kept.append(i)
+        n = feed.update({s: dict(mt[s], dup=True) if s in dups else mt[s] for s in S})
+        feed_dups = dups
+        print(f"sync feed: version {feed.version}, {n} rows changed ({time.time() - t:.1f}s)", flush=True)
+
+    threading.Thread(target=feed_update, daemon=True).start()
     page = Path(__file__).with_name("search.html")
     # Home-screen app files (manifest, icons, service worker), served from the site root: a service
     # worker only controls pages at or below its own path.
@@ -1185,6 +1209,16 @@ def cmd_serve(a) -> None:
                     return self.json(stats_payload(one("refresh") == "1"))
                 if u.path == "/api/info":
                     return self.json(info)
+                if u.path == "/api/sync":   # what changed since a device last asked (sync.py)
+                    if not feed.ready:
+                        self.extra_headers = {"Retry-After": "5"}
+                        return self.json({"error": "starting"}, 503)
+                    since = one("since", "0")
+                    ids, deleted, (ver, after), more = feed.page(one("epoch"), int(since) if since.isdigit() else 0,
+                                                                 one("after"), max(1, min(int(one("limit", "2000")), 10000)))
+                    rows = [dict(sha=s, **meta[s], **({"dup": True} if s in feed_dups else {})) for s in ids if s in meta]
+                    return self.json({"epoch": feed.epoch, "photos": rows, "deleted": deleted, "since": ver, "after": after,
+                                      "more": more, "total": N, "trips": [] if more else trip_list})
                 if u.path in app_files:
                     body = app_files[u.path].read_bytes()
                     return self.send(200, body, app_types[app_files[u.path].suffix], "no-cache",
@@ -1266,6 +1300,7 @@ def cmd_serve(a) -> None:
                         st["lib"] = None
                     reload_state.update(at=time.time(), seconds=time.time() - t, error=None)
                     print(f"catalog reloaded: {N} images in {time.time() - t:.1f}s", flush=True)
+                    feed_update()
                     if not a.no_pregenerate:
                         threading.Thread(target=pregenerate, daemon=True).start()
                 except Exception as e:   # keep serving the old catalog

@@ -5,6 +5,19 @@ builds a *synthetic* Google, iCloud and Flickr export on the fly, and a checked-
 public-domain photos that runs through the real pipeline. This chapter covers both, then the other
 tools in `tools/`.
 
+## The tests
+
+| Test | Covers |
+|---|---|
+| `tests/test_poc.py` | The whole catalog pipeline on a synthetic Takeout, iCloud and Flickr export (below) |
+| `tests/test_sync.py` | The change feed ([chapter 20](20-sync.md)): a device that pages through ends with the catalog's rows; deltas; deletions; resuming mid-way; restart; a lost feed file |
+
+The iPhone app has no unit tests of its own. It was checked in the iOS Simulator against the demo
+library (104 photos), with the server up and then stopped; `ios/project-sim.yml` builds it for a
+Simulator older than the upload extension needs. The demo is what makes that cheap: `embed.py serve
+--demo --port 8791` and the app's `SERVER_BASE` pointed at it. Screenshots in the README and chapter 23
+are taken that way.
+
 ## The end-to-end test: `tests/test_poc.py`
 
 ```bash

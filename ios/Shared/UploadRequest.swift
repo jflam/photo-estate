@@ -8,11 +8,7 @@ import Photos
 /// are a no-op, so the system uploader and the in-app uploader can both send the same photo safely:
 /// they build the same path from the same asset.
 enum UploadRequest {
-    /// The server's address, from Info.plist (`SERVER_BASE` in project.yml).
-    static var baseURL: URL {
-        let s = Bundle.main.object(forInfoDictionaryKey: "BackgroundUploadURLBase") as? String ?? ""
-        return URL(string: s) ?? URL(string: "https://johns-mac-mini.taila5abb.ts.net:8766")!
-    }
+    static var baseURL: URL { Server.baseURL }
 
     /// The originals only: the still or video as it was captured, and a Live Photo's video.
     static func wanted(_ r: PHAssetResource) -> Bool {
