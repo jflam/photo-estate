@@ -5,8 +5,8 @@ import UIKit
 ///
 /// - Photos are the interface, so surfaces are quiet: warm paper in the light, near-black ink in the dark.
 /// - One colour, the sun, marks what is chosen or alive. Nothing else is coloured.
-/// - Words that name a time or a place (a month, a trip, a date) are set in the serif, like captions
-///   under prints. Controls stay in the system face.
+/// - One typeface, the system's. Words that name a time or a place (a month, a trip, a date) are set
+///   heavier than the controls around them; nothing is decorated.
 enum Estate {
     static let paper = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.035, green: 0.035, blue: 0.04, alpha: 1)
                                                                : UIColor(red: 0.972, green: 0.964, blue: 0.945, alpha: 1) }
@@ -18,10 +18,8 @@ enum Estate {
     static let gap: CGFloat = 3
     static let densities: [Double] = [64, 96, 128, 180, 260]                   // row heights, pinch steps between them
 
-    static func serif(_ size: CGFloat, _ weight: UIFont.Weight = .semibold) -> UIFont {
-        let base = UIFont.systemFont(ofSize: size, weight: weight)
-        return UIFont(descriptor: base.fontDescriptor.withDesign(.serif) ?? base.fontDescriptor, size: size)
-    }
+    /// The face for words that name a time or a place (a month, a trip, a date): the system's, set heavier.
+    static func title(_ size: CGFloat, _ weight: UIFont.Weight = .semibold) -> UIFont { .systemFont(ofSize: size, weight: weight) }
 }
 
 extension Color {
@@ -32,8 +30,8 @@ extension Color {
 }
 
 extension Font {
-    /// The caption face: for months, trips, dates, places.
-    static func serif(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font { .system(size: size, weight: weight, design: .serif) }
+    /// For months, trips, dates, places: see `Estate.title`.
+    static func title(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font { .system(size: size, weight: weight) }
 }
 
 /// The icon's picture, drawn: hills under a low sun. Used where there are no photos to show.

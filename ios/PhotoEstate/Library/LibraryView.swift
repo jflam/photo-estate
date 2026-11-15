@@ -73,13 +73,13 @@ struct Welcome: View {
                 .frame(width: 150)
                 .padding(.bottom, 6)
             if let failed {
-                Text("Can't reach your library").font(.serif(24, .bold))
+                Text("Can't reach your library").font(.title(24, .bold))
                 Text("\(failed)\nYour photos appear here once this iPhone has fetched the catalog from \(Server.baseURL.host() ?? "your server").")
                     .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Button("Try again") { Task { await sync.sync() } }
                     .buttonStyle(.glassProminent).padding(.top, 4)
             } else {
-                Text("Bringing your library home").font(.serif(24, .bold))
+                Text("Bringing your library home").font(.title(24, .bold))
                 Text(sync.serverTotal > 0 ? "\(sync.photos.formatted()) of \(sync.serverTotal.formatted()) photos" : "Fetching the catalog…")
                     .font(.subheadline).foregroundStyle(.secondary).monospacedDigit().contentTransition(.numericText())
             }

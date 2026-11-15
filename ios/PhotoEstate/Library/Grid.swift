@@ -416,7 +416,7 @@ private final class HeadingView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        title.font = Estate.serif(40, .bold)
+        title.font = Estate.title(40, .bold)
         title.adjustsFontSizeToFitWidth = true
         title.minimumScaleFactor = 0.6
         detail.font = .preferredFont(forTextStyle: .subheadline)
@@ -446,13 +446,13 @@ private final class HeadingView: UIView {
     }
 }
 
-/// A section's caption: the month (or day) in the serif, then where and how many.
+/// A section's caption: the month (or day), then where and how many.
 private final class HeaderView: UICollectionReusableView {
     private let title = UILabel(), detail = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        title.font = Estate.serif(22)
+        title.font = Estate.title(22)
         detail.font = .systemFont(ofSize: 13, weight: .regular)
         detail.textColor = .secondaryLabel
         let stack = UIStackView(arrangedSubviews: [title, detail])
@@ -489,7 +489,7 @@ private final class Scrubber: UIView {
         super.init(frame: frame)
         glass.clipsToBounds = true
         addSubview(glass)
-        text.font = Estate.serif(15)
+        text.font = Estate.title(15)
         text.textColor = .label
         grip.tintColor = .secondaryLabel
         grip.contentMode = .center
