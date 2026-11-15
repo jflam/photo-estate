@@ -276,6 +276,7 @@ def cmd_ingest(a) -> None:
     store = Path(a.store)
     (store / ".tmp").mkdir(parents=True, exist_ok=True)
     con = connect(a.db)
+    done_before = 0           # photos and videos read from the sources before this one (for --progress)
     for src in map(Path, a.sources):
         name = src.name
         row = con.execute("SELECT finished_at FROM sources WHERE name=?", (name,)).fetchone()
@@ -298,6 +299,8 @@ def cmd_ingest(a) -> None:
             if not kind:
                 continue
             st["media"] += 1
+            if a.progress and st["media"] % 25 == 0:   # for the setup page (intake/engine.py)
+                print(f"progress {done_before + st['media']}", flush=True)
             if con.execute("SELECT 1 FROM occurrences WHERE source=? AND path=?",
                            (name, path)).fetchone():
                 continue  # resuming an interrupted run
@@ -331,6 +334,7 @@ def cmd_ingest(a) -> None:
         con.execute("INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?,?,?)",
                     (name, st["entries"], st["media"], st["new"], st["seen"], st["new_bytes"], now()))
         con.commit()
+        done_before += st["media"]
         dt = max(time.time() - t0, 1e-6)
         print(f"{name}: {st['entries']} entries, {st['media']} media -> {st['new']} new, "
               f"{st['dup']} exact dups, {st['sidecars']} sidecars, "
@@ -1094,6 +1098,7 @@ def main() -> None:
     s.add_argument("--force", action="store_true", help="re-scan sources already ingested")
     s.add_argument("--facts", help="folder of <sha256>.json image facts worked out on upload (used, then removed)")
     s.add_argument("--delete-after", action="store_true", help="delete each zip after it is ingested")
+    s.add_argument("--progress", action="store_true", help="print `progress N` every 25 photos and videos read")
     s.set_defaults(fn=cmd_ingest)
 
     s = sub.add_parser("link", help="match sidecars and merge metadata")

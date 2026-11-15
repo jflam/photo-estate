@@ -154,7 +154,23 @@ real, set `SERVER_BASE` in `ios/project.yml` to your server's address.
 
 ## Bring your own photos
 
-Every source goes through the same steps, and each step only does new work, so adding photos
+The easiest way is to let the app walk you through it:
+
+```bash
+cd photo-estate
+uv run embed.py serve
+```
+
+With no library yet, <http://127.0.0.1:8766/> opens a setup page. It asks where the library should
+live (your Pictures folder or an external disk), then where your photos are now, with step-by-step
+instructions for each service: Google Photos (Takeout zips), Flickr's export, or any folder. It
+brings them in, shows progress as it goes, and opens your library once the first photos are
+searchable. Add more later from the **+** in the library's header. To try the whole flow first,
+with practice sources made from the demo photos and no accounts, run `uv run embed.py serve --sandbox`
+(<http://127.0.0.1:8768/>). iCloud, Google Drive, Dropbox and OneDrive are next
+([INTAKE-PLAN.md](photo-estate/INTAKE-PLAN.md)).
+
+By hand, every source goes through the same steps, and each step only does new work, so adding photos
 later is cheap: **ingest → link → exif → places → embed**. Run from `photo-estate/`, with `DB` and
 `STORE` set to where you want the catalog and the photos:
 

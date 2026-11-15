@@ -59,7 +59,14 @@ ROOT/                                  e.g. /Volumes/estate
 
 ## The first run, end to end
 
-Run from `photo-estate/`, with `DB` and `STORE` set:
+The app can do all of this itself. `uv run embed.py serve` with no library shows a setup page that
+asks where the library should live and where the photos are now, then runs the stages below as one
+*intake job* per source, showing progress, and opens the library when the first photos are searchable.
+Jobs are kept in `intake.db` beside the catalog and resume from their stage after a restart; the
+setup page stays at `/setup` (the **+** in the library's header) for adding sources later. The code
+is in `intake/`, and [INTAKE-PLAN.md](../../photo-estate/INTAKE-PLAN.md) explains how sources plug in.
+
+By hand, run from `photo-estate/`, with `DB` and `STORE` set:
 
 ```bash
 DB=~/estate/estate.db STORE=/Volumes/photos/store

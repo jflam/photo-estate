@@ -45,7 +45,7 @@ uv run embed.py [--db estate.db] [--model google/siglip2-base-patch16-256] [--th
 | `run` | `--store DIR` (**required**); `--workers 3` decoder processes; `--batch 16`; `--limit 0` | Embed every image with no embedding for this model (resumable) | [10](10-embeddings.md) |
 | `search` | `query`; `--limit 15` | Command-line semantic search | [10](10-embeddings.md) |
 | `stats` | none | Images embedded per model | |
-| `serve` | `--store DIR` (required unless `--demo`); `--demo`; `--port` (default 8766, or 8767 with `--demo`); `--cache DIR` (default `<db dir>/review`); `--fast-cache DIR`; `--no-pregenerate`; `--match-floor 0.085` (`-1` = no floor); `--match-window 0.04` (`2` = show every photo, ranked); `--query-log FILE` (default `<db dir>/query-log.jsonl`) | The photo app | [11](11-server.md) |
+| `serve` | `--root DIR` (the library: `estate.db` and `store/` inside; default: the one chosen on the setup page, saved in `~/.config/photo-estate/library.json`); `--store DIR` (default `<root>/store`); `--demo`; `--sandbox` (a scratch library with practice sources, port 8768); `--port` (default 8766, or 8767 with `--demo`). With no photos in the library yet, `serve` shows the setup page (`/setup`) instead of the app, and becomes the app once the first photos are searchable; `--cache DIR` (default `<db dir>/review`); `--fast-cache DIR`; `--no-pregenerate`; `--match-floor 0.085` (`-1` = no floor); `--match-window 0.04` (`2` = show every photo, ranked); `--query-log FILE` (default `<db dir>/query-log.jsonl`) | The photo app | [11](11-server.md) |
 
 ```bash
 uv run embed.py --db estate.db run --store STORE

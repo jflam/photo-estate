@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="/icon-192.png">
+<title>Add photos — Photo Estate</title>
+<style>/*@estate.css*/
+main { max-width: 880px; margin: 0 auto; padding: 8px var(--pad) 120px; }
+.hero { padding: 36px 0 28px; }
+.hero p { margin-top: 10px; color: var(--ink-2); max-width: 58ch; font-size: 16px; }
+section { margin-top: 36px; }
+section > .label { margin-bottom: 12px; display: block; }
+.step-n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--sun-wash);
+  color: var(--sun); font-size: 12px; font-weight: 700; margin-right: 8px; vertical-align: 1px; letter-spacing: 0; }
+
+/* choosing: cards in a grid */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.card { text-align: left; padding: 18px; border-radius: var(--r); background: var(--well); display: flex; flex-direction: column; gap: 4px;
+  transition: background .15s, box-shadow .15s, transform .2s var(--ease); min-height: 104px; }
+button.card:hover { background: var(--well-2); }
+button.card:active { transform: scale(.985); }
+.card.on { box-shadow: inset 0 0 0 2px var(--sun); background: var(--sun-wash); }
+.card.soon { opacity: .55; cursor: default; }
+.card b { font-size: 16px; letter-spacing: -.01em; }
+.card .sub { font-size: 13.5px; }
+.card .tag { margin-top: auto; padding-top: 8px; font-size: 12px; color: var(--muted); }
+.card .tag.sun { color: var(--sun); font-weight: 600; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row input[type=text], .row input[type=password] { flex: 1; min-width: 200px; }
+input[type=password] { height: 36px; padding: 0 14px; border-radius: 999px; border: 0; outline: 0; background: var(--well); }
+input[type=password]:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 4px var(--sun-wash); }
+
+/* a source's guide */
+.panel { margin-top: 14px; padding: 24px; border-radius: var(--r); background: var(--raised); box-shadow: var(--shadow); }
+.panel h2 { font-size: 22px; letter-spacing: -.02em; }
+.panel .why { color: var(--ink-2); margin-top: 4px; }
+ol.guide { list-style: none; padding: 0; margin: 20px 0 0; counter-reset: g; display: grid; gap: 16px; }
+ol.guide li { counter-increment: g; display: grid; grid-template-columns: 30px 1fr; gap: 2px 10px; }
+ol.guide li::before { content: counter(g); grid-row: span 3; width: 24px; height: 24px; border-radius: 50%; background: var(--well-2);
+  display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--ink-2); margin-top: 1px; }
+ol.guide b { font-weight: 650; }
+ol.guide p { color: var(--ink-2); font-size: 14.5px; }
+ol.guide .note { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
+ol.guide a.btn { justify-self: start; margin-top: 8px; height: 32px; font-size: 13.5px; }
+.field { margin-top: 22px; }
+.field > span { display: block; font-weight: 600; margin-bottom: 8px; }
+.field small { display: block; color: var(--muted); margin-top: 6px; }
+.checks { margin-top: 16px; display: grid; gap: 6px; font-size: 14px; }
+.checks div { display: flex; gap: 8px; align-items: baseline; }
+.checks code, .log code { font: 12.5px var(--mono); background: var(--well); padding: 2px 6px; border-radius: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--yes); transform: translateY(-1px); }
+.dot.no { background: var(--no); } .dot.warn { background: var(--sun); }
+.preview { margin-top: 14px; font-size: 14.5px; }
+.preview .bad { color: var(--no); } .preview .warn { color: var(--sun); }
+.actions { margin-top: 22px; display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+/* jobs */
+.job { padding: 20px 22px; border-radius: var(--r); background: var(--well); margin-bottom: 10px; }
+.job.live { background: var(--raised); box-shadow: var(--shadow); }
+.job header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.job header b { font-size: 17px; letter-spacing: -.01em; }
+.job header .sub { font-size: 13.5px; }
+.job header .end { margin-left: auto; display: flex; gap: 6px; }
+.job header .end .btn { height: 30px; padding: 0 12px; font-size: 13px; }
+.stages { display: flex; gap: 4px; margin: 16px 0 10px; }
+.stages i { flex: 1; height: 4px; border-radius: 2px; background: var(--well-2); }
+.stages i.done { background: var(--sun-lit); } .stages i.running, .stages i.waiting { background: linear-gradient(90deg, var(--sun-lit) var(--p, 30%), var(--well-2) 0); }
+.stages i.failed { background: var(--no); } .stages i.skip { opacity: .35; }
+.now { font-size: 14.5px; color: var(--ink-2); display: flex; gap: 8px; flex-wrap: wrap; }
+.now .num { color: var(--muted); }
+.job .ask { margin-top: 16px; padding: 16px; border-radius: 14px; background: var(--sun-wash); }
+.job .ask b { display: block; color: var(--ink); margin-bottom: 4px; }
+.job .ask p { color: var(--ink-2); font-size: 14px; margin-bottom: 12px; }
+.job .err { margin-top: 12px; color: var(--no); font-size: 14px; }
+.job .warns { margin-top: 10px; color: var(--muted); font-size: 13.5px; }
+.job .done-line { margin-top: 12px; font-size: 14.5px; }
+details.log { margin-top: 12px; }
+details.log summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 600; list-style: none; }
+details.log summary::-webkit-details-marker { display: none; }
+details.log pre { margin: 8px 0 0; max-height: 260px; overflow: auto; padding: 12px; border-radius: 12px; background: var(--well);
+  font: 12px/1.5 var(--mono); color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+.opening { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: var(--paper); text-align: center; padding: 16px; }
+.opening .mark .s { animation: rise 2.4s var(--ease) infinite alternate; }
+@keyframes rise { from { transform: translateY(34px); } to { transform: none; } }
+.opening h3 { margin: 22px 0 6px; font-size: 24px; letter-spacing: -.022em; }
+.opening p { color: var(--muted); }
+.lib { display: flex; gap: 6px; white-space: nowrap; align-items: baseline; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+.lib b { color: var(--ink); font-weight: 600; }
+@media (max-width: 520px) { .lib .wide { display: none; } }
+@media (max-width: 760px) { .panel { padding: 18px; } .job { padding: 16px; } .hero { padding-top: 20px; } }
+</style>
+
+<div class="topbar">
+  <div class="crumb"><a class="round" href="/" id="back" aria-label="Back to the library" hidden>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></a>
+    <span id="crumb">Photo Estate</span></div>
+  <div class="end" id="libline"></div>
+</div>
+
+<main>
+  <div class="hero">
+    <h1 class="display" id="headline">Bring your photos home</h1>
+    <p id="lede">Photo Estate gathers your photos from Google, Flickr and your own folders into one library on a disk you own,
+      removes the duplicates, and keeps each photo's date, place and album. Nothing is changed or deleted where they come from.</p>
+  </div>
+
+  <section id="where" hidden>
+    <span class="label"><span class="step-n">1</span>Where should your library live?</span>
+    <div class="cards" id="places"></div>
+    <div class="row" style="margin-top:12px">
+      <input type="text" id="rootpath" placeholder="Or type a folder, e.g. /Volumes/Photos/Photo Estate" spellcheck="false">
+      <button class="btn" id="pickroot">Choose…</button>
+      <button class="btn pri" id="useroot">Use this place</button>
+    </div>
+    <p class="sub" style="margin-top:10px;font-size:13.5px">Plan on about as much free space as your photos take in the cloud.
+      An external disk is a good home; you can still browse from your phone.</p>
+  </section>
+
+  <section id="jobs" hidden>
+    <span class="label" id="jobslabel">Coming in</span>
+    <div id="joblist"></div>
+  </section>
+
+  <section id="from" hidden>
+    <span class="label" id="fromlabel"><span class="step-n">2</span>Where are your photos now?</span>
+    <div class="cards" id="sources"></div>
+    <div id="panel"></div>
+  </section>
+
+</main>
+<div class="opening" id="opening" hidden>
+  <div><svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>
+  <h3>Your first photos are in</h3><p>Opening your library. Faces are still being found; that carries on by itself.</p></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const h = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const api = async (path, body) => {
+  const r = await fetch('/api/intake' + path, body === undefined ? {} :
+    {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+};
+const toast = (msg) => { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 3200); };
+const nf = new Intl.NumberFormat();
+
+// Sources the next phases add: shown so you know they are coming, not clickable yet.
+const SOON = [
+  {name: 'iCloud Photos', blurb: 'Sign in with your Apple Account and a code from your iPhone.', group: 'apple'},
+  {name: 'Google Drive', blurb: 'Have Takeout deliver to Drive and pull the zips from there.', group: 'google'},
+  {name: 'Dropbox', blurb: 'Sign in through your browser.', group: 'cloud'},
+  {name: 'OneDrive', blurb: 'Sign in through your browser.', group: 'cloud'},
+];
+const ORDER = ['practice', 'google', 'apple', 'flickr', 'computer', 'cloud', 'other'];
+
+let S = null, askedWhere = false, chosen = null, config = {}, previewed = null, openLogs = new Set(), logs = {}, typed = {};
+
+async function refresh() {
+  try { S = await api(''); } catch (e) { return starting(); }
+  if (S.mode === 'starting') return starting();
+  render();
+  const live = S.jobs.some(j => ['queued', 'running', 'waiting'].includes(j.state));
+  clearTimeout(refresh.t); refresh.t = setTimeout(refresh, live ? 1200 : 8000);
+}
+
+// Setup mode: once the first photos are searchable, this server becomes the full app. Wait for it, then open it.
+async function starting() {
+  $('#opening').hidden = false;
+  try { const r = await fetch('/api/info', {cache: 'no-store'}); if (r.ok) return location.replace('/'); } catch (e) {}
+  setTimeout(starting, 1500);
+}
+
+function render() {
+  const app = S.mode === 'app', lib = S.library;
+  document.title = (app ? 'Add photos' : 'Set up') + ' — Photo Estate';
+  $('#back').hidden = !app;
+  $('#crumb').textContent = app ? 'Add photos' : 'Photo Estate';
+  if (app) { $('#headline').textContent = 'Add photos'; $('#lede').textContent = 'Bring in more from another service or folder. Photos you already have are recognised and not copied twice.'; }
+  $('#libline').innerHTML = lib.chosen ? `<span class="lib"><span><b class="num">${nf.format(lib.media)}</b> in library</span><span class="wide">· ${h(lib.free_label)} free</span>${S.practice ? '<span class="wide">· <b>practice</b></span>' : ''}</span>` : (S.practice ? '<b>practice</b>' : '');
+  $('#jobslabel').textContent = S.jobs.some(j => ['queued', 'running', 'waiting'].includes(j.state)) ? 'Coming in' : 'Brought in';
+  $('#where').hidden = lib.chosen;
+  if (!lib.chosen) renderPlaces(lib.suggestions);
+  $('#from').hidden = !lib.chosen;
+  if (!lib.chosen) askedWhere = true;   // number the steps only when there were two
+  $('#fromlabel').innerHTML = app ? 'Where are the photos?' : `${askedWhere ? '<span class="step-n">2</span>' : ''}Where are your photos now?`;
+  if (lib.chosen) renderSources();
+  $('#jobs').hidden = !S.jobs.length;
+  renderJobs();
+}
+
+function renderPlaces(list) {
+  const el = $('#places');
+  if (el.dataset.done) return;
+  el.dataset.done = 1;
+  const roomiest = list.reduce((a, b) => (b.free || 0) > (a.free || 0) ? b : a, list[0]);   // the suggestion: most room
+  el.innerHTML = list.map(p => `<button class="card" data-root="${h(p.root)}">
+      <b>${p.external ? h(p.root.split('/')[2]) : 'This Mac'}</b><span class="sub">${h(p.root)}</span>
+      <span class="tag ${p === roomiest ? 'sun' : ''}">${h(p.free_label)} free${p.external ? ' · external disk' : ''}${p === roomiest && list.length > 1 ? ' · most room' : ''}</span></button>`).join('');
+  el.querySelectorAll('.card').forEach(c => c.onclick = () => {
+    el.querySelectorAll('.card').forEach(x => x.classList.toggle('on', x === c));
+    $('#rootpath').value = c.dataset.root;
+  });
+}
+$('#pickroot').onclick = async () => {
+  try { const {path} = await api('/choose', {what: 'folder', for: 'library'}); if (path) $('#rootpath').value = path.replace(/\/$/, '') + '/Photo Estate'; }
+  catch (e) { toast(e.message); }
+};
+$('#useroot').onclick = async () => {
+  const root = $('#rootpath').value.trim();
+  if (!root) return toast('Choose a place first');
+  try { await api('/library', {root}); refresh(); } catch (e) { toast(e.message); }
+};
+
+function renderSources() {
+  const el = $('#sources');
+  const key = S.sources.map(s => s.id).join() + chosen;
+  if (el.dataset.key !== key) {
+    el.dataset.key = key;
+    const all = [...S.sources, ...SOON.map(s => ({...s, soon: true}))]
+      .sort((a, b) => ORDER.indexOf(a.group) - ORDER.indexOf(b.group));
+    el.innerHTML = all.map(s => s.soon ? `<div class="card soon"><b>${h(s.name)}</b><span class="sub">${h(s.blurb)}</span><span class="tag">Coming soon</span></div>`
+      : `<button class="card ${s.id === chosen ? 'on' : ''}" data-id="${s.id}"><b>${h(s.name)}</b><span class="sub">${h(s.blurb)}</span>
+         <span class="tag ${s.practice ? 'sun' : ''}">${h(s.time_hint)}</span></button>`).join('');
+    el.querySelectorAll('button.card').forEach(c => c.onclick = () => choose(c.dataset.id));
+  }
+  if (!chosen) $('#panel').innerHTML = '';
+}
+
+function choose(id) {
+  chosen = chosen === id ? null : id; config = {}; previewed = null;
+  renderSources();
+  if (!chosen) return;
+  const s = S.sources.find(x => x.id === id);
+  const guide = s.guide.map(g => `<li><b>${h(g.title)}</b>${g.body ? `<p>${h(g.body)}</p>` : ''}${g.note ? `<p class="note">${h(g.note)}</p>` : ''}
+      ${g.link ? `<a class="btn ask" href="${h(g.link)}" target="_blank" rel="noopener">${h(g.link_label || 'Open')} ↗</a>` : ''}</li>`).join('');
+  const fields = s.fields.map(f => `<label class="field"><span>${h(f.label)}</span><div class="row">
+      <input type="text" data-key="${f.key}" placeholder="${h(f.placeholder)}" spellcheck="false" autocomplete="off">
+      ${f.kind === 'path' ? `<button class="btn" data-pick="${f.key}">Choose…</button>` : ''}</div>${f.help ? `<small>${h(f.help)}</small>` : ''}</label>`).join('');
+  const checks = s.checks.length ? `<div class="checks">${s.checks.map(c => `<div><i class="dot ${c.ok ? '' : c.required ? 'no' : 'warn'}"></i><span>${h(c.label)}${c.ok ? '' : ` — ${h(c.fix)}`}</span></div>`).join('')}</div>` : '';
+  $('#panel').innerHTML = `<div class="panel"><h2>${h(s.name)}</h2><p class="why">${h(s.blurb)}</p>
+      <ol class="guide">${guide}</ol>${fields}${checks}<div class="preview" id="pv"></div>
+      <div class="actions"><button class="btn" id="cancelsrc">Not now</button><button class="btn pri" id="go">${s.fields.length ? 'Check and bring them in' : 'Start'}</button></div></div>`;
+  $('#panel').querySelectorAll('input[data-key]').forEach(i => i.oninput = () => { config[i.dataset.key] = i.value; previewed = null; $('#pv').innerHTML = ''; $('#go').textContent = 'Check and bring them in'; });
+  $('#panel').querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const {path} = await api('/choose', {what: 'folder'});
+      if (path) { const i = $(`input[data-key="${b.dataset.pick}"]`); i.value = path; i.oninput(); go(); }
+    } catch (e) { toast(e.message); }
+    b.disabled = false;
+  });
+  $('#cancelsrc').onclick = () => choose(id);
+  $('#go').onclick = go;
+  $('#panel').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+async function go() {
+  const s = S.sources.find(x => x.id === chosen), btn = $('#go');
+  btn.disabled = true;
+  try {
+    if (!previewed) {
+      const p = await api('/preview', {source: chosen, config});
+      $('#pv').innerHTML = (p.summary ? `<p>${h(p.summary)}</p>` : '') + p.problems.map(x => `<p class="${p.ok ? 'warn' : 'bad'}">${h(x)}</p>`).join('');
+      if (!p.ok) return;
+      previewed = p;
+      if (s.fields.length) { btn.textContent = `Bring in ${p.media ? nf.format(p.media) + ' ' : ''}photos`; return; }
+    }
+    await api('/jobs', {source: chosen, config});
+    chosen = null; previewed = null; $('#panel').innerHTML = '';
+    toast('Started'); refresh();
+    setTimeout(() => $('#jobs').scrollIntoView({behavior: 'smooth', block: 'center'}), 150);
+  } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+}
+
+function stageText(j) {
+  const st = j.stages.find(s => s.id === j.stage) || {};
+  const n = j.done != null && j.total ? ` <span class="num">${nf.format(j.done)} of ${nf.format(j.total)}</span>` : '';
+  return `<span>${h(j.detail || st.label || '')}</span>${j.state === 'running' && j.stage !== 'acquire' ? n : ''}`;
+}
+
+function promptHtml(j) {
+  const p = j.prompt; if (!p || j.state !== 'waiting') return '';
+  const id = j.id, v = h(typed[id] || '');
+  if (p.kind === 'browser') return `<div class="ask"><b>${h(p.label)}</b><p>${h(p.help)}</p><a class="btn pri" href="${h(p.url)}" target="_blank" rel="noopener">Open sign-in page ↗</a></div>`;
+  if (p.kind === 'approve') return `<div class="ask"><b>${h(p.label)}</b><p>${h(p.help)}</p><button class="btn pri" data-answer="${id}" data-v="ok">Done</button></div>`;
+  const type = p.secret ? 'password' : 'text', extra = p.kind === 'code' ? 'inputmode="numeric" autocomplete="one-time-code"' : 'autocomplete="current-password"';
+  return `<div class="ask"><b>${h(p.label)}</b><p>${h(p.help)}${p.secret ? ' It is used for this sign-in only and never saved.' : ''}</p>
+    <form class="row" data-form="${id}"><input type="${type}" ${extra} data-typed="${id}" value="${p.secret ? '' : v}"><button class="btn pri">Continue</button></form></div>`;
+}
+
+function renderJobs() {
+  const el = $('#joblist');
+  // Don't redraw a job while someone is typing into its prompt.
+  const typing = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.typed;
+  const html = S.jobs.map(j => {
+    const live = ['queued', 'running', 'waiting'].includes(j.state);
+    if (typing == j.id && document.getElementById('job-' + j.id)) return document.getElementById('job-' + j.id).outerHTML;
+    const cur = j.stages.findIndex(s => s.id === j.stage);
+    const pct = j.total ? Math.round(100 * (j.done || 0) / j.total) : 25;
+    const bars = j.stages.map((s, i) => `<i class="${s.skipped ? 'skip ' : ''}${s.state}" title="${h(s.label)}" ${i === cur ? `style="--p:${pct}%"` : ''}></i>`).join('');
+    const added = j.media_after != null && j.media_before != null ? j.media_after - j.media_before : null;
+    const status = {queued: 'Waiting its turn', running: '', waiting: 'Needs you', done: 'Done', failed: 'Stopped', cancelled: 'Cancelled'}[j.state];
+    const btns = live ? `<button class="btn" data-cancel="${j.id}">Cancel</button>` : ['failed', 'cancelled'].includes(j.state) ? `<button class="btn ask" data-retry="${j.id}">Try again</button>` : '';
+    return `<div class="job ${live ? 'live' : ''}" id="job-${j.id}"><header><b>${h(j.source_name)}</b><span class="sub">${h(status)}</span><span class="end">${btns}</span></header>
+      <div class="stages">${bars}</div>
+      ${live && j.state !== 'waiting' ? `<div class="now">${stageText(j)}</div>` : ''}
+      ${promptHtml(j)}
+      ${j.state === 'failed' ? `<div class="err">${h(j.error)}</div>` : ''}
+      ${j.ready && added != null ? `<div class="done-line">${added > 0 ? `<b>${nf.format(added)}</b> new photos and videos in your library.` : 'Nothing new: you already had all of these.'}
+         ${S.mode === 'app' ? ' <a class="link" href="/">See them</a>' : ''}</div>` : ''}
+      ${j.warnings.length ? `<div class="warns">${j.warnings.map(h).join('<br>')}</div>` : ''}
+      <details class="log" data-log="${j.id}" ${openLogs.has(j.id) ? 'open' : ''}><summary>Details</summary><pre>…</pre></details></div>`;
+  }).join('');
+  if (html === el.dataset.html) return openLogs.forEach(loadLog);   // nothing changed: keep focus, refs and scroll
+  el.innerHTML = el.dataset.html = html;
+  el.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => api(`/jobs/${b.dataset.cancel}/cancel`, {}).then(refresh, e => toast(e.message)));
+  el.querySelectorAll('[data-retry]').forEach(b => b.onclick = () => api(`/jobs/${b.dataset.retry}/retry`, {}).then(refresh, e => toast(e.message)));
+  el.querySelectorAll('[data-answer]').forEach(b => b.onclick = () => answer(b.dataset.answer, b.dataset.v));
+  el.querySelectorAll('[data-typed]').forEach(i => i.oninput = () => { if (i.type !== 'password') typed[i.dataset.typed] = i.value; });
+  el.querySelectorAll('[data-form]').forEach(f => f.onsubmit = (e) => { e.preventDefault(); const i = f.querySelector('input'); answer(f.dataset.form, i.value); i.value = ''; });
+  el.querySelectorAll('details.log').forEach(d => d.ontoggle = () => { const id = +d.dataset.log; d.open ? (openLogs.add(id), loadLog(id)) : openLogs.delete(id); });
+  openLogs.forEach(loadLog);
+}
+
+async function answer(id, value) {
+  try { await api(`/jobs/${id}/answer`, {value}); delete typed[id]; document.activeElement && document.activeElement.blur(); refresh(); }
+  catch (e) { toast(e.message); }
+}
+
+async function loadLog(id) {
+  const have = logs[id] || [];
+  try {
+    const j = await api(`/jobs/${id}?after=${have.length ? have[have.length - 1].id : 0}`);
+    logs[id] = have.concat(j.events).slice(-400);
+    if (!j.events.length && have.length && document.querySelector(`details[data-log="${id}"] pre`)?.textContent !== '…') return;
+    const pre = document.querySelector(`details[data-log="${id}"] pre`);
+    if (pre) { const end = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8; pre.textContent = logs[id].map(e => e.text).join('\n') || '…'; if (end) pre.scrollTop = pre.scrollHeight; }
+  } catch (e) {}
+}
+
+refresh();
+</script>
+</html>
