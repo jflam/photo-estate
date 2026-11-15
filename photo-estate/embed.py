@@ -1299,6 +1299,7 @@ def cmd_serve(a) -> None:
         src, out = sqlite3.connect(f"file:{a.db}?mode=ro", uri=True, timeout=60), sqlite3.connect(tmp)
         try:
             src.backup(out)        # one step: one read transaction, so writers carry on (WAL)
+            out.execute("PRAGMA journal_mode=DELETE")   # one self-contained file, openable read-only
         finally:
             out.close()
             src.close()
