@@ -33,7 +33,7 @@ count() { sqlite3 "$DB" "SELECT (SELECT count(*) FROM assets) + (SELECT count(*)
 
 before=$(count)
 echo "== $(date +%T) ingest $INBOX"
-run estate.py ingest --store "$STORE" --force "$INBOX"
+run estate.py ingest --store "$STORE" --force --facts "$INBOX.partial/facts" "$INBOX"   # facts: see upload.py
 after=$(count)
 if [[ $before == "$after" ]]; then
   echo "nothing new"

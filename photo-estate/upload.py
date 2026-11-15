@@ -10,8 +10,9 @@ picks it up like any other source:
 The server never records photos in the catalog: it only drops files here. That keeps `ingest` the
 single writer of what the catalog holds, and a half-finished upload can never be mistaken for a photo,
 because a file is written beside the inbox and renamed into it only once every byte has arrived. (The
-app does write each arrival's embedding, keyed by its hash, so `embed.py run` has nothing left to do;
-see `prepare_arrivals` in embed.py.)
+app does write each arrival's embedding, keyed by its hash, so `embed.py run` has nothing left to do,
+and for a HEIC leaves `<inbox>.partial/facts/<sha256>.json` with its size, EXIF date and dHash, so
+`ingest --facts` does not decode it a second time; see `prepare_arrivals` in embed.py.)
 """
 from __future__ import annotations
 
