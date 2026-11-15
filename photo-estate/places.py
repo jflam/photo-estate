@@ -116,6 +116,13 @@ def dominant(values, share: float = 0.0):
 
 # ----------------------------------------------------------------------------- run
 
+def search_signatures(con) -> dict:
+    """What `places` adds to each asset's search text: when it changes, so must the search row."""
+    return {r[0]: r[1:] for r in con.execute(
+        "SELECT p.sha256, p.city, p.locality, p.admin2, p.admin1, p.country, e.title, t.title FROM places p"
+        " LEFT JOIN events e ON e.id = p.event_id LEFT JOIN trips t ON t.id = e.trip_id")}
+
+
 def cmd_run(a) -> None:
     import reverse_geocode
     from timezonefinder import TimezoneFinder
@@ -125,38 +132,68 @@ def cmd_run(a) -> None:
     con.execute("PRAGMA busy_timeout=120000")
     offs = ", ".join(f"json_extract(e.data, '{k}')" for k in OFFSET_KEYS + QT_DATE_KEYS)
     has_exif = con.execute("SELECT count(*) FROM exif").fetchone()[0] > 0
-    rows = con.execute(
-        "SELECT a.sha256, a.taken_at, a.exif_taken_at, a.lat, a.lon,"
-        f" {'coalesce(' + offs + ')' if has_exif else 'NULL'},"
-        " (SELECT album FROM occurrences o WHERE o.sha256=a.sha256 AND album IS NOT NULL ORDER BY id LIMIT 1)"
-        " FROM assets a" + (" LEFT JOIN exif e USING(sha256)" if has_exif else "")).fetchall()
-    print(f"{len(rows)} assets", flush=True)
+
+    # What the last run decided. Place names and zones come from GPS (reverse geocoding and timezone
+    # lookup are the slow parts), and EXIF offsets from exiftool's JSON (a big table): both are reused
+    # for photos already in `places`, so a run costs about what the new photos cost. --full redoes all.
+    old = {} if a.full else {r[0]: r[1:] for r in con.execute(
+        "SELECT sha256, city, locality, admin2, admin1, cc, place_source, tz, tz_source FROM places")}
+    before = search_signatures(con)
+    albums: dict[str, str] = {}
+    for sha, album in con.execute("SELECT sha256, album FROM occurrences WHERE album IS NOT NULL ORDER BY id"):
+        albums.setdefault(sha, album)
+    rows = [(*r, albums.get(r[0])) for r in con.execute(
+        "SELECT sha256, taken_at, exif_taken_at, lat, lon FROM assets")]
+
+    def gps_ok(lat, lon) -> bool:
+        return lat is not None and lon is not None and (abs(lat) > 1e-6 or abs(lon) > 1e-6) \
+            and -90 <= lat <= 90 and -180 <= lon <= 180
+
+    def reusable(sha, lat, lon) -> bool:
+        o = old.get(sha)
+        if o is None:
+            return False
+        return not gps_ok(lat, lon) or (o[5] == "gps" and o[7] == "gps")   # a GPS photo needs its cached zone
+
+    fresh = [r[0] for r in rows if r[1] and not reusable(r[0], r[3], r[4])]
+    offsets: dict[str, str | None] = {}
+    if has_exif and fresh:
+        con.execute("DROP TABLE IF EXISTS temp.fresh")
+        con.execute("CREATE TEMP TABLE fresh(sha256 TEXT PRIMARY KEY)")
+        con.executemany("INSERT INTO fresh VALUES (?)", [(x,) for x in fresh])
+        offsets = {sha: off for sha, off in con.execute(
+            f"SELECT f.sha256, coalesce({offs}) FROM fresh f JOIN exif e ON e.sha256 = f.sha256")}
+    print(f"{len(rows)} assets, {len(fresh)} to place from scratch", flush=True)
 
     # --- place names and zones for everything with GPS
     A = []  # one dict per asset with a usable time
     gps = []
-    for sha, taken, exif_taken, lat, lon, off, album in rows:
+    for sha, taken, exif_taken, lat, lon, album in rows:
         if not taken:
             continue
         try:
             dt = datetime.fromisoformat(taken)
         except ValueError:
             continue
-        ok_gps = lat is not None and lon is not None and (abs(lat) > 1e-6 or abs(lon) > 1e-6) \
-            and -90 <= lat <= 90 and -180 <= lon <= 180
-        off = parse_offset(off)
-        if off is None and dt.tzinfo is not None and exif_taken:
+        ok_gps = gps_ok(lat, lon)
+        cached = old.get(sha) if sha not in offsets and reusable(sha, lat, lon) else None
+        off = parse_offset(offsets.get(sha))
+        if off is None and dt.tzinfo is not None and exif_taken and cached is None:
             off = offset_between(dt, exif_taken)
         r = {"sha": sha, "dt": dt, "lat": lat if ok_gps else None, "lon": lon if ok_gps else None,
-             "off": off, "album": album, "tz": None, "tz_src": None, "place": None, "locality": None}
+             "off": off, "album": album, "tz": None, "tz_src": None, "place": None, "locality": None,
+             "cached": cached}
+        if cached is not None and not ok_gps and cached[7] == "exif":
+            r["off"] = parse_offset(cached[6])     # the offset it was placed with last time
         A.append(r)
         if ok_gps:
             gps.append(r)
-    if gps:
-        pts = [(r["lat"], r["lon"]) for r in gps]
+    todo_geo = [r for r in gps if r["cached"] is None]
+    if todo_geo:
+        pts = [(r["lat"], r["lon"]) for r in todo_geo]
         near, big = reverse_geocode.search(pts), reverse_geocode.search(pts, min_population=BIG_CITY)
         tf, zones = TimezoneFinder(), {}
-        for r, g, b in zip(gps, near, big):
+        for r, g, b in zip(todo_geo, near, big):
             if b.get("city") != g.get("city") and haversine_km(r["lat"], r["lon"], b["latitude"], b["longitude"]) \
                     <= min(25, 0.006 * math.sqrt(b.get("population") or 0)):
                 r["locality"], g = g.get("city"), b
@@ -167,10 +204,14 @@ def cmd_run(a) -> None:
                 zones[key] = ZoneInfo(name) if name else None
             if zones[key]:
                 r["tz"], r["tz_src"] = zones[key], "gps"
+    for r in gps:
+        if (c := r["cached"]) is not None:       # c = city, locality, admin2, admin1, cc, place_source, tz, tz_source
+            r["place"], r["locality"] = (c[0], c[2], c[3], c[4]), c[1]
+            r["tz"], r["tz_src"] = ZoneInfo(c[6]), "gps"
     for r in A:
         if r["tz"] is None and r["off"] is not None:
             r["tz"], r["tz_src"] = r["off"], "exif"
-    print(f"  {len(gps)} with GPS geocoded ({time.time() - t0:.1f}s)", flush=True)
+    print(f"  {len(gps)} with GPS ({len(todo_geo)} geocoded, {time.time() - t0:.1f}s)", flush=True)
 
     # --- home per year: the ~10 km cell with photos on the most distinct days
     days: dict[int, dict[tuple, set]] = {}
@@ -308,6 +349,7 @@ def cmd_run(a) -> None:
                           len(t), f"Trip to {label}", label))
 
     # --- write
+    con.commit()                              # the temp table above opened an implicit transaction
     con.execute("BEGIN")
     for t in ("places", "events", "trips"):   # fully derived: recreate, so schema changes need no migration
         con.execute(f"DROP TABLE IF EXISTS {t}")
@@ -326,8 +368,10 @@ def cmd_run(a) -> None:
                     [(e["id"], e["start"].isoformat(), e["end"].isoformat(), e["n"], e["title"], e["place"],
                       e["lat"], e["lon"], e["km"], e["trip"]) for e in ev_rows])
     con.executemany("INSERT INTO trips VALUES (?,?,?,?,?,?,?)", trip_rows)
-    print(f"  {len(ev_rows)} events, {len(trip_rows)} trips; rebuilding search index", flush=True)
-    estate.reindex(con)
+    after = search_signatures(con)
+    changed = [sha for sha in after.keys() | before.keys() if after.get(sha) != before.get(sha)]
+    print(f"  {len(ev_rows)} events, {len(trip_rows)} trips; updating search rows of {len(changed)} assets", flush=True)
+    estate.reindex(con, changed)
     con.commit()
     src = Counter(r["tz_src"] for r in A)
     psrc = Counter(r["place_src"] for r in A)
@@ -356,6 +400,7 @@ def main() -> None:
     s = sub.add_parser("run", help="places, local time, events, trips (recomputed from scratch)")
     s.add_argument("--gap", type=float, default=3.0, help="hours without photos that end an event")
     s.add_argument("--away", type=float, default=100.0, help="km from home that makes an event part of a trip")
+    s.add_argument("--full", action="store_true", help="geocode and look up zones for every photo again")
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("events", help="list events, newest first")
     s.add_argument("--trips", action="store_true")

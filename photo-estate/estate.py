@@ -371,16 +371,41 @@ def match_sidecar(fn: str, idx: SidecarIndex) -> int | None:
 
 
 def cmd_link(a) -> None:
+    """Match sidecars and merge their metadata onto assets.
+
+    With --source NAME only that source's occurrences (and the assets they point at) are touched, and
+    only their search rows are rebuilt: the cost follows the size of the source, not of the library.
+    Flickr data is not consulted in that mode."""
     con = connect(a.db)
+    scoped = bool(a.source)
+    if scoped:
+        occ_where = "WHERE source=?"
+        occ_args = (a.source,)
+        con.execute("DROP TABLE IF EXISTS temp.touched")
+        con.execute("CREATE TEMP TABLE touched(sha256 TEXT PRIMARY KEY)")
+        con.execute("INSERT OR IGNORE INTO touched SELECT sha256 FROM occurrences WHERE source=?", occ_args)
+        dirs = [r[0] for r in con.execute("SELECT DISTINCT dir FROM occurrences WHERE source=?", occ_args)]
+        sc_rows = (r for i in range(0, len(dirs), 500) for r in con.execute(
+            "SELECT id, dir, filename, title FROM sidecars WHERE dir IN (%s) ORDER BY id"
+            % ",".join("?" * len(dirs[i:i + 500])), dirs[i:i + 500]))
+        dirset = set(dirs)
+        albums = {d: t for d, t in con.execute("SELECT dir, title FROM albums") if d in dirset}
+        flickr = {}
+        touch_join = " JOIN touched t ON t.sha256 = o.sha256"
+    else:
+        occ_where, occ_args = "", ()
+        sc_rows = con.execute("SELECT id, dir, filename, title FROM sidecars ORDER BY id")
+        albums = dict(con.execute("SELECT dir, title FROM albums"))
+        flickr = {fid: json.loads(raw) for fid, raw in con.execute("SELECT id, data FROM flickr")}
+        touch_join = ""
     side: dict[str, SidecarIndex] = {}
-    for sid, d, fn, title in con.execute("SELECT id, dir, filename, title FROM sidecars ORDER BY id"):
+    for sid, d, fn, title in sc_rows:
         s, n = split_dupn(fn[:-5])
         side.setdefault(d, SidecarIndex()).add(sid, s, n, title)
-    albums = dict(con.execute("SELECT dir, title FROM albums"))
-    flickr = {fid: json.loads(raw) for fid, raw in con.execute("SELECT id, data FROM flickr")}
     matched = total = live = 0
     pending, by_stem, flickr_hits = [], {}, {}
-    for oid, sha, d, fn in con.execute("SELECT id, sha256, dir, filename FROM occurrences").fetchall():
+    for oid, sha, d, fn in con.execute(
+            f"SELECT id, sha256, dir, filename FROM occurrences {occ_where}", occ_args).fetchall():
         sid = match_sidecar(fn, side.get(d, EMPTY_INDEX))
         album = albums.get(d) or default_album(d)
         fl = flickr_for(fn, flickr) if sid is None else None
@@ -420,7 +445,7 @@ def cmd_link(a) -> None:
 
     merged: dict[str, dict] = {}
     for sha, raw in con.execute("SELECT o.sha256, s.data FROM occurrences o"
-                                " JOIN sidecars s ON s.id = o.sidecar_id"):
+                                " JOIN sidecars s ON s.id = o.sidecar_id" + touch_join):
         m, acc = json.loads(raw), merged.setdefault(sha, {"people": set(), "fav": 0})
         ts = (m.get("photoTakenTime") or {}).get("timestamp")
         if ts and "taken" not in acc:
@@ -436,7 +461,7 @@ def cmd_link(a) -> None:
     # iCloud XMP sidecars fill whatever no Google sidecar supplied. Their time carries the UTC
     # offset, so iCloud and Google copies of one photo get the same taken_at.
     for sha, raw in con.execute("SELECT o.sha256, x.data FROM occurrences o"
-                                " JOIN xmp x ON x.dir = o.dir AND x.filename = o.filename || '.xmp'"):
+                                " JOIN xmp x ON x.dir = o.dir AND x.filename = o.filename || '.xmp'" + touch_join):
         m, acc = json.loads(raw), merged.setdefault(sha, {"people": set(), "fav": 0})
         if m.get("taken") and "taken" not in acc:
             acc["taken"] = m["taken"]
@@ -446,7 +471,8 @@ def cmd_link(a) -> None:
     # Flickr fills what is still missing. Its date_taken is camera-local with no offset (like
     # EXIF), so it is only a fallback after EXIF. Title + description become the description;
     # Flickr tags are stored as tags of model "flickr" so they are searchable.
-    con.execute("DELETE FROM tags WHERE model='flickr'")
+    if not scoped:
+        con.execute("DELETE FROM tags WHERE model='flickr'")
     for sha, m in flickr_hits.items():
         acc = merged.setdefault(sha, {"people": set(), "fav": 0})
         if m.get("date_taken"):
@@ -466,7 +492,7 @@ def cmd_link(a) -> None:
                     " description=?, people=?, favorited=? WHERE sha256=?",
                     (acc.get("taken"), acc.get("fallback_taken"), acc.get("lat"), acc.get("lon"),
                      acc.get("desc"), ", ".join(sorted(acc["people"])) or None, acc["fav"], sha))
-    reindex(con)
+    reindex(con, [r[0] for r in con.execute("SELECT sha256 FROM touched")] if scoped else None)
     con.commit()
     print(f"linked {matched}/{total} occurrences to sidecars ({live} Live Photo clips via their still,"
           f" {len(flickr_hits)} Flickr photos); metadata merged onto {len(merged)} assets")
@@ -598,7 +624,7 @@ def cmd_exif(a) -> None:
             dt = time.time() - t0
             print(f"{time.strftime('%H:%M:%S')} {n}/{len(todo)} {n / dt:.0f} files/s,"
                   f" ~{(len(todo) - n) / max(n / dt, 1e-6) / 60:.0f} min left", flush=True)
-    reindex(con)
+    reindex(con, [sha for sha, _ in todo] if not a.force else None)
     con.commit()
     print(f"done: {n} assets in {(time.time() - t0) / 60:.1f} min, {cams} with a camera name")
     for cam, c in con.execute("SELECT camera, count(*) c FROM exif WHERE camera IS NOT NULL"
@@ -609,13 +635,16 @@ def cmd_exif(a) -> None:
 def reindex(con, shas: list[str] | None = None) -> None:
     """Rebuild full-text search rows. The FTS row id is the asset's rowid, so deleting one asset's
     row is a direct lookup (sha256 is UNINDEXED in FTS5; deleting by it scans the whole table)."""
-    if shas:
-        where, args = f"WHERE sha256 IN ({','.join('?' * len(shas))})", shas
+    if shas is not None:
+        rows = []
+        for i in range(0, len(shas), 500):
+            chunk = shas[i:i + 500]
+            rows += con.execute("SELECT rowid, sha256, description, people FROM assets WHERE sha256 IN (%s)"
+                                % ",".join("?" * len(chunk)), chunk).fetchall()
     else:
-        where, args = "", []
         con.execute("DELETE FROM search")
-    for rid, sha, desc, people in con.execute(
-            f"SELECT rowid, sha256, description, people FROM assets {where}", args).fetchall():
+        rows = con.execute("SELECT rowid, sha256, description, people FROM assets").fetchall()
+    for rid, sha, desc, people in rows:
         parts = [desc or "", people or ""]
         for fn, album in con.execute("SELECT filename, album FROM occurrences WHERE sha256=?", (sha,)):
             parts += [fn, album or ""]
@@ -627,7 +656,7 @@ def reindex(con, shas: list[str] | None = None) -> None:
                                " LEFT JOIN events e ON e.id = p.event_id LEFT JOIN trips t ON t.id = e.trip_id"
                                " WHERE p.sha256=?", (sha,)):
             parts += [x or "" for x in row]
-        if shas:
+        if shas is not None:
             con.execute("DELETE FROM search WHERE rowid=?", (rid,))
         con.execute("INSERT INTO search(rowid, sha256, text) VALUES (?,?,?)",
                     (rid, sha, " ".join(p for p in parts if p)))
@@ -1040,6 +1069,7 @@ def main() -> None:
     s.set_defaults(fn=cmd_ingest)
 
     s = sub.add_parser("link", help="match sidecars and merge metadata")
+    s.add_argument("--source", help="only this source's occurrences (fast, for incremental runs)")
     s.set_defaults(fn=cmd_link)
 
     s = sub.add_parser("exif", help="read all EXIF/XMP/QuickTime metadata with exiftool (resumable)")
