@@ -15,3 +15,6 @@ ios/*.xcodeproj/xcuserdata/
 ios/build/
 ios/build-device/
 ios/PhotoEstateSim.xcodeproj/
+
+# the book, built locally with photo-estate/tools/build_book.py
+site/

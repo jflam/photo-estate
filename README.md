@@ -10,6 +10,8 @@ in your photos once, and "ben and matthew on a beach" or "ben san diego" finds e
 
 ![Searching the demo library for "latte art"](docs/screenshots/search-latte-art.jpg)
 
+**📖 [Read the book](https://jflam.github.io/photo-estate/)**: a technical book on how it all works, chapter by chapter, with diagrams. It covers the pipeline, the search, the faces and the native iPhone app.
+
 Everything runs on your own machine. The archive is deliberately boring: **plain files plus one
 SQLite file.** No app, this one included, is needed to read it. If every script here disappeared,
 your photos would still be ordinary JPEG/HEIC/MP4 files in folders, and the catalog would still be
@@ -294,7 +296,8 @@ services, with ~10k duplicates collapsed and ~130 trips found, served from an M1
 ## Layout
 
 ```
-docs/book/             a technical book on how it all works, with diagrams (start at docs/book/README.md)
+docs/book/             a technical book on how it all works, with diagrams; published as a website
+                       (photo-estate/tools/build_book.py builds it, .github/workflows/book.yml deploys it)
 docs/screenshots/      the screenshots in this README (tools/screenshots.py retakes the web ones)
 ios/                   the native iPhone app: offline catalog, search, photo cache, uploads
 photo-estate/
