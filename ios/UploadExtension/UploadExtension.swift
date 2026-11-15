@@ -76,20 +76,26 @@ class UploadExtension: PHBackgroundResourceUploadJobExtension {
         var total = 0                  // a closure below runs the change block, so count in a local, not the inout
         defer { made = total }
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
-        var found: [PHAsset] = []
-        assets.enumerateObjects { a, _, _ in found.append(a) }
+        var found: [(PHAsset, [PHAssetResource])] = []
+        assets.enumerateObjects { a, _, _ in
+            found.append((a, PHAssetResource.assetResources(for: a).filter(UploadRequest.wanted)))
+        }
+        // Every file queued in this run is one batch: the server starts cataloguing when the last arrives.
+        let batch = (id: UploadRequest.newBatch(), count: found.reduce(0) { $0 + $1.1.count })
         var left: [String] = []        // photos that vanished since they were seen are simply dropped
-        for (i, asset) in found.enumerated() {
+        for (i, (asset, resources)) in found.enumerated() {
             do {
                 try PHPhotoLibrary.shared().performChangesAndWait {
-                    for r in PHAssetResource.assetResources(for: asset) where UploadRequest.wanted(r) {
+                    for r in resources {
                         total += 1
-                        PHAssetResourceUploadJobChangeRequest.creationRequestForJob(destination: UploadRequest.make(asset: asset, resource: r), resource: r)
+                        PHAssetResourceUploadJobChangeRequest.creationRequestForJob(
+                            destination: UploadRequest.make(asset: asset, resource: r, batch: batch), resource: r)
                     }
                 }
             } catch {
                 note = "job create failed: \((error as NSError).code)"
-                left = found[i...].map(\.localIdentifier)    // limitExceeded or similar: try again next time
+                left = found[i...].map(\.0.localIdentifier)  // limitExceeded or similar: try again next time; this
+                                                            // batch never completes, so the server falls back to its quiet period
                 break
             }
         }

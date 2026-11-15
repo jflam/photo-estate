@@ -34,11 +34,14 @@ final class ForegroundUploader: ObservableObject {
         let assets = PHAsset.fetchAssets(with: opts)
         total = assets.count
         status = total == 0 ? "No photos in the last \(days) days." : "Sending \(total) photos and videos…"
+        var files = 0
+        assets.enumerateObjects { a, _, _ in files += PHAssetResource.assetResources(for: a).filter(UploadRequest.wanted).count }
+        let batch = (id: UploadRequest.newBatch(), count: files)   // the server catalogues them when the last is in
         var i = 0
         while i < assets.count, !Task.isCancelled {
             let asset = assets.object(at: i)
             for r in PHAssetResource.assetResources(for: asset) where UploadRequest.wanted(r) {
-                switch await upload(asset, r) {
+                switch await upload(asset, r, batch) {
                 case .sent: sent += 1
                 case .exists: skipped += 1
                 case .failed(let why): failed += 1; status = why
@@ -52,14 +55,14 @@ final class ForegroundUploader: ObservableObject {
 
     private enum Outcome { case sent, exists, failed(String) }
 
-    private func upload(_ asset: PHAsset, _ r: PHAssetResource) async -> Outcome {
+    private func upload(_ asset: PHAsset, _ r: PHAssetResource, _ batch: (id: String, count: Int)) async -> Outcome {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: file) }
         do {
             let o = PHAssetResourceRequestOptions()
             o.isNetworkAccessAllowed = true
             try await PHAssetResourceManager.default().writeData(for: r, toFile: file, options: o)
-            let (data, resp) = try await URLSession.shared.upload(for: UploadRequest.make(asset: asset, resource: r), fromFile: file)
+            let (data, resp) = try await URLSession.shared.upload(for: UploadRequest.make(asset: asset, resource: r, batch: batch), fromFile: file)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             switch code {
             case 201: return .sent

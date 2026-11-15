@@ -93,8 +93,10 @@ Each does only new work. For Google, request a Takeout of just the newest "Photo
 and use `PATTERN` to pick up the new zips; for iCloud, re-run `pull-icloud.sh` (the mirror makes it
 incremental). For imports run by hand, restart the app to load the new photos.
 
-**Phone uploads need none of this.** When an upload arrives the app starts a quiet period
-(`--ingest-quiet`, 60 s; 0 turns it off). Further uploads restart it, but a run starts at the latest
+**Phone uploads need none of this.** The phone tags each file with the batch it belongs to and how
+many files that batch has (`X-Batch: <id>/<count>`), so when the last one is in, the app starts
+cataloguing at once. Otherwise (an upload failed, or an older app) an upload starts a quiet period
+(`--ingest-quiet`, 60 s; 0 turns automatic runs off). Further uploads restart it, but a run starts at the latest
 `--ingest-max-wait` (600 s) after the first of a burst. It then runs `ingest-iphone.sh`, and when that
 added photos the app re-reads the catalog in the background and swaps it in, with no restart: searches
 keep being answered from the old catalog until the new one is ready. A failed run is retried after

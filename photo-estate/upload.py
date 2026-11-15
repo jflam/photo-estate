@@ -142,7 +142,8 @@ class IngestJob:
         self.on_added = None      # called after a run that added photos (the app reloads its catalog)
         self.timer = None
         self.first_poke = None    # when the current burst of uploads began
-        self.again = False        # an upload arrived while a run was going
+        self.again = None         # an upload arrived while a run was going: seconds to wait after it ends
+        self.batches = {}         # batch id -> (photos the phone said it is sending, paths that arrived)
         self.failures = 0
         self.lock = threading.Lock()
         self.log = collections.deque(maxlen=300)
@@ -196,19 +197,44 @@ class IngestJob:
 
     # -- running by itself: an upload starts (or restarts) a quiet period, and when it ends the ingest runs
 
-    def poke(self) -> None:
+    def poke(self, batch: str | None = None, path: str | None = None, new: bool = True) -> None:
         """An upload arrived. Run the ingest once uploads have been quiet for `quiet` seconds, but no later
-        than `max_wait` after the first of the burst, so a long upload still gets catalogued as it goes."""
+        than `max_wait` after the first of the burst, so a long upload still gets catalogued as it goes.
+
+        `batch` is the phone's X-Batch header, "<id>/<count>": the phone says how many files it is sending
+        together, so when the last one is in there is nothing to wait for and the run starts at once. Files
+        that were already here (`new` False) count towards the batch but start nothing by themselves. The
+        quiet period stays the fallback for a batch that never completes (a failed upload, an old app)."""
         if not self.quiet:
             return
         with self.lock:
-            if self.proc is not None and self.proc.poll() is None:
-                self.again = True       # picked up when the running one finishes
+            done = self._batch_done(batch, path)
+            if not new and not (done and (self.first_poke is not None or self.again is not None)):
+                return
+            delay = 0.0 if done else None
+            if self.proc is not None and self.proc.poll() is None:   # picked up when the running one finishes
+                self.again = min(x for x in (self.again, delay, self.quiet) if x is not None)
                 return
             now = time.time()
             if self.first_poke is None:
                 self.first_poke = now
-            self._arm(min(self.quiet, max(0.0, self.first_poke + self.max_wait - now)))
+            self._arm(delay if done else min(self.quiet, max(0.0, self.first_poke + self.max_wait - now)))
+
+    def _batch_done(self, batch: str | None, path: str | None) -> bool:      # lock held
+        m = re.match(r"^([A-Za-z0-9-]{1,64})/(\d{1,6})$", batch or "")
+        if not m or path is None:
+            return False
+        bid, n = m.group(1), int(m.group(2))
+        if bid not in self.batches:
+            while len(self.batches) >= 64:               # forget the oldest: a batch that never finished
+                self.batches.pop(next(iter(self.batches)))
+            self.batches[bid] = (n, set())
+        want, got = self.batches[bid]
+        got.add(path)
+        if len(got) < want:
+            return False
+        del self.batches[bid]
+        return True
 
     def sweep(self) -> None:
         """At startup: uploads that were waiting when the app last stopped."""
@@ -230,7 +256,7 @@ class IngestJob:
         print("ingest: uploads have gone quiet, cataloguing", flush=True)
         if not self.start():            # one is already going (started by hand): look again when it ends
             with self.lock:
-                self.again = True
+                self.again = 0.0
 
     def _follow(self, proc) -> None:
         for line in proc.stdout:
@@ -247,9 +273,9 @@ class IngestJob:
             if self.quiet:
                 if code != 0 and self.failures < 3:
                     self._arm(600)             # try again later, a few times
-                elif self.again:
-                    self._arm(self.quiet)
-            self.again = False
+                elif self.again is not None:
+                    self._arm(self.again)
+            self.again = None
         if added and self.on_added:
             try:
                 self.on_added()

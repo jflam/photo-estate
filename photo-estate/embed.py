@@ -945,8 +945,8 @@ def cmd_serve(a) -> None:
                 code, msg = 500, f"could not write: {e.strerror}"
             if code == 201:
                 print(f"upload: {self.command} {u.path[len(prefix):]} ({length / 1e6:.1f} MB) from {who or 'local'}", flush=True)
-                if ingest:
-                    ingest.poke()
+            if ingest and code in (200, 201):
+                ingest.poke(self.headers.get("X-Batch"), u.path[len(prefix):], new=code == 201)
             self.json({"status": msg}, code)
 
         def do_GET(self):
