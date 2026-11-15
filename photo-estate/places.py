@@ -13,7 +13,8 @@ network: GeoNames cities (reverse_geocode) and timezone shapes (timezonefinder) 
   uv run places.py --db /Volumes/estate/estate.db run
   uv run places.py --db /Volumes/estate/estate.db events --trips
 
-Everything is recomputed on each run (seconds), so new photos and better rules just mean re-running.
+Everything is recomputed on each run (seconds), so new photos and better rules just mean re-running;
+only the rows that come out different are written, so a run with a few new photos writes a few rows.
 
 How it decides:
   place       GPS -> nearest GeoNames place; but a city of 100k+ within ~0.006*sqrt(population) km
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import sqlite3
 import sys
 import time
 from collections import Counter
@@ -116,17 +118,42 @@ def dominant(values, share: float = 0.0):
 
 # ----------------------------------------------------------------------------- run
 
-def search_signatures(con) -> dict:
-    """What `places` adds to each asset's search text: when it changes, so must the search row."""
-    return {r[0]: r[1:] for r in con.execute(
-        "SELECT p.sha256, p.city, p.locality, p.admin2, p.admin1, p.country, e.title, t.title FROM places p"
-        " LEFT JOIN events e ON e.id = p.event_id LEFT JOIN trips t ON t.id = e.trip_id")}
+PLACE_COLS = ("sha256", "city", "locality", "admin2", "admin1", "country", "cc", "place_source", "tz", "tz_source",
+              "local_time", "utc_time", "event_id")
+EVENT_COLS = ("id", "start_local", "end_local", "n", "title", "place", "lat", "lon", "km_from_home", "trip_id")
+TRIP_COLS = ("id", "start_local", "end_local", "n", "n_events", "title", "place")
+
+
+def tables_current(con) -> bool:
+    """Whether places, events and trips exist with the columns estate.SCHEMA gives them now. If not,
+    the run recreates them (they are fully derived), so a schema change needs no migration."""
+    want = sqlite3.connect(":memory:")
+    want.executescript(estate.SCHEMA)
+    cols = lambda c, t: [r[1:3] for r in c.execute(f"PRAGMA table_info({t})")]
+    return all(cols(con, t) == cols(want, t) for t in ("places", "events", "trips"))
+
+
+def signatures(places: dict, events: dict, trips: dict) -> dict:
+    """What `places` adds to each asset's search text (place names, event and trip titles), worked out
+    from rows in memory: when it changes, so must the search row."""
+    out = {}
+    for sha, p in places.items():
+        e = events.get(p[12])
+        t = trips.get(e[9]) if e else None
+        out[sha] = (*p[1:6], e[4] if e else None, t[5] if t else None)
+    return out
+
+
+def write_diff(con, table: str, key: str, cols: tuple, now: dict, before: dict) -> int:
+    """Make `table` hold the rows in `now` ({key: row}) by writing only the rows that differ."""
+    gone = [(k,) for k in before.keys() - now.keys()]
+    changed = [r for k, r in now.items() if before.get(k) != r]
+    con.executemany(f"DELETE FROM {table} WHERE {key}=?", gone)
+    con.executemany(f"INSERT OR REPLACE INTO {table}({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", changed)
+    return len(gone) + len(changed)
 
 
 def cmd_run(a) -> None:
-    import reverse_geocode
-    from timezonefinder import TimezoneFinder
-
     t0 = time.time()
     con = estate.connect(a.db)
     con.execute("PRAGMA busy_timeout=120000")
@@ -136,9 +163,16 @@ def cmd_run(a) -> None:
     # What the last run decided. Place names and zones come from GPS (reverse geocoding and timezone
     # lookup are the slow parts), and EXIF offsets from exiftool's JSON (a big table): both are reused
     # for photos already in `places`, so a run costs about what the new photos cost. --full redoes all.
-    old = {} if a.full else {r[0]: r[1:] for r in con.execute(
-        "SELECT sha256, city, locality, admin2, admin1, cc, place_source, tz, tz_source FROM places")}
-    before = search_signatures(con)
+    current = tables_current(con)
+
+    def sel(t, cols):          # what the last run wrote, as far as it can still be read
+        try:
+            return {r[0]: r for r in con.execute(f"SELECT {', '.join(cols)} FROM {t}")}
+        except sqlite3.OperationalError:
+            return {}
+    prior = {"places": sel("places", PLACE_COLS), "events": sel("events", EVENT_COLS), "trips": sel("trips", TRIP_COLS)}
+    before = signatures(*prior.values())
+    old = {} if a.full else {sha: (*r[1:5], r[6], r[7], r[8], r[9]) for sha, r in prior["places"].items()}
     albums: dict[str, str] = {}
     for sha, album in con.execute("SELECT sha256, album FROM occurrences WHERE album IS NOT NULL ORDER BY id"):
         albums.setdefault(sha, album)
@@ -189,7 +223,9 @@ def cmd_run(a) -> None:
         if ok_gps:
             gps.append(r)
     todo_geo = [r for r in gps if r["cached"] is None]
-    if todo_geo:
+    if todo_geo:   # the geocoder and the zone shapes take a while to load: only when something needs them
+        import reverse_geocode
+        from timezonefinder import TimezoneFinder
         pts = [(r["lat"], r["lon"]) for r in todo_geo]
         near, big = reverse_geocode.search(pts), reverse_geocode.search(pts, min_population=BIG_CITY)
         tf, zones = TimezoneFinder(), {}
@@ -348,29 +384,33 @@ def cmd_run(a) -> None:
         trip_rows.append((tid, t[0]["start"].isoformat(), t[-1]["end"].isoformat(), sum(e["n"] for e in t),
                           len(t), f"Trip to {label}", label))
 
-    # --- write
+    # --- write: only the rows that differ from what is there (most of them, on a run with a few new
+    # photos), so the cost follows what changed; the tables are recreated when their columns changed
+    now = {
+        "places": {r["sha"]: (r["sha"], r["place"][0] if r["place"] else None,
+                              r["locality"] if r["place_src"] == "gps" else None,
+                              *(r["place"][1:3] if r["place"] else (None,) * 2),
+                              country_name(r["place"][3]) if r["place"] else None, r["place"][3] if r["place"] else None,
+                              r["place_src"], tz_label(r["tz"]) if r["tz"] is not None else None, r["tz_src"],
+                              r["local"].isoformat(), r["utc"].isoformat(), r["event"]) for r in A},
+        "events": {e["id"]: (e["id"], e["start"].isoformat(), e["end"].isoformat(), e["n"], e["title"], e["place"],
+                             e["lat"], e["lon"], e["km"], e["trip"]) for e in ev_rows},
+        "trips": {t[0]: t for t in trip_rows},
+    }
     con.commit()                              # the temp table above opened an implicit transaction
     con.execute("BEGIN")
-    for t in ("places", "events", "trips"):   # fully derived: recreate, so schema changes need no migration
-        con.execute(f"DROP TABLE IF EXISTS {t}")
-    for stmt in estate.SCHEMA.split(";"):
-        if any(f" {t}(" in stmt or f" {t} " in stmt for t in ("places", "events", "trips", "places_event")):
-            con.execute(stmt)
-    con.executemany(
-        "INSERT INTO places(sha256, city, locality, admin2, admin1, country, cc, place_source, tz, tz_source,"
-        " local_time, utc_time, event_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [(r["sha"], r["place"][0] if r["place"] else None, r["locality"] if r["place_src"] == "gps" else None,
-          *(r["place"][1:3] if r["place"] else (None,) * 2),
-          country_name(r["place"][3]) if r["place"] else None, r["place"][3] if r["place"] else None,
-          r["place_src"], tz_label(r["tz"]) if r["tz"] is not None else None, r["tz_src"],
-          r["local"].isoformat(), r["utc"].isoformat(), r["event"]) for r in A])
-    con.executemany("INSERT INTO events VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    [(e["id"], e["start"].isoformat(), e["end"].isoformat(), e["n"], e["title"], e["place"],
-                      e["lat"], e["lon"], e["km"], e["trip"]) for e in ev_rows])
-    con.executemany("INSERT INTO trips VALUES (?,?,?,?,?,?,?)", trip_rows)
-    after = search_signatures(con)
+    if not current:
+        for t in ("places", "events", "trips"):
+            con.execute(f"DROP TABLE IF EXISTS {t}")
+        for stmt in estate.SCHEMA.split(";"):
+            if any(f" {t}(" in stmt or f" {t} " in stmt for t in ("places", "events", "trips", "places_event")):
+                con.execute(stmt)
+    wrote = sum(write_diff(con, t, k, cols, now[t], prior[t] if current else {})
+                for t, k, cols in (("places", "sha256", PLACE_COLS), ("events", "id", EVENT_COLS), ("trips", "id", TRIP_COLS)))
+    after = signatures(*now.values())
     changed = [sha for sha in after.keys() | before.keys() if after.get(sha) != before.get(sha)]
-    print(f"  {len(ev_rows)} events, {len(trip_rows)} trips; updating search rows of {len(changed)} assets", flush=True)
+    print(f"  {len(ev_rows)} events, {len(trip_rows)} trips; {wrote} rows written;"
+          f" updating search rows of {len(changed)} assets", flush=True)
     estate.reindex(con, changed)
     con.commit()
     src = Counter(r["tz_src"] for r in A)
