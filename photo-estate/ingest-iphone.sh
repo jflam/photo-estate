@@ -22,8 +22,9 @@ DB=${DB:-$ROOT/estate.db}
 STORE=${STORE:-$ROOT/store}
 INBOX=${INBOX:-$ROOT/iphone}
 
+# The store is the disk that must be there; the catalog (ROOT) may be on another one, e.g. the internal SSD.
+[[ -d $STORE ]] || { echo "store $STORE does not exist (is the disk mounted?)"; exit 1; }
 [[ -d $INBOX ]] || { echo "nothing to do: $INBOX does not exist yet"; exit 0; }
-[[ -d $ROOT ]] || { echo "estate root $ROOT does not exist (is the disk mounted?)"; exit 1; }
 LOCK=${TMPDIR:-/tmp}/photo-estate-ingest-iphone.lock
 mkdir "$LOCK" 2>/dev/null || { echo "already running ($LOCK)"; exit 0; }
 trap 'rmdir "$LOCK"' EXIT

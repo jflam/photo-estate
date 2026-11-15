@@ -75,5 +75,5 @@ if [[ -n $prefetch_pid ]]; then wait "$prefetch_pid" || true; fi
 
 estate link
 estate stats
-sqlite3 "$DB" ".backup '$DB.bak-$(date +%Y%m%d)'"   # catalog snapshot
+sqlite3 "$DB" ".backup '$ROOT/$(basename "$DB").bak-$(date +%Y%m%d)'"   # catalog snapshot, on the estate disk
 echo "done $(date +%T)"

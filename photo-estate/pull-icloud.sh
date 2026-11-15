@@ -42,5 +42,5 @@ done
 
 estate link
 estate stats
-sqlite3 "$DB" ".backup '$DB.bak-$(date +%Y%m%d)-icloud'"   # catalog snapshot
+sqlite3 "$DB" ".backup '$ROOT/$(basename "$DB").bak-$(date +%Y%m%d)-icloud'"   # catalog snapshot, on the estate disk
 echo "done $(date +%T); review same-shot copies with: estate.py --db $DB dupes"
