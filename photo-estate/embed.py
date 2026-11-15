@@ -54,6 +54,7 @@ COMMON_WORDS = set("""sunny lily rose rosie daisy iris violet ivy holly heather 
     glen dale cliff rocco sandy dusty misty penny chip bud bunny kitty angel star sterling destiny""".split())
 # Countries and states that are also everyday words: read as a place only when capitalized
 COMMON_PLACES = {"china", "turkey", "chad", "jordan", "georgia", "guinea", "japan", "chile", "cuba", "wales", "jersey"}
+IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".gif", ".webp", ".tif", ".tiff", ".avif"}  # decodable stills
 SKIP_EXT = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"}  # Pillow can't decode RAW
 
 
@@ -734,6 +735,34 @@ def cmd_serve(a) -> None:
                 return None
         return dest.read_bytes()
 
+    # A photo that just arrived from the phone gets its grid thumbnail now, while the file is still in
+    # the page cache, so the first look at the new photos never waits on decoding a 12 MP HEIC. It is
+    # named by the photo's hash, which is the key the ingest will give it. One worker, in arrival order.
+    import queue
+    arrivals = queue.Queue()
+
+    def prepare_arrivals():
+        while True:
+            sha, path = arrivals.get()
+            try:
+                dest = cache / "thumbs" / f"{sha}.jpg"
+                if not dest.exists():
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    with Image.open(path) as im:
+                        im.draft("RGB", (360, 360))
+                        im = ImageOps.exif_transpose(im).convert("RGB")
+                        im.thumbnail((360, 360))
+                        tmp = dest.with_suffix(f".{threading.get_ident()}.tmp")
+                        im.save(tmp, "JPEG", quality=82)
+                        os.replace(tmp, dest)
+            except Exception as e:     # the ingest and the page cope without it
+                print(f"upload: could not prepare {path.name}: {type(e).__name__}: {e}", flush=True)
+            finally:
+                arrivals.task_done()
+
+    if inbox:
+        threading.Thread(target=prepare_arrivals, daemon=True).start()
+
     # Every search, page of results, and photo opened or shared from one, one JSON object per line.
     # This is the raw material for choosing evaluation queries from real use; nothing reads it back.
     qlog = Path(a.query_log or Path(a.db).resolve().parent / "query-log.jsonl")
@@ -938,8 +967,11 @@ def cmd_serve(a) -> None:
                 h = self.headers
                 meta = {"taken": h.get("X-Taken"), "lat": h.get("X-Latitude"), "lon": h.get("X-Longitude"),
                         "fav": h.get("X-Favorite")}
+                stored = {}
                 code, msg = save_upload(inbox, unquote(u.path[len(prefix):]), self.rfile, length,
-                                        h.get("X-Content-SHA256"), meta)
+                                        h.get("X-Content-SHA256"), meta, stored)
+                if stored and stored["path"].suffix.lower() in IMAGE_EXT:
+                    arrivals.put((stored["sha256"], stored["path"]))
                 self.close_connection = code >= 400   # a refused body may still be on the wire
             except OSError as e:
                 code, msg = 500, f"could not write: {e.strerror}"

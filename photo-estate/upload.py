@@ -75,7 +75,7 @@ def xmp_for(meta: dict) -> str | None:
 
 
 def save_upload(inbox: Path, rel: str, fp, length: int, sha256: str | None = None,
-                meta: dict | None = None) -> tuple[int, str]:
+                meta: dict | None = None, stored: dict | None = None) -> tuple[int, str]:
     """Stream `length` bytes from fp to <inbox>/<rel>. Returns (http status, message).
 
     `meta` (taken/lat/lon/fav, from request headers) becomes the file's `.xmp` sidecar, written after
@@ -83,7 +83,8 @@ def save_upload(inbox: Path, rel: str, fp, length: int, sha256: str | None = Non
 
     Idempotent: sending a file that is already there, with the same size, is a 200. The same path
     with a different size is a 409, because ingest keys on the path and must never see it change.
-    `sha256`, when given, is checked against what arrived."""
+    `sha256`, when given, is checked against what arrived. On a 201, `stored` (if given) gets the file's
+    "path" and "sha256", which is the key the catalog will give it, so the app can prepare it early."""
     p = clean_path(rel)
     if p is None:
         return 400, "bad path"
@@ -113,6 +114,8 @@ def save_upload(inbox: Path, rel: str, fp, length: int, sha256: str | None = Non
             return 400, "sha256 does not match the bytes received"
         dest.parent.mkdir(parents=True, exist_ok=True)
         os.replace(tmp, dest)
+        if stored is not None:
+            stored.update(path=dest, sha256=h.hexdigest())
         xmp = xmp_for(meta or {}) if dest.suffix.lower() in MEDIA_EXT else None
         if xmp:
             side = dest.with_name(dest.name + ".xmp")
