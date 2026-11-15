@@ -4,8 +4,9 @@
 #   ./ingest-iphone.sh /Volumes/estate          (what a launchd timer runs)
 #
 # The photo app drops uploads in ROOT/iphone (see upload.py). This ingests that folder, and only if
-# it brought anything new runs the rest of the pipeline on the new photos: every stage below skips
-# what it has already done, except `places`, which recomputes in seconds. Nothing is deleted.
+# it brought anything new runs the rest of the pipeline on the new photos: every stage below only
+# touches what is new: link is limited to the inbox, exif/embed/faces skip finished photos, and places
+# reuses the place names and zones it already worked out (events and trips are rebuilt, in seconds). Nothing is deleted.
 #
 # - Set RESTART=com.jflam.photo-search to restart the photo app at the end: it reads the catalog at
 #   startup, so new photos appear in search only after that.
@@ -40,7 +41,7 @@ if [[ $before == "$after" ]]; then
 fi
 
 echo "== $(date +%T) $((after - before)) new assets and sidecars: link, exif, places"
-run estate.py link
+run estate.py link --source "$(basename "$INBOX")"
 if command -v exiftool >/dev/null; then
   run estate.py exif --store "$STORE"
 else
