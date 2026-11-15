@@ -10,9 +10,11 @@
 		35CE5A370192488149A5A29B /* UploadRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49009F7D6AE27A66198655FD /* UploadRequest.swift */; };
 		5849B82EBB4FF63BC7F05628 /* UploadRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49009F7D6AE27A66198655FD /* UploadRequest.swift */; };
 		6609B17342C482D0197A6F10 /* WebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2383C462B3C446A1E06644F7 /* WebView.swift */; };
+		722108BD24A023E998684CB8 /* ExtensionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6EA4B6B039BA595B76EF3D8 /* ExtensionStatus.swift */; };
 		94AA6DA1AE07270F45E33766 /* ForegroundUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDFDD9520B743A0331D2FCF8 /* ForegroundUploader.swift */; };
 		9536C3D5DD7F27FFD25DA1B2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13DA59C97BB2529E43D3813A /* ContentView.swift */; };
 		B5B8A9CA5FB59F7C93EB62D2 /* UploadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2D5A1D8D1E8B9DAE50D5508 /* UploadsView.swift */; };
+		B7E41ACAFD9F7C90B416B1C1 /* ExtensionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6EA4B6B039BA595B76EF3D8 /* ExtensionStatus.swift */; };
 		C2C6BB4833851DD603965909 /* UploadExtension.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 4D60A82DDFE17E182160CBAB /* UploadExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C767DF4E23F7FE4C51F17991 /* PhotoEstateApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FD21ED368938DA62FCF458 /* PhotoEstateApp.swift */; };
 		F58F69FB3166A10E8F99D0D4 /* UploadExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DF2FAB3068A53E42312D37B /* UploadExtension.swift */; };
@@ -43,16 +45,19 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		11D4B8291F8FFB1775A15495 /* UploadExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = UploadExtension.entitlements; sourceTree = "<group>"; };
 		13DA59C97BB2529E43D3813A /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		2383C462B3C446A1E06644F7 /* WebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebView.swift; sourceTree = "<group>"; };
 		24FD21ED368938DA62FCF458 /* PhotoEstateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoEstateApp.swift; sourceTree = "<group>"; };
 		49009F7D6AE27A66198655FD /* UploadRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadRequest.swift; sourceTree = "<group>"; };
 		4D60A82DDFE17E182160CBAB /* UploadExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = UploadExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5DF2FAB3068A53E42312D37B /* UploadExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadExtension.swift; sourceTree = "<group>"; };
+		8218B37C6A0A15C579ABC4AE /* PhotoEstate.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PhotoEstate.entitlements; sourceTree = "<group>"; };
 		9A7D1C8FD4E917F7BA7F1D67 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A21B86D5141AD45EB40AB504 /* PhotoEstate.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PhotoEstate.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D138D459277DE48E8CDA729B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D2D5A1D8D1E8B9DAE50D5508 /* UploadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadsView.swift; sourceTree = "<group>"; };
+		E6EA4B6B039BA595B76EF3D8 /* ExtensionStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionStatus.swift; sourceTree = "<group>"; };
 		FDFDD9520B743A0331D2FCF8 /* ForegroundUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundUploader.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -61,6 +66,7 @@
 			isa = PBXGroup;
 			children = (
 				9A7D1C8FD4E917F7BA7F1D67 /* Info.plist */,
+				11D4B8291F8FFB1775A15495 /* UploadExtension.entitlements */,
 				5DF2FAB3068A53E42312D37B /* UploadExtension.swift */,
 			);
 			path = UploadExtension;
@@ -81,6 +87,7 @@
 				13DA59C97BB2529E43D3813A /* ContentView.swift */,
 				FDFDD9520B743A0331D2FCF8 /* ForegroundUploader.swift */,
 				D138D459277DE48E8CDA729B /* Info.plist */,
+				8218B37C6A0A15C579ABC4AE /* PhotoEstate.entitlements */,
 				24FD21ED368938DA62FCF458 /* PhotoEstateApp.swift */,
 				D2D5A1D8D1E8B9DAE50D5508 /* UploadsView.swift */,
 				2383C462B3C446A1E06644F7 /* WebView.swift */,
@@ -91,6 +98,7 @@
 		64E0EFE6199B846405246807 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				E6EA4B6B039BA595B76EF3D8 /* ExtensionStatus.swift */,
 				49009F7D6AE27A66198655FD /* UploadRequest.swift */,
 			);
 			path = Shared;
@@ -189,6 +197,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				722108BD24A023E998684CB8 /* ExtensionStatus.swift in Sources */,
 				F58F69FB3166A10E8F99D0D4 /* UploadExtension.swift in Sources */,
 				35CE5A370192488149A5A29B /* UploadRequest.swift in Sources */,
 			);
@@ -199,6 +208,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9536C3D5DD7F27FFD25DA1B2 /* ContentView.swift in Sources */,
+				B7E41ACAFD9F7C90B416B1C1 /* ExtensionStatus.swift in Sources */,
 				94AA6DA1AE07270F45E33766 /* ForegroundUploader.swift in Sources */,
 				C767DF4E23F7FE4C51F17991 /* PhotoEstateApp.swift in Sources */,
 				5849B82EBB4FF63BC7F05628 /* UploadRequest.swift in Sources */,
@@ -222,6 +232,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PhotoEstate/PhotoEstate.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = PhotoEstate/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -287,7 +298,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -303,6 +314,7 @@
 		6F7D024115D8403D881F19C2 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = UploadExtension/UploadExtension.entitlements;
 				INFOPLIST_FILE = UploadExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -317,6 +329,7 @@
 		9CBF7D5D3859C0C805F9677B /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = UploadExtension/UploadExtension.entitlements;
 				INFOPLIST_FILE = UploadExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -332,6 +345,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PhotoEstate/PhotoEstate.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = PhotoEstate/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -391,7 +405,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

@@ -13,10 +13,5 @@ struct ContentView: View {
             UploadsView(uploader: uploader)
                 .tabItem { Label("Uploads", systemImage: "icloud.and.arrow.up") }
         }
-        .task {
-            // `-autoUploadDays 30` as a launch argument starts an upload at launch (for testing without taps)
-            let d = UserDefaults.standard.integer(forKey: "autoUploadDays")
-            if d > 0 { uploader.start(days: d) }
-        }
     }
 }

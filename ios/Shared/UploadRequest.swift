@@ -25,7 +25,7 @@ enum UploadRequest {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "UTC")!
         let d = cal.dateComponents([.year, .month, .day], from: asset.creationDate ?? Date(timeIntervalSince1970: 0))
-        let name = resource.originalFilename as NSString
+        let name = (resource.filename ?? "photo") as NSString
         let stem = clean(name.deletingPathExtension)
         let ext = clean(name.pathExtension).uppercased()
         let id = SHA256.hash(data: Data(asset.localIdentifier.utf8)).prefix(4).map { String(format: "%02x", $0) }.joined().prefix(7)
@@ -45,7 +45,7 @@ enum UploadRequest {
         let rel = path(asset: asset, resource: resource)
         var req = URLRequest(url: base.appendingPathComponent("api/upload/" + rel))
         req.httpMethod = "POST"
-        req.setValue(resource.originalFilename, forHTTPHeaderField: "X-Filename")
+        req.setValue(resource.filename, forHTTPHeaderField: "X-Filename")
         if let d = asset.creationDate {
             let f = DateFormatter()
             f.locale = Locale(identifier: "en_US_POSIX")

@@ -64,10 +64,10 @@ final class ForegroundUploader: ObservableObject {
             switch code {
             case 201: return .sent
             case 200: return .exists
-            default: return .failed("\(r.originalFilename): server said \(code) \(String(decoding: data.prefix(120), as: UTF8.self))")
+            default: return .failed("\(r.filename ?? "?"): server said \(code) \(String(decoding: data.prefix(120), as: UTF8.self))")
             }
         } catch {
-            return .failed("\(r.originalFilename): \(error.localizedDescription)")
+            return .failed("\(r.filename ?? "?"): \(error.localizedDescription)")
         }
     }
 }
