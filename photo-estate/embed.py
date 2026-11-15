@@ -270,8 +270,9 @@ def cmd_serve(a) -> None:
         con = connect(a.db)
         # Startup reads every query below in table order and sorts in memory: on a hard disk, walking an
         # index (ORDER BY sha256, a correlated subquery) turns each row into a seek, ~18 s on the Mac mini.
-        rows = sorted(con.execute("SELECT sha256, vec FROM embeddings WHERE model=? AND vec IS NOT NULL",
-                                  (a.model,)).fetchall())
+        images = {r[0] for r in con.execute("SELECT sha256 FROM assets WHERE kind='image'")}
+        rows = sorted(r for r in con.execute("SELECT sha256, vec FROM embeddings WHERE model=? AND vec IS NOT NULL",
+                                             (a.model,)) if r[0] in images)   # an upload is embedded before it is ingested
         if not rows:
             raise RuntimeError(f"no embeddings for {a.model}; run `embed.py run` first")
         shas = [r[0] for r in rows]
@@ -530,10 +531,12 @@ def cmd_serve(a) -> None:
     def load_encoder():
         t = time.time()
         import torch
-        from transformers import AutoModel, AutoTokenizer
+        from transformers import AutoImageProcessor, AutoModel, AutoTokenizer
         torch.set_num_threads(a.threads)
         encoder.update(torch=torch, model=AutoModel.from_pretrained(a.model, dtype=torch.float32).eval(),
                        tok=AutoTokenizer.from_pretrained(a.model))
+        if inbox:   # the image side, for photos arriving from the phone
+            encoder["images"] = AutoImageProcessor.from_pretrained(a.model)
         encoder_ready.set()
         text_vec("warm-up")  # the first forward pass is ~1 s slower; take it here, not on a user's query
         print(f"text encoder ready in {time.time() - t:.1f}s", flush=True)
@@ -735,32 +738,63 @@ def cmd_serve(a) -> None:
                 return None
         return dest.read_bytes()
 
-    # A photo that just arrived from the phone gets its grid thumbnail now, while the file is still in
-    # the page cache, so the first look at the new photos never waits on decoding a 12 MP HEIC. It is
-    # named by the photo's hash, which is the key the ingest will give it. One worker, in arrival order.
+    # A photo that just arrived from the phone is prepared now, while the file is still in the page
+    # cache, decoding it once for both (three workers: decoding a HEIC is most of the time and runs in
+    # parallel; the model takes one photo at a time):
+    #   - its grid thumbnail, so the first look at new photos never waits on decoding a 12 MP HEIC;
+    #   - its embedding, with the model this process already holds for text search. Starting
+    #     `embed.py run` would cost ~7 s of loading PyTorch and the model for a fraction of a second of
+    #     work; with the rows already there it finds nothing to do and never loads them.
+    # Both are keyed by the photo's hash, the key the ingest will give it. The embedding row is the one
+    # thing the app writes to the catalog: a value computed from the file's bytes as `embed.py run`
+    # computes it (byte for byte at --batch 1; batching itself moves cosine by ~1e-4), so which of the
+    # two writes it does not matter.
     import queue
     arrivals = queue.Queue()
 
     def prepare_arrivals():
+        con = None
         while True:
             sha, path = arrivals.get()
             try:
                 dest = cache / "thumbs" / f"{sha}.jpg"
-                if not dest.exists():
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    with Image.open(path) as im:
-                        im.draft("RGB", (360, 360))
-                        im = ImageOps.exif_transpose(im).convert("RGB")
+                con = con or connect(a.db)
+                embedded = con.execute("SELECT 1 FROM embeddings WHERE sha256=? AND model=?", (sha, a.model)).fetchone()
+                if dest.exists() and embedded:
+                    continue
+                encoder_ready.wait()
+                side = encoder["images"].size["height"]
+                with Image.open(path) as im:
+                    im.draft("RGB", (side * 2, side * 2))   # as _decode does, so the vector is the same
+                    im = ImageOps.exif_transpose(im).convert("RGB")
+                    if not embedded:
+                        small = im.resize((side, side), Image.Resampling.BICUBIC)
+                        torch, model = encoder["torch"], encoder["model"]
+                        with model_lock, torch.no_grad():
+                            px = encoder["images"](images=[small], return_tensors="pt")["pixel_values"]
+                            v = torch.nn.functional.normalize(
+                                _features(torch, model.get_image_features(pixel_values=px)), dim=-1)[0]
+                        vec = v.numpy().astype(np.float16)
+                        con.execute("INSERT OR REPLACE INTO embeddings VALUES (?,?,?,?,?,?)",
+                                    (sha, a.model, vec.shape[0], vec.tobytes(), None, now()))
+                        con.commit()
+                    if not dest.exists():
+                        dest.parent.mkdir(parents=True, exist_ok=True)
                         im.thumbnail((360, 360))
                         tmp = dest.with_suffix(f".{threading.get_ident()}.tmp")
                         im.save(tmp, "JPEG", quality=82)
                         os.replace(tmp, dest)
-            except Exception as e:     # the ingest and the page cope without it
+            except Exception as e:     # `embed.py run` and the page cope without it
                 print(f"upload: could not prepare {path.name}: {type(e).__name__}: {e}", flush=True)
             finally:
                 arrivals.task_done()
 
-    if inbox:
+    def arrivals_prepared(timeout: float = 120) -> None:
+        """Wait (a while) for the worker to catch up, so the ingest finds every embedding already made."""
+        with arrivals.all_tasks_done:
+            arrivals.all_tasks_done.wait_for(lambda: not arrivals.unfinished_tasks, timeout)
+
+    for _ in range(3 if inbox else 0):
         threading.Thread(target=prepare_arrivals, daemon=True).start()
 
     # Every search, page of results, and photo opened or shared from one, one JSON object per line.
@@ -1122,6 +1156,7 @@ def cmd_serve(a) -> None:
 
     if ingest:
         ingest.on_added = reload_catalog
+        ingest.before_run = arrivals_prepared
         ingest.on_faces = lambda: has_faces and load_people()   # the run's faces are in: rebuild the People page
         threading.Thread(target=ingest.sweep, daemon=True).start()   # uploads left from before this start
 

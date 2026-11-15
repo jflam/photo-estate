@@ -7,9 +7,11 @@ picks it up like any other source:
     <inbox>/2026/11/14/IMG_0042-A1B2C3D.HEIC        the original, byte for byte
     <inbox>/2026/11/14/IMG_0042-A1B2C3D.HEIC.xmp    its metadata (date with offset, GPS, favourite)
 
-The server never writes the catalog: it only drops files here. That keeps `ingest` the single
-writer of the database, and a half-finished upload can never be mistaken for a photo, because a file
-is written beside the inbox and renamed into it only once every byte has arrived.
+The server never records photos in the catalog: it only drops files here. That keeps `ingest` the
+single writer of what the catalog holds, and a half-finished upload can never be mistaken for a photo,
+because a file is written beside the inbox and renamed into it only once every byte has arrived. (The
+app does write each arrival's embedding, keyed by its hash, so `embed.py run` has nothing left to do;
+see `prepare_arrivals` in embed.py.)
 """
 from __future__ import annotations
 
@@ -144,6 +146,7 @@ class IngestJob:
         self.quiet, self.max_wait = quiet, max_wait   # seconds; quiet = 0 turns the automatic runs off
         self.on_added = None      # called once a run that added photos has them searchable (the app reloads its catalog)
         self.on_faces = None      # called when that run has also finished faces (the app reloads its People page)
+        self.before_run = None    # called before an automatic run starts (the app finishes embedding the uploads)
         self.timer = None
         self.first_poke = None    # when the current burst of uploads began
         self.again = None         # an upload arrived while a run was going: seconds to wait after it ends
@@ -258,6 +261,8 @@ class IngestJob:
         with self.lock:
             self.timer, self.first_poke = None, None
         print("ingest: uploads have gone quiet, cataloguing", flush=True)
+        if self.before_run:
+            self.before_run()
         if not self.start():            # one is already going (started by hand): look again when it ends
             with self.lock:
                 self.again = 0.0
