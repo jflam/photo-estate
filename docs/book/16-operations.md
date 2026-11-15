@@ -98,7 +98,7 @@ many files that batch has (`X-Batch: <id>/<count>`), so when the last one is in,
 cataloguing at once. Otherwise (an upload failed, or an older app) an upload starts a quiet period
 (`--ingest-quiet`, 60 s; 0 turns automatic runs off). Further uploads restart it, but a run starts at the latest
 `--ingest-max-wait` (600 s) after the first of a burst. It then runs `ingest-iphone.sh`, and when that
-added photos the app re-reads the catalog in the background and swaps it in, with no restart: searches
+added photos the app re-reads what changed in the catalog in the background and swaps it in, with no restart: searches
 keep being answered from the old catalog until the new one is ready. The reload starts as soon as the
 script says the photos are searchable ("catalog ready", after embeddings); faces run on, and the People
 page reloads when they finish. A failed run is retried after

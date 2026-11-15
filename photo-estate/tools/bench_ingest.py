@@ -135,7 +135,7 @@ def main() -> None:
     p.add_argument("--quiet", type=float, default=60, help="the server's --ingest-quiet")
     p.add_argument("--runs", type=int, default=1)
     p.add_argument("--port", type=int, default=8798)
-    p.add_argument("--keep", action="store_true", help="leave the last run's estate and log in --work/run")
+    p.add_argument("--check", action="store_true", help="the app also does a full reload and compares (slower)")
     a = p.parse_args()
     work = a.work.expanduser().resolve()
     build(work, a.photos)
@@ -150,7 +150,7 @@ def main() -> None:
         shutil.copyfile(work / "thumb-dims.json", run / "review" / "thumb-dims.json")
         (run / "store").symlink_to(work / "store")
         log = open(run / "serve.log", "w")
-        env = dict(os.environ, HF_HUB_OFFLINE="1")
+        env = dict(os.environ, HF_HUB_OFFLINE="1", **({"PHOTO_ESTATE_CHECK_RELOAD": "1"} if a.check else {}))
         srv = subprocess.Popen(["uv", "run", "--quiet", "--script", str(HERE / "embed.py"), "--db", str(run / "estate.db"),
                                 "serve", "--store", str(run / "store"), "--port", str(a.port), "--no-pregenerate",
                                 "--ingest-quiet", str(a.quiet)], stdout=log, stderr=subprocess.STDOUT, env=env,
@@ -199,6 +199,8 @@ def main() -> None:
                   f" | script started {r['run_start']:.1f}s after, ran {r['run']:.1f}s (exit {r['exit']})"
                   f" | reload {', '.join(f'{x:.1f}s' for x in reload_s)}", flush=True)
             print("   stages: " + "  ".join(f"{t} {s}" for t, s in stamps), flush=True)
+            for line in re.findall(r"reload check: .*", txt):
+                print("   " + line, flush=True)
         finally:
             os.killpg(srv.pid, signal.SIGTERM)
             srv.wait()

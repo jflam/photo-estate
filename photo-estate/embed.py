@@ -263,37 +263,21 @@ def cmd_serve(a) -> None:
     cache = Path(a.fast_cache) if a.fast_cache else seed
     t0 = time.time()
 
-    def load_state() -> dict:
+    def chunks(xs, n=500):
+        xs = list(xs)
+        return (xs[i:i + n] for i in range(0, len(xs), n))
+
+    def load_state(prev: dict | None = None) -> dict:
         """Everything the app keeps in memory, built from the catalog. Startup runs it once; a finished
         ingest runs it again in the background and swaps the result in (install), so new photos appear
-        without a restart."""
+        without a restart.
+
+        With `prev` (what the last load read, its "_raw") it reads only what an ingest can have changed:
+        embeddings, assets and occurrences added since (by rowid), the photos those touch, and the small
+        or derived tables (places, events, trips, named faces), applying only rows that differ. Photos it
+        does not touch keep their per-photo dict, so the cost follows the new photos, not the library.
+        Dicts are never changed in place: the old state keeps answering requests until install()."""
         con = connect(a.db)
-        # Startup reads every query below in table order and sorts in memory: on a hard disk, walking an
-        # index (ORDER BY sha256, a correlated subquery) turns each row into a seek, ~18 s on the Mac mini.
-        images = {r[0] for r in con.execute("SELECT sha256 FROM assets WHERE kind='image'")}
-        rows = sorted(r for r in con.execute("SELECT sha256, vec FROM embeddings WHERE model=? AND vec IS NOT NULL",
-                                             (a.model,)) if r[0] in images)   # an upload is embedded before it is ingested
-        if not rows:
-            raise RuntimeError(f"no embeddings for {a.model}; run `embed.py run` first")
-        shas = [r[0] for r in rows]
-        N = len(shas)
-        index = {s: i for i, s in enumerate(shas)}
-        M = np.frombuffer(b"".join(r[1] for r in rows), dtype=np.float16).reshape(N, -1).astype(np.float32)
-        del rows
-        meta = {}
-        for sha, ext, taken, lat, lon, desc, people, fav, w, h in con.execute(
-                "SELECT sha256, ext, taken_at, lat, lon, description, people, favorited, width, height"
-                " FROM assets WHERE kind='image'"):
-            if sha in index:
-                meta[sha] = {"ext": ext, "taken": taken, "lat": lat, "lon": lon, "desc": desc,
-                             "people": [p.strip() for p in (people or "").split(",") if p.strip()],
-                             "albums": [], "fav": bool(fav), "w": w, "h": h, "path": None}
-        for sha, path, album in con.execute("SELECT sha256, dir || '/' || filename, album FROM occurrences ORDER BY id"):
-            if (m := meta.get(sha)) is not None:
-                if m["path"] is None:  # the first place the photo was seen
-                    m["path"] = path
-                if album and album not in m["albums"]:
-                    m["albums"].append(album)
 
         def optional(q, args=()):  # tables filled by `estate.py exif` / `places.py run`; the page works without them
             try:
@@ -301,44 +285,150 @@ def cmd_serve(a) -> None:
             except sqlite3.OperationalError:
                 return []
 
-        # exif is mostly exiftool's JSON dump (~700 MB for 120k photos); this index holds just the columns
-        # read here, so startup scans ~15 MB instead. Built once, then kept up to date by SQLite.
-        optional("CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)")
-        for sha, camera, lens, focal, focal35, fnum, expo, iso in optional(
-                "SELECT sha256, camera, lens, focal, focal35, fnumber, exposure, iso FROM exif"):
-            if sha in meta:
-                meta[sha].update(camera=camera, lens=lens, focal=focal, focal35=focal35, fnumber=fnum,
-                                 exposure=expo, iso=iso)
+        def where_in(q, shas):     # q's rows for these photos (q ends in "sha256 IN")
+            return [r for c in chunks(shas) for r in con.execute(f"{q} ({','.join('?' * len(c))})", c)]
+
+        def read_meta(want):
+            """Per-photo dicts from assets, occurrences and exif. `want` None: every image, by scanning
+            the tables in order (startup: on a hard disk, walking an index turns each row into a seek,
+            ~18 s on the Mac mini); else just those photos, by key."""
+            got, tagged = {}, {}
+            q_assets = "SELECT sha256, ext, taken_at, lat, lon, description, people, favorited, width, height FROM assets"
+            q_occ = "SELECT sha256, dir || '/' || filename, album FROM occurrences"
+            q_exif = "SELECT sha256, camera, lens, focal, focal35, fnumber, exposure, iso FROM exif"
+            for sha, ext, taken, lat, lon, desc, people, fav, w, h in (
+                    con.execute(q_assets + " WHERE kind='image'") if want is None else where_in(q_assets + " WHERE sha256 IN", want)):
+                if sha in index_of:
+                    tagged[sha] = [p.strip() for p in (people or "").split(",") if p.strip()]
+                    got[sha] = {"ext": ext, "taken": taken, "lat": lat, "lon": lon, "desc": desc,
+                                "people": list(tagged[sha]), "albums": [], "fav": bool(fav), "w": w, "h": h, "path": None}
+            occ = con.execute(q_occ + " ORDER BY id") if want is None else sorted(
+                where_in("SELECT id, sha256, dir || '/' || filename, album FROM occurrences WHERE sha256 IN", got))
+            for *_, sha, path, album in occ:
+                if (m := got.get(sha)) is not None:
+                    if m["path"] is None:  # the first place the photo was seen
+                        m["path"] = path
+                    if album and album not in m["albums"]:
+                        m["albums"].append(album)
+            # exif is mostly exiftool's JSON dump (~700 MB for 120k photos); this index holds just the columns
+            # read here, so startup scans ~15 MB instead. Built once, then kept up to date by SQLite.
+            optional("CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)")
+            try:
+                ex = optional(q_exif) if want is None else where_in(q_exif + " WHERE sha256 IN", got)
+            except sqlite3.OperationalError:
+                ex = []
+            for sha, camera, lens, focal, focal35, fnum, expo, iso in ex:
+                if sha in got:
+                    got[sha].update(camera=camera, lens=lens, focal=focal, focal35=focal35, fnumber=fnum,
+                                    exposure=expo, iso=iso)
+            return got, tagged
+
+        q_emb = "SELECT rowid, sha256, vec FROM embeddings WHERE model=? AND vec IS NOT NULL"
+        marks = {k: con.execute(q).fetchone()[0] or 0 for k, q in (
+            ("emb", "SELECT max(rowid) FROM embeddings"), ("asset", "SELECT max(rowid) FROM assets"),
+            ("occ", "SELECT max(id) FROM occurrences"))}
+        if prev is None:
+            images = {r[0] for r in con.execute("SELECT sha256 FROM assets WHERE kind='image'")}
+            rows = sorted((sha, vec) for rid, sha, vec in con.execute(q_emb + " AND rowid <= ?", (a.model, marks["emb"])))
+            orphans = {sha: vec for sha, vec in rows if sha not in images}   # embedded on upload, not ingested yet
+            rows = [r for r in rows if r[0] in images]
+            if not rows:
+                raise RuntimeError(f"no embeddings for {a.model}; run `embed.py run` first")
+            shas = [r[0] for r in rows]
+            index_of = {s: i for i, s in enumerate(shas)}
+            M = np.frombuffer(b"".join(r[1] for r in rows), dtype=np.float16).reshape(len(shas), -1).astype(np.float32)
+            del rows
+            meta, tagged = read_meta(None)
+            fresh = set(meta)
+        else:
+            old = prev["index"]
+            vecs = dict(prev["orphans"])            # embeddings made before their photo was ingested
+            vecs.update((sha, vec) for _, sha, vec in con.execute(q_emb + " AND rowid > ? AND rowid <= ?",
+                                                                  (a.model, prev["marks"]["emb"], marks["emb"])))
+            touched = {r[0] for r in con.execute("SELECT sha256 FROM assets WHERE rowid > ? AND rowid <= ?",
+                                                 (prev["marks"]["asset"], marks["asset"]))}
+            touched |= {r[0] for r in con.execute("SELECT sha256 FROM occurrences WHERE id > ? AND id <= ?",
+                                                  (prev["marks"]["occ"], marks["occ"]))}
+            images = {r[0] for r in where_in("SELECT sha256 FROM assets WHERE kind='image' AND sha256 IN", vecs.keys() | touched)}
+            orphans = {sha: v for sha, v in vecs.items() if sha not in images and sha not in old}
+            added = sorted(sha for sha in vecs if sha in images and sha not in old)
+            replaced = [sha for sha in vecs if sha in old]
+            if added or replaced:
+                shas = sorted(prev["shas"] + added)
+                index_of = {s: i for i, s in enumerate(shas)}
+                new = np.frombuffer(b"".join(vecs[s] for s in added + replaced), dtype=np.float16)
+                new = new.reshape(len(added) + len(replaced), -1).astype(np.float32)
+                M = np.concatenate([prev["M"], new[:len(added)]])
+                M[[old[s] for s in replaced]] = new[len(added):]
+                pos = {s: len(old) + i for i, s in enumerate(added)}
+                M = M[[old[s] if s in old else pos[s] for s in shas]] if added else M
+            else:
+                shas, index_of, M = prev["shas"], old, prev["M"]
+            fresh = {sha for sha in touched | set(added) if sha in index_of}
+            got, tagged_new = read_meta(fresh)
+            meta = dict(prev["meta"])
+            meta.update(got)
+            tagged = dict(prev["tagged"])
+            tagged.update(tagged_new)
+        N, index = len(shas), index_of
+
         events = {eid: {"title": t, "start": s0, "end": s1, "n": n, "trip": tid}
                   for eid, t, s0, s1, n, tid in optional("SELECT id, title, start_local, end_local, n, trip_id FROM events")}
         trips = {tid: {"title": t, "start": s0, "end": s1, "n": n}
                  for tid, t, s0, s1, n in optional("SELECT id, title, start_local, end_local, n FROM trips")}
+
+        def own(sha):              # this load's own copy of a photo's dict, to change
+            if sha not in fresh:
+                meta[sha] = dict(meta[sha], people=list(meta[sha]["people"]))
+                fresh.add(sha)
+            return meta[sha]
+
         join = lambda *xs: ", ".join(dict.fromkeys(x for x in xs if x)) or None
+        place_key = {}
+        old_keys = prev["place_key"] if prev else {}
         for sha, local, tz, city, locality, admin2, admin1, country, psrc, eid in optional(
                 "SELECT sha256, local_time, tz, city, locality, admin2, admin1, country, place_source, event_id"
                 " FROM places"):
             if sha in meta:
                 ev = events.get(eid) or {}
-                meta[sha].update(local=local, tz=tz, place=join(city, admin1, country),
-                                 country=country or None, region=join(admin1, country) if admin1 else None,
-                                 city=join(city, admin1, country) if city else None,
-                                 county=" ".join(x for x in (locality, admin2) if x), place_inferred=psrc == "event",
-                                 event=eid, event_title=ev.get("title"),
-                                 trip=ev.get("trip"), trip_title=(trips.get(ev.get("trip")) or {}).get("title"))
+                trip_title = (trips.get(ev.get("trip")) or {}).get("title")
+                key = place_key[sha] = (local, tz, city, locality, admin2, admin1, country, psrc, eid,
+                                        ev.get("title"), ev.get("trip"), trip_title)
+                if sha in fresh or old_keys.get(sha) != key:
+                    own(sha).update(local=local, tz=tz, place=join(city, admin1, country),
+                                    country=country or None, region=join(admin1, country) if admin1 else None,
+                                    city=join(city, admin1, country) if city else None,
+                                    county=" ".join(x for x in (locality, admin2) if x), place_inferred=psrc == "event",
+                                    event=eid, event_title=ev.get("title"), trip=ev.get("trip"), trip_title=trip_title)
+        for sha in old_keys.keys() - place_key.keys():   # no longer placed (never, in practice)
+            for k in ("local", "tz", "place", "country", "region", "city", "county", "place_inferred", "event",
+                      "event_title", "trip", "trip_title"):
+                own(sha).pop(k, None)
         # Faces named on the People page (faces.py) count as people in the photo, alongside Google's tags.
+        face_names = {}
         for sha, name in optional("SELECT DISTINCT f.sha256, p.name FROM faces f JOIN persons p ON p.id=f.person_id"):
-            if sha in meta and name not in meta[sha]["people"]:
-                meta[sha]["people"].append(name)
+            if sha in meta:
+                face_names.setdefault(sha, []).append(name)
+        old_names = prev["face_names"] if prev else {}
+        for sha in (face_names.keys() | old_names.keys()) if prev else face_names:
+            if sha in fresh or face_names.get(sha) != old_names.get(sha):
+                own(sha)["people"] = list(dict.fromkeys(tagged[sha] + face_names.get(sha, [])))
         has_faces = bool(optional("SELECT 1 FROM faces LIMIT 1"))
         con.close()
+        _raw = {"shas": shas, "index": index, "M": M, "meta": meta, "tagged": tagged, "orphans": orphans,
+                "marks": marks, "place_key": place_key, "face_names": face_names}
 
         # Thumbnails are upright; the catalog's width/height are not always. The grid needs the real shape.
+        # Worked out for the photos this load read or changed, and for those that had no thumbnail last time.
+        need = [s for s in shas if "ar" not in meta[s] or s in (prev or {}).get("no_dims", ())]
         dims_file = cache / "thumb-dims.json"
-        try:
-            dims = json.loads((dims_file if dims_file.exists() else seed / "thumb-dims.json").read_text())
-        except (OSError, ValueError):
-            dims = {}
-        missing = [s for s in shas if s not in dims]
+        dims = {}
+        if need:
+            try:
+                dims = json.loads((dims_file if dims_file.exists() else seed / "thumb-dims.json").read_text())
+            except (OSError, ValueError):
+                pass
+        missing = [s for s in need if s not in dims]
         if missing:
             def size_of(s):
                 return _jpeg_size(str(cache / "thumbs" / f"{s}.jpg")) or _jpeg_size(str(seed / "thumbs" / f"{s}.jpg"))
@@ -351,10 +441,11 @@ def cmd_serve(a) -> None:
                 dims_file.write_text(json.dumps(dims, separators=(",", ":")))
             except OSError:
                 pass
-        for s in shas:
-            m = meta[s]
+        for s in need:
+            m = own(s)
             tw, th = dims.get(s) or (m["w"] or 4, m["h"] or 3)
             m["ar"] = round(tw / th, 4)
+        _raw["no_dims"] = {s for s in need if s not in dims}
         del dims
 
         col = lambda f: np.array([f(meta[s]) for s in shas], dtype=object)
@@ -438,7 +529,7 @@ def cmd_serve(a) -> None:
             return "|".join(re.escape(k) for k in sorted(keys, key=len, reverse=True))
         word_re = re.compile(r"(?<![\w'’])(?:(?P<who>" + (alt(who) or "(?!)") + r")|(?P<where>" + (alt(where) or "(?!)") +
                              r"))(['’]s)?(?![\w'’])", re.I)
-        return {k: v for k, v in locals().items() if k in STATE}
+        return {k: v for k, v in locals().items() if k in STATE or k == "_raw"}
 
     def combine(masks: dict, skip: str | None = None):
         out = np.ones(N, bool)
@@ -468,7 +559,10 @@ def cmd_serve(a) -> None:
     STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re')
     shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info = (None,) * 29
 
+    loaded = {}   # what the installed state was read from: the next reload starts from it
+
     def install(st: dict) -> None:
+        loaded["raw"] = st["_raw"]
         nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info
         shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re = (st[k] for k in STATE)
         info = {"total": N, "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
@@ -1120,6 +1214,24 @@ def cmd_serve(a) -> None:
     reload_state = {"running": False, "again": False, "at": None, "seconds": None, "error": None}
     reload_lock = threading.Lock()
 
+    def reload_differences(got: dict, want: dict) -> str:
+        """What an incremental load got wrong, compared with a full one ('' if nothing)."""
+        def same(x, y):
+            if isinstance(x, np.ndarray) or isinstance(y, np.ndarray):
+                return isinstance(x, np.ndarray) and isinstance(y, np.ndarray) and x.shape == y.shape and \
+                    bool(np.all((x == y) | ((x != x) & (y != y))))
+            if isinstance(x, dict) and isinstance(y, dict):
+                return x.keys() == y.keys() and all(same(x[k], y[k]) for k in x)
+            if isinstance(x, (list, tuple)) and isinstance(y, (list, tuple)):
+                return len(x) == len(y) and all(same(p, q) for p, q in zip(x, y))
+            if isinstance(x, re.Pattern):
+                return x.pattern == y.pattern
+            return x == y
+        bad = [k for k in STATE if not same(got[k], want[k])]
+        if "meta" in bad:
+            bad += [f"meta[{s[:8]}]" for s in want["meta"] if not same(got["meta"].get(s), want["meta"][s])][:5]
+        return ", ".join(bad)
+
     def reload_catalog() -> None:
         """Re-read the catalog and swap it in, with no restart. The new state is built on the side while the
         old one keeps answering; only the swap waits for requests in flight. Asked again mid-run, it runs again."""
@@ -1133,7 +1245,9 @@ def cmd_serve(a) -> None:
                 reload_state["again"] = False
                 t = time.time()
                 try:
-                    fresh = load_state()
+                    fresh = load_state(loaded.get("raw"))
+                    if os.environ.get("PHOTO_ESTATE_CHECK_RELOAD"):   # tools/bench_ingest.py --check
+                        print(f"reload check: {reload_differences(fresh, load_state()) or 'same as a full load'}", flush=True)
                     gate.swap(lambda: install(fresh))
                     with lru_lock:
                         lru.clear()      # cached masks and rankings are the old catalog's
