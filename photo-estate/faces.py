@@ -47,6 +47,8 @@ from itertools import islice
 from multiprocessing import Pool
 from pathlib import Path
 
+import pages   # the pages, with the shared stylesheet put in
+
 MODEL = "buffalo_l"
 MODEL_URL = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
 MODEL_FILES = {  # name -> sha256
@@ -327,7 +329,6 @@ class People:
         self.np, self.db, self.store, self.caches = np, db, Path(store), [Path(c) for c in caches]
         self.lock = threading.RLock()
         self.journal = Path(db).resolve().parent / "face-labels.jsonl"
-        self.page = Path(__file__).with_name("people.html")
         t0 = time.time()
         con = connect(db)
         rows = con.execute(
@@ -846,7 +847,7 @@ class People:
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":")).encode(), "application/json", "no-store")
         if method == "GET":
             if path in ("/people", "/people/"):
-                return 200, self.page.read_bytes(), "text/html; charset=utf-8", "no-cache"
+                return 200, pages.page("people.html"), "text/html; charset=utf-8", "no-cache"
             if path.startswith("/face/"):
                 body_ = self.crop(int(path[6:])) if path[6:].isdigit() else None
                 return (200, body_, "image/jpeg", "public, max-age=86400") if body_ else (404, b"", "text/plain", "no-store")

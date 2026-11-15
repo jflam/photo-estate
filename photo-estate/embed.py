@@ -663,7 +663,7 @@ def cmd_serve(a) -> None:
         print(f"sync feed: version {feed.version}, {n} rows changed ({time.time() - t:.1f}s)", flush=True)
 
     threading.Thread(target=feed_update, daemon=True).start()
-    page = Path(__file__).with_name("search.html")
+    import pages   # the pages, with the shared stylesheet put in
     # Home-screen app files (manifest, icons, service worker), served from the site root: a service
     # worker only controls pages at or below its own path.
     app_dir = Path(__file__).with_name("app")
@@ -1057,7 +1057,10 @@ def cmd_serve(a) -> None:
             if not has_faces or not u.path.startswith(("/people", "/face/", "/api/people")):
                 return False
             if "p" not in people:
-                self.send(503, b"Faces are still loading; try again in a moment.", "text/plain")
+                if method == "GET" and u.path.rstrip("/") == "/people":   # the page itself: wait, and ask again
+                    self.send(503, pages.waiting("Finding everyone", "Faces load after the library does. This takes under a minute; the page opens by itself."), "text/html; charset=utf-8")
+                else:
+                    self.send(503, b"Faces are still loading; try again in a moment.", "text/plain")
                 return True
             got = people["p"].handle(method, u.path, qs, body)
             self.send(*(got or (404, b"not found", "text/plain", "no-store")))
@@ -1152,7 +1155,7 @@ def cmd_serve(a) -> None:
                 if self.people_page("GET", u, qs, None):
                     return
                 if u.path in ("/", "/index.html"):  # revalidated each load, so edits show up at once
-                    body = page.read_bytes()
+                    body = pages.page("search.html")
                     return self.send(200, body, "text/html; charset=utf-8", "no-cache",
                                      etag=f'"{hashlib.md5(body).hexdigest()}"')
                 if u.path in ("/api/search", "/api/similar"):
@@ -1200,7 +1203,7 @@ def cmd_serve(a) -> None:
                 if u.path == "/api/facets":
                     return self.json(facet_counts(select(qs)[0]))
                 if u.path in ("/stats", "/stats.html"):
-                    body = Path(__file__).with_name("stats.html").read_bytes()
+                    body = pages.page("stats.html")
                     return self.send(200, body, "text/html; charset=utf-8", "no-cache",
                                      etag=f'"{hashlib.md5(body).hexdigest()}"')
                 if u.path == "/api/ingest":

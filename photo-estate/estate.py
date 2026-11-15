@@ -883,7 +883,8 @@ def cmd_review(a) -> None:
         k: {"label": label, "policy": pol, "short": SHORT[k]} for k, (label, pol) in DUPE_CATEGORIES.items()}})
     dec_path = out / "decisions.json"
     lock = threading.Lock()
-    page = Path(__file__).with_name("review.html").read_bytes()
+    import pages
+    page = pages.page("review.html")
 
     def image(sha: str, kind: str, side: int) -> Path | None:
         dest = out / kind / f"{sha}.jpg"

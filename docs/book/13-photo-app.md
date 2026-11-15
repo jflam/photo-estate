@@ -345,7 +345,7 @@ The page is a [Progressive Web App](https://web.dev/progressive-web-apps/) with 
 
 | File | Purpose |
 |---|---|
-| [app/manifest.webmanifest](../../photo-estate/app/manifest.webmanifest) | Name, `display: standalone`, theme and background `#0c0c0d`, icons |
+| [app/manifest.webmanifest](../../photo-estate/app/manifest.webmanifest) | Name, `display: standalone`, theme and background `#09090a` (ink), icons |
 | `icon-180/192/512.png`, `icon-maskable-512.png` (made by [tools/make_icons.py](../../photo-estate/tools/make_icons.py)) | Home-screen icons, one maskable for Android's adaptive shapes |
 | [app/sw.js](../../photo-estate/app/sw.js) (41 lines) | A service worker that does *one thing* |
 | The `<meta>` tags in search.html | `apple-mobile-web-app-capable`, status-bar style, theme colour for light and dark |
@@ -353,7 +353,7 @@ The page is a [Progressive Web App](https://web.dev/progressive-web-apps/) with 
 The service worker's single job: if a **navigation** fails (on a phone, usually because Tailscale is
 off), show a built-in page "Can't reach your photos: the library is only reachable on your tailnet.
 Check that Tailscale is connected, then try again." instead of the browser's error. It precaches that
-page and the icon at install and otherwise goes straight to the network: the API is live data and
+page at install and otherwise goes straight to the network: the API is live data and
 images are already in the HTTP cache (immutable, named by hash), so caching either in the worker would
 only add staleness. The server serves these files from the site root because a service worker only
 controls pages at or below its own path.
@@ -370,10 +370,19 @@ Phone polish found throughout the CSS:
 
 ## Look and feel
 
-- **One set of CSS variables** drives light and dark themes (`prefers-color-scheme`): background,
-  surface, ink in three strengths, line, faint, the inverted chip colours, and the favourite red.
-- **Type** is a system stack leading with Inter, with tabular numerals for counts and dates and
-  slightly negative letter-spacing; the monospace stack is used only for file paths.
+- **One stylesheet, [app/estate.css](../../photo-estate/app/estate.css), is shared by every page** (the photo
+  app, People, Library info, duplicate review). [pages.py](../../photo-estate/pages.py) puts it into each page as it
+  is sent, so a page is still one request and the pages cannot drift apart.
+- **The look is the iPhone app's** ([chapter 23](23-native-interface.md)), and comes from the icon: ink, paper and a
+  low sun. Surfaces are quiet (warm paper in the light, near-black in the dark, switched by
+  `prefers-color-scheme`); one colour, the sun, marks what is chosen, alive or waiting for you: a filter that is
+  on, the timeline, the primary button. Controls are capsules and circles; things that hold content are wells
+  with generous corners. Where there is nothing to show, the icon's hills and sun are drawn.
+- **Type** is the system's face (San Francisco on Apple devices), with tabular numerals for counts and dates.
+  Words that name a time or a place (the page title, a month) are set heavier than the controls around them.
+- **Nothing is shown for the person running the server unless asked for.** How long a search took, the catalog's
+  tables, the caches and what the catalogue step printed are on the Library info page under "Under the hood" and
+  "Show what it did", closed until opened.
 - **Motion** is a single easing curve, `cubic-bezier(.2,.7,.2,1)`, used by every animation, so
   everything feels like one system.
 - **The header** is sticky with a translucent, blurred background; a hairline appears under it only
