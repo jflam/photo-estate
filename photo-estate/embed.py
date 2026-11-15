@@ -229,7 +229,8 @@ def cmd_serve(a) -> None:
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, quote, unquote, urlparse
 
-    from upload import IngestJob, save_upload
+    from estate import facts_of as estate_facts
+    from upload import IngestJob, save_upload, staging_dir
     import numpy as np
     from PIL import Image, ImageOps
     import pillow_heif
@@ -838,7 +839,9 @@ def cmd_serve(a) -> None:
     #   - its grid thumbnail, so the first look at new photos never waits on decoding a 12 MP HEIC;
     #   - its embedding, with the model this process already holds for text search. Starting
     #     `embed.py run` would cost ~7 s of loading PyTorch and the model for a fraction of a second of
-    #     work; with the rows already there it finds nothing to do and never loads them.
+    #     work; with the rows already there it finds nothing to do and never loads them;
+    #   - for a HEIC, the size, EXIF date and dHash `estate.py ingest` would otherwise decode it again for
+    #     (~0.45 s a photo), left in <inbox>.partial/facts for `ingest --facts`.
     # Both are keyed by the photo's hash, the key the ingest will give it. The embedding row is the one
     # thing the app writes to the catalog: a value computed from the file's bytes as `embed.py run`
     # computes it (byte for byte at --batch 1; batching itself moves cosine by ~1e-4), so which of the
@@ -852,15 +855,21 @@ def cmd_serve(a) -> None:
             sha, path = arrivals.get()
             try:
                 dest = cache / "thumbs" / f"{sha}.jpg"
+                facts = staging_dir(inbox) / "facts" / f"{sha}.json"
                 con = con or connect(a.db)
                 embedded = con.execute("SELECT 1 FROM embeddings WHERE sha256=? AND model=?", (sha, a.model)).fetchone()
                 if dest.exists() and embedded:
                     continue
                 encoder_ready.wait()
                 side = encoder["images"].size["height"]
-                with Image.open(path) as im:
-                    im.draft("RGB", (side * 2, side * 2))   # as _decode does, so the vector is the same
-                    im = ImageOps.exif_transpose(im).convert("RGB")
+                with Image.open(path) as raw:
+                    raw.draft("RGB", (side * 2, side * 2))   # as _decode does, so the vector is the same
+                    im = ImageOps.exif_transpose(raw).convert("RGB")
+                    if raw.format == "HEIF":   # draft() does nothing for HEIC, so these are image_facts' own
+                        facts.parent.mkdir(parents=True, exist_ok=True)
+                        tmp = facts.with_suffix(f".{threading.get_ident()}.tmp")
+                        tmp.write_text(json.dumps(estate_facts(raw, im)))
+                        os.replace(tmp, facts)
                     if not embedded:
                         small = im.resize((side, side), Image.Resampling.BICUBIC)
                         torch, model = encoder["torch"], encoder["model"]

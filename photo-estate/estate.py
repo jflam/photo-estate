@@ -184,26 +184,38 @@ def store_blob(con, store: Path, fp, ext: str) -> tuple[str, int, Path | None]:
 
 def image_facts(path: Path) -> dict:
     """Dimensions, EXIF DateTimeOriginal and 64-bit dHash. Never raises."""
-    facts = {"width": None, "height": None, "exif_taken_at": None, "dhash": None}
     try:
         with Image.open(path) as im:
-            facts["width"], facts["height"] = im.size
-            exif = im.getexif()
-            raw = exif.get_ifd(0x8769).get(36867) or exif.get(306)
-            if raw:
-                try:
-                    dt = datetime.strptime(str(raw).strip("\x00 ")[:19], "%Y:%m:%d %H:%M:%S")
-                    facts["exif_taken_at"] = dt.isoformat()
-                except ValueError:
-                    pass
+            return facts_of(im)
+    except Exception as e:  # RAW formats, corrupt files, etc.
+        return {"width": None, "height": None, "exif_taken_at": None, "dhash": None, "error": str(e)}
+
+
+def facts_of(im, upright=None) -> dict:
+    """image_facts for an image already open. `upright` is the decoded image, already turned upright
+    (ImageOps.exif_transpose), when the caller has one: then the file is not decoded again. Only pass it
+    for formats where draft() does nothing (HEIC), or the dHash would differ from image_facts'."""
+    facts = {"width": None, "height": None, "exif_taken_at": None, "dhash": None}
+    try:
+        facts["width"], facts["height"] = im.size
+        exif = im.getexif()
+        raw = exif.get_ifd(0x8769).get(36867) or exif.get(306)
+        if raw:
+            try:
+                dt = datetime.strptime(str(raw).strip("\x00 ")[:19], "%Y:%m:%d %H:%M:%S")
+                facts["exif_taken_at"] = dt.isoformat()
+            except ValueError:
+                pass
+        if upright is None:
             im.draft("L", (128, 128))  # fast JPEG decode at reduced size
-            g = ImageOps.exif_transpose(im).convert("L").resize((9, 8), Image.Resampling.LANCZOS)
-            px = g.tobytes()
-            bits = 0
-            for r in range(8):
-                for c in range(8):
-                    bits = (bits << 1) | (px[r * 9 + c] > px[r * 9 + c + 1])
-            facts["dhash"] = bits - (1 << 64) if bits >= (1 << 63) else bits  # fit SQLite INT64
+            upright = ImageOps.exif_transpose(im)
+        g = upright.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
+        px = g.tobytes()
+        bits = 0
+        for r in range(8):
+            for c in range(8):
+                bits = (bits << 1) | (px[r * 9 + c] > px[r * 9 + c + 1])
+        facts["dhash"] = bits - (1 << 64) if bits >= (1 << 63) else bits  # fit SQLite INT64
     except Exception as e:  # RAW formats, corrupt files, etc.
         facts["error"] = str(e)
     return facts
@@ -293,8 +305,15 @@ def cmd_ingest(a) -> None:
             with opener() as fp:
                 sha, size, dest = store_blob(con, store, fp, ext)
             st["seen"] += size
+            known = None               # what the photo app worked out when it received the file
+            if a.facts and (f := Path(a.facts) / f"{sha}.json").exists():
+                try:
+                    known = json.loads(f.read_text())
+                except (OSError, ValueError):
+                    pass
+                f.unlink(missing_ok=True)
             if dest:
-                facts = image_facts(dest) if kind == "image" else {}
+                facts = (known or image_facts(dest)) if kind == "image" else {}
                 st["unreadable"] += "error" in facts
                 con.execute(
                     "INSERT INTO assets(sha256, ext, kind, size, width, height, dhash, exif_taken_at,"
@@ -1065,6 +1084,7 @@ def main() -> None:
     s.add_argument("sources", nargs="+")
     s.add_argument("--store", required=True, help="content-addressed store root (external disk / NAS)")
     s.add_argument("--force", action="store_true", help="re-scan sources already ingested")
+    s.add_argument("--facts", help="folder of <sha256>.json image facts worked out on upload (used, then removed)")
     s.add_argument("--delete-after", action="store_true", help="delete each zip after it is ingested")
     s.set_defaults(fn=cmd_ingest)
 
