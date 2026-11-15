@@ -158,7 +158,7 @@ def cmd_run(a) -> None:
     con = estate.connect(a.db)
     con.execute("PRAGMA busy_timeout=120000")
     offs = ", ".join(f"json_extract(e.data, '{k}')" for k in OFFSET_KEYS + QT_DATE_KEYS)
-    has_exif = con.execute("SELECT count(*) FROM exif").fetchone()[0] > 0
+    has_exif = con.execute("SELECT 1 FROM exif LIMIT 1").fetchone() is not None   # not count(*): a 5 s scan on a hard disk
 
     # What the last run decided. Place names and zones come from GPS (reverse geocoding and timezone
     # lookup are the slow parts), and EXIF offsets from exiftool's JSON (a big table): both are reused
