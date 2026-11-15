@@ -115,6 +115,36 @@ Where the remaining 9.7 s goes:
 | `ingest`, `link`, `embed` (empty), process starts | ~1 s | |
 | Catalog reload | 2.8 s | Mostly Python rebuilding the derived arrays (orderings, facets, the name regex) over all 121k photos |
 
+## Phone upload to visible on the Mac mini: internal SSD vs USB hard disk (2026-11-14)
+
+`tools/bench_ingest.py` on the M1 Mac mini (16 GB; the real app running beside it, ~9.5 GB of swap in
+use), the same 121k-photo synthetic estate on the internal SSD and on the 8 TB USB hard disk (APFS).
+Catalog, store, inbox and thumbnail cache all on the disk under test; code, Python environments and
+models on the SSD, as in production. 9 photos, median of 3 interleaved runs. exiftool installed. The
+page cache is not flushed (no sudo), but each run reads a fresh APFS clone of the catalog, which
+starts uncached.
+
+| | SSD | USB HDD | HDD penalty |
+|---|---|---|---|
+| **Before** (e715736): visible after last upload | 89 s | 115 s | +26 s |
+| ↳ ingest script | 24 s | 46 s | +22 s |
+| ↳ catalog reload | 5.3 s | 8.7 s | +3.4 s |
+| **After** 1–6 (laptop-tuned): visible | 13.4 s | 44.5 s | +31 s |
+| ↳ embed step with nothing to do | <1 s | 22 s | the whole-library "what has no embedding?" query |
+| **After** + `--after-rowid` scoping | 12.6 s | 20.5 s | +8 s |
+| **After** + `LIMIT 1` in places | — | **16.0 s** | **+3.4 s** |
+| First thumbnails of new photos | 640 ms → 2 ms | 650 ms → 2 ms | |
+| App startup catalog load (not on the upload path) | 6.2 s | 14.2 s | +8 s |
+
+What the hard disk punished: queries that touch every row or a whole index to answer a question about
+a few photos. Cold on the USB disk, `count(*)`/`NOT EXISTS` over embeddings took ~10 s per pass,
+`NOT IN (SELECT sha256 FROM exif)` 19 s, `count(*) FROM exif` 4.7 s; on the SSD each is well under a
+second, which is why the laptop never showed them. exif, embed and faces now look up only assets after
+the last finished run (`--after-rowid`, kept in `<inbox>.partial/catalogued-rowid`).
+
+Where the hard disk's 16 s goes: ~3 s upload workers catching up (the benchmark sends all 9 at once),
+~1-2 s ingest, link and exif, ~5 s places, ~5 s catalog reload, the rest process starts.
+
 ## Open tasks
 
 Each is independent. "Done" means a before/after number on the Mac mini and no change to API answers.
