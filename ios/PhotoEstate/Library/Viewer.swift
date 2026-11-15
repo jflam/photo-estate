@@ -2,90 +2,90 @@ import MapKit
 import SwiftUI
 import UIKit
 
-/// One photo, full screen: swipe between photos, pinch or double-tap to zoom, swipe down to close,
-/// swipe up for its details. It shows whatever is on the phone at once (the thumbnail, then the
-/// full-screen copy if it has been kept) and sharpens from the server when it can.
+/// One photo, full screen. It grows out of its tile and goes back into it; between photos you swipe;
+/// pinch or double-tap to look closer; flick up for what is known about it. It shows whatever is on
+/// the phone at once (the thumbnail, then the full-screen copy if it has been kept) and sharpens from
+/// the server when it can.
 struct ViewerScreen: View {
-    let tiles: [Tile]
-    @State var index: Int
+    @ObservedObject var session: ViewerSession
     @ObservedObject var model: LibraryModel
-    var onIndex: (Int) -> Void
+    var route: (Query) -> Void              // a link out of the viewer: show these photos instead
 
-    @Environment(\.dismiss) private var dismiss
     @State private var chrome = true
     @State private var info: Photo?           // the photo whose details are showing
     @State private var photo: Photo?
-    @State private var drag: CGFloat = 0          // 0...1: how far the photo has been pulled down
     @State private var sharing = false
 
-    private var tile: Tile { tiles[min(index, tiles.count - 1)] }
+    private var tile: Tile { session.tile }
 
     var body: some View {
-        GeometryReader { geo in
         ZStack {
-            Color.black.opacity(1 - drag * 0.9).ignoresSafeArea()
-            PagerView(tiles: tiles, index: $index, onTap: { withAnimation(.easeOut(duration: 0.18)) { chrome.toggle() } },
-                      onDrag: { drag = $0 }, onClose: { dismiss() }, onInfo: { info = photo },
-                      chrome: AnyView(bars.padding(.top, geo.safeAreaInsets.top).padding(.bottom, geo.safeAreaInsets.bottom)
-                                        .opacity(chrome && drag == 0 ? 1 : 0).allowsHitTesting(chrome)))
+            Color.black.ignoresSafeArea()
+            PagerView(session: session, onTap: { withAnimation(.easeOut(duration: 0.2)) { chrome.toggle() } },
+                      onInfo: { info = photo }, onZoomedIn: { withAnimation(.easeOut(duration: 0.2)) { chrome = false } }, visible: chrome,
+                      top: AnyView(caption.environment(\.colorScheme, .dark)),
+                      bottom: AnyView(actions.environment(\.colorScheme, .dark).tint(.sunLit)))
                 .ignoresSafeArea()
         }
-        }
-        .task(id: index) {
-            onIndex(index)
-            photo = await model.photo(tile.sha)
-        }
+        .task(id: session.index) { photo = await model.photo(tile.sha) }
         .sheet(item: $info) { shown in
             InfoView(photo: shown) { q in
                 info = nil
-                dismiss()
-                model.go(q)
+                session.close()
+                route(q)
             }
             .presentationDetents([.medium, .large])
+            .presentationBackground(.regularMaterial)
+            .presentationCornerRadius(28)
         }
         .statusBarHidden(!chrome)
-        .preferredColorScheme(.dark)
-        .presentationBackground(.clear)
+        .environment(\.colorScheme, .dark)
+        .tint(.sunLit)
     }
 
-    private var bars: some View {
-        VStack {
-            HStack(alignment: .top) {
-                round("xmark", "Close") { dismiss() }
-                Spacer()
-                VStack(spacing: 2) {
-                    Text(Dates.long(tile.when)).font(.subheadline.weight(.semibold))
-                    Text([Dates.clock(tile.when), tile.city?.split(separator: ",").first.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                .foregroundStyle(.white)
-                .shadow(radius: 3)
-                .padding(.top, 4)
-                Spacer()
-                round("info", "Details") { info = photo }
-            }
+    // what and when, as a caption above the print
+    private var caption: some View {
+        HStack(alignment: .top) {
+            Button { session.close() } label: { Image(systemName: "xmark").modifier(GlassCircle()) }
+                .accessibilityLabel("Close")
             Spacer()
-            HStack {
-                round(sharing ? "ellipsis" : "square.and.arrow.up", "Share") { share() }
-                Spacer()
-                if tile.fav { Image(systemName: "heart.fill").foregroundStyle(.white).shadow(radius: 3).accessibilityLabel("Favourite") }
-                Spacer()
-                round("sparkles", "More like this") {
-                    dismiss()
-                    model.go(Query(similar: tile.sha))
-                }
+            VStack(spacing: 3) {
+                Text(Dates.long(tile.when)).font(.serif(17))
+                Text([Dates.clock(tile.when), tile.city?.split(separator: ",").first.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: "  ·  "))
+                    .font(.caption).opacity(0.75)
             }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-
-    private func round(_ symbol: String, _ label: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 17, weight: .semibold)).frame(width: 44, height: 44)
+            .multilineTextAlignment(.center)
+            .shadow(color: .black.opacity(0.6), radius: 6)
+            .padding(.top, 5)
+            Spacer()
+            Image(systemName: "heart.fill").foregroundStyle(Color.sunLit).font(.system(size: 17, weight: .semibold))
+                .frame(width: 46, height: 46).opacity(tile.fav ? 1 : 0).accessibilityLabel("Favourite").accessibilityHidden(!tile.fav)
         }
         .foregroundStyle(.white)
-        .background(.ultraThinMaterial, in: Circle())
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
+    }
+
+    private var actions: some View {
+        HStack(spacing: 4) {
+            action(sharing ? "ellipsis" : "square.and.arrow.up", "Share") { share() }
+            action("info.circle", "Details") { info = photo }
+            action("sparkles", "More like this") {
+                session.close()
+                route(Query(similar: tile.sha))
+            }
+        }
+        .padding(.horizontal, 6)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .foregroundStyle(.white)
+        .padding(8)
+    }
+
+    private func action(_ symbol: String, _ label: String, _ run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            Image(systemName: symbol).font(.system(size: 19, weight: .medium)).frame(width: 62, height: 50).contentShape(Rectangle())
+        }
         .accessibilityLabel(label)
     }
 
@@ -130,121 +130,202 @@ extension UIApplication {
 
 // MARK: details
 
+/// What is known about a photo, laid out like the back of a print: when, where, who, and how it was
+/// taken. Everything that names a set of photos is a way into that set.
 struct InfoView: View {
     let photo: Photo
     var go: (Query) -> Void
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    row("calendar", Dates.long(photo.when), [Dates.clock(photo.when), photo.tz ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
-                    if let place = photo.place {
-                        Button { go(Query(picks: photo.city.map { [.city: [$0]] } ?? [:])) } label: {
-                            row("mappin.and.ellipse", place, [photo.county ?? "", photo.placeInferred ? "from photos taken around then" : ""].filter { !$0.isEmpty }.joined(separator: " · "), link: true)
-                        }
-                    }
-                    if let lat = photo.lat, let lon = photo.lon {
-                        let at = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-                        Map(initialPosition: .region(MKCoordinateRegion(center: at, latitudinalMeters: 4000, longitudinalMeters: 4000)), interactionModes: []) {
-                            Marker("", coordinate: at)
-                        }
-                        .frame(height: 150)
-                        .listRowInsets(EdgeInsets())
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(Dates.long(photo.when)).font(.serif(26, .bold))
+                    Text([Dates.clock(photo.when), photo.tz ?? ""].filter { !$0.isEmpty }.joined(separator: "  ·  "))
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    if let d = photo.desc { Text(d).font(.serif(16, .regular)).italic().foregroundStyle(.secondary).padding(.top, 6) }
                 }
+                if photo.place != nil || photo.lat != nil { place }
                 if photo.event != nil || photo.trip != nil {
-                    Section {
+                    VStack(spacing: 0) {
                         if let e = photo.event {
-                            Button { go(Query(event: e)) } label: { row("sparkles.rectangle.stack", photo.eventTitle ?? "This event", "Photos taken around then", link: true) }
+                            link("calendar.day.timeline.left", photo.eventTitle ?? "That day", "Everything taken around then") { go(Query(event: e)) }
                         }
+                        if photo.event != nil && photo.trip != nil { Divider().padding(.leading, 52) }
                         if let t = photo.trip {
-                            Button { go(Query(picks: [.trip: [String(t)]])) } label: { row("airplane", photo.tripTitle ?? "This trip", "The whole trip", link: true) }
+                            link("airplane", (photo.tripTitle ?? "This trip").replacingOccurrences(of: "Trip to ", with: ""), "The whole trip") { go(Query(picks: [.trip: [String(t)]])) }
                         }
                     }
+                    .background(Color.well, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
-                if !photo.people.isEmpty {
-                    Section("People") {
-                        ForEach(photo.people, id: \.self) { name in
-                            Button { go(Query(picks: [.person: [name]])) } label: { row("person.crop.circle", name, "", link: true) }
+                if !photo.people.isEmpty { chips("With", photo.people, .person) }
+                if !photo.albums.isEmpty { chips("In", photo.albums, .album) }
+                if photo.camera != nil || !exposure.isEmpty { camera }
+                Text([photo.filename, photo.w.flatMap { w in photo.h.map { "\(w) × \($0)" } } ?? ""].filter { !$0.isEmpty }.joined(separator: "  ·  "))
+                    .font(.caption).foregroundStyle(.tertiary).textSelection(.enabled)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 30)
+            .padding(.bottom, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .environment(\.colorScheme, .dark)
+        .tint(.sunLit)
+    }
+
+    private var place: some View {
+        Button { if let c = photo.city { go(Query(picks: [.city: [c]])) } } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                if let lat = photo.lat, let lon = photo.lon {
+                    let at = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                    Map(initialPosition: .region(MKCoordinateRegion(center: at, latitudinalMeters: 6000, longitudinalMeters: 6000)), interactionModes: []) {
+                        Marker("", coordinate: at).tint(Color.sunLit)
+                    }
+                    .frame(height: 140)
+                    .allowsHitTesting(false)
+                }
+                if let name = photo.place {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(name).font(.serif(17)).foregroundStyle(.primary).multilineTextAlignment(.leading)
+                            let sub = [photo.county ?? "", photo.placeInferred ? "from photos taken around then" : ""].filter { !$0.isEmpty }.joined(separator: "  ·  ")
+                            if !sub.isEmpty { Text(sub).font(.footnote).foregroundStyle(.secondary) }
                         }
+                        Spacer()
+                        if photo.city != nil { Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary) }
                     }
-                }
-                if !photo.albums.isEmpty {
-                    Section("Albums") {
-                        ForEach(photo.albums, id: \.self) { name in
-                            Button { go(Query(picks: [.album: [name]])) } label: { row("rectangle.stack", name, "", link: true) }
-                        }
-                    }
-                }
-                Section {
-                    if let camera = photo.camera {
-                        Button { go(Query(picks: [.camera: [camera]])) } label: { row("camera", camera, photo.lens ?? "", link: true) }
-                    }
-                    if !exposure.isEmpty { row("camera.aperture", exposure, "") }
-                    row("doc", photo.filename, [photo.w.flatMap { w in photo.h.map { "\(w) × \($0)" } } ?? "", photo.desc ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .padding(14)
                 }
             }
-            .navigationTitle("Details")
-            .navigationBarTitleDisplayMode(.inline)
+            .background(Color.well)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(photo.city == nil)
+    }
+
+    private func link(_ symbol: String, _ title: String, _ detail: String, _ run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            HStack(spacing: 14) {
+                Image(systemName: symbol).font(.system(size: 17)).foregroundStyle(Color.sunLit).frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.serif(17)).foregroundStyle(.primary).multilineTextAlignment(.leading)
+                    Text(detail).font(.footnote).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func chips(_ label: String, _ names: [String], _ facet: Facet) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label.uppercased()).font(.caption2.weight(.semibold)).kerning(1.2).foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(names, id: \.self) { name in
+                        Button(name) { go(Query(picks: [facet: [name]])) }
+                            .font(.subheadline.weight(.medium))
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(Color.well, in: Capsule())
+                            .foregroundStyle(.primary)
+                    }
+                }
+            }
+            .scrollClipDisabled()
         }
     }
 
-    private var exposure: String {
-        var parts: [String] = []
-        if let f = photo.focal35 ?? photo.focal { parts.append("\(f.formatted(.number.precision(.fractionLength(0...1)))) mm") }
-        if let n = photo.fnumber { parts.append("ƒ/\(n.formatted(.number.precision(.fractionLength(0...1))))") }
-        if let e = photo.exposure, e > 0 { parts.append(e < 1 ? "1/\(Int((1 / e).rounded())) s" : "\(e.formatted(.number.precision(.fractionLength(0...1)))) s") }
-        if let i = photo.iso { parts.append("ISO \(Int(i))") }
-        return parts.joined(separator: " · ")
+    /// How it was taken, as the plate on a camera: the body and lens, then the four numbers.
+    private var camera: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let name = photo.camera {
+                Button { go(Query(picks: [.camera: [name]])) } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(name).font(.serif(17)).foregroundStyle(.primary)
+                            if let lens = photo.lens { Text(lens).font(.footnote).foregroundStyle(.secondary) }
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            if !exposure.isEmpty {
+                HStack(spacing: 0) {
+                    ForEach(Array(exposure.enumerated()), id: \.offset) { i, e in
+                        if i > 0 { Divider().frame(height: 26) }
+                        VStack(spacing: 3) {
+                            Text(e.value).font(.system(.callout, design: .monospaced).weight(.medium))
+                            Text(e.label.uppercased()).font(.system(size: 9, weight: .semibold)).kerning(1).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(Color.well, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    private func row(_ symbol: String, _ title: String, _ detail: String, link: Bool = false) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol).frame(width: 24).foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).foregroundStyle(.primary)
-                if !detail.isEmpty { Text(detail).font(.footnote).foregroundStyle(.secondary) }
-            }
-            Spacer()
-            if link { Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary) }
-        }
+    private var exposure: [(label: String, value: String)] {
+        var out: [(String, String)] = []
+        let n = { (x: Double) in x.formatted(.number.precision(.fractionLength(0...1))) }
+        if let f = photo.focal35 ?? photo.focal { out.append(("Focal", "\(n(f)) mm")) }
+        if let a = photo.fnumber { out.append(("Aperture", "ƒ/\(n(a))")) }
+        if let e = photo.exposure, e > 0 { out.append(("Shutter", e < 1 ? "1/\(Int((1 / e).rounded()))" : "\(n(e))s")) }
+        if let i = photo.iso { out.append(("ISO", "\(Int(i))")) }
+        return out
     }
 }
 
 // MARK: paging and zooming (UIKit)
 
 struct PagerView: UIViewControllerRepresentable {
-    let tiles: [Tile]
-    @Binding var index: Int
+    let session: ViewerSession
     var onTap: () -> Void
-    var onDrag: (CGFloat) -> Void
-    var onClose: () -> Void
     var onInfo: () -> Void
-    var chrome: AnyView         // the buttons, hosted above the pages so UIKit decides who gets a touch
+    var onZoomedIn: () -> Void  // looking closer: the caption and controls get out of the way
+    var visible: Bool           // the caption and the controls; a tap on the photo hides them
+    var top: AnyView
+    var bottom: AnyView
 
     func makeUIViewController(context: Context) -> PagerController {
-        let c = PagerController(tiles: tiles, index: index)
-        c.onIndex = { i in DispatchQueue.main.async { index = i } }
+        let c = PagerController(tiles: session.tiles, index: session.index)
+        c.onIndex = { [session] i in DispatchQueue.main.async { session.index = i; Haptics.tick() } }
+        c.onZoom = { [session] z in
+            if z && !session.zoomed { context.coordinator.zoomedIn() }
+            session.zoomed = z
+        }
         return c
     }
 
+    final class Coordinator { var zoomedIn: () -> Void = {} }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func updateUIViewController(_ c: PagerController, context: Context) {
+        context.coordinator.zoomedIn = onZoomedIn
         c.onTap = onTap
-        c.onDrag = onDrag
-        c.onClose = onClose
         c.onInfo = onInfo
-        c.chrome.rootView = chrome
+        c.top.rootView = top
+        c.bottom.rootView = bottom
+        c.setChrome(visible)
     }
 }
 
 final class PagerController: UIPageViewController, UIPageViewControllerDataSource, UIPageViewControllerDelegate, UIGestureRecognizerDelegate {
     var onIndex: (Int) -> Void = { _ in }
     var onTap: () -> Void = {}
-    var onDrag: (CGFloat) -> Void = { _ in }
-    var onClose: () -> Void = {}
+    var onZoom: (Bool) -> Void = { _ in }
     var onInfo: () -> Void = {}
-    let chrome = UIHostingController(rootView: AnyView(EmptyView()))
+    // Two small bars, not one sheet over the photo: whatever they don't cover belongs to the photo's gestures.
+    let top = UIHostingController(rootView: AnyView(EmptyView()))
+    let bottom = UIHostingController(rootView: AnyView(EmptyView()))
     private let tiles: [Tile]
 
     init(tiles: [Tile], index: Int) {
@@ -263,19 +344,32 @@ final class PagerController: UIPageViewController, UIPageViewControllerDataSourc
         let pan = UIPanGestureRecognizer(target: self, action: #selector(pulled(_:)))
         pan.delegate = self
         view.addGestureRecognizer(pan)
-        addChild(chrome)
-        chrome.view.backgroundColor = .clear
-        chrome.safeAreaRegions = []
-        chrome.view.frame = view.bounds
-        chrome.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.addSubview(chrome.view)
-        chrome.didMove(toParent: self)
+        for bar in [top, bottom] {
+            bar.view.backgroundColor = .clear
+            bar.safeAreaRegions = []
+            bar.sizingOptions = .intrinsicContentSize
+            bar.view.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(bar.view)
+        }
+        NSLayoutConstraint.activate([
+            top.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            top.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            top.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottom.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -4),
+            bottom.view.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        ])
+    }
+
+    func setChrome(_ visible: Bool) {
+        guard (top.view.alpha > 0.5) != visible else { return }
+        UIView.animate(withDuration: 0.2) { self.top.view.alpha = visible ? 1 : 0; self.bottom.view.alpha = visible ? 1 : 0 }
     }
 
     private func page(_ i: Int) -> PhotoPage? {
         guard tiles.indices.contains(i) else { return nil }
         let p = PhotoPage(tile: tiles[i], index: i)
         p.onTap = { [weak self] in self?.onTap() }
+        p.onZoom = { [weak self] z in self?.onZoom(z) }
         // Keep the neighbours' full-screen copies warm, so a swipe lands on a sharp photo.
         for j in [i + 1, i - 1] where tiles.indices.contains(j) { Task { _ = await ImageStore.shared.fetch(.preview, tiles[j].sha) } }
         return p
@@ -295,30 +389,23 @@ final class PagerController: UIPageViewController, UIPageViewControllerDataSourc
         if completed, let c = current { onIndex(c.index) }
     }
 
-    // Pull down to close, flick up for details: only when the photo is not zoomed, and the pull is vertical.
+    // Flick up for details. (Pulling down is the zoom transition's own gesture: the photo follows the
+    // finger back to its tile.)
     func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
         guard let pan = g as? UIPanGestureRecognizer, let c = current, !c.isZoomed else { return false }
         let v = pan.velocity(in: view)
-        return abs(v.y) > abs(v.x) * 1.3
+        return v.y < 0 && abs(v.y) > abs(v.x) * 1.3
     }
 
     @objc private func pulled(_ pan: UIPanGestureRecognizer) {
         guard let v = current?.view else { return }
-        let t = pan.translation(in: view), vel = pan.velocity(in: view)
+        let t = pan.translation(in: view)
         switch pan.state {
         case .changed:
-            let down = max(0, t.y)
-            let k = 1 - min(down / 900, 0.35)
-            v.transform = CGAffineTransform(translationX: t.x * (down > 0 ? 1 : 0), y: down).scaledBy(x: k, y: k)
-            onDrag(min(down / 300, 1))
+            v.transform = CGAffineTransform(translationX: 0, y: min(0, t.y) * 0.35)
         case .ended, .cancelled:
-            if pan.state == .ended, t.y > 110 || vel.y > 900 {
-                onClose()
-            } else {
-                if pan.state == .ended, t.y < -60 || vel.y < -700 { onInfo() }
-                UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.85, initialSpringVelocity: 0) { v.transform = .identity }
-                onDrag(0)
-            }
+            if pan.state == .ended, t.y < -50 || pan.velocity(in: view).y < -600 { onInfo() }
+            UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.85, initialSpringVelocity: 0) { v.transform = .identity }
         default: break
         }
     }
@@ -328,6 +415,7 @@ final class PhotoPage: UIViewController, UIScrollViewDelegate {
     let tile: Tile
     let index: Int
     var onTap: () -> Void = {}
+    var onZoom: (Bool) -> Void = { _ in }
     private let scroll = UIScrollView()
     private let imageView = UIImageView()
     private var fitted = CGSize.zero
@@ -405,7 +493,12 @@ final class PhotoPage: UIViewController, UIScrollViewDelegate {
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
 
-    func scrollViewDidZoom(_ scrollView: UIScrollView) { centre() }
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        centre()
+        // Not zoomed, there is nothing to pan: leave drags to the pager and to the pull-down that closes.
+        scroll.isScrollEnabled = isZoomed
+        onZoom(isZoomed)
+    }
 
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
         guard scale > 1.6, !large else { return }      // zoomed in far enough to see more than 1600 px holds
