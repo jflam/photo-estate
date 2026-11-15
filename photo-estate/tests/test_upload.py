@@ -138,10 +138,25 @@ def main():
         time.sleep(3.5)
         runs = len(count.read_text().split())
         assert runs == 2 and len(told) == 2, (runs, told)
+        # the phone says how many files a batch has: the last one starts the run without the quiet period
+        eager = IngestJob(fake, td, db, store, inbox, quiet=30, max_wait=60)
+        eager.poke("b1/3", "2026/11/16/a.JPG")
+        eager.poke("b1/3", "2026/11/16/a.JPG")           # a retry of the same file is not the next one
+        eager.poke("b1/3", "2026/11/16/b.JPG", new=False)   # already here: counts, but starts nothing
+        time.sleep(0.3)
+        assert len(count.read_text().split()) == 2, "batch not complete: still waiting for the quiet period"
+        eager.poke("b1/3", "2026/11/16/c.JPG")
+        time.sleep(0.5)
+        assert len(count.read_text().split()) == 3, "the batch's last file starts the run at once"
+        time.sleep(1.0)
+        eager.poke("b2/1", "2026/11/16/d.JPG", new=False)   # nothing new in it: no run
+        time.sleep(0.5)
+        assert len(count.read_text().split()) == 3
+        eager.timer and eager.timer.cancel()
         off = IngestJob(fake, td, db, store, inbox, quiet=0)
         off.poke()
         time.sleep(0.3)
-        assert len(count.read_text().split()) == 2, "quiet=0 never runs by itself"
+        assert len(count.read_text().split()) == 3, "quiet=0 never runs by itself"
     print("ALL CHECKS PASSED")
 
 

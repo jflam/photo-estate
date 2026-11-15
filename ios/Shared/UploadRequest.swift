@@ -40,11 +40,19 @@ enum UploadRequest {
         return out.isEmpty ? "photo" : out
     }
 
+    /// A name for files sent together, for `X-Batch: <id>/<count>`: when the server has all `count` of
+    /// them it catalogues them at once instead of waiting for uploads to go quiet.
+    static func newBatch() -> String {
+        String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12)).lowercased()
+    }
+
     /// POST with the metadata the catalog needs as headers; the server writes the `.xmp` sidecar from them.
-    static func make(asset: PHAsset, resource: PHAssetResource, base: URL = baseURL) -> URLRequest {
+    static func make(asset: PHAsset, resource: PHAssetResource, batch: (id: String, count: Int)? = nil,
+                     base: URL = baseURL) -> URLRequest {
         let rel = path(asset: asset, resource: resource)
         var req = URLRequest(url: base.appendingPathComponent("api/upload/" + rel))
         req.httpMethod = "POST"
+        if let b = batch { req.setValue("\(b.id)/\(b.count)", forHTTPHeaderField: "X-Batch") }
         req.setValue(resource.filename, forHTTPHeaderField: "X-Filename")
         if let d = asset.creationDate {
             let f = DateFormatter()
