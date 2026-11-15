@@ -89,6 +89,31 @@ the hard disk and the memory pressure only show up there. To reproduce the proxy
 HTTP/2 reverse proxy (Caddy, or `tailscale serve`, which needs `sudo tailscale set --operator=$USER`
 once) in front of the local server.
 
+## Phone upload to visible (2026-11-14)
+
+`tools/bench_ingest.py` uploads 9 full-size HEICs to a real `embed.py serve` over a synthetic
+121k-photo catalog, the way the phone does, and times how long until they are searchable. Laptop SSD;
+exiftool not installed, so the exif stage is skipped in every row.
+
+| Change | Visible after last upload | Notes |
+|---|---|---|
+| Before | 89 s | 60 s quiet period + 25 s `ingest-iphone.sh` + 4 s catalog reload; first thumbnails ~550 ms each |
+| Phone sends `X-Batch: <id>/<count>`; the last file starts the run | 28 s | The quiet period is the fallback only |
+| Reload at "catalog ready", before faces | 25 s | Faces is ~3 s for 9 photos here; more on the Mac mini |
+| Thumbnail made at upload | 25 s | First thumbnails 550 ms → 2 ms each |
+| Embedding made at upload, in the app | 19 s | `embed.py run` finds nothing and never loads PyTorch (11 s → <1 s) |
+| Incremental catalog reload | **14.6 s** | Reload 4.6 s → 2.8 s; identical to a full load (`--check`) |
+
+Where the remaining 14.6 s goes:
+
+| Step | Time | Why |
+|---|---|---|
+| Upload workers catching up | 1.9 s | The benchmark sends all 9 at once; a real phone is slower than the workers |
+| `estate.py ingest` | 5 s | 4.1 s is `image_facts` decoding each 12 MP HEIC in full for its size and dHash, which the app had already decoded at upload |
+| `places.py run` | 5 s | 4.5 s of it is spent even with nothing new: it rebuilds every place, event and trip row and two full search-signature joins |
+| `link`, `embed` (empty), process starts | ~1 s | |
+| Catalog reload | 2.8 s | Mostly Python rebuilding the derived arrays (orderings, facets, the name regex) over all 121k photos |
+
 ## Open tasks
 
 Each is independent. "Done" means a before/after number on the Mac mini and no change to API answers.
