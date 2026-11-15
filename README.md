@@ -307,6 +307,7 @@ photo-estate/
   embed.py             SigLIP 2 embeddings: run, search, serve (the photo app)
   places.py            place names, local time, events, trips
   search.html          the photo app served by embed.py
+  pages.py             puts the shared stylesheet (app/estate.css) into each page as it is sent
   sync.py              GET /api/sync: the catalog as a change feed, for devices that keep a copy
   upload.py            receives phone uploads into an inbox folder (PUT /api/upload)
   ingest-iphone.sh     catalogue what the phone uploaded, touching only the new photos
