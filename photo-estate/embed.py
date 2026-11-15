@@ -254,147 +254,189 @@ def cmd_serve(a) -> None:
     # takes none unless --inbox says where; otherwise the inbox sits beside the catalog.
     inbox = Path(a.inbox) if a.inbox else None if a.demo else Path(a.db).resolve().parent / "iphone"
     ingest = (IngestJob(Path(a.ingest_script or Path(__file__).with_name("ingest-iphone.sh")), Path(a.db).resolve().parent,
-                        a.db, store, inbox) if inbox else None)
+                        a.db, store, inbox, quiet=a.ingest_quiet, max_wait=a.ingest_max_wait) if inbox else None)
     seed = Path(a.cache or Path(a.db).resolve().parent / "review")
     # On the Mac mini the estate disk is a USB hard disk: a cold thumbnail costs a ~9 ms seek, so a
     # screenful of 150 takes most of a second. --fast-cache puts the cache on the internal SSD and
     # fills it from the disk's cache (`seed`) on first use, decoding the original only if neither has it.
     cache = Path(a.fast_cache) if a.fast_cache else seed
-    con = connect(a.db)
     t0 = time.time()
-    # Startup reads every query below in table order and sorts in memory: on a hard disk, walking an
-    # index (ORDER BY sha256, a correlated subquery) turns each row into a seek, ~18 s on the Mac mini.
-    rows = sorted(con.execute("SELECT sha256, vec FROM embeddings WHERE model=? AND vec IS NOT NULL",
-                              (a.model,)).fetchall())
-    if not rows:
-        sys.exit(f"no embeddings for {a.model}; run `embed.py run` first")
-    shas = [r[0] for r in rows]
-    N = len(shas)
-    index = {s: i for i, s in enumerate(shas)}
-    M = np.frombuffer(b"".join(r[1] for r in rows), dtype=np.float16).reshape(N, -1).astype(np.float32)
-    del rows
-    meta = {}
-    for sha, ext, taken, lat, lon, desc, people, fav, w, h in con.execute(
-            "SELECT sha256, ext, taken_at, lat, lon, description, people, favorited, width, height"
-            " FROM assets WHERE kind='image'"):
-        if sha in index:
-            meta[sha] = {"ext": ext, "taken": taken, "lat": lat, "lon": lon, "desc": desc,
-                         "people": [p.strip() for p in (people or "").split(",") if p.strip()],
-                         "albums": [], "fav": bool(fav), "w": w, "h": h, "path": None}
-    for sha, path, album in con.execute("SELECT sha256, dir || '/' || filename, album FROM occurrences ORDER BY id"):
-        if (m := meta.get(sha)) is not None:
-            if m["path"] is None:  # the first place the photo was seen
-                m["path"] = path
-            if album and album not in m["albums"]:
-                m["albums"].append(album)
 
-    def optional(q, args=()):  # tables filled by `estate.py exif` / `places.py run`; the page works without them
+    def load_state() -> dict:
+        """Everything the app keeps in memory, built from the catalog. Startup runs it once; a finished
+        ingest runs it again in the background and swaps the result in (install), so new photos appear
+        without a restart."""
+        con = connect(a.db)
+        # Startup reads every query below in table order and sorts in memory: on a hard disk, walking an
+        # index (ORDER BY sha256, a correlated subquery) turns each row into a seek, ~18 s on the Mac mini.
+        rows = sorted(con.execute("SELECT sha256, vec FROM embeddings WHERE model=? AND vec IS NOT NULL",
+                                  (a.model,)).fetchall())
+        if not rows:
+            raise RuntimeError(f"no embeddings for {a.model}; run `embed.py run` first")
+        shas = [r[0] for r in rows]
+        N = len(shas)
+        index = {s: i for i, s in enumerate(shas)}
+        M = np.frombuffer(b"".join(r[1] for r in rows), dtype=np.float16).reshape(N, -1).astype(np.float32)
+        del rows
+        meta = {}
+        for sha, ext, taken, lat, lon, desc, people, fav, w, h in con.execute(
+                "SELECT sha256, ext, taken_at, lat, lon, description, people, favorited, width, height"
+                " FROM assets WHERE kind='image'"):
+            if sha in index:
+                meta[sha] = {"ext": ext, "taken": taken, "lat": lat, "lon": lon, "desc": desc,
+                             "people": [p.strip() for p in (people or "").split(",") if p.strip()],
+                             "albums": [], "fav": bool(fav), "w": w, "h": h, "path": None}
+        for sha, path, album in con.execute("SELECT sha256, dir || '/' || filename, album FROM occurrences ORDER BY id"):
+            if (m := meta.get(sha)) is not None:
+                if m["path"] is None:  # the first place the photo was seen
+                    m["path"] = path
+                if album and album not in m["albums"]:
+                    m["albums"].append(album)
+
+        def optional(q, args=()):  # tables filled by `estate.py exif` / `places.py run`; the page works without them
+            try:
+                return con.execute(q, args).fetchall()
+            except sqlite3.OperationalError:
+                return []
+
+        # exif is mostly exiftool's JSON dump (~700 MB for 120k photos); this index holds just the columns
+        # read here, so startup scans ~15 MB instead. Built once, then kept up to date by SQLite.
+        optional("CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)")
+        for sha, camera, lens, focal, focal35, fnum, expo, iso in optional(
+                "SELECT sha256, camera, lens, focal, focal35, fnumber, exposure, iso FROM exif"):
+            if sha in meta:
+                meta[sha].update(camera=camera, lens=lens, focal=focal, focal35=focal35, fnumber=fnum,
+                                 exposure=expo, iso=iso)
+        events = {eid: {"title": t, "start": s0, "end": s1, "n": n, "trip": tid}
+                  for eid, t, s0, s1, n, tid in optional("SELECT id, title, start_local, end_local, n, trip_id FROM events")}
+        trips = {tid: {"title": t, "start": s0, "end": s1, "n": n}
+                 for tid, t, s0, s1, n in optional("SELECT id, title, start_local, end_local, n FROM trips")}
+        join = lambda *xs: ", ".join(dict.fromkeys(x for x in xs if x)) or None
+        for sha, local, tz, city, locality, admin2, admin1, country, psrc, eid in optional(
+                "SELECT sha256, local_time, tz, city, locality, admin2, admin1, country, place_source, event_id"
+                " FROM places"):
+            if sha in meta:
+                ev = events.get(eid) or {}
+                meta[sha].update(local=local, tz=tz, place=join(city, admin1, country),
+                                 country=country or None, region=join(admin1, country) if admin1 else None,
+                                 city=join(city, admin1, country) if city else None,
+                                 county=" ".join(x for x in (locality, admin2) if x), place_inferred=psrc == "event",
+                                 event=eid, event_title=ev.get("title"),
+                                 trip=ev.get("trip"), trip_title=(trips.get(ev.get("trip")) or {}).get("title"))
+        # Faces named on the People page (faces.py) count as people in the photo, alongside Google's tags.
+        for sha, name in optional("SELECT DISTINCT f.sha256, p.name FROM faces f JOIN persons p ON p.id=f.person_id"):
+            if sha in meta and name not in meta[sha]["people"]:
+                meta[sha]["people"].append(name)
+        has_faces = bool(optional("SELECT 1 FROM faces LIMIT 1"))
+        con.close()
+
+        # Thumbnails are upright; the catalog's width/height are not always. The grid needs the real shape.
+        dims_file = cache / "thumb-dims.json"
         try:
-            return con.execute(q, args).fetchall()
-        except sqlite3.OperationalError:
-            return []
+            dims = json.loads((dims_file if dims_file.exists() else seed / "thumb-dims.json").read_text())
+        except (OSError, ValueError):
+            dims = {}
+        missing = [s for s in shas if s not in dims]
+        if missing:
+            def size_of(s):
+                return _jpeg_size(str(cache / "thumbs" / f"{s}.jpg")) or _jpeg_size(str(seed / "thumbs" / f"{s}.jpg"))
+            with ThreadPoolExecutor(16) as ex:
+                for s, d in zip(missing, ex.map(size_of, missing)):
+                    if d and d[0] and d[1]:
+                        dims[s] = d
+            try:
+                cache.mkdir(parents=True, exist_ok=True)
+                dims_file.write_text(json.dumps(dims, separators=(",", ":")))
+            except OSError:
+                pass
+        for s in shas:
+            m = meta[s]
+            tw, th = dims.get(s) or (m["w"] or 4, m["h"] or 3)
+            m["ar"] = round(tw / th, 4)
+        del dims
 
-    # exif is mostly exiftool's JSON dump (~700 MB for 120k photos); this index holds just the columns
-    # read here, so startup scans ~15 MB instead. Built once, then kept up to date by SQLite.
-    optional("CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)")
-    for sha, camera, lens, focal, focal35, fnum, expo, iso in optional(
-            "SELECT sha256, camera, lens, focal, focal35, fnumber, exposure, iso FROM exif"):
-        if sha in meta:
-            meta[sha].update(camera=camera, lens=lens, focal=focal, focal35=focal35, fnumber=fnum,
-                             exposure=expo, iso=iso)
-    events = {eid: {"title": t, "start": s0, "end": s1, "n": n, "trip": tid}
-              for eid, t, s0, s1, n, tid in optional("SELECT id, title, start_local, end_local, n, trip_id FROM events")}
-    trips = {tid: {"title": t, "start": s0, "end": s1, "n": n}
-             for tid, t, s0, s1, n in optional("SELECT id, title, start_local, end_local, n FROM trips")}
-    join = lambda *xs: ", ".join(dict.fromkeys(x for x in xs if x)) or None
-    for sha, local, tz, city, locality, admin2, admin1, country, psrc, eid in optional(
-            "SELECT sha256, local_time, tz, city, locality, admin2, admin1, country, place_source, event_id"
-            " FROM places"):
-        if sha in meta:
-            ev = events.get(eid) or {}
-            meta[sha].update(local=local, tz=tz, place=join(city, admin1, country),
-                             country=country or None, region=join(admin1, country) if admin1 else None,
-                             city=join(city, admin1, country) if city else None,
-                             county=" ".join(x for x in (locality, admin2) if x), place_inferred=psrc == "event",
-                             event=eid, event_title=ev.get("title"),
-                             trip=ev.get("trip"), trip_title=(trips.get(ev.get("trip")) or {}).get("title"))
-    # Faces named on the People page (faces.py) count as people in the photo, alongside Google's tags.
-    for sha, name in optional("SELECT DISTINCT f.sha256, p.name FROM faces f JOIN persons p ON p.id=f.person_id"):
-        if sha in meta and name not in meta[sha]["people"]:
-            meta[sha]["people"].append(name)
-    has_faces = bool(optional("SELECT 1 FROM faces LIMIT 1"))
-    con.close()
+        col = lambda f: np.array([f(meta[s]) for s in shas], dtype=object)
+        when = col(lambda m: m.get("local") or m["taken"] or "")
+        year = np.array([int(w[:4] or 0) for w in when])
 
-    # Thumbnails are upright; the catalog's width/height are not always. The grid needs the real shape.
-    dims_file = cache / "thumb-dims.json"
-    try:
-        dims = json.loads((dims_file if dims_file.exists() else seed / "thumb-dims.json").read_text())
-    except (OSError, ValueError):
-        dims = {}
-    missing = [s for s in shas if s not in dims]
-    if missing:
-        def size_of(s):
-            return _jpeg_size(str(cache / "thumbs" / f"{s}.jpg")) or _jpeg_size(str(seed / "thumbs" / f"{s}.jpg"))
-        with ThreadPoolExecutor(16) as ex:
-            for s, d in zip(missing, ex.map(size_of, missing)):
-                if d and d[0] and d[1]:
-                    dims[s] = d
+        def month_abs(w: str) -> int:
+            try:
+                y, mo = int(w[:4]), int(w[5:7])
+            except ValueError:
+                return -1
+            return y * 12 + mo - 1 if y > 1900 and 1 <= mo <= 12 else -1
+
+        ym = np.array([month_abs(w) for w in when])
+        m0 = int(ym[ym >= 0].min()) if (ym >= 0).any() else 0     # first month with a photo, as year*12+month-1
+        nmonths = int(ym.max()) - m0 + 1 if (ym >= 0).any() else 1
+        ym = np.where(ym >= 0, ym - m0, -1)
+
+        cols = {  # lower-cased text per photo, for the typed `key:value` substring filters
+            "place": col(lambda m: f"{m.get('place') or ''} {m.get('county') or ''}".lower()),
+            "camera": col(lambda m: f"{m.get('camera') or ''} {m.get('lens') or ''}".lower()),
+            "album": col(lambda m: " | ".join(m["albums"]).lower()),
+            "person": col(lambda m: " | ".join(m["people"]).lower()),
+        }
+        event_of = col(lambda m: m.get("event"))
+        trip_of = col(lambda m: m.get("trip"))
+        fav = np.array([meta[s]["fav"] for s in shas])
+        oldest = np.argsort(when, kind="stable")
+        oldest = np.concatenate([oldest[when[oldest] != ""], oldest[when[oldest] == ""]])   # undated last, either way
+        newest = np.concatenate([oldest[when[oldest] != ""][::-1], oldest[when[oldest] == ""]])
+
+        # Facets. `single`: one value per photo, choosing several means any of them. `multi`: a photo can
+        # have several (albums: any of the chosen; people: all of the chosen, i.e. photos of them together).
+        def coded(values):
+            labels = sorted({v for v in values if v})
+            ix = {v: i for i, v in enumerate(labels)}
+            return {"labels": labels, "ix": ix, "codes": np.array([ix.get(v, -1) for v in values], np.int32)}
+
+        single = {k: coded([meta[s].get(k) for s in shas]) for k in ("country", "region", "city", "camera", "lens")}
+        single["trip"] = coded([str(t) if t is not None else None for t in trip_of])
+        multi = {}
+        for key, field in (("album", "albums"), ("person", "people")):
+            labels = sorted({v for s in shas for v in meta[s][field]})
+            ix = {v: i for i, v in enumerate(labels)}
+            multi[key] = {"labels": labels, "ix": ix,
+                          "rows": np.array([i for i, s in enumerate(shas) for _ in meta[s][field]], np.int64),
+                          "codes": np.array([ix[v] for s in shas for v in meta[s][field]], np.int64)}
+
+        trip_list = []
+        for tid, t in sorted(trips.items(), key=lambda kv: kv[1]["start"] or "", reverse=True):
+            ids = np.flatnonzero(trip_of == tid)
+            if len(ids):
+                ids = ids[np.argsort(when[ids], kind="stable")]
+                favs = ids[fav[ids]]
+                cover = int(favs[len(favs) // 2]) if len(favs) else int(ids[len(ids) // 2])
+                trip_list.append({"id": tid, "title": t["title"], "start": t["start"], "end": t["end"],
+                                  "n": int(len(ids)), "cover": shas[cover]})
+        people_ix = multi["person"]["ix"]
+        firsts = {}
+        for n in people_ix:
+            firsts.setdefault(n.split()[0].lower(), []).append(n)
+        who = {f: ns[0] for f, ns in firsts.items() if len(ns) == 1}
+        who.update({n.lower(): n for n in people_ix})
+        where, cities = {}, set()
+        for k in ("city", "region", "country"):
+            for label in single[k]["labels"]:
+                name = label.split(",")[0].strip()
+                where.setdefault(name.lower(), name)
+                if k == "city":
+                    cities.add(name.lower())
+        for k in [k for k in where if k in who]:   # a person first
+            del where[k]
         try:
-            cache.mkdir(parents=True, exist_ok=True)
-            dims_file.write_text(json.dumps(dims, separators=(",", ":")))
+            lower_words = {w for w in Path("/usr/share/dict/words").read_text().split() if w.islower()}
         except OSError:
-            pass
-    for s in shas:
-        m = meta[s]
-        tw, th = dims.get(s) or (m["w"] or 4, m["h"] or 3)
-        m["ar"] = round(tw / th, 4)
-    del dims
+            lower_words = set()
+        common_place = {k for k in where if " " not in k and (k in COMMON_WORDS or k in COMMON_PLACES
+                                                              or (k in cities and k in lower_words))}
 
-    col = lambda f: np.array([f(meta[s]) for s in shas], dtype=object)
-    when = col(lambda m: m.get("local") or m["taken"] or "")
-    year = np.array([int(w[:4] or 0) for w in when])
-
-    def month_abs(w: str) -> int:
-        try:
-            y, mo = int(w[:4]), int(w[5:7])
-        except ValueError:
-            return -1
-        return y * 12 + mo - 1 if y > 1900 and 1 <= mo <= 12 else -1
-
-    ym = np.array([month_abs(w) for w in when])
-    m0 = int(ym[ym >= 0].min()) if (ym >= 0).any() else 0     # first month with a photo, as year*12+month-1
-    nmonths = int(ym.max()) - m0 + 1 if (ym >= 0).any() else 1
-    ym = np.where(ym >= 0, ym - m0, -1)
-
-    cols = {  # lower-cased text per photo, for the typed `key:value` substring filters
-        "place": col(lambda m: f"{m.get('place') or ''} {m.get('county') or ''}".lower()),
-        "camera": col(lambda m: f"{m.get('camera') or ''} {m.get('lens') or ''}".lower()),
-        "album": col(lambda m: " | ".join(m["albums"]).lower()),
-        "person": col(lambda m: " | ".join(m["people"]).lower()),
-    }
-    event_of = col(lambda m: m.get("event"))
-    trip_of = col(lambda m: m.get("trip"))
-    fav = np.array([meta[s]["fav"] for s in shas])
-    oldest = np.argsort(when, kind="stable")
-    oldest = np.concatenate([oldest[when[oldest] != ""], oldest[when[oldest] == ""]])   # undated last, either way
-    newest = np.concatenate([oldest[when[oldest] != ""][::-1], oldest[when[oldest] == ""]])
-
-    # Facets. `single`: one value per photo, choosing several means any of them. `multi`: a photo can
-    # have several (albums: any of the chosen; people: all of the chosen, i.e. photos of them together).
-    def coded(values):
-        labels = sorted({v for v in values if v})
-        ix = {v: i for i, v in enumerate(labels)}
-        return {"labels": labels, "ix": ix, "codes": np.array([ix.get(v, -1) for v in values], np.int32)}
-
-    single = {k: coded([meta[s].get(k) for s in shas]) for k in ("country", "region", "city", "camera", "lens")}
-    single["trip"] = coded([str(t) if t is not None else None for t in trip_of])
-    multi = {}
-    for key, field in (("album", "albums"), ("person", "people")):
-        labels = sorted({v for s in shas for v in meta[s][field]})
-        ix = {v: i for i, v in enumerate(labels)}
-        multi[key] = {"labels": labels, "ix": ix,
-                      "rows": np.array([i for i, s in enumerate(shas) for _ in meta[s][field]], np.int64),
-                      "codes": np.array([ix[v] for s in shas for v in meta[s][field]], np.int64)}
+        def alt(keys):
+            return "|".join(re.escape(k) for k in sorted(keys, key=len, reverse=True))
+        word_re = re.compile(r"(?<![\w'’])(?:(?P<who>" + (alt(who) or "(?!)") + r")|(?P<where>" + (alt(where) or "(?!)") +
+                             r"))(['’]s)?(?![\w'’])", re.I)
+        return {k: v for k, v in locals().items() if k in STATE}
 
     def combine(masks: dict, skip: str | None = None):
         out = np.ones(N, bool)
@@ -419,26 +461,65 @@ def cmd_serve(a) -> None:
         return {"facets": out, "months": np.bincount(ym[base & (ym >= 0)], minlength=nmonths).tolist(),
                 "fav": int((combine(masks, skip="fav") & fav).sum()), "matching": int(combine(masks).sum())}
 
-    trip_list = []
-    for tid, t in sorted(trips.items(), key=lambda kv: kv[1]["start"] or "", reverse=True):
-        ids = np.flatnonzero(trip_of == tid)
-        if len(ids):
-            ids = ids[np.argsort(when[ids], kind="stable")]
-            favs = ids[fav[ids]]
-            cover = int(favs[len(favs) // 2]) if len(favs) else int(ids[len(ids) // 2])
-            trip_list.append({"id": tid, "title": t["title"], "start": t["start"], "end": t["end"],
-                              "n": int(len(ids)), "cover": shas[cover]})
-    info = {"total": N, "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
-            "demo": bool(a.demo), "faces": has_faces, **facet_counts({})}
+    # The names load_state() produces. Handlers read them as plain variables; install() rebinds them all
+    # at once while no request is being served, so a search never sees half of an old and half of a new catalog.
+    STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re')
+    shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info = (None,) * 29
+
+    def install(st: dict) -> None:
+        nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info
+        shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re = (st[k] for k in STATE)
+        info = {"total": N, "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
+                "demo": bool(a.demo), "faces": has_faces, **facet_counts({})}
+
+    class Gate:
+        """Requests share it; install() takes it alone. Writers wait first, so a stream of requests can't starve a reload."""
+        def __init__(self):
+            self.cv, self.readers, self.writing, self.waiting = threading.Condition(), 0, False, 0
+
+        def __enter__(self):
+            with self.cv:
+                while self.writing or self.waiting:
+                    self.cv.wait()
+                self.readers += 1
+
+        def __exit__(self, *exc):
+            with self.cv:
+                self.readers -= 1
+                self.cv.notify_all()
+
+        def swap(self, fn):
+            with self.cv:
+                self.waiting += 1
+                while self.readers or self.writing:
+                    self.cv.wait()
+                self.waiting -= 1
+                self.writing = True
+            try:
+                fn()
+            finally:
+                with self.cv:
+                    self.writing = False
+                    self.cv.notify_all()
+
+    gate = Gate()
+    try:
+        install(load_state())
+    except RuntimeError as e:
+        sys.exit(str(e))
+    print(f"{N} images loaded in {time.time() - t0:.1f}s ({len(events)} events, {len(trips)} trips)", flush=True)
+
 
     # The People page (/people): who each face is, and the questions worth asking. It's faces.py's,
     # mounted here so naming works wherever the app does. Loads in the background, like the encoder.
     people = {}
+
+    def load_people():
+        from faces import People
+        people["p"] = People(a.db, a.store, [cache] if cache == seed else [cache, seed],
+                             log=lambda msg: print(msg, flush=True))
+
     if has_faces:
-        def load_people():
-            from faces import People
-            people["p"] = People(a.db, a.store, [cache] if cache == seed else [cache, seed],
-                                 log=lambda msg: print(msg, flush=True))
         threading.Thread(target=load_people, daemon=True).start()
 
     # Importing PyTorch and loading the text encoder is most of the startup time, and only typed
@@ -457,7 +538,6 @@ def cmd_serve(a) -> None:
         print(f"text encoder ready in {time.time() - t:.1f}s", flush=True)
 
     threading.Thread(target=load_encoder, daemon=True).start()
-    print(f"{N} images loaded in {time.time() - t0:.1f}s ({len(events)} events, {len(trips)} trips)", flush=True)
     page = Path(__file__).with_name("search.html")
     # Home-screen app files (manifest, icons, service worker), served from the site root: a service
     # worker only controls pages at or below its own path.
@@ -505,32 +585,6 @@ def cmd_serve(a) -> None:
     # first name when one person has it. A place counts if the library has photos there: a city, region
     # or country. A name or place that's also an everyday word ("sunny", "celebration", "golden") counts
     # only when capitalized ("Sunny's" too). People: photos with all of them; places: any of them.
-    people_ix = multi["person"]["ix"]
-    firsts = {}
-    for n in people_ix:
-        firsts.setdefault(n.split()[0].lower(), []).append(n)
-    who = {f: ns[0] for f, ns in firsts.items() if len(ns) == 1}
-    who.update({n.lower(): n for n in people_ix})
-    where, cities = {}, set()
-    for k in ("city", "region", "country"):
-        for label in single[k]["labels"]:
-            name = label.split(",")[0].strip()
-            where.setdefault(name.lower(), name)
-            if k == "city":
-                cities.add(name.lower())
-    for k in [k for k in where if k in who]:   # a person first
-        del where[k]
-    try:
-        lower_words = {w for w in Path("/usr/share/dict/words").read_text().split() if w.islower()}
-    except OSError:
-        lower_words = set()
-    common_place = {k for k in where if " " not in k and (k in COMMON_WORDS or k in COMMON_PLACES
-                                                          or (k in cities and k in lower_words))}
-
-    def alt(keys):
-        return "|".join(re.escape(k) for k in sorted(keys, key=len, reverse=True))
-    word_re = re.compile(r"(?<![\w'’])(?:(?P<who>" + (alt(who) or "(?!)") + r")|(?P<where>" + (alt(where) or "(?!)") +
-                         r"))(['’]s)?(?![\w'’])", re.I)
     joiners = {"\0": {"and", "&", "+", "with", ","}, "\1": {"in", "at", "from", "near", "around", "to", "and", "or", ","}}
     filler = {"photo", "photos", "picture", "pictures", "pic", "pics", "of", "the", "all", "show", "me", "find",
               "trip", "trips", "visit"}
@@ -891,6 +945,8 @@ def cmd_serve(a) -> None:
                 code, msg = 500, f"could not write: {e.strerror}"
             if code == 201:
                 print(f"upload: {self.command} {u.path[len(prefix):]} ({length / 1e6:.1f} MB) from {who or 'local'}", flush=True)
+                if ingest:
+                    ingest.poke()
             self.json({"status": msg}, code)
 
         def do_GET(self):
@@ -984,7 +1040,71 @@ def cmd_serve(a) -> None:
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
+    def gated(fn):
+        def run(self):
+            if self.path.startswith("/api/upload/"):   # a phone's upload touches none of the above, and can be slow
+                return fn(self)
+            with gate:
+                return fn(self)
+        return run
+
+    for _name in ("do_GET", "do_POST"):
+        setattr(Handler, _name, gated(getattr(Handler, _name)))
+
+    reload_state = {"running": False, "again": False, "at": None, "seconds": None, "error": None}
+    reload_lock = threading.Lock()
+
+    def reload_catalog() -> None:
+        """Re-read the catalog and swap it in, with no restart. The new state is built on the side while the
+        old one keeps answering; only the swap waits for requests in flight. Asked again mid-run, it runs again."""
+        with reload_lock:
+            if reload_state["running"]:
+                reload_state["again"] = True
+                return
+            reload_state["running"] = True
+        try:
+            while True:
+                reload_state["again"] = False
+                t = time.time()
+                try:
+                    fresh = load_state()
+                    gate.swap(lambda: install(fresh))
+                    with lru_lock:
+                        lru.clear()      # cached masks and rankings are the old catalog's
+                    with st_lock:
+                        st["lib"] = None
+                    reload_state.update(at=time.time(), seconds=time.time() - t, error=None)
+                    print(f"catalog reloaded: {N} images in {time.time() - t:.1f}s", flush=True)
+                    if has_faces:
+                        threading.Thread(target=load_people, daemon=True).start()
+                    if not a.no_pregenerate:
+                        threading.Thread(target=pregenerate, daemon=True).start()
+                except Exception as e:   # keep serving the old catalog
+                    reload_state["error"] = f"{type(e).__name__}: {e}"
+                    print(f"catalog reload failed: {reload_state['error']}", flush=True)
+                if not reload_state["again"]:
+                    break
+        finally:
+            with reload_lock:
+                reload_state["running"] = False
+        if ingest and not reload_state["error"]:
+            ingest.fresh = False
+
+    if ingest:
+        ingest.on_added = reload_catalog
+        threading.Thread(target=ingest.sweep, daemon=True).start()   # uploads left from before this start
+
+    pregen_lock = threading.Lock()
+
     def pregenerate():  # every thumbnail once, so scrolling results never waits on HEIC decoding
+        if not pregen_lock.acquire(blocking=False):
+            return
+        try:
+            _pregenerate()
+        finally:
+            pregen_lock.release()
+
+    def _pregenerate():
         (cache / "thumbs").mkdir(parents=True, exist_ok=True)
         have = {p.name[:64] for p in (cache / "thumbs").iterdir()}
         if cache != seed and (seed / "thumbs").is_dir():  # copy what the disk's cache has, newest first
@@ -1003,6 +1123,10 @@ def cmd_serve(a) -> None:
             return
         print(f"making {len(todo)} thumbnails in the background", flush=True)
         t = time.time()
+        if len(todo) <= 64:   # a few new photos: not worth starting worker processes
+            ok = sum(_thumb(job) for job in todo)
+            print(f"thumbnails: {ok} made in {time.time() - t:.0f}s", flush=True)
+            return
         import multiprocessing as mp  # forkserver: no fork() of a process that holds torch threads
         with mp.get_context("forkserver").Pool(max(1, (os.cpu_count() or 4) - 2)) as pool:
             ok = sum(pool.imap_unordered(_thumb, todo, chunksize=32))
@@ -1064,6 +1188,10 @@ def main() -> None:
                    help="...nor more than this below the best match (2 = show every photo, ranked)")
     s.add_argument("--inbox", help="where phone uploads (PUT /api/upload/...) are saved; default <db dir>/iphone (none with --demo)")
     s.add_argument("--ingest-script", help="script the Library info page runs to catalogue uploads (default: ingest-iphone.sh)")
+    s.add_argument("--ingest-quiet", type=float, default=60.0,
+                   help="seconds without an upload before the ingest runs by itself (0 = only when asked)")
+    s.add_argument("--ingest-max-wait", type=float, default=600.0,
+                   help="an ingest starts at least this long after the first upload of a burst, however many follow")
     s.add_argument("--upload-user", action="append", default=[],
                    help="Tailscale login allowed to upload (repeatable); default: anyone who can reach the app")
     s.add_argument("--query-log", help="where to record searches and photos opened (default: <db dir>/query-log.jsonl)")

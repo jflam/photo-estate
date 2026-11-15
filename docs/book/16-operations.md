@@ -91,7 +91,14 @@ timezone offsets exif extracts). Every stage can be run again at any time and do
 New photos are a cheap increment: run **ingest → link → exif → places → embed** again (and `faces`).
 Each does only new work. For Google, request a Takeout of just the newest "Photos from YYYY" folder
 and use `PATTERN` to pick up the new zips; for iCloud, re-run `pull-icloud.sh` (the mirror makes it
-incremental). Restart the app to load the new photos (the app reads the catalog at startup).
+incremental). For imports run by hand, restart the app to load the new photos.
+
+**Phone uploads need none of this.** When an upload arrives the app starts a quiet period
+(`--ingest-quiet`, 60 s; 0 turns it off). Further uploads restart it, but a run starts at the latest
+`--ingest-max-wait` (600 s) after the first of a burst. It then runs `ingest-iphone.sh`, and when that
+added photos the app re-reads the catalog in the background and swaps it in, with no restart: searches
+keep being answered from the old catalog until the new one is ready. A failed run is retried after
+10 minutes, up to three times; uploads left in the inbox from before a start are picked up at startup.
 
 ## Running it as a service (macOS)
 

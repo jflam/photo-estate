@@ -121,6 +121,27 @@ def main():
         st = job.status()
         assert st["exit_code"] == 0 and st["restart_needed"], st
         assert st["log"][0] == f"inbox={inbox} root={td} restart=unset", st["log"]
+
+        # automatic runs: a burst of uploads makes one run, after the quiet period; one that arrives
+        # while it runs makes a second; and the app is told when a run added photos
+        count = td / "runs"
+        fake.write_text(f"#!/usr/bin/env bash\necho x >> {count}; sleep 1\necho '== 1 new assets and sidecars: link'\n")
+        auto = IngestJob(fake, td, db, store, inbox, quiet=0.6, max_wait=5)
+        told = []
+        auto.on_added = lambda: told.append(1)
+        for _ in range(4):
+            auto.poke()
+            time.sleep(0.2)
+        assert not count.exists(), "still inside the quiet period"
+        time.sleep(1.0)                      # quiet ended: the run is going
+        auto.poke()                          # an upload during the run
+        time.sleep(3.5)
+        runs = len(count.read_text().split())
+        assert runs == 2 and len(told) == 2, (runs, told)
+        off = IngestJob(fake, td, db, store, inbox, quiet=0)
+        off.poke()
+        time.sleep(0.3)
+        assert len(count.read_text().split()) == 2, "quiet=0 never runs by itself"
     print("ALL CHECKS PASSED")
 
 
