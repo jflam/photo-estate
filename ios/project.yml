@@ -2,7 +2,7 @@ name: PhotoEstate
 options:
   bundleIdPrefix: com.jflam
   deploymentTarget:
-    iOS: "26.1"
+    iOS: "27.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -26,6 +26,10 @@ targets:
         NSPhotoLibraryUsageDescription: Photo Estate uploads the photos and videos you take to your own server.
         BackgroundUploadURLBase: $(SERVER_BASE)
         NSAppTransportSecurity: { NSAllowsLocalNetworking: true }
+    entitlements:
+      path: PhotoEstate/PhotoEstate.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.jflam.photoestate]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jflam.photoestate
@@ -44,6 +48,10 @@ targets:
           EXExtensionPointIdentifier: com.apple.photos.background-upload
         BackgroundUploadURLBase: $(SERVER_BASE)
         NSPhotoLibraryUsageDescription: Photo Estate uploads the photos and videos you take to your own server.
+    entitlements:
+      path: UploadExtension/UploadExtension.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.jflam.photoestate]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jflam.photoestate.upload
