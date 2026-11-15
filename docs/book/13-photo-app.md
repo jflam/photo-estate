@@ -336,6 +336,11 @@ The share and open events are recorded in the query log (chapter 11).
 
 ## An installable app
 
+> There is also a native iPhone app that keeps its own copy of the library and works offline. It is not
+> this page in a wrapper: it is a separate app with its own grid, viewer and search ([chapter 19](19-iphone-app.md)),
+> and the ideas here (the justified grid, the three-slide viewer, progressive sharpness, every detail a
+> link) carry over to it ([chapter 23](23-native-interface.md)). What follows is the web page as an installed app.
+
 The page is a [Progressive Web App](https://web.dev/progressive-web-apps/) with four small pieces:
 
 | File | Purpose |
