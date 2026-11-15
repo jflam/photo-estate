@@ -27,6 +27,9 @@ it did.
 | **Standard-library HTTP server** | FastAPI, Flask, a Rust server | One dependency fewer; load is one household. A Rust rewrite was explicitly considered and rejected as not addressing the real bottleneck (disk seeks) |
 | **No authentication; bind `127.0.0.1`** | Accounts, tokens | The network is the boundary: Tailscale identity in front, nothing exposed |
 | **`uv run` scripts with inline dependencies** | A package, a virtualenv, Docker | Zero setup; each script carries only what it needs |
+| **The phone keeps a read-only replica, not a second writer** | Sync both ways; edit on the phone | The server is the only writer, so there is nothing to merge and no conflict to resolve; the replica can be deleted and refetched ([chapter 20](20-sync.md)) |
+| **A change feed built by comparing digests** | A change log written by every update; syncing the whole catalog each time | The catalog holds state, not history, and its served rows are derived from several tables; comparing what it holds now with what the feed last saw needs no change to any writer |
+| **The phone uploads into an inbox; `ingest` writes the catalog** | The server writes photos into the catalog directly | One writer of what the catalog holds, and a half-finished upload can never be mistaken for a photo ([chapter 24](24-uploading.md)) |
 | **Names and corrections in the catalog, plus a plain-text journal** | Only in the database | Your work should survive a model change |
 
 ## The tagging plan versus what was built
@@ -58,12 +61,14 @@ Stated plainly so nobody has to discover them.
   Faces are not found in videos.
 - **Photos Google or iCloud edited** are only as good as the export: Takeout "Storage saver" copies are
   compressed forever.
-- **Sources:** Google, iCloud and Flickr only. Amazon Photos, OneDrive, Dropbox and a phone's camera
-  roll would each be a new set of rules in `link`.
+- **Sources:** Google, iCloud, Flickr and the iPhone app's uploads. Amazon Photos, OneDrive, Dropbox and
+  an Android phone would each be a new set of rules in `link`.
 
 **Behaviour**
-- **The app reads the catalog at startup.** New photos, new embeddings, and names newly confirmed on the
-  People page appear in *search* after a restart. (The People page itself updates live.)
+- **The catalog is re-read after a phone upload, not after every change.** An ingest started by an upload
+  hot-reloads the app's catalog with no restart. Photos ingested by hand with `estate.py`, and new embeddings
+  or names confirmed on the People page, still appear in *search* only after a restart. (The People page
+  itself updates live.)
 - **Near-duplicate decisions are recorded, not applied.** `decisions.json` has no consumer.
 - **The face journal is write-only.** `face-labels.jsonl` is a durable record but has no replay tool,
   so surviving a rescan with a better model is a design intention, not yet a feature.
@@ -115,8 +120,10 @@ The README's roadmap, in its order, with where each would land in the code:
 | 4 | **Text in photos** (OCR) | A new batch job writing text into `tags`; `reindex` already includes tag text |
 | 5 | **Videos** | Keyframes through the same embedding path; faces in keyframes |
 | 6 | **Event captions** | `estate.py tag` on one photo per event, applied to all its photos; shows up in the full-text index |
-| 7 | **Backups built in** | A command that configures and verifies `rsync` or `restic`; the append-only store makes it simple |
+| 7 | **Backups of the store** | The catalog is already copied on a schedule (`--backup-dir`). A command that configures and verifies `rsync` or `restic` for the store; the append-only store makes it simple |
 | 8 | **Less memory** | The open tasks in PERFORMANCE.md: columns instead of dictionaries; the `.npy` embedding cache |
+| 9 | **Rank on the phone** | Today "dog in the snow" and More like this need the server ([chapter 21](21-offline-search.md)). Shipping every photo's vector (about 3 KB each) and a small text encoder to the phone would make them work offline; the replica's `fts` fallback is the stand-in |
+| 10 | **Background sync** | The phone syncs when the app comes to the front. A background refresh would have it current before you open it |
 
 Beyond the list, the natural continuations that the architecture invites:
 
@@ -125,7 +132,7 @@ Beyond the list, the natural continuations that the architecture invites:
 - **Write metadata back** as XMP sidecars with `exiftool` (PLAN.md's "phase 2"), so any photo app can
   read what Photo Estate learned.
 - **Search-time reading of seasons and holidays**, which `places` already has the dates for.
-- **Live reload**: let the server notice new embeddings and faces without a restart.
+- **Live reload for everything**: the app reloads after a phone upload; letting it notice new embeddings and faces from a hand-run job as well would remove the last reason to restart it.
 
 ## The principle to keep
 

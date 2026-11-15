@@ -1,17 +1,29 @@
 import SwiftUI
 
-/// The photo app is the web app, so the Library tab is just a web view of it. The Uploads tab is the
-/// one thing the web app can't do: reach into the phone's photo library.
+/// Two places: the Library, which is every photo in time order, and Search, which is finding some of
+/// them. What the phone keeps, and what it sends to the server, sit behind the Library's bar.
 struct ContentView: View {
-    @StateObject private var uploader = ForegroundUploader()
+    @StateObject private var router = Router()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        TabView {
-            WebView(url: UploadRequest.baseURL)
-                .ignoresSafeArea()                 // the page handles the notch and home bar itself
-                .tabItem { Label("Library", systemImage: "photo.on.rectangle") }
-            UploadsView(uploader: uploader)
-                .tabItem { Label("Uploads", systemImage: "icloud.and.arrow.up") }
+        TabView(selection: $router.tab) {
+            Tab("Library", systemImage: "photo.on.rectangle.angled", value: Router.Tab.library) {
+                LibraryView(model: router.library)
+            }
+            Tab(value: Router.Tab.search, role: .search) {
+                SearchView(model: router.search)
+            }
+        }
+        .tint(.sun)
+        .environmentObject(router)
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            guard phase == .active else { return }
+            Task {                       // catch up with the server, then fetch what should be on the phone
+                ImageStore.shared.retryNetwork()
+                await SyncEngine.shared.sync()
+                Downloader.shared.restart()
+            }
         }
     }
 }

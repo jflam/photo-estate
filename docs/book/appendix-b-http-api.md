@@ -93,6 +93,7 @@ Response:
 | `GET /api/info` | `{"total", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
 | `GET /stats` | The library info page ([stats.html](../../photo-estate/stats.html)) |
 | `GET /api/stats[?refresh=1]` | `{state: working|ready|error, library, disk, app}`: library figures from memory, disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
+| `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start |
 | `GET /api/log?ev=open|share&sha=...&pos=N` plus the search's parameters | Appends an event to the query log; `204` |
 
 ### Images
