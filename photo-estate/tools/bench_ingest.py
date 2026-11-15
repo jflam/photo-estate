@@ -150,7 +150,9 @@ def main() -> None:
         shutil.copyfile(work / "thumb-dims.json", run / "review" / "thumb-dims.json")
         (run / "store").symlink_to(work / "store")
         log = open(run / "serve.log", "w")
-        env = dict(os.environ, HF_HUB_OFFLINE="1", **({"PHOTO_ESTATE_CHECK_RELOAD": "1"} if a.check else {}))
+        (run / "tmp").mkdir()      # ingest-iphone.sh's lock lives in TMPDIR: never share a real app's
+        env = dict(os.environ, HF_HUB_OFFLINE="1", TMPDIR=str(run / "tmp"),
+                   **({"PHOTO_ESTATE_CHECK_RELOAD": "1"} if a.check else {}))
         srv = subprocess.Popen(["uv", "run", "--quiet", "--script", str(HERE / "embed.py"), "--db", str(run / "estate.db"),
                                 "serve", "--store", str(run / "store"), "--port", str(a.port), "--no-pregenerate",
                                 "--ingest-quiet", str(a.quiet)], stdout=log, stderr=subprocess.STDOUT, env=env,
