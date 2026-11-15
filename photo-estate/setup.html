@@ -156,7 +156,7 @@ const SOON = [
 ];
 const ORDER = ['practice', 'google', 'apple', 'flickr', 'computer', 'cloud', 'other'];
 
-let S = null, askedWhere = false, chosen = null, config = {}, previewed = null, openLogs = new Set(), logs = {}, typed = {};
+let S = null, askedWhere = false, chosen = null, config = {}, previewed = null, openLogs = new Set(), logs = {};
 
 async function refresh() {
   try { S = await api(''); } catch (e) { return starting(); }
@@ -283,21 +283,21 @@ function stageText(j) {
 
 function promptHtml(j) {
   const p = j.prompt; if (!p || j.state !== 'waiting') return '';
-  const id = j.id, v = h(typed[id] || '');
+  const id = j.id;
   if (p.kind === 'browser') return `<div class="ask"><b>${h(p.label)}</b><p>${h(p.help)}</p><a class="btn pri" href="${h(p.url)}" target="_blank" rel="noopener">Open sign-in page ↗</a></div>`;
   if (p.kind === 'approve') return `<div class="ask"><b>${h(p.label)}</b><p>${h(p.help)}</p><button class="btn pri" data-answer="${id}" data-v="ok">Done</button></div>`;
   const type = p.secret ? 'password' : 'text', extra = p.kind === 'code' ? 'inputmode="numeric" autocomplete="one-time-code"' : 'autocomplete="current-password"';
   return `<div class="ask"><b>${h(p.label)}</b><p>${h(p.help)}${p.secret ? ' It is used for this sign-in only and never saved.' : ''}</p>
-    <form class="row" data-form="${id}"><input type="${type}" ${extra} data-typed="${id}" value="${p.secret ? '' : v}"><button class="btn pri">Continue</button></form></div>`;
+    <form class="row" data-form="${id}"><input type="${type}" ${extra} data-typed="${id}"><button class="btn pri">Continue</button></form></div>`;
 }
 
 function renderJobs() {
   const el = $('#joblist');
-  // Don't redraw a job while someone is typing into its prompt.
-  const typing = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.typed;
+  // Never redraw while someone is answering a prompt (the field has focus, or something typed in it):
+  // a redraw replaces the field, taking the focus and what was typed with it. Answering clears it.
+  if ([...el.querySelectorAll('input[data-typed]')].some(i => i === document.activeElement || i.value)) return;
   const html = S.jobs.map(j => {
     const live = ['queued', 'running', 'waiting'].includes(j.state);
-    if (typing == j.id && document.getElementById('job-' + j.id)) return document.getElementById('job-' + j.id).outerHTML;
     const cur = j.stages.findIndex(s => s.id === j.stage);
     const pct = j.total ? Math.round(100 * (j.done || 0) / j.total) : 25;
     const bars = j.stages.map((s, i) => `<i class="${s.skipped ? 'skip ' : ''}${s.state}" title="${h(s.label)}" ${i === cur ? `style="--p:${pct}%"` : ''}></i>`).join('');
@@ -319,14 +319,13 @@ function renderJobs() {
   el.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => api(`/jobs/${b.dataset.cancel}/cancel`, {}).then(refresh, e => toast(e.message)));
   el.querySelectorAll('[data-retry]').forEach(b => b.onclick = () => api(`/jobs/${b.dataset.retry}/retry`, {}).then(refresh, e => toast(e.message)));
   el.querySelectorAll('[data-answer]').forEach(b => b.onclick = () => answer(b.dataset.answer, b.dataset.v));
-  el.querySelectorAll('[data-typed]').forEach(i => i.oninput = () => { if (i.type !== 'password') typed[i.dataset.typed] = i.value; });
   el.querySelectorAll('[data-form]').forEach(f => f.onsubmit = (e) => { e.preventDefault(); const i = f.querySelector('input'); answer(f.dataset.form, i.value); i.value = ''; });
   el.querySelectorAll('details.log').forEach(d => d.ontoggle = () => { const id = +d.dataset.log; d.open ? (openLogs.add(id), loadLog(id)) : openLogs.delete(id); });
   openLogs.forEach(loadLog);
 }
 
 async function answer(id, value) {
-  try { await api(`/jobs/${id}/answer`, {value}); delete typed[id]; document.activeElement && document.activeElement.blur(); refresh(); }
+  try { await api(`/jobs/${id}/answer`, {value}); document.activeElement && document.activeElement.blur(); refresh(); }
   catch (e) { toast(e.message); }
 }
 
