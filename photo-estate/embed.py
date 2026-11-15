@@ -663,7 +663,7 @@ def cmd_serve(a) -> None:
         print(f"sync feed: version {feed.version}, {n} rows changed ({time.time() - t:.1f}s)", flush=True)
 
     threading.Thread(target=feed_update, daemon=True).start()
-    page = Path(__file__).with_name("search.html")
+    import pages   # the pages, with the shared stylesheet put in
     # Home-screen app files (manifest, icons, service worker), served from the site root: a service
     # worker only controls pages at or below its own path.
     app_dir = Path(__file__).with_name("app")
@@ -1152,7 +1152,7 @@ def cmd_serve(a) -> None:
                 if self.people_page("GET", u, qs, None):
                     return
                 if u.path in ("/", "/index.html"):  # revalidated each load, so edits show up at once
-                    body = page.read_bytes()
+                    body = pages.page("search.html")
                     return self.send(200, body, "text/html; charset=utf-8", "no-cache",
                                      etag=f'"{hashlib.md5(body).hexdigest()}"')
                 if u.path in ("/api/search", "/api/similar"):
@@ -1200,7 +1200,7 @@ def cmd_serve(a) -> None:
                 if u.path == "/api/facets":
                     return self.json(facet_counts(select(qs)[0]))
                 if u.path in ("/stats", "/stats.html"):
-                    body = Path(__file__).with_name("stats.html").read_bytes()
+                    body = pages.page("stats.html")
                     return self.send(200, body, "text/html; charset=utf-8", "no-cache",
                                      etag=f'"{hashlib.md5(body).hexdigest()}"')
                 if u.path == "/api/ingest":
