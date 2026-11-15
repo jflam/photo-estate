@@ -11,7 +11,7 @@ struct UploadsView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        NavigationStack {
+        Group {
             List {
                 Section("Server") {
                     LabeledContent("Address", value: UploadRequest.baseURL.absoluteString)
@@ -39,6 +39,7 @@ struct UploadsView: View {
                 if systemOn { activity }
             }
             .navigationTitle("Uploads")
+            .navigationBarTitleDisplayMode(.inline)
             .onAppear { refresh() }
             .refreshable { refresh() }
             .onChange(of: scenePhase) { _, p in if p == .active { refresh() } }
