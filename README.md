@@ -118,6 +118,37 @@ and how far the pipeline has got.
 
 <br clear="right">
 
+## A native iPhone app
+
+Beyond the home-screen web app there is a real iPhone app in [`ios/`](ios/), and it works with no
+network at all. The server is the only writer, so the phone keeps a read-only copy of the catalog
+(synced from `GET /api/sync`, a change feed) in its own SQLite file, plus a thumbnail of every photo
+and full-screen copies of favourites and anything you've opened, within a size cap you choose.
+
+<table>
+<tr>
+<td width="25%"><img src="docs/screenshots/ios-library.jpg" alt="The Library tab: photos grouped by month and place"></td>
+<td width="25%"><img src="docs/screenshots/ios-search.jpg" alt="The Search tab: trips, photos through the years"></td>
+<td width="25%"><img src="docs/screenshots/ios-kitten.jpg" alt="Searching for kitten"></td>
+<td width="25%"><img src="docs/screenshots/ios-details.jpg" alt="A photo's details: date, camera, exposure"></td>
+</tr>
+</table>
+
+- **Library** is a justified grid grouped by month and place, with a viewer (zoom, swipe, share)
+  and details like the back of a print: date, camera and exposure, with a tap to "everything
+  taken around then".
+- **Search** runs on the phone against its own copy: people, places, dates, albums, cameras and
+  typed filters (`place:denmark`), with the same live-count filters as the web app. Trips and a
+  photos-per-year chart sit under the search field.
+- **Offline.** Everything above works on a plane. Describing a photo ("dog in the snow", "More like
+  this") needs the image model, so online it asks your server; offline it falls back to matching
+  words in names, places, albums and captions, and says so.
+- **Uploads.** An optional upload extension sends new photos from the phone to your server.
+
+To try it against the demo library, run `uv run embed.py serve --demo --port 8791` and build
+`ios/project-sim.yml` for the Simulator (see the comments at the top of that file). To use it for
+real, set `SERVER_BASE` in `ios/project.yml` to your server's address.
+
 ## Bring your own photos
 
 Every source goes through the same steps, and each step only does new work, so adding photos
@@ -256,7 +287,8 @@ services, with ~10k duplicates collapsed and ~130 trips found, served from an M1
 
 ```
 docs/book/             a technical book on how it all works, with diagrams (start at docs/book/README.md)
-docs/screenshots/      the screenshots in this README (tools/screenshots.py retakes them)
+docs/screenshots/      the screenshots in this README (tools/screenshots.py retakes the web ones)
+ios/                   the native iPhone app: offline catalog, search, photo cache, uploads
 photo-estate/
   estate.py            ingest, link, exif, dupes, review, tag (any OpenAI-compatible VLM), search, stats
   stats.py             the numbers behind the /stats page (also runs on its own)
