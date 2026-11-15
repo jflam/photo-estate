@@ -8,6 +8,7 @@ struct UploadsView: View {
     @State private var systemOn = false
     @State private var days = 7
     @State private var history = ExtensionStatus.history()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -18,23 +19,12 @@ struct UploadsView: View {
                 Section {
                     LabeledContent("Photo access", value: accessText)
                     LabeledContent("Background upload", value: systemUploader)
+                    if systemOn { LabeledContent("Last activity", value: lastActivity) }
                     Button(systemOn ? "Turn off background upload" : "Turn on background upload", role: systemOn ? .destructive : nil) {
                         Task { systemOn ? disable() : await enable() }
                     }
                 } header: { Text("New photos") } footer: {
                     Text("Once on, iOS sends each new photo to your server in the background, even with this app closed. Photos taken before you turn it on are not sent: use the button below for those.")
-                }
-                Section {
-                    if !ExtensionStatus.available { Text("App group not available").foregroundStyle(.secondary) }
-                    else if history.isEmpty { Text("The extension has not run yet.").foregroundStyle(.secondary) }
-                    ForEach(Array(history.enumerated()), id: \.offset) { _, e in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(e.at.formatted(date: .abbreviated, time: .standard))
-                            Text("\(e.result), \(e.queued) queued" + (e.note.isEmpty ? "" : " · \(e.note)")).font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                } header: { Text("Background upload log") } footer: {
-                    Text("Each line is one time iOS woke the upload extension. Pull down to refresh.")
                 }
                 Section {
                     Stepper("Last \(days) days", value: $days, in: 1...3650)
@@ -46,10 +36,58 @@ struct UploadsView: View {
                 } header: { Text("Older photos") } footer: {
                     Text("Keep the app open while this runs. Photos the server already has are skipped.")
                 }
+                if systemOn { activity }
             }
             .navigationTitle("Uploads")
             .onAppear { refresh() }
             .refreshable { refresh() }
+            .onChange(of: scenePhase) { _, p in if p == .active { refresh() } }
+        }
+    }
+
+    // MARK: background upload activity
+
+    /// "3 min ago · nothing new", for the line under the toggle.
+    private var lastActivity: String {
+        guard let e = history.first else { return "none yet" }
+        let when = RelativeDateTimeFormatter().localizedString(for: e.at, relativeTo: Date())
+        return "\(when) · \(summary(e, short: true))"
+    }
+
+    private func summary(_ e: ExtensionStatus.Entry, short: Bool = false) -> String {
+        switch e.result {
+        case "failure": return "failed" + (e.note.isEmpty ? "" : ": \(e.note)")
+        case "processing": return "sending" + (e.queued > 0 ? " \(e.queued)" : "")
+        default:
+            if e.queued > 0 { return e.queued == 1 ? "1 photo sent to iOS" : "\(e.queued) photos sent to iOS" }
+            return e.note.isEmpty ? "nothing new" : e.note
+        }
+    }
+
+    private func row(_ e: ExtensionStatus.Entry) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(e.count > 1 ? "Nothing new ×\(e.count)" : summary(e).prefix(1).uppercased() + summary(e).dropFirst())
+            Text(e.count > 1 ? "\(e.since.formatted(date: .abbreviated, time: .shortened)) to \(e.at.formatted(date: .omitted, time: .shortened))"
+                             : e.at.formatted(date: .abbreviated, time: .standard))
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var activity: some View {
+        Section {
+            if !ExtensionStatus.available {
+                Text("App group not available").foregroundStyle(.secondary)
+            } else if history.isEmpty {
+                Text("iOS has not woken the upload extension yet. It decides when; plugging in on Wi-Fi helps.").foregroundStyle(.secondary)
+            }
+            ForEach(Array(history.prefix(3).enumerated()), id: \.offset) { _, e in row(e) }
+            if history.count > 3 {
+                DisclosureGroup("Earlier (\(history.count - 3))") {
+                    ForEach(Array(history.dropFirst(3).enumerated()), id: \.offset) { _, e in row(e) }
+                }
+            }
+        } header: { Text("Background upload activity") } footer: {
+            Text("Each row is a time iOS woke the upload extension. Runs that found nothing are merged into one row.")
         }
     }
 
