@@ -11,6 +11,7 @@
     <string>serve</string>
     <string>--store</string><string>/Volumes/estate/store</string>
     <string>--fast-cache</string><string>/Users/jflam/Library/Caches/photo-estate</string>
+    <string>--backup-dir</string><string>/Volumes/estate/catalog-backups</string>
   </array>
   <key>WorkingDirectory</key><string>/Users/jflam/src/photo-estate/photo-estate</string>
   <key>EnvironmentVariables</key>
