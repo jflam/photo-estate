@@ -157,6 +157,21 @@ def main():
         off.poke()
         time.sleep(0.3)
         assert len(count.read_text().split()) == 3, "quiet=0 never runs by itself"
+
+        # the app reloads when the photos are searchable, before the slow faces step ends
+        staged = td / "staged.sh"
+        staged.write_text("#!/usr/bin/env bash\necho '== 12:00:00 2 new assets and sidecars: link'\n"
+                          "echo '== 12:00:01 catalog ready'\nsleep 1.5\necho 'faces done'\n")
+        staged.chmod(0o755)
+        job = IngestJob(staged, td, db, store, inbox)
+        events = []
+        job.on_added = lambda: events.append(("catalog", job.status()["running"]))
+        job.on_faces = lambda: events.append(("faces", job.status()["running"]))
+        job.start()
+        time.sleep(0.8)
+        assert events == [("catalog", True)], events
+        time.sleep(1.5)
+        assert events == [("catalog", True), ("faces", False)], events
     print("ALL CHECKS PASSED")
 
 

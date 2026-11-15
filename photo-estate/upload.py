@@ -139,7 +139,8 @@ class IngestJob:
         import threading
         self.script, self.root, self.db, self.store, self.inbox = script, root, db, store, inbox
         self.quiet, self.max_wait = quiet, max_wait   # seconds; quiet = 0 turns the automatic runs off
-        self.on_added = None      # called after a run that added photos (the app reloads its catalog)
+        self.on_added = None      # called once a run that added photos has them searchable (the app reloads its catalog)
+        self.on_faces = None      # called when that run has also finished faces (the app reloads its People page)
         self.timer = None
         self.first_poke = None    # when the current burst of uploads began
         self.again = None         # an upload arrived while a run was going: seconds to wait after it ends
@@ -259,14 +260,24 @@ class IngestJob:
                 self.again = 0.0
 
     def _follow(self, proc) -> None:
+        import threading
+        added = told = False
         for line in proc.stdout:
-            self.log.append(line.rstrip())
+            line = line.rstrip()
+            self.log.append(line)
+            added = added or "new assets and sidecars" in line
+            if added and not told and line.endswith(" catalog ready"):   # searchable now; faces still to come
+                told = True
+                with self.lock:
+                    self.fresh = True
+                if self.on_added:
+                    threading.Thread(target=self._tell, args=(self.on_added,), daemon=True).start()
         code = proc.wait()
-        added = False
+        added = added and (told or code == 0)
         with self.lock:
             self.code, self.finished = code, time.time()
-            if code == 0 and any("new assets and sidecars" in x for x in self.log):
-                self.fresh = added = True
+            if added and not told:
+                self.fresh = True
             self.failures = 0 if code == 0 else self.failures + 1
             if code != 0:
                 print(f"ingest failed (exit {code}), failure {self.failures}", flush=True)
@@ -276,8 +287,14 @@ class IngestJob:
                 elif self.again is not None:
                     self._arm(self.again)
             self.again = None
-        if added and self.on_added:
-            try:
-                self.on_added()
-            except Exception as e:             # the run itself succeeded
-                print(f"ingest: reload after run failed: {e}", flush=True)
+        if added and not told and self.on_added:     # a script without the "catalog ready" line
+            self._tell(self.on_added)
+        if added and code == 0 and self.on_faces:
+            self._tell(self.on_faces)
+
+    @staticmethod
+    def _tell(fn) -> None:
+        try:
+            fn()
+        except Exception as e:                 # the run itself succeeded
+            print(f"ingest: reload after run failed: {e}", flush=True)
