@@ -102,16 +102,17 @@ exiftool not installed, so the exif stage is skipped in every row.
 | Reload at "catalog ready", before faces | 25 s | Faces is ~3 s for 9 photos here; more on the Mac mini |
 | Thumbnail made at upload | 25 s | First thumbnails 550 ms → 2 ms each |
 | Embedding made at upload, in the app | 19 s | `embed.py run` finds nothing and never loads PyTorch (11 s → <1 s) |
-| Incremental catalog reload | **14.6 s** | Reload 4.6 s → 2.8 s; identical to a full load (`--check`) |
+| Incremental catalog reload | 14.6 s | Reload 4.6 s → 2.8 s; identical to a full load (`--check`) |
+| `places` writes only changed rows; geocoder loaded only when needed | | A run with nothing new 4.5 s → 2 s; identical output |
+| Ingest reuses the HEIC facts the app worked out on upload | **9.7 s** | Ingest 5 s → under 1 s (no second 12 MP decode per photo) |
 
-Where the remaining 14.6 s goes:
+Where the remaining 9.7 s goes:
 
 | Step | Time | Why |
 |---|---|---|
-| Upload workers catching up | 1.9 s | The benchmark sends all 9 at once; a real phone is slower than the workers |
-| `estate.py ingest` | 5 s | 4.1 s is `image_facts` decoding each 12 MP HEIC in full for its size and dHash, which the app had already decoded at upload |
-| `places.py run` | 5 s | 4.5 s of it is spent even with nothing new: it rebuilds every place, event and trip row and two full search-signature joins |
-| `link`, `embed` (empty), process starts | ~1 s | |
+| Upload workers catching up | 2 s | The benchmark sends all 9 at once; a real phone is slower than the workers |
+| `places.py run` | 4 s | ~2 s is the work itself over all 121k photos; ~2 s is loading the geocoder and zone shapes for the new GPS photos |
+| `ingest`, `link`, `embed` (empty), process starts | ~1 s | |
 | Catalog reload | 2.8 s | Mostly Python rebuilding the derived arrays (orderings, facets, the name regex) over all 121k photos |
 
 ## Open tasks
