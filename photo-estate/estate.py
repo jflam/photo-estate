@@ -613,8 +613,13 @@ def cmd_exif(a) -> None:
     if not shutil.which("exiftool"):
         sys.exit("exiftool not found: install it (Arch: sudo pacman -S perl-image-exiftool)")
     con, store = connect(a.db), Path(a.store)
-    q = "SELECT sha256, ext FROM assets" + ("" if a.force else " WHERE sha256 NOT IN (SELECT sha256 FROM exif)")
-    todo = con.execute(q + " ORDER BY sha256").fetchall()[: a.limit or None]
+    if a.after_rowid is not None:   # a few new assets: look each up, never scan exif (~19 s cold on a hard disk)
+        todo = con.execute("SELECT a.sha256, a.ext FROM assets a WHERE a.rowid > ? AND NOT EXISTS"
+                           " (SELECT 1 FROM exif e WHERE e.sha256 = a.sha256) ORDER BY a.sha256", (a.after_rowid,)).fetchall()
+    else:
+        q = "SELECT sha256, ext FROM assets" + ("" if a.force else " WHERE sha256 NOT IN (SELECT sha256 FROM exif)")
+        todo = con.execute(q + " ORDER BY sha256").fetchall()
+    todo = todo[: a.limit or None]
     print(f"{len(todo)} assets to read with exiftool", flush=True)
     by_path = {str(blob_path(store, sha, ext)): sha for sha, ext in todo}
     batches = [list(by_path)[i:i + a.batch] for i in range(0, len(by_path), a.batch)]
@@ -646,6 +651,8 @@ def cmd_exif(a) -> None:
     reindex(con, [sha for sha, _ in todo] if not a.force else None)
     con.commit()
     print(f"done: {n} assets in {(time.time() - t0) / 60:.1f} min, {cams} with a camera name")
+    if a.after_rowid is not None:
+        return
     for cam, c in con.execute("SELECT camera, count(*) c FROM exif WHERE camera IS NOT NULL"
                               " GROUP BY camera ORDER BY c DESC LIMIT 25"):
         print(f"  {c:7}  {cam}")
@@ -1096,6 +1103,7 @@ def main() -> None:
     s.add_argument("--store", required=True)
     s.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) // 2))
     s.add_argument("--batch", type=int, default=200, help="files per exiftool call")
+    s.add_argument("--after-rowid", type=int, help="only assets added after this rowid (incremental runs: a few index lookups, not a scan)")
     s.add_argument("--limit", type=int, default=0, help="0 = all")
     s.add_argument("--force", action="store_true", help="re-read assets already done")
     s.set_defaults(fn=cmd_exif)
