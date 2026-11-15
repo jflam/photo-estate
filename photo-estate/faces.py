@@ -252,12 +252,16 @@ def cmd_run(a) -> None:
     con = connect(a.db)
     store = Path(a.store)
     cache = Path(a.cache or Path(a.db).resolve().parent / "review")
-    todo = con.execute(
-        "SELECT a.sha256, a.ext FROM assets a WHERE a.kind='image' AND NOT EXISTS"
-        " (SELECT 1 FROM face_scans s WHERE s.sha256=a.sha256 AND s.model=?) ORDER BY a.sha256", (MODEL,)).fetchall()
+    todo = con.execute(   # --after-rowid: only new assets, a few index lookups instead of a scan (see embed.py run)
+        "SELECT a.sha256, a.ext FROM assets a WHERE a.kind='image' AND a.rowid > ? AND NOT EXISTS"
+        " (SELECT 1 FROM face_scans s WHERE s.sha256=a.sha256 AND s.model=?) ORDER BY a.sha256",
+        (a.after_rowid or 0, MODEL)).fetchall()
     todo = [(s, e) for s, e in todo if e not in SKIP_EXT][: a.limit or None]
-    done, found = con.execute("SELECT count(*), coalesce(sum(n), 0) FROM face_scans WHERE model=?", (MODEL,)).fetchone()
-    print(f"{done} images already scanned ({found} faces), {len(todo)} to do", flush=True)
+    if a.after_rowid is None:
+        done, found = con.execute("SELECT count(*), coalesce(sum(n), 0) FROM face_scans WHERE model=?", (MODEL,)).fetchone()
+        print(f"{done} images already scanned ({found} faces), {len(todo)} to do", flush=True)
+    else:
+        print(f"{len(todo)} new images to scan", flush=True)
     if not todo:
         return
     models = Models(a.threads)
@@ -959,6 +963,7 @@ def main() -> None:
     s.add_argument("--store", required=True)
     s.add_argument("--cache", help="where face thumbnails go (default: <db dir>/review, the photo app's cache)")
     s.add_argument("--workers", type=int, default=3, help="decoder processes, in parallel with the models")
+    s.add_argument("--after-rowid", type=int, help="only assets added after this rowid (incremental runs: a few index lookups, not a scan)")
     s.add_argument("--threads", type=int, default=6, help="onnxruntime threads")
     s.add_argument("--limit", type=int, default=0)
     s.set_defaults(fn=cmd_run)

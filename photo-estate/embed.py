@@ -117,15 +117,17 @@ def _features(torch, out):
 def cmd_run(a) -> None:
     con = connect(a.db)
     store = Path(a.store)
+    # Each lookup below walks the embeddings index: over the whole library that is ~10 s when it is not
+    # cached and the catalog is on a hard disk, so an incremental run (--after-rowid) looks up only new assets.
     todo = con.execute(
-        "SELECT a.sha256, a.ext FROM assets a WHERE a.kind='image' AND NOT EXISTS"
+        "SELECT a.sha256, a.ext FROM assets a WHERE a.kind='image' AND a.rowid > ? AND NOT EXISTS"
         " (SELECT 1 FROM embeddings e WHERE e.sha256=a.sha256 AND e.model=?) ORDER BY a.sha256",
-        (a.model,)).fetchall()
+        (a.after_rowid or 0, a.model)).fetchall()
     skipped = [(s, e) for s, e in todo if e in SKIP_EXT]
     todo = [(s, e) for s, e in todo if e not in SKIP_EXT][: a.limit or None]
-    done = con.execute("SELECT count(*) FROM embeddings WHERE model=?", (a.model,)).fetchone()[0]
-    print(f"{a.model}: {done} already embedded, {len(todo)} to do"
-          f" ({len(skipped)} RAW files skipped)", flush=True)
+    done = "" if a.after_rowid is not None else \
+        f"{con.execute('SELECT count(*) FROM embeddings WHERE model=?', (a.model,)).fetchone()[0]} already embedded, "
+    print(f"{a.model}: {done}{len(todo)} to do ({len(skipped)} RAW files skipped)", flush=True)
     if not todo:
         return
     torch, model, proc = load_model(a.model, a.threads)
@@ -1356,6 +1358,7 @@ def main() -> None:
     s.add_argument("--store", required=True)
     s.add_argument("--workers", type=int, default=3, help="decoder processes, in parallel with the model")
     s.add_argument("--batch", type=int, default=16)
+    s.add_argument("--after-rowid", type=int, help="only assets added after this rowid (incremental runs: a few index lookups, not a scan)")
     s.add_argument("--limit", type=int, default=0)
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("search", help="semantic search")
