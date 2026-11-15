@@ -1,258 +1,91 @@
 import SwiftUI
 
-/// The Library tab: the grid, the search field, and the filters. Native, and answered from the phone's
-/// own catalog, so it opens at once and works with no network.
+/// The Library tab: every photo, newest first, and nothing else. The photos run to the edges of the
+/// screen and the heading leaves with them; the handle at the right edge says where you are.
 struct LibraryView: View {
-    @StateObject private var model = LibraryModel()
+    @ObservedObject var model: LibraryModel
+    @EnvironmentObject private var router: Router
     @ObservedObject private var sync = SyncEngine.shared
-    @State private var draft = ""
-    @State private var viewer: Opened?
-    @State private var sheet: Pill?
-    @State private var reveal: Int?
-    @State private var headerHeight: CGFloat = 0
-
-    private struct Opened: Identifiable {
-        let id = UUID()
-        let tiles: [Tile]
-        let index: Int
-    }
+    @ObservedObject private var downloads = Downloader.shared
+    @State private var settings = false
 
     var body: some View {
         NavigationStack {
-            GridView(data: model.grid, rowHeight: model.rowHeight,
-                     onOpen: { i in viewer = Opened(tiles: model.grid.tiles, index: i) },
-                     onNearEnd: { model.loadMore() },
+            GridView(data: model.grid, rowHeight: model.rowHeight, title: "Library", subtitle: model.subtitle,
                      onRefresh: { ImageStore.shared.retryNetwork(); await sync.sync() },
-                     reveal: reveal, topInset: headerHeight)
+                     onRowHeight: { model.rowHeight = $0 },
+                     viewer: { session in AnyView(ViewerScreen(session: session, model: model, route: router.find)) })
                 .ignoresSafeArea()
-                .overlay { empty }
-                .overlay(alignment: .top) { header.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 } }
-                .navigationTitle(model.title)
+                .overlay { if model.grid.tiles.isEmpty && !model.loading { Welcome() } }
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar { toolbar }
-                .searchable(text: $draft, prompt: "Describe a photo, or a name or place")
-                .searchSuggestions { suggestions }
-                .onSubmit(of: .search) { model.search(draft) }
-                .onChange(of: model.query.text) { _, t in if t != draft { draft = t } }
-                .onChange(of: draft) { _, t in if t.isEmpty && !model.query.text.isEmpty { model.search("") } }
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) { ViewMenu(model: model) }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { settings = true } label: {
+                            Image(systemName: !sync.online ? "wifi.slash" : sync.state == .syncing || downloads.running ? "arrow.down" : "iphone")
+                                .contentTransition(.symbolEffect(.replace))
+                                .foregroundStyle(sync.online ? Color.primary : Color.sun)
+                        }
+                        .accessibilityLabel("On this iPhone")
+                    }
+                }
         }
-        .fullScreenCover(item: $viewer) { v in
-            ViewerScreen(tiles: v.tiles, index: v.index, model: model) { reveal = $0 }
-        }
-        .sheet(item: $sheet) { pill in
-            FilterSheet(pill: pill, model: model).presentationDetents([.medium, .large])
-        }
+        .sheet(isPresented: $settings) { ThisPhoneView() }
         .onAppear { model.reload(reset: false) }
         .onChange(of: sync.revision) { _, _ in model.catalogChanged() }
     }
+}
 
-    // MARK: header: what is showing, and the filters
+/// Order, size and near-identical shots: how a list of photos is laid out.
+struct ViewMenu: View {
+    @ObservedObject var model: LibraryModel
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(Pill.allCases) { pill in chip(pill) }
-                }
-                .padding(.horizontal, 12)
-            }
-            HStack(spacing: 6) {
-                if !sync.online { Label("Offline", systemImage: "wifi.slash").labelStyle(.titleAndIcon).foregroundStyle(.orange) }
-                Text(model.subtitle).lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 14)
-            if model.plan.couldRead && model.query.similar == nil {
-                Button(model.query.plain ? "Read the names and places in it instead" : "Search for the words instead") {
-                    var q = model.query
-                    q.plain.toggle()
-                    model.go(q)
-                }
-                .font(.footnote)
-                .padding(.horizontal, 14)
-            }
-            if let notice = model.notice {
-                Text(notice).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 14).fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-        .background(.bar)
-    }
-
-    private func chip(_ pill: Pill) -> some View {
-        let value = pill.value(model.query, trips: model.trips)
-        return Button {
-            if pill == .fav { var q = model.query; q.fav.toggle(); model.query = q } else { sheet = pill }
-        } label: {
-            HStack(spacing: 5) {
-                if let symbol = pill.symbol { Image(systemName: value == nil ? symbol : "\(symbol).fill").imageScale(.small) }
-                Text(value ?? pill.title).lineLimit(1)
-                if value != nil && pill != .fav {
-                    Image(systemName: "xmark").imageScale(.small).fontWeight(.semibold)
-                        .onTapGesture { model.query = pill.cleared(model.query) }
-                        .accessibilityLabel("Clear \(pill.title)")
+    var body: some View {
+        Menu {
+            if !model.ranked {
+                Picker("Order", selection: Binding(get: { model.oldFirst }, set: { v in var q = model.query; q.oldFirst = v; model.query = q })) {
+                    Label("Newest first", systemImage: "arrow.down").tag(false)
+                    Label("Oldest first", systemImage: "arrow.up").tag(true)
                 }
             }
-            .font(.subheadline.weight(.medium))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .foregroundStyle(value == nil ? Color.primary : Color.white)
-            .background(value == nil ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.accentColor), in: Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        if model.canGoBack {
-            ToolbarItem(placement: .topBarLeading) {
-                Button { model.back() } label: { Image(systemName: "chevron.backward") }.accessibilityLabel("Back")
+            Picker("Photo size", selection: Binding(get: { Estate.densities.min { abs($0 - model.rowHeight) < abs($1 - model.rowHeight) } ?? 128 },
+                                                    set: { model.rowHeight = $0 })) {
+                Label("Smallest", systemImage: "square.grid.4x3.fill").tag(Estate.densities[0])
+                Label("Small", systemImage: "square.grid.3x3.fill").tag(Estate.densities[1])
+                Label("Medium", systemImage: "square.grid.3x2.fill").tag(Estate.densities[2])
+                Label("Large", systemImage: "square.grid.2x2.fill").tag(Estate.densities[3])
+                Label("Largest", systemImage: "rectangle.grid.1x2.fill").tag(Estate.densities[4])
             }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                if !model.ranked {
-                    Picker("Order", selection: Binding(get: { model.oldFirst }, set: { v in var q = model.query; q.oldFirst = v; model.query = q })) {
-                        Label("Newest first", systemImage: "arrow.down").tag(false)
-                        Label("Oldest first", systemImage: "arrow.up").tag(true)
-                    }
-                }
-                Picker("Photo size", selection: $model.rowHeight) {
-                    Text("Small photos").tag(96.0)
-                    Text("Medium photos").tag(128.0)
-                    Text("Large photos").tag(196.0)
-                }
-                Toggle("Hide near-identical shots", isOn: $model.hideDups)
-                if !model.query.isEmpty {
-                    Button("Clear search and filters", systemImage: "xmark.circle", role: .destructive) { draft = ""; model.clear() }
-                }
-            } label: { Image(systemName: "ellipsis.circle") }
-            .accessibilityLabel("View options")
-        }
-    }
-
-    @ViewBuilder private var suggestions: some View {
-        let typed = draft.trimmingCharacters(in: .whitespaces)
-        if typed == model.query.text && !typed.isEmpty {
-            EmptyView()                      // these words are what is showing: don't cover the answer
-        } else if typed.isEmpty {
-            ForEach(["sunset over water", "dog on the beach", "birthday cake", "snowy mountains", "city at night", "is:fav"], id: \.self) { idea in
-                Label(idea, systemImage: "sparkle.magnifyingglass").searchCompletion(idea)
-            }
-        } else {
-            ForEach(model.vocab.suggest(typed, trips: model.trips), id: \.key) { s in
-                Button {
-                    draft = ""
-                    var q = model.query
-                    q.text = ""
-                    if !q.picked(s.facet).contains(s.value) { q.toggle(s.facet, s.value) }
-                    model.go(q)
-                } label: {
-                    HStack {
-                        Image(systemName: Pill.symbol(for: s.facet)).foregroundStyle(.secondary).frame(width: 24)
-                        VStack(alignment: .leading) {
-                            Text(s.label)
-                            Text("\(s.facet.title) · \(s.count.formatted())").font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var empty: some View {
-        if model.grid.tiles.isEmpty && !model.loading {
-            if sync.photos == 0 {
-                switch sync.state {
-                case .failed(let why):
-                    ContentUnavailableView {
-                        Label("Can't reach your library", systemImage: "wifi.slash")
-                    } description: {
-                        Text("\(why)\nPhotos appear here once this iPhone has fetched the catalog from \(Server.baseURL.host() ?? "your server").")
-                    } actions: {
-                        Button("Try again") { Task { await sync.sync() } }
-                    }
-                default:
-                    ContentUnavailableView { ProgressView() } description: { Text("Fetching your library…") }
-                }
-            } else if model.query.similar != nil && model.notice != nil {
-                ContentUnavailableView("Not available offline", systemImage: "wifi.slash")
-            } else {
-                ContentUnavailableView {
-                    Label("Nothing found", systemImage: "photo.on.rectangle.angled")
-                } description: {
-                    Text(model.plan.text.isEmpty ? "No photo matches these filters." : model.notice != nil ? "Nothing on this iPhone mentions “\(model.plan.text)”." : "No photo looks like “\(model.plan.text)”.")
-                } actions: {
-                    Button("Clear search and filters") { draft = ""; model.clear() }
-                }
-            }
-        }
+            Toggle("Hide near-identical shots", systemImage: "square.on.square.dashed", isOn: $model.hideDups)
+        } label: { Image(systemName: "line.3.horizontal.decrease").foregroundStyle(Color.primary) }
+        .accessibilityLabel("View options")
     }
 }
 
-/// The filter chips above the grid.
-enum Pill: String, CaseIterable, Identifiable {
-    case place, people, albums, trips, dates, camera, fav
-    var id: String { rawValue }
+/// Before there are photos: the first fetch, or no way to reach the server yet.
+struct Welcome: View {
+    @ObservedObject private var sync = SyncEngine.shared
 
-    var title: String {
-        switch self {
-        case .place: "Where"
-        case .people: "People"
-        case .albums: "Albums"
-        case .trips: "Trips"
-        case .dates: "When"
-        case .camera: "Camera"
-        case .fav: "Favourites"
+    var body: some View {
+        let failed: String? = { if case .failed(let why) = sync.state { return why }; return nil }()
+        VStack(spacing: 18) {
+            EstateMark(progress: failed != nil ? 0.15 : sync.serverTotal > 0 ? Double(sync.photos) / Double(max(sync.serverTotal, 1)) : 0.3)
+                .frame(width: 150)
+                .padding(.bottom, 6)
+            if let failed {
+                Text("Can't reach your library").font(.serif(24, .bold))
+                Text("\(failed)\nYour photos appear here once this iPhone has fetched the catalog from \(Server.baseURL.host() ?? "your server").")
+                    .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Button("Try again") { Task { await sync.sync() } }
+                    .buttonStyle(.glassProminent).padding(.top, 4)
+            } else {
+                Text("Bringing your library home").font(.serif(24, .bold))
+                Text(sync.serverTotal > 0 ? "\(sync.photos.formatted()) of \(sync.serverTotal.formatted()) photos" : "Fetching the catalog…")
+                    .font(.subheadline).foregroundStyle(.secondary).monospacedDigit().contentTransition(.numericText())
+            }
         }
-    }
-
-    var symbol: String? { self == .fav ? "heart" : nil }
-
-    var facets: [Facet] {
-        switch self {
-        case .place: [.country, .region, .city]
-        case .people: [.person]
-        case .albums: [.album]
-        case .trips: [.trip]
-        case .camera: [.camera, .lens]
-        case .dates, .fav: []
-        }
-    }
-
-    static func symbol(for f: Facet) -> String {
-        switch f {
-        case .country, .region, .city: "mappin.and.ellipse"
-        case .person: "person.crop.circle"
-        case .album: "rectangle.stack"
-        case .camera, .lens: "camera"
-        case .trip: "airplane"
-        }
-    }
-
-    /// What the chip says when it has a selection: the first value, "+N" for the rest.
-    func value(_ q: Query, trips: [Trip]) -> String? {
-        switch self {
-        case .fav: return q.fav ? "Favourites" : nil
-        case .dates: return q.from == nil && q.to == nil ? nil : Dates.range(q.from, q.to)
-        default:
-            var picked = facets.flatMap { q.picked($0) }
-            if self == .trips { picked = picked.map { id in trips.first { String($0.id) == id }?.title ?? "Trip" } }
-            guard let first = picked.first else { return nil }
-            let short = self == .place ? (first.split(separator: ",").first.map(String.init) ?? first) : first
-            return picked.count > 1 ? "\(short) +\(picked.count - 1)" : short
-        }
-    }
-
-    func cleared(_ q: Query) -> Query {
-        var q = q
-        switch self {
-        case .fav: q.fav = false
-        case .dates: q.from = nil; q.to = nil
-        default: for f in facets { q.picks[f] = nil }
-        }
-        return q
+        .padding(36)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.paper)
     }
 }

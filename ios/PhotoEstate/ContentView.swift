@@ -1,24 +1,22 @@
 import SwiftUI
 
-/// Library: the photos, native, from the phone's own catalog and image store. Uploads: the phone's
-/// photo library, sent to the server. Offline: what is kept on the phone.
+/// Two places: the Library, which is every photo in time order, and Search, which is finding some of
+/// them. What the phone keeps, and what it sends to the server, sit behind the Library's bar.
 struct ContentView: View {
-    #if !NO_BACKGROUND_UPLOAD
-    @StateObject private var uploader = ForegroundUploader()
-    #endif
+    @StateObject private var router = Router()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        TabView {
-            LibraryView()
-                .tabItem { Label("Library", systemImage: "photo.on.rectangle") }
-            #if !NO_BACKGROUND_UPLOAD
-            UploadsView(uploader: uploader)
-                .tabItem { Label("Uploads", systemImage: "icloud.and.arrow.up") }
-            #endif
-            OfflineView()
-                .tabItem { Label("Offline", systemImage: "arrow.down.circle") }
+        TabView(selection: $router.tab) {
+            Tab("Library", systemImage: "photo.on.rectangle.angled", value: Router.Tab.library) {
+                LibraryView(model: router.library)
+            }
+            Tab(value: Router.Tab.search, role: .search) {
+                SearchView(model: router.search)
+            }
         }
+        .tint(.sun)
+        .environmentObject(router)
         .onChange(of: scenePhase, initial: true) { _, phase in
             guard phase == .active else { return }
             Task {                       // catch up with the server, then fetch what should be on the phone

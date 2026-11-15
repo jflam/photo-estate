@@ -186,7 +186,7 @@ final class LibraryModel: ObservableObject {
             parts = [matching == 0 ? "No matches" : ranked ? "\(n), best match first" : n]
             if !reading.isEmpty { parts.insert([who.isEmpty ? "" : "with \(who)", place.isEmpty ? "" : "in \(place)"].filter { !$0.isEmpty }.joined(separator: ", "), at: 0) }
         } else if let scope {
-            title = scope.title; parts = [Dates.span(scope.start, scope.end), n]
+            title = scope.title.replacingOccurrences(of: "Trip to ", with: ""); parts = [Dates.span(scope.start, scope.end), n]
         } else if q.isFiltered {
             let places = (q.picked(.city) + q.picked(.region) + q.picked(.country)).map { $0.split(separator: ",").first.map(String.init) ?? $0 }
             var range = ""
@@ -196,10 +196,28 @@ final class LibraryModel: ObservableObject {
             title = bits.isEmpty ? (q.fav ? "Favourites" : "Photos") : bits.joined(separator: " · ")
             parts = [n] + (q.fav && !bits.isEmpty ? ["favourites"] : [])
         } else {
-            title = "Library"; parts = [n]
+            let newest = grid.tiles.first { !$0.when.isEmpty }?.when.prefix(4), oldest = grid.tiles.last { !$0.when.isEmpty }?.when.prefix(4)
+            let years = [oldest, newest].compactMap { $0.map(String.init) }
+            title = "Library"; parts = [n, years.first == years.last ? years.first ?? "" : years.sorted().joined(separator: " – ")]
         }
         parts += plan.applied
         subtitle = parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
+/// Where the app is, and the two lists it shows: the whole library in time order, and whatever was
+/// asked for. Anything that names a set of photos (a place in a photo's details, "More like this")
+/// goes through `find`, which shows that set in Search.
+@MainActor
+final class Router: ObservableObject {
+    enum Tab: Hashable { case library, search }
+    @Published var tab = Tab.library
+    let library = LibraryModel()
+    let search = LibraryModel()
+
+    func find(_ q: Query) {
+        search.go(q)
+        tab = .search
     }
 }
 
@@ -231,6 +249,10 @@ enum Dates {
         guard let d = date(key) else { return "Undated" }
         return (key.count > 7 ? day : month).string(from: d)
     }
+
+    private static let shortMonth = formatter("MMMyyyy"), shortDay = formatter("dMMMyyyy")
+    /// For the scrubber: "Jul 2019", or "14 Jul 2019" for a day.
+    static func short(_ key: String) -> String { date(key).map { (key.count > 7 ? shortDay : shortMonth).string(from: $0) } ?? "Undated" }
 
     static func long(_ s: String) -> String { date(s).map { full.string(from: $0) } ?? "Undated" }
     static func clock(_ s: String) -> String { s.count >= 16 ? (date(s).map { time.string(from: $0) } ?? "") : "" }

@@ -31,6 +31,7 @@ struct FilterSheet: View {
                 ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() }.fontWeight(.semibold) }
             }
         }
+        .tint(.sun)
         .task(id: Key(facet: facet, query: model.query)) { await load() }
         .onAppear { facet = pill.facets.first ?? .country }
     }
@@ -63,16 +64,16 @@ struct FilterSheet: View {
                 .listRowSeparator(.hidden)
             }
             ForEach(Array(shown), id: \.value) { row in
-                Button { model.toggle(facet, row.value) } label: {
+                Button { Haptics.tick(); model.toggle(facet, row.value) } label: {
                     HStack {
                         let parts = row.value.split(separator: ",", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(pill == .place ? parts.first ?? row.value : row.value).foregroundStyle(.primary)
+                            Text(pill == .place ? parts.first ?? row.value : row.value).font(.serif(17, .medium)).foregroundStyle(.primary)
                             if pill == .place, parts.count > 1 { Text(parts[1]).font(.footnote).foregroundStyle(.secondary) }
                         }
                         Spacer()
                         Text(row.count.formatted()).foregroundStyle(.secondary).monospacedDigit()
-                        Image(systemName: "checkmark").fontWeight(.semibold).opacity(picked.contains(row.value) ? 1 : 0)
+                        Image(systemName: "checkmark").fontWeight(.bold).foregroundStyle(Color.sun).opacity(picked.contains(row.value) ? 1 : 0)
                     }
                     .opacity(row.count == 0 ? 0.5 : 1)
                 }
@@ -90,11 +91,11 @@ struct FilterSheet: View {
         let picked = model.query.picked(.trip)
         let shown = model.trips.filter { filter.isEmpty || $0.title.localizedCaseInsensitiveContains(filter) }
         return List(shown) { trip in
-            Button { model.toggle(.trip, String(trip.id)) } label: {
+            Button { Haptics.tick(); model.toggle(.trip, String(trip.id)) } label: {
                 HStack(spacing: 12) {
-                    Thumb(sha: trip.cover).frame(width: 56, height: 56).clipShape(RoundedRectangle(cornerRadius: 8))
+                    Thumb(sha: trip.cover).frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(trip.title.replacingOccurrences(of: "Trip to ", with: "")).foregroundStyle(.primary)
+                        Text(trip.title.replacingOccurrences(of: "Trip to ", with: "")).font(.serif(17, .medium)).foregroundStyle(.primary)
                         Text("\(Dates.span(trip.start, trip.end)) · \((found[String(trip.id)] ?? 0).formatted()) of \(trip.n.formatted())")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
@@ -131,7 +132,7 @@ struct FilterSheet: View {
             } label: {
                 Button { pick(year * 12, year * 12 + 11) } label: {
                     HStack {
-                        Text(String(year)).font(.headline).foregroundStyle(.primary)
+                        Text(String(year)).font(.serif(20)).foregroundStyle(.primary)
                         Spacer()
                         Text(total.formatted()).foregroundStyle(.secondary).monospacedDigit()
                         Image(systemName: "checkmark").fontWeight(.semibold).opacity(whole ? 1 : 0)
@@ -157,7 +158,7 @@ struct Thumb: View {
 
     var body: some View {
         ZStack {
-            Color(.secondarySystemBackground)
+            Color.well
             if let image { Image(uiImage: image).resizable().scaledToFill() }
         }
         .clipped()
