@@ -203,6 +203,8 @@ Three things start in threads *after* the arrays are built, so the page and filt
 | Text encoder | `import torch`, load SigLIP, then one `"warm-up"` encode | Importing PyTorch is **most of startup time** and only typed queries need it. The warm-up takes the ~1 s first-forward-pass penalty away from the first real query |
 | Thumbnail pre-generation | Make every missing 360 px thumbnail | So scrolling never waits for HEIC decoding |
 
+| Sync feed | `Feed(...)`, then `feed_update()` | Compares the loaded catalog with the change feed the iPhone app syncs from (chapter 20); until it finishes, `/api/sync` answers 503 |
+
 A typed search that arrives before the encoder is ready simply blocks on `encoder_ready.wait()`.
 Measured on the author's Mac mini with a 100k library: first answer in 9-17 s after restart (most of
 it reading the catalog off a USB disk), typed search ready 14-22 s.
@@ -373,6 +375,26 @@ from a result list, which is how "opened" events reach the log.
 On the author's Mac mini, serving about 100k photos, the process uses about **1.7 GB** resident
 (roughly 1 GB catalog and vectors, 0.5 GB PyTorch). The per-photo `meta` dictionaries (~30 keys ×
 100k) are identified as the obvious thing to shrink (PERFORMANCE.md open task 4).
+
+## Serving the phone
+
+Beyond what the web page uses, the server has four routes that exist for the iPhone app
+([chapter 19](19-iphone-app.md)); each is a few lines in the handler because the real work is in
+modules of their own:
+
+| Route | Does | Chapter |
+|---|---|---|
+| `GET /api/sync` | A page of the catalog's change feed, from `sync.py` | [20](20-sync.md) |
+| `PUT` or `POST /api/upload/...` | Saves a photo into the inbox (`upload.py`); each arrival can start the ingest | [24](24-uploading.md) |
+| `GET /api/ingest`, `POST /api/ingest` | The state of, and a manual start of, `ingest-iphone.sh` | [16](16-operations.md) |
+| `GET /original/<sha>` | The file as stored: what the web page and the phone share | [13](13-photo-app.md) |
+
+Two things in `cmd_serve` also exist only for phone uploads. **Hot reload**: after an ingest the server
+re-reads what changed *in the background* and swaps the new state in under a gate, clearing the
+rankings cache, so searches never wait and nothing needs a restart; it ends by calling `feed_update()`.
+**Preparing arrivals**: a photo that has just been uploaded gets its grid thumbnail and its embedding
+made in the server's own process, using the model it already holds, so the ingest that follows has
+nothing left to do for it.
 
 ## Where to look in the code
 

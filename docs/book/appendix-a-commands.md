@@ -57,6 +57,20 @@ uv run embed.py serve --demo
 `--demo` ignores `--db`, `--store`, `--cache` and `--fast-cache`, and sends the query log to
 `/dev/null`.
 
+### `serve` options for phones and backups
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--inbox DIR` | `<db dir>/iphone` (none with `--demo`) | Where phone uploads are saved ([24](24-uploading.md)) |
+| `--ingest-script FILE` | `ingest-iphone.sh` | What the Library info page and automatic runs execute |
+| `--ingest-quiet SECONDS` | 60 | Quiet time after an upload before a run starts (0 turns automatic runs off) |
+| `--ingest-max-wait SECONDS` | 600 | The latest a run starts after the first upload of a burst |
+| `--upload-user LOGIN` (repeatable) | any | Only these Tailscale users may upload or run ingest |
+| `--backup-dir DIR` | off | Copy the catalog and `face-labels.jsonl` here ([16](16-operations.md)) |
+| `--backup-every HOURS` / `--backup-keep N` | 24 / 7 | How often, and how many copies to keep |
+
+The change feed (`sync-feed.db`) is created next to the catalog by `serve` ([20](20-sync.md)).
+
 ## faces.py: faces and people
 
 ```bash
@@ -97,6 +111,21 @@ uv run places.py [--db estate.db] <command>
 | `STORE` | `ESTATE_ROOT/store` | Store location |
 
 Needs `rclone`, `sqlite3`, `uv`, bash 4 and GNU `df`. See [chapter 3](03-repatriation.md).
+
+### ingest-iphone.sh
+
+```bash
+./ingest-iphone.sh ESTATE_ROOT          # catalogue what the phone uploaded since last time
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DB`, `STORE`, `INBOX` | `ROOT/estate.db`, `ROOT/store`, `ROOT/iphone` | Where things are; the catalog may be on another disk than the store |
+| `SKIP_MODELS=1` | off | Catalogue only; leave embeddings and faces for later |
+| `RESTART=LABEL` | none | When run by hand, restart that launchd job at the end |
+
+Only new photos are touched by each stage; safe to run while the app is up and to overlap (a second run
+exits at once). The app runs it itself after uploads ([24](24-uploading.md)).
 
 ### pull-icloud.sh
 

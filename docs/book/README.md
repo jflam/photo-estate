@@ -1,11 +1,13 @@
 # Photo Estate: how it works
 
 A technical book about a small program that does a large job: take every photo and video you have
-scattered across Google Photos, iCloud and Flickr, put them on a disk you own, and make them
-searchable by what is in them, who is in them and where they were taken.
+scattered across Google Photos, iCloud, Flickr and your phone, put them on a disk you own, and make
+them searchable by what is in them, who is in them and where they were taken, on the web and in a
+native iPhone app that works offline.
 
-The whole application is about **5,500 lines of code** (6,200 with its tests and tools), written
-as a handful of single-file Python scripts and three single-file web pages. This book walks through
+The server and its web pages were about **5,500 lines of code** (6,200 with tests and tools) when this book
+was first written, as a handful of single-file Python scripts and three single-file web pages. The
+iPhone app added about **3,500 lines of Swift** and a few hundred of Python. This book walks through
 all of it: why it is shaped the way it is, how each piece works, and how the pieces fit together.
 
 ## How to read it
@@ -33,6 +35,12 @@ problem it solves and ends with where to look in the code.
 | Run it for real: disks, services, speed, backups | [16. Operating it](16-operations.md) |
 | See how it is tested, and how the demo is built | [17. Tests and the demo library](17-testing-and-demo.md) |
 | Know the trade-offs, limits and what is next | [18. Design decisions and what's next](18-design-and-future.md) |
+| See what the iPhone app is and how its pieces fit | [19. The iPhone app](19-iphone-app.md) |
+| Understand how the phone keeps its own copy of the catalog | [20. Sync: the catalog on the phone](20-sync.md) |
+| See how a search is read and answered with no server | [21. Search with no server](21-offline-search.md) |
+| Know which photos the phone keeps, and how it decides | [22. Photos on the phone](22-photos-on-the-phone.md) |
+| Understand the native grid, viewer and search page | [23. The native interface](23-native-interface.md) |
+| Understand background upload and how a photo reaches the catalog | [24. Uploading from the phone](24-uploading.md) |
 | Look something up | [Appendix A: command reference](appendix-a-commands.md), [B: HTTP API](appendix-b-http-api.md), [C: glossary](appendix-c-glossary.md) |
 
 ## The system on one page
@@ -44,6 +52,7 @@ flowchart LR
       I["iCloud Photos<br/>(icloudpd mirror)"]
       F["Flickr<br/>(data download zips)"]
       O["Any folder"]
+      P["Your iPhone<br/>(background upload)"]
     end
     subgraph Disk["Your disk"]
       ST[("store/ab/cd/sha256.ext<br/>every unique file, once")]
@@ -51,6 +60,7 @@ flowchart LR
       CA["review/<br/>thumbnails, face crops"]
       LG["query-log.jsonl<br/>face-labels.jsonl"]
     end
+    P -->|"inbox"| ING
     G & I & F & O --> ING["estate.py ingest"]
     ING --> ST
     ING --> DB
@@ -64,7 +74,8 @@ flowchart LR
     ST --> SRV
     CA --> SRV
     SRV --> LG
-    SRV --> BR["Your browser / phone"]
+    SRV --> BR["Your browser"]
+    SRV <-->|"/api/sync, images"| IOS["iPhone app<br/>(offline copy)"]
     BR -->|"your corrections"| SRV
 ```
 
@@ -80,8 +91,8 @@ them is the central idea of the whole design:
 
 ## About the numbers in this book
 
-Line counts come from `tokei` on the repository as of 2026-11-13 (21 commits, 2026-11-11 to
-2026-11-13). Performance and scale figures come from the project's own measurements in
+Line counts for the server and web pages come from `tokei` on the repository as of 2026-11-13 (21
+commits, 2026-11-11 to 2026-11-13); the iPhone app's, from 2026-11-14 (chapter 19). Performance and scale figures come from the project's own measurements in
 [PERFORMANCE.md](../../photo-estate/PERFORMANCE.md), [BENCHMARK.md](../../photo-estate/BENCHMARK.md)
 and the README; where this book quotes one, it says so. Code references link to files and name the
 function, because line numbers drift.

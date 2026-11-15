@@ -17,6 +17,8 @@ is never used as evidence.
 **Banding.** Cutting a 64-bit hash into `t+1` pieces so that two hashes within distance `t` must agree
 exactly on at least one piece; used to find near-duplicates without comparing all pairs.
 
+**Batch (upload).** The files a phone sends together, named in an `X-Batch: <id>/<count>` header; when the last arrives, the server starts cataloguing at once ([24](24-uploading.md)).
+
 **Catalog.** The SQLite file `estate.db`.
 
 **Centroid.** The mean (normalised sum) of a person's trusted face vectors for one year.
@@ -30,8 +32,12 @@ unrelated. Used for image-text matching, "more like this", and face matching.
 **dHash (difference hash).** A 64-bit perceptual fingerprint: whether each pixel of a 9×8 grey
 thumbnail is brighter than its right-hand neighbour. Similar images have hashes a few bits apart.
 
+**Cursor (sync).** The pair `(since, after)` a device sends to say "I have every row up to this version and hash" ([20](20-sync.md)).
+
 **Embedding.** A fixed-length list of numbers that represents the meaning of an image, a sentence or a
 face, such that similar things have similar vectors.
+
+**Epoch (sync).** A random name for one `sync-feed.db`. A device that sees an epoch it doesn't know fetches everything again and drops what the new feed lacks ([20](20-sync.md)).
 
 **Event.** A burst of photos with no gap of more than 3 hours (configurable) between consecutive
 photos. Its id is its start time in epoch seconds.
@@ -52,8 +58,12 @@ trip.
 
 **icloudpd.** The open-source iCloud Photos downloader the project uses.
 
+**Inbox.** The folder (`iphone/` next to the catalog) where phone uploads land, in the same shape as the iCloud mirror; `ingest-iphone.sh` catalogues it ([24](24-uploading.md)).
+
 **Journal (face).** `face-labels.jsonl`: an append-only record of your face decisions, keyed by photo
 hash and box.
+
+**Replica.** The phone's read-only copy of the catalog, in `catalog.db`; the server is the only writer ([20](20-sync.md)).
 
 **Locality.** The nearer suburb or neighbourhood when a big city was chosen as a photo's `city`.
 
@@ -72,6 +82,8 @@ is waiting for your yes or no.
 edited.
 
 **PWA.** Progressive Web App: a web page that can be installed on a phone's home screen.
+
+**Scrubber.** The handle at the iPhone grid's right edge that shows the month you are in and lets you drag to any date ([23](23-native-interface.md)).
 
 **Sidecar.** A small metadata file next to a photo. Google's is JSON; iCloud's (via `icloudpd`) is XMP.
 
@@ -92,6 +104,8 @@ edited.
 
 **Tailscale.** A private network (a "tailnet") used here to reach the app from a phone, with
 `tailscale serve` providing HTTPS.
+
+**Tile.** What the iPhone grid needs to draw a photo and nothing else: its hash, aspect ratio, local time, city and favourite flag ([21](21-offline-search.md)).
 
 **Trip.** A run of events more than 100 km (configurable) from home, spanning at least two dates.
 
