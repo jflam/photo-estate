@@ -68,7 +68,7 @@ struct FilterSheet: View {
                     HStack {
                         let parts = row.value.split(separator: ",", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(pill == .place ? parts.first ?? row.value : row.value).font(.serif(17, .medium)).foregroundStyle(.primary)
+                            Text(pill == .place ? parts.first ?? row.value : row.value).font(.title(17, .medium)).foregroundStyle(.primary)
                             if pill == .place, parts.count > 1 { Text(parts[1]).font(.footnote).foregroundStyle(.secondary) }
                         }
                         Spacer()
@@ -95,7 +95,7 @@ struct FilterSheet: View {
                 HStack(spacing: 12) {
                     Thumb(sha: trip.cover).frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(trip.title.replacingOccurrences(of: "Trip to ", with: "")).font(.serif(17, .medium)).foregroundStyle(.primary)
+                        Text(trip.title.replacingOccurrences(of: "Trip to ", with: "")).font(.title(17, .medium)).foregroundStyle(.primary)
                         Text("\(Dates.span(trip.start, trip.end)) · \((found[String(trip.id)] ?? 0).formatted()) of \(trip.n.formatted())")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
@@ -132,7 +132,7 @@ struct FilterSheet: View {
             } label: {
                 Button { pick(year * 12, year * 12 + 11) } label: {
                     HStack {
-                        Text(String(year)).font(.serif(20)).foregroundStyle(.primary)
+                        Text(String(year)).font(.title(20)).foregroundStyle(.primary)
                         Spacer()
                         Text(total.formatted()).foregroundStyle(.secondary).monospacedDigit()
                         Image(systemName: "checkmark").fontWeight(.semibold).opacity(whole ? 1 : 0)

@@ -50,7 +50,7 @@ struct ViewerScreen: View {
                 .accessibilityLabel("Close")
             Spacer()
             VStack(spacing: 3) {
-                Text(Dates.long(tile.when)).font(.serif(17))
+                Text(Dates.long(tile.when)).font(.title(17))
                 Text([Dates.clock(tile.when), tile.city?.split(separator: ",").first.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: "  ·  "))
                     .font(.caption).opacity(0.75)
             }
@@ -140,10 +140,10 @@ struct InfoView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(Dates.long(photo.when)).font(.serif(26, .bold))
+                    Text(Dates.long(photo.when)).font(.title(26, .bold))
                     Text([Dates.clock(photo.when), photo.tz ?? ""].filter { !$0.isEmpty }.joined(separator: "  ·  "))
                         .font(.subheadline).foregroundStyle(.secondary)
-                    if let d = photo.desc { Text(d).font(.serif(16, .regular)).italic().foregroundStyle(.secondary).padding(.top, 6) }
+                    if let d = photo.desc { Text(d).font(.callout).italic().foregroundStyle(.secondary).padding(.top, 6) }
                 }
                 if photo.place != nil || photo.lat != nil { place }
                 if photo.event != nil || photo.trip != nil {
@@ -187,7 +187,7 @@ struct InfoView: View {
                 if let name = photo.place {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(name).font(.serif(17)).foregroundStyle(.primary).multilineTextAlignment(.leading)
+                            Text(name).font(.title(17)).foregroundStyle(.primary).multilineTextAlignment(.leading)
                             let sub = [photo.county ?? "", photo.placeInferred ? "from photos taken around then" : ""].filter { !$0.isEmpty }.joined(separator: "  ·  ")
                             if !sub.isEmpty { Text(sub).font(.footnote).foregroundStyle(.secondary) }
                         }
@@ -209,7 +209,7 @@ struct InfoView: View {
             HStack(spacing: 14) {
                 Image(systemName: symbol).font(.system(size: 17)).foregroundStyle(Color.sunLit).frame(width: 24)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.serif(17)).foregroundStyle(.primary).multilineTextAlignment(.leading)
+                    Text(title).font(.title(17)).foregroundStyle(.primary).multilineTextAlignment(.leading)
                     Text(detail).font(.footnote).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -246,7 +246,7 @@ struct InfoView: View {
                 Button { go(Query(picks: [.camera: [name]])) } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(name).font(.serif(17)).foregroundStyle(.primary)
+                            Text(name).font(.title(17)).foregroundStyle(.primary)
                             if let lens = photo.lens { Text(lens).font(.footnote).foregroundStyle(.secondary) }
                         }
                         Spacer()

@@ -24,13 +24,13 @@ struct ThisPhoneView: View {
                             Circle().trim(from: 0, to: held).stroke(Color.sun, style: StrokeStyle(lineWidth: 10, lineCap: .round))
                                 .rotationEffect(.degrees(-90)).animation(.easeOut(duration: 0.5), value: held)
                             VStack(spacing: 0) {
-                                Text(held, format: .percent.precision(.fractionLength(0))).font(.serif(34, .bold)).monospacedDigit().contentTransition(.numericText())
+                                Text(held, format: .percent.precision(.fractionLength(0))).font(.title(34, .bold)).monospacedDigit().contentTransition(.numericText())
                                 Text("on this iPhone").font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         .frame(width: 150, height: 150)
                         .padding(.top, 8)
-                        Text("\(sync.photos.formatted()) photos").font(.serif(22))
+                        Text("\(sync.photos.formatted()) photos").font(.title(22))
                         Text(statusLine).font(.footnote).foregroundStyle(sync.online ? Color.secondary : Color.sun).multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity)
