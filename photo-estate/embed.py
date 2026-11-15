@@ -1285,6 +1285,52 @@ def cmd_serve(a) -> None:
         ingest.on_faces = lambda: has_faces and load_people()   # the run's faces are in: rebuild the People page
         threading.Thread(target=ingest.sweep, daemon=True).start()   # uploads left from before this start
 
+    # --backup-dir: a copy of the catalog (and the face-label journal) every --backup-every hours, kept
+    # --backup-keep deep. Done here, not by a separate job, because this process already has macOS's
+    # permission to write the estate disk; a new launchd job would wait on an "Allow" click. The copy is
+    # taken with SQLite's backup API, so it is consistent while the app and an ingest keep writing.
+    def backup_once(dest: Path) -> None:
+        import shutil
+        stamp = datetime.now().strftime("%Y%m%d-%H%M")
+        t = time.time()
+        for left in dest.glob(".estate.db.*.tmp"):    # from a copy that was cut short
+            left.unlink(missing_ok=True)
+        tmp = dest / f".estate.db.{stamp}.tmp"
+        src, out = sqlite3.connect(f"file:{a.db}?mode=ro", uri=True, timeout=60), sqlite3.connect(tmp)
+        try:
+            src.backup(out)        # one step: one read transaction, so writers carry on (WAL)
+        finally:
+            out.close()
+            src.close()
+        os.replace(tmp, dest / f"estate.db.{stamp}")
+        labels = Path(a.db).resolve().parent / "face-labels.jsonl"
+        if labels.exists():
+            shutil.copy2(labels, dest / f"face-labels.jsonl.{stamp}")
+        for pattern in ("estate.db.*", "face-labels.jsonl.*"):
+            for old in sorted(dest.glob(pattern))[:-a.backup_keep]:
+                old.unlink(missing_ok=True)
+        print(f"backup: catalog copied to {dest} in {time.time() - t:.0f}s", flush=True)
+
+    def backups() -> None:
+        dest, every = Path(a.backup_dir), a.backup_every * 3600
+        while True:
+            last = max((p.stat().st_mtime for p in dest.glob("estate.db.*")), default=None) if dest.is_dir() else None
+            due = last + every if last else t0 + min(300, every)   # the first shortly after startup, not during it
+            if time.time() < due:
+                time.sleep(min(due - time.time(), 3600))
+                continue
+            try:
+                if not dest.parent.is_dir():
+                    raise OSError(f"{dest.parent} is not there (is the disk mounted?)")
+                dest.mkdir(exist_ok=True)
+                backup_once(dest)
+            except Exception as e:  # try again in an hour
+                print(f"backup failed: {type(e).__name__}: {e}", flush=True)
+                time.sleep(3600)
+
+    if a.backup_dir and not a.demo:
+        threading.Thread(target=backups, daemon=True).start()
+
     pregen_lock = threading.Lock()
 
     def pregenerate():  # every thumbnail once, so scrolling results never waits on HEIC decoding
@@ -1386,6 +1432,10 @@ def main() -> None:
                    help="an ingest starts at least this long after the first upload of a burst, however many follow")
     s.add_argument("--upload-user", action="append", default=[],
                    help="Tailscale login allowed to upload (repeatable); default: anyone who can reach the app")
+    s.add_argument("--backup-dir", help="copy the catalog and face-labels.jsonl here every --backup-every hours"
+                   " (e.g. a folder on another disk than the catalog)")
+    s.add_argument("--backup-every", type=float, default=24.0, help="hours between catalog backups")
+    s.add_argument("--backup-keep", type=int, default=7, help="catalog backups to keep")
     s.add_argument("--query-log", help="where to record searches and photos opened (default: <db dir>/query-log.jsonl)")
     s.set_defaults(fn=cmd_serve)
     a = p.parse_args()
