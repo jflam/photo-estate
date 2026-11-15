@@ -1,15 +1,18 @@
 # /// script
 # dependencies = ["pillow"]
 # ///
-"""make_icons.py: draw the photo app's home-screen icons into ../app/ (run again after changing the design).
+"""make_icons.py: draw the photo app's icons (run again after changing the design): the web app's
+home-screen icons into ../app/, and the iPhone app's icon into ../../ios/PhotoEstate/Assets.xcassets.
 
   uv run tools/make_icons.py
 """
+import json
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
 OUT = Path(__file__).resolve().parent.parent / "app"
+IOS = Path(__file__).resolve().parents[2] / "ios" / "PhotoEstate" / "Assets.xcassets"
 BG, CARD, INK, SUN = (12, 12, 13), (28, 28, 31), (241, 241, 242), (255, 176, 92)
 
 
@@ -35,3 +38,13 @@ for name, size, inset in (("icon-180.png", 180, .14), ("icon-192.png", 192, .14)
                           ("icon-maskable-512.png", 512, .22)):
     draw(size, inset).save(OUT / name, optimize=True)
     print(OUT / name)
+
+# The iPhone app: one 1024 px square, no transparency (iOS rounds the corners and makes the smaller sizes).
+icon = IOS / "AppIcon.appiconset"
+icon.mkdir(parents=True, exist_ok=True)
+draw(1024, .14).save(icon / "icon-1024.png", optimize=True)
+(icon / "Contents.json").write_text(json.dumps({
+    "images": [{"filename": "icon-1024.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}],
+    "info": {"author": "xcode", "version": 1}}, indent=2) + "\n")
+(IOS / "Contents.json").write_text(json.dumps({"info": {"author": "xcode", "version": 1}}, indent=2) + "\n")
+print(icon / "icon-1024.png")

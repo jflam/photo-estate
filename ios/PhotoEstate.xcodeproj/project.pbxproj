@@ -17,6 +17,7 @@
 		B7E41ACAFD9F7C90B416B1C1 /* ExtensionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6EA4B6B039BA595B76EF3D8 /* ExtensionStatus.swift */; };
 		C2C6BB4833851DD603965909 /* UploadExtension.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 4D60A82DDFE17E182160CBAB /* UploadExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C767DF4E23F7FE4C51F17991 /* PhotoEstateApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FD21ED368938DA62FCF458 /* PhotoEstateApp.swift */; };
+		C76FDC4A74EA418770F9FC96 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0C64D9093A3BBAAA110CAA66 /* Assets.xcassets */; };
 		F58F69FB3166A10E8F99D0D4 /* UploadExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DF2FAB3068A53E42312D37B /* UploadExtension.swift */; };
 /* End PBXBuildFile section */
 
@@ -45,6 +46,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0C64D9093A3BBAAA110CAA66 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		11D4B8291F8FFB1775A15495 /* UploadExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = UploadExtension.entitlements; sourceTree = "<group>"; };
 		13DA59C97BB2529E43D3813A /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		2383C462B3C446A1E06644F7 /* WebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebView.swift; sourceTree = "<group>"; };
@@ -84,6 +86,7 @@
 		4AFBFCE31200FAC33ADADF84 /* PhotoEstate */ = {
 			isa = PBXGroup;
 			children = (
+				0C64D9093A3BBAAA110CAA66 /* Assets.xcassets */,
 				13DA59C97BB2529E43D3813A /* ContentView.swift */,
 				FDFDD9520B743A0331D2FCF8 /* ForegroundUploader.swift */,
 				D138D459277DE48E8CDA729B /* Info.plist */,
@@ -139,6 +142,7 @@
 			buildConfigurationList = 21152BC025EB57CA304F1301 /* Build configuration list for PBXNativeTarget "PhotoEstate" */;
 			buildPhases = (
 				D99C115490FACA86E3C20CA0 /* Sources */,
+				5FEF73423797FF8296BD340E /* Resources */,
 				704257342A98DD6466C08BAD /* Embed ExtensionKit Extensions */,
 			);
 			buildRules = (
@@ -191,6 +195,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5FEF73423797FF8296BD340E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C76FDC4A74EA418770F9FC96 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		919F5C65424A56C3892836A1 /* Sources */ = {
