@@ -99,6 +99,7 @@ final class LibraryModel: ObservableObject {
     private var next: Int?                        // where the server's ranked list continues
     private var matching = 0
     private var pending = 0                       // of those, on this iPhone only
+    private var total = 0                         // the whole library, nothing hidden: for "of N", browsing only
     private var loadingMore = false
 
     // MARK: changing the question
@@ -203,6 +204,9 @@ final class LibraryModel: ObservableObject {
                 pending = mine.count
                 next = nil
                 matching = tiles.count
+                if q.isEmpty {
+                    total = await Catalog.shared.count() + LocalPhotos.shared.tiles(for: q).count
+                }
             }
             guard g == gen else { return }
             self.plan = plan
@@ -267,6 +271,12 @@ final class LibraryModel: ObservableObject {
         return out
     }
 
+    /// A count for the Library's heading, near enough: 81K, 8.1K, 950.
+    static func about(_ n: Int) -> String {
+        let r = n >= 10_000 ? (n + 500) / 1000 * 1000 : n >= 1000 ? (n + 50) / 100 * 100 : n
+        return r.formatted(.number.notation(.compactName))
+    }
+
     private static func tile(_ p: Photo) -> Tile {
         Tile(sha: p.sha, ar: Float(p.ar), when: p.when, city: p.city, fav: p.fav)
     }
@@ -298,9 +308,11 @@ final class LibraryModel: ObservableObject {
             title = bits.isEmpty ? (q.fav ? "Favourites" : "Photos") : bits.joined(separator: " · ")
             parts = [n] + (q.fav && !bits.isEmpty ? ["favourites"] : [])
         } else {
-            let newest = grid.tiles.first { !$0.when.isEmpty }?.when.prefix(4), oldest = grid.tiles.last { !$0.when.isEmpty }?.when.prefix(4)
-            let years = [oldest, newest].compactMap { $0.map(String.init) }
-            title = "Library"; parts = [n, years.first == years.last ? years.first ?? "" : years.sorted().joined(separator: " – ")]
+            // What the view options hide (near-identical shots, screenshots), so the count adds up to the whole library.
+            let hidden = total - matching
+            title = "Library"
+            parts = hidden > 0 ? ["\(LibraryModel.about(matching)) of \(LibraryModel.about(total)) photos", "\(LibraryModel.about(hidden)) hidden"]
+                               : ["\(LibraryModel.about(matching)) photos"]
         }
         parts += plan.applied
         if pending > 0 { parts.append("\(pending.formatted()) not uploaded") }
