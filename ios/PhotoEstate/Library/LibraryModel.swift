@@ -28,6 +28,7 @@ struct Period: Identifiable, Equatable {
     let count: Int
     let places: String
     var id: String { key }
+    var back: Scale { key.count > 4 ? .months : .years }      // the view this card is in
 }
 
 /// Where the grid should scroll to: the section whose key starts with `key`. `id` changes with every ask.
@@ -69,10 +70,24 @@ final class LibraryModel: ObservableObject {
     @Published private(set) var years: [Period] = []
     @Published private(set) var months: [Period] = []
     @Published private(set) var jump = Jump()
-    private var openedYear: String?
+    /// The cards tapped to get here, oldest first: what a swipe from the left edge goes back through.
+    @Published private(set) var trail: [Period] = []
+    /// Where Years or Months opens: the first card whose key starts with this.
+    @Published private(set) var anchor: String?
 
-    /// The year just tapped, once: Months starts there.
-    func takeYear() -> String? { defer { openedYear = nil }; return openedYear }
+    /// Years, Months or All from the bar: a fresh start, nothing to go back to.
+    func pick(_ s: Scale) {
+        trail = []
+        anchor = nil
+        withAnimation(.snappy(duration: 0.25)) { scale = s }
+    }
+
+    /// One step back, like a browser: to the view the last card was tapped in, at that card.
+    func retrace() {
+        guard let p = trail.popLast() else { return }
+        anchor = p.key
+        scale = p.back
+    }
     @Published var rowHeight = UserDefaults.standard.object(forKey: "view.rowHeight") as? Double ?? 128 {
         didSet { UserDefaults.standard.set(rowHeight, forKey: "view.rowHeight") }
     }
@@ -109,7 +124,8 @@ final class LibraryModel: ObservableObject {
     func open(_ p: Period) {
         Haptics.tap()
         jump = Jump(key: p.key, id: jump.id + 1)
-        openedYear = p.key.count == 4 ? p.key : nil
+        trail.append(p)
+        anchor = p.key
         withAnimation(.snappy(duration: 0.25)) { scale = p.key.count > 4 ? .all : .months }
     }
 
