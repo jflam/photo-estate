@@ -31,9 +31,8 @@ struct Query: Equatable {
     var to: Int?
     var fav = false
     var oldFirst: Bool?
-    var recent: Recent?               // today, this week, this month: by the phone's calendar
 
-    var isFiltered: Bool { picks.values.contains { !$0.isEmpty } || event != nil || from != nil || to != nil || fav || recent != nil }
+    var isFiltered: Bool { picks.values.contains { !$0.isEmpty } || event != nil || from != nil || to != nil || fav }
     var isEmpty: Bool { text.isEmpty && similar == nil && !isFiltered }
 
     func picked(_ f: Facet) -> [String] { picks[f] ?? [] }
@@ -57,48 +56,10 @@ struct Query: Equatable {
         if let from { out.append(.init(name: "from", value: Query.month(from))) }
         if let to { out.append(.init(name: "to", value: Query.month(to))) }
         if fav { out.append(.init(name: "fav", value: "1")) }
-        if let recent, from == nil { out.append(.init(name: "from", value: Query.month(Catalog.monthNumber(recent.since)))) }   // the server counts in months
         if let oldFirst { out.append(.init(name: "sort", value: oldFirst ? "old" : "new")) }
         out += [.init(name: "limit", value: String(limit)), .init(name: "cursor", value: String(cursor)),
                 .init(name: "dedupe", value: dedupe ? "1" : "0")]
         return out
-    }
-}
-
-/// The recent past, as people sort it: what was taken today, this week, this month.
-enum Recent: String, CaseIterable, Identifiable {
-    case today, week, month
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .today: "Today"
-        case .week: "This week"
-        case .month: "This month"
-        }
-    }
-
-    /// For the picker, where room is short.
-    var short: String {
-        switch self {
-        case .today: "Today"
-        case .week: "Week"
-        case .month: "Month"
-        }
-    }
-
-    /// Where it starts, as a catalog time: local wall clock, "2026-11-09T00:00:00".
-    var since: String {
-        let cal = Calendar.current
-        let now = Date()
-        let start: Date
-        switch self {
-        case .today: start = cal.startOfDay(for: now)
-        case .week: start = cal.dateInterval(of: .weekOfYear, for: now)?.start ?? cal.startOfDay(for: now)
-        case .month: start = cal.dateInterval(of: .month, for: now)?.start ?? cal.startOfDay(for: now)
-        }
-        let c = cal.dateComponents([.year, .month, .day], from: start)
-        return String(format: "%04d-%02d-%02dT00:00:00", c.year!, c.month!, c.day!)
     }
 }
 
@@ -285,7 +246,6 @@ enum Reader {
             p.clauses.append(Clause(key: "date", sql: "p.ym BETWEEN ? AND ?", args: [q.from ?? 0, q.to ?? 1_000_000]))
         }
         if q.fav { p.clauses.append(Clause(key: "fav", sql: "p.fav=1", args: [])) }
-        if let r = q.recent { p.clauses.append(Clause(key: "recent", sql: "p.whenk >= ?", args: [r.since])) }
         if let e = q.event {
             p.clauses.append(Clause(key: "event", sql: "p.event=?", args: [e]))
             p.scopeEvent = e

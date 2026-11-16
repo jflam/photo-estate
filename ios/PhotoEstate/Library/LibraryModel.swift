@@ -12,6 +12,30 @@ struct GridData: Equatable {
     static func == (a: GridData, b: GridData) -> Bool { a.id == b.id }
 }
 
+/// How far out the Library is zoomed, as in Photos: a card a year, a card a month, or every photo.
+enum Scale: String, CaseIterable, Identifiable {
+    case years, months, all
+    var id: String { rawValue }
+    var title: String { switch self { case .years: "Years"; case .months: "Months"; case .all: "All" } }
+    var grain: Int { switch self { case .years: 4; case .months: 7; case .all: 0 } }
+}
+
+/// One year's or one month's photos, as a card: its key ("2019", "2019-07"), the photo on the
+/// front, how many and where.
+struct Period: Identifiable, Equatable {
+    let key: String
+    let cover: Tile
+    let count: Int
+    let places: String
+    var id: String { key }
+}
+
+/// Where the grid should scroll to: the section whose key starts with `key`. `id` changes with every ask.
+struct Jump: Equatable {
+    var key = ""
+    var id = 0
+}
+
 /// The Library tab's state: the question (`query`) and its answer (`grid`).
 ///
 /// Browsing, filters, names, places and dates are answered from the phone's catalog, online or not.
@@ -39,6 +63,16 @@ final class LibraryModel: ObservableObject {
     @Published var hideShots = UserDefaults.standard.object(forKey: "view.hideShots") as? Bool ?? true {
         didSet { UserDefaults.standard.set(hideShots, forKey: "view.hideShots"); reload(reset: false) }
     }
+    @Published var scale = Scale(rawValue: UserDefaults.standard.string(forKey: "view.scale") ?? "") ?? .all {
+        didSet { UserDefaults.standard.set(scale.rawValue, forKey: "view.scale") }
+    }
+    @Published private(set) var years: [Period] = []
+    @Published private(set) var months: [Period] = []
+    @Published private(set) var jump = Jump()
+    private var openedYear: String?
+
+    /// The year just tapped, once: Months starts there.
+    func takeYear() -> String? { defer { openedYear = nil }; return openedYear }
     @Published var rowHeight = UserDefaults.standard.object(forKey: "view.rowHeight") as? Double ?? 128 {
         didSet { UserDefaults.standard.set(rowHeight, forKey: "view.rowHeight") }
     }
@@ -70,6 +104,14 @@ final class LibraryModel: ObservableObject {
     }
 
     func clear() { go(Query()) }
+
+    /// A year's card opens its months; a month's card opens its photos.
+    func open(_ p: Period) {
+        Haptics.tap()
+        jump = Jump(key: p.key, id: jump.id + 1)
+        openedYear = p.key.count == 4 ? p.key : nil
+        withAnimation(.snappy(duration: 0.25)) { scale = p.key.count > 4 ? .all : .months }
+    }
 
     func search(_ text: String) {
         var q = query
@@ -154,9 +196,13 @@ final class LibraryModel: ObservableObject {
             self.pending = pending
             var grain = 7
             if isRanked { grain = 0 }
-            else if scope != nil || q.recent != nil { grain = 10 }
+            else if scope != nil { grain = 10 }
             else if let a = q.from, let b = q.to, b - a <= 1 { grain = 10 }
             grid = GridData(tiles: tiles, grain: grain, id: grid.id + 1, reset: grid.reset + (reset ? 1 : 0))
+            if !isRanked {
+                years = LibraryModel.periods(tiles, 4)
+                months = LibraryModel.periods(tiles, 7)
+            }
             describe(q, plan, scope)
             loading = false
         }
@@ -174,6 +220,35 @@ final class LibraryModel: ObservableObject {
             next = page.next
             grid = GridData(tiles: grid.tiles + page.photos.map(LibraryModel.tile), grain: 0, id: grid.id + 1, reset: grid.reset)
         }
+    }
+
+    /// The photos grouped by year (`grain` 4) or month (7), in the list's order. The card's photo is a
+    /// favourite if there is one, a landscape one if not, nearest the middle of the stretch.
+    static func periods(_ tiles: [Tile], _ grain: Int) -> [Period] {
+        var out: [Period] = []
+        var i = 0
+        while i < tiles.count {
+            let key = tiles[i].when.prefix(grain)
+            var j = i
+            var cities: [Substring: Int] = [:]
+            while j < tiles.count, tiles[j].when.prefix(grain) == key {
+                if let c = tiles[j].city?.split(separator: ",").first { cities[c, default: 0] += 1 }
+                j += 1
+            }
+            if key.count == grain {                          // undated photos have no year or month
+                let mid = (i + j) / 2
+                var best = i, score = -Int.max
+                for k in i..<j {
+                    let t = tiles[k]
+                    let s = (t.fav ? 4_000_000 : 0) + (t.ar >= 1.2 && t.ar <= 1.9 ? 2_000_000 : 0) - abs(k - mid)
+                    if s > score { score = s; best = k }
+                }
+                let top = cities.sorted { ($0.value, $1.key) > ($1.value, $0.key) }.prefix(grain == 4 ? 3 : 2).map { String($0.key) }
+                out.append(Period(key: String(key), cover: tiles[best], count: j - i, places: top.joined(separator: " · ")))
+            }
+            i = j
+        }
+        return out
     }
 
     private static func tile(_ p: Photo) -> Tile {
@@ -196,9 +271,6 @@ final class LibraryModel: ObservableObject {
             title = "“\(plan.text)”"
             parts = [matching == 0 ? "No matches" : ranked ? "\(n), best match first" : n]
             if !reading.isEmpty { parts.insert([who.isEmpty ? "" : "with \(who)", place.isEmpty ? "" : "in \(place)"].filter { !$0.isEmpty }.joined(separator: ", "), at: 0) }
-        } else if let r = q.recent, q.picks.values.allSatisfy(\.isEmpty), q.event == nil, q.from == nil, q.to == nil {
-            title = r.title + (q.fav ? " · Favourites" : "")
-            parts = [matching == 0 ? "Nothing yet" : n, r == .today ? Dates.brief(r.since) : Dates.span(r.since, Recent.today.since)]
         } else if let scope {
             title = scope.title.replacingOccurrences(of: "Trip to ", with: ""); parts = [Dates.span(scope.start, scope.end), n]
         } else if q.isFiltered {

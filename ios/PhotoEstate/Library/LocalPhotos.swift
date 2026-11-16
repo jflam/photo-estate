@@ -253,11 +253,9 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
     /// places and the rest are known only once the server has the photo).
     func tiles(for q: Query, hideShots: Bool = false) -> [Tile] {
         guard show, allowed, q.text.isEmpty, q.similar == nil, q.event == nil, !q.picks.values.contains(where: { !$0.isEmpty }) else { return [] }
-        let since = q.recent?.since
         return pending.filter { t in
             if q.fav && !t.fav { return false }
             if hideShots && screenshots.contains(t.sha) { return false }
-            if let since, t.when < since { return false }
             if q.from != nil || q.to != nil {
                 let ym = Catalog.monthNumber(t.when)
                 if ym < (q.from ?? 0) || ym > (q.to ?? 1_000_000) { return false }
