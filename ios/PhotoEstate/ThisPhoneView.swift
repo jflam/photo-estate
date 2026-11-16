@@ -60,6 +60,9 @@ struct ThisPhoneView: View {
                 }
 
                 Section {
+                    if LocalPhotos.shared.allowed {
+                        LabeledContent("Only on this iPhone", value: "\(LocalPhotos.shared.pending.count.formatted()) photos")
+                    }
                     LabeledContent("Last synced", value: sync.lastSynced.map { $0.formatted(.relative(presentation: .named)) } ?? "Never")
                     Button(sync.state == .syncing ? "Syncing…" : "Sync now") { Task { ImageStore.shared.retryNetwork(); await sync.sync(); downloads.restart() } }
                         .disabled(sync.state == .syncing)

@@ -532,6 +532,7 @@ private final class TileView: UIImageView {
     private var sha = ""
     private var task: Task<Void, Never>?
     private let heart = UIImageView(image: UIImage(systemName: "heart.fill"))
+    private let mine = UIImageView(image: UIImage(systemName: "arrow.up.circle.fill"))   // on this iPhone, not yet on the server
     var index = 0
 
     override init(frame: CGRect) {
@@ -548,6 +549,12 @@ private final class TileView: UIImageView {
         heart.layer.shadowOffset = .zero
         heart.contentMode = .scaleAspectFit
         addSubview(heart)
+        mine.tintColor = .white
+        mine.layer.shadowOpacity = 0.5
+        mine.layer.shadowRadius = 2
+        mine.layer.shadowOffset = .zero
+        mine.contentMode = .scaleAspectFit
+        addSubview(mine)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -555,12 +562,15 @@ private final class TileView: UIImageView {
     override func layoutSubviews() {
         super.layoutSubviews()
         heart.frame = CGRect(x: 6, y: bounds.height - 19, width: 14, height: 13)
+        mine.frame = CGRect(x: bounds.width - 20, y: bounds.height - 20, width: 15, height: 15)
     }
 
     func show(_ tile: Tile, index i: Int) {
         index = i
         heart.isHidden = !tile.fav
-        accessibilityLabel = [Dates.long(tile.when), tile.city?.split(separator: ",").first.map(String.init), tile.fav ? "favourite" : nil]
+        mine.isHidden = !tile.isLocal
+        accessibilityLabel = [Dates.long(tile.when), tile.city?.split(separator: ",").first.map(String.init), tile.fav ? "favourite" : nil,
+                              tile.isLocal ? "not yet on the server" : nil]
             .compactMap { $0 }.joined(separator: ", ")
         guard tile.sha != sha || image == nil else { return }
         task?.cancel()

@@ -45,6 +45,7 @@ final class LibraryModel: ObservableObject {
     private var served: [String: Photo] = [:]     // rows the server sent with a ranked answer
     private var next: Int?                        // where the server's ranked list continues
     private var matching = 0
+    private var pending = 0                       // of those, on this iPhone only
     private var loadingMore = false
 
     // MARK: changing the question
@@ -81,6 +82,7 @@ final class LibraryModel: ObservableObject {
     }
 
     func photo(_ sha: String) async -> Photo? {
+        if LocalPhotos.id(sha) != nil { return LocalPhotos.shared.photo(sha) }
         if let p = await Catalog.shared.photo(sha) { return p }
         return served[sha]
     }
@@ -106,6 +108,7 @@ final class LibraryModel: ObservableObject {
             var tiles: [Tile] = []
             var note: String?
             var isRanked = false
+            var pending = 0
             let scope = await Catalog.shared.scope(plan)
             let old = q.oldFirst ?? (scope != nil)
             if q.similar != nil || !plan.text.isEmpty {
@@ -133,6 +136,9 @@ final class LibraryModel: ObservableObject {
                 }
             } else {
                 tiles = await Catalog.shared.tiles(plan, oldFirst: old, hideDups: hideDups)
+                let mine = LocalPhotos.shared.tiles(for: q)        // on this iPhone, not yet on the server
+                tiles = mergeByTime(tiles, mine, oldFirst: old)
+                pending = mine.count
                 next = nil
                 matching = tiles.count
             }
@@ -141,9 +147,10 @@ final class LibraryModel: ObservableObject {
             ranked = isRanked
             oldFirst = old
             notice = note
+            self.pending = pending
             var grain = 7
             if isRanked { grain = 0 }
-            else if scope != nil { grain = 10 }
+            else if scope != nil || q.recent != nil { grain = 10 }
             else if let a = q.from, let b = q.to, b - a <= 1 { grain = 10 }
             grid = GridData(tiles: tiles, grain: grain, id: grid.id + 1, reset: grid.reset + (reset ? 1 : 0))
             describe(q, plan, scope)
@@ -185,6 +192,9 @@ final class LibraryModel: ObservableObject {
             title = "“\(plan.text)”"
             parts = [matching == 0 ? "No matches" : ranked ? "\(n), best match first" : n]
             if !reading.isEmpty { parts.insert([who.isEmpty ? "" : "with \(who)", place.isEmpty ? "" : "in \(place)"].filter { !$0.isEmpty }.joined(separator: ", "), at: 0) }
+        } else if let r = q.recent, q.picks.values.allSatisfy(\.isEmpty), q.event == nil, q.from == nil, q.to == nil {
+            title = r.title + (q.fav ? " · Favourites" : "")
+            parts = [matching == 0 ? "Nothing yet" : n, r == .today ? Dates.brief(r.since) : Dates.span(r.since, Recent.today.since)]
         } else if let scope {
             title = scope.title.replacingOccurrences(of: "Trip to ", with: ""); parts = [Dates.span(scope.start, scope.end), n]
         } else if q.isFiltered {
@@ -201,6 +211,7 @@ final class LibraryModel: ObservableObject {
             title = "Library"; parts = [n, years.first == years.last ? years.first ?? "" : years.sorted().joined(separator: " – ")]
         }
         parts += plan.applied
+        if pending > 0 { parts.append("\(pending.formatted()) not uploaded") }
         subtitle = parts.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
