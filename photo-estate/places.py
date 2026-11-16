@@ -164,6 +164,8 @@ def cmd_run(a) -> None:
     # lookup are the slow parts), and EXIF offsets from exiftool's JSON (a big table): both are reused
     # for photos already in `places`, so a run costs about what the new photos cost. --full redoes all.
     current = tables_current(con)
+    step = lambda k, what: estate.progress(k, 5, what, every=1)   # for the setup page: the steps, not photos
+    step(1, "reading the library")
 
     def sel(t, cols):          # what the last run wrote, as far as it can still be read
         try:
@@ -200,6 +202,7 @@ def cmd_run(a) -> None:
     print(f"{len(rows)} assets, {len(fresh)} to place from scratch", flush=True)
 
     # --- place names and zones for everything with GPS
+    step(2, "naming places and time zones")
     A = []  # one dict per asset with a usable time
     gps = []
     for sha, taken, exif_taken, lat, lon, album in rows:
@@ -249,6 +252,7 @@ def cmd_run(a) -> None:
             r["tz"], r["tz_src"] = r["off"], "exif"
     print(f"  {len(gps)} with GPS ({len(todo_geo)} geocoded, {time.time() - t0:.1f}s)", flush=True)
 
+    step(3, "finding home, events and trips")
     # --- home per year: the ~10 km cell with photos on the most distinct days
     days: dict[int, dict[tuple, set]] = {}
     for r in gps:
@@ -384,6 +388,7 @@ def cmd_run(a) -> None:
         trip_rows.append((tid, t[0]["start"].isoformat(), t[-1]["end"].isoformat(), sum(e["n"] for e in t),
                           len(t), f"Trip to {label}", label))
 
+    step(4, "saving places, events and trips")
     # --- write: only the rows that differ from what is there (most of them, on a run with a few new
     # photos), so the cost follows what changed; the tables are recreated when their columns changed
     now = {
@@ -411,7 +416,7 @@ def cmd_run(a) -> None:
     changed = [sha for sha in after.keys() | before.keys() if after.get(sha) != before.get(sha)]
     print(f"  {len(ev_rows)} events, {len(trip_rows)} trips; {wrote} rows written;"
           f" updating search rows of {len(changed)} assets", flush=True)
-    estate.reindex(con, changed)
+    estate.reindex(con, changed, report=True)
     con.commit()
     src = Counter(r["tz_src"] for r in A)
     psrc = Counter(r["place_src"] for r in A)

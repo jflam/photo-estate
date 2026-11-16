@@ -256,6 +256,20 @@ def main():
         assert "1 result" in run(*D, "search", "olympic")
         run(*D, "link")   # idempotent
         assert q("SELECT count(*) FROM tags WHERE model='flickr'")[0] == 2
+        # The same photo arrives again from another folder (an import from the app links only that
+        # source): its Flickr title, album and place must survive, since every copy is merged again.
+        again = td / "onedrive-copy"
+        again.mkdir()
+        with zipfile.ZipFile(td / "data-download-1.zip") as z:
+            (again / "IMG_0001.jpg").write_bytes(z.read("sunset-at-rialto_12345678901_o.jpg"))
+        run(*D, "ingest", "--store", str(store), str(again))
+        out = run(*D, "link", "--source", "onedrive-copy", "--source", "nothing-by-this-name")
+        assert "progress " in out, out
+        desc, lat = q("SELECT a.description, a.lat FROM assets a JOIN occurrences o USING(sha256)"
+                      " WHERE o.source='onedrive-copy'")
+        assert desc == "Sunset at Rialto — Low tide & sea stacks" and abs(lat - 47.9208) < 1e-6, (desc, lat)
+        assert "1 result" in run(*D, "search", '"sea stacks"')
+        assert q("SELECT count(*) FROM tags WHERE model='flickr'")[0] == 2
 
         # exif: every asset read with exiftool; camera and exposure promoted and searchable
         if shutil.which("exiftool"):

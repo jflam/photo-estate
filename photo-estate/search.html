@@ -327,6 +327,7 @@ main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right
     <div class="pills" id="pills"></div>
     <div class="tools">
       <a class="round" id="peopleBtn" href="/people" style="display:none" title="Name the people in your photos" aria-label="Name people"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="5.4" r="2.6"/><path d="M2.8 13.6c.6-2.6 2.7-4 5.2-4s4.6 1.4 5.2 4"/></svg></a>
+      <a class="round" id="addBtn" href="/setup" style="display:none" title="Add photos from Google, Flickr or a folder" aria-label="Add photos"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg></a>
       <a class="round" id="statsBtn" href="/stats" title="Library info: size, counts and stats" aria-label="Library info"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 13V8M8 13V3M13 13V6"/></svg></a>
       <button class="round" id="viewBtn" aria-label="View options"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 5h5.5M11.5 5H14M2 11h2.5M8.5 11H14"/><circle cx="9.5" cy="5" r="1.9"/><circle cx="6.5" cy="11" r="1.9"/></svg></button>
     </div>
@@ -1371,6 +1372,7 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
   F = await getJSON("/api/info");                 // unfiltered counts double as the first facet state
   INFO = { ...F, months: F.months.length };
   if (INFO.faces) $("#peopleBtn").style.display = "";
+  if (!INFO.demo) $("#addBtn").style.display = "";   // the demo has no setup page
   S =fromParams(new URLSearchParams(location.search));
   $("#q").value = S.q;
   buildVocab(); buildTimeline(); renderTimeline();

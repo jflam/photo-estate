@@ -219,8 +219,60 @@ def _jpeg_size(path: str):
     return None
 
 
+def _has_photos(db: str | None, model: str) -> bool:
+    if not db or not Path(db).exists():
+        return False
+    try:
+        c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
+        try:
+            return c.execute("SELECT 1 FROM embeddings WHERE model=? AND vec IS NOT NULL LIMIT 1", (model,)).fetchone() is not None
+        finally:
+            c.close()
+    except sqlite3.Error:
+        return False
+
+
+def _library_or_setup(a) -> bool:
+    """Where the library is: --root, else --store with --db (as before), else the one chosen on the setup
+    page last time. With photos in it, fill in a.db/a.store and return True. Without (a first run), serve
+    the setup page instead (intake/server.py), which becomes the full app once the first photos are in;
+    return False when it stops."""
+    import atexit
+    import shutil
+    import tempfile
+    from intake.api import Library, saved_root
+    from intake.server import run_setup
+    explicit_db = a.db != "estate.db"
+    if a.sandbox and not a.root:   # practice: a scratch library, gone when the app stops
+        a.root = tempfile.mkdtemp(prefix="photo-estate-sandbox-")
+    if a.sandbox and Path(a.root).name.startswith("photo-estate-sandbox-"):
+        import signal
+        atexit.register(shutil.rmtree, a.root, ignore_errors=True)
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))   # stopped by a service manager: still clean up
+    root = Path(a.root).expanduser().resolve() if a.root else \
+        Path(a.db).resolve().parent if (a.store or explicit_db) else saved_root()
+    db = a.db if explicit_db or not root else str(root / "estate.db")
+    store = a.store or (str(root / "store") if root else None)
+    if root and _has_photos(db, a.model):
+        a.db, a.store, a.root = db, store, str(root)
+        return True
+    port = a.port or (8768 if a.sandbox else 8766)
+
+    def app_argv(lib: Library) -> list[str]:
+        argv = [sys.executable, str(Path(__file__).resolve()), "--db", lib.db, "--model", a.model,
+                "--threads", str(a.threads), "serve", "--root", str(lib.root), "--store", str(lib.store), "--port", str(port)]
+        return argv + (["--sandbox"] if a.sandbox else []) + (["--fast-cache", a.fast_cache] if a.fast_cache else [])
+
+    lib = Library(root, db, store, fixed=bool(a.root and not a.sandbox) or bool(a.store) or explicit_db,
+                  remember=not a.sandbox)
+    run_setup(lib, port, app_argv, practice=a.sandbox)
+    return False
+
+
 def cmd_serve(a) -> None:
     """The photo app: describe a photo and/or narrow by place, person, album, trip, camera and date."""
+    if not a.demo and not _library_or_setup(a):
+        return
     import gzip
     import hashlib
     import json
@@ -252,8 +304,6 @@ def cmd_serve(a) -> None:
         shutil.copyfile(demo / "estate.db", scratch / "estate.db")
         a.db, a.store, a.cache, a.fast_cache = str(scratch / "estate.db"), str(demo / "store"), None, None
         a.query_log = a.query_log or os.devnull
-    elif not a.store:
-        sys.exit("serve needs --store (or --demo)")
     store = Path(a.store)
     # Phone uploads land in a plain folder that `estate.py ingest` reads like any other source. The demo
     # takes none unless --inbox says where; otherwise the inbox sits beside the catalog.
@@ -1077,10 +1127,21 @@ def cmd_serve(a) -> None:
             except ValueError:
                 body = None
             try:
+                if intake and u.path.startswith("/api/intake"):
+                    return self.intake_route("POST", u, parse_qs(u.query), body)
                 if not self.people_page("POST", u, parse_qs(u.query), body):
                     self.send(404, b"not found", "text/plain")
             except (BrokenPipeError, ConnectionResetError):
                 pass
+
+        def intake_route(self, method: str, u, qs: dict, body):
+            """The setup page and its API (intake/api.py). Starting a job reads any folder on this computer,
+            so it takes the same permission as uploading (--upload-user)."""
+            from intake.server import is_local
+            if method == "POST" and not self.allowed():
+                return self.send(403, b'{"error":"not allowed"}', "application/json")
+            got = intake.handle(method, u.path, qs, body, is_local(self))
+            self.send(*(got or (404, b"not found", "text/plain")))
 
         def who(self) -> str:
             # `tailscale serve` adds the caller's identity; the app itself is bound to 127.0.0.1
@@ -1152,6 +1213,8 @@ def cmd_serve(a) -> None:
             qs = parse_qs(u.query)
             one = lambda k, d="": (qs.get(k) or [d])[0]
             try:
+                if intake and u.path.startswith(("/setup", "/api/intake")):
+                    return self.intake_route("GET", u, qs, None)
                 if self.people_page("GET", u, qs, None):
                     return
                 if u.path in ("/", "/index.html"):  # revalidated each load, so edits show up at once
@@ -1250,7 +1313,7 @@ def cmd_serve(a) -> None:
 
     def gated(fn):
         def run(self):
-            if self.path.startswith("/api/upload/"):   # a phone's upload touches none of the above, and can be slow
+            if self.path.startswith(("/api/upload/", "/api/intake", "/setup")):   # touch none of the above; can be slow
                 return fn(self)
             with gate:
                 return fn(self)
@@ -1322,6 +1385,22 @@ def cmd_serve(a) -> None:
         ingest.before_run = arrivals_prepared
         ingest.on_faces = lambda: has_faces and load_people()   # the run's faces are in: rebuild the People page
         threading.Thread(target=ingest.sweep, daemon=True).start()   # uploads left from before this start
+
+    # Bringing in more photos from the app (/setup): the engine first-run setup uses (intake/), here
+    # reloading the catalog when a job's photos are searchable, and the People page when its faces are in.
+    intake = None
+    if not a.demo:
+        from intake.api import IntakeAPI, Library
+        from intake.engine import Engine as IntakeEngine
+
+        def make_intake(lib):
+            e = IntakeEngine(lib.root, lib.db, lib.store, Path(__file__).resolve().parent, practice=bool(a.sandbox),
+                             on_ready=lambda jid: reload_catalog(),
+                             on_faces=lambda jid: (reload_catalog(), has_faces and load_people()))
+            e.start()
+            return e
+        intake = IntakeAPI(Library(Path(a.root or Path(a.db).resolve().parent), a.db, store, fixed=True), make_intake,
+                           setup_mode=False, practice=bool(a.sandbox))
 
     # --backup-dir: a copy of the catalog (and the face-label journal) every --backup-every hours, kept
     # --backup-keep deep. Done here, not by a separate job, because this process already has macOS's
@@ -1416,7 +1495,7 @@ def cmd_serve(a) -> None:
         request_queue_size = 256
         daemon_threads = True
 
-    port = a.port or (8767 if a.demo else 8766)
+    port = a.port or (8767 if a.demo else 8768 if a.sandbox else 8766)
     srv = Server(("127.0.0.1", port), Handler)
     print(f"Open http://127.0.0.1:{port}/  (Ctrl-C to stop)", flush=True)
     try:
@@ -1452,7 +1531,11 @@ def main() -> None:
     s.set_defaults(fn=cmd_search)
     sub.add_parser("stats").set_defaults(fn=cmd_stats)
     s = sub.add_parser("serve", help="local search page")
-    s.add_argument("--store", help="the photo store (required unless --demo)")
+    s.add_argument("--root", help="the library's folder: estate.db and store/ inside it (default: the one chosen on"
+                   " the setup page; with no library yet, the app opens the setup page)")
+    s.add_argument("--store", help="the photo store (default: <root>/store)")
+    s.add_argument("--sandbox", action="store_true",
+                   help="practise setting up: a scratch library and practice sources made from the demo photos (port 8768)")
     s.add_argument("--demo", action="store_true",
                    help="serve the ~100 public-domain photos in demo/ (--db, --store, --cache are ignored; nothing is logged)")
     s.add_argument("--port", type=int, help="default 8766, or 8767 with --demo so it can run beside the real one")
