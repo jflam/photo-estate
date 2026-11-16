@@ -327,6 +327,12 @@ extension Catalog {
         }) ?? []
     }
 
+    /// How many photos the plan selects, nothing hidden: what a heading's "of N" counts.
+    func count(_ plan: Plan) async -> Int {
+        let (sql, args) = plan.condition()
+        return (try? await store.read { try $0.one("SELECT count(*) FROM photos p WHERE \(sql)", args) { Int($0.int(0)) } ?? 0 }) ?? 0
+    }
+
     /// Counts per value of a facet under the plan; a facet ignores its own selection (people do not:
     /// choosing a second person means photos of them together).
     func counts(_ facet: Facet, _ plan: Plan) async -> [(value: String, count: Int)] {

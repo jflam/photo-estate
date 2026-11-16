@@ -99,7 +99,7 @@ final class LibraryModel: ObservableObject {
     private var next: Int?                        // where the server's ranked list continues
     private var matching = 0
     private var pending = 0                       // of those, on this iPhone only
-    private var total = 0                         // the whole library, nothing hidden: for "of N", browsing only
+    private var total = 0                         // what the question selects with nothing hidden: for "of N"
     private var loadingMore = false
 
     // MARK: changing the question
@@ -183,6 +183,7 @@ final class LibraryModel: ObservableObject {
                     tiles = page.photos.map(LibraryModel.tile)
                     next = page.next
                     matching = page.matching
+                    total = matching
                     plan.text = page.text; plan.names = page.names; plan.places = page.places
                     isRanked = true
                 } catch {
@@ -196,6 +197,7 @@ final class LibraryModel: ObservableObject {
                         note = "Offline: showing photos whose people, places, albums, captions or file names contain “\(plan.text)”. Finding photos by what's in them needs your server."
                     }
                     matching = tiles.count
+                    total = matching
                 }
             } else {
                 tiles = await Catalog.shared.tiles(plan, oldFirst: old, hideDups: hideDups, hideShots: hideShots)
@@ -204,9 +206,7 @@ final class LibraryModel: ObservableObject {
                 pending = mine.count
                 next = nil
                 matching = tiles.count
-                if q.isEmpty {
-                    total = await Catalog.shared.count() + LocalPhotos.shared.tiles(for: q).count
-                }
+                total = await Catalog.shared.count(plan) + LocalPhotos.shared.tiles(for: q).count
             }
             guard g == gen else { return }
             self.plan = plan
@@ -282,7 +282,11 @@ final class LibraryModel: ObservableObject {
     }
 
     private func describe(_ q: Query, _ plan: Plan, _ scope: Scope?) {
-        let n = "\(matching.formatted()) \(matching == 1 ? "photo" : "photos")"
+        // What the view options hide (near-identical shots, screenshots) is said, so a count never reads as less than there is.
+        let hidden = max(total - matching, 0)
+        let noun = { (k: Int) in k == 1 ? "photo" : "photos" }
+        let n = hidden > 0 ? "\(matching.formatted()) of \(total.formatted()) \(noun(total)) · \(hidden.formatted()) hidden"
+                           : "\(matching.formatted()) \(noun(matching))"
         let both = { (xs: [String], word: String) -> String in
             xs.count > 1 ? xs.dropLast().joined(separator: ", ") + " \(word) " + xs.last! : xs.first ?? ""
         }
@@ -308,8 +312,6 @@ final class LibraryModel: ObservableObject {
             title = bits.isEmpty ? (q.fav ? "Favourites" : "Photos") : bits.joined(separator: " · ")
             parts = [n] + (q.fav && !bits.isEmpty ? ["favourites"] : [])
         } else {
-            // What the view options hide (near-identical shots, screenshots), so the count adds up to the whole library.
-            let hidden = total - matching
             title = "Library"
             parts = hidden > 0 ? ["\(LibraryModel.about(matching)) of \(LibraryModel.about(total)) photos", "\(LibraryModel.about(hidden)) hidden"]
                                : ["\(LibraryModel.about(matching)) photos"]
