@@ -35,6 +35,10 @@ final class LibraryModel: ObservableObject {
     @Published var hideDups = UserDefaults.standard.object(forKey: "view.hideDups") as? Bool ?? true {
         didSet { UserDefaults.standard.set(hideDups, forKey: "view.hideDups"); reload(reset: false) }
     }
+    /// Browsing and filtering only: a described search ("boarding pass") still finds screenshots.
+    @Published var hideShots = UserDefaults.standard.object(forKey: "view.hideShots") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(hideShots, forKey: "view.hideShots"); reload(reset: false) }
+    }
     @Published var rowHeight = UserDefaults.standard.object(forKey: "view.rowHeight") as? Double ?? 128 {
         didSet { UserDefaults.standard.set(rowHeight, forKey: "view.rowHeight") }
     }
@@ -135,8 +139,8 @@ final class LibraryModel: ObservableObject {
                     matching = tiles.count
                 }
             } else {
-                tiles = await Catalog.shared.tiles(plan, oldFirst: old, hideDups: hideDups)
-                let mine = LocalPhotos.shared.tiles(for: q)        // on this iPhone, not yet on the server
+                tiles = await Catalog.shared.tiles(plan, oldFirst: old, hideDups: hideDups, hideShots: hideShots)
+                let mine = LocalPhotos.shared.tiles(for: q, hideShots: hideShots)        // on this iPhone, not yet on the server
                 tiles = mergeByTime(tiles, mine, oldFirst: old)
                 pending = mine.count
                 next = nil
