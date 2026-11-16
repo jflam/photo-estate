@@ -8,7 +8,10 @@ import UIKit
 /// The server's catalog knows a photo by the hash of its bytes, which the phone can't compute without
 /// exporting every original, so a photo here counts as already there when the catalog has one taken in
 /// the same second (UTC, give or take one), or at the same wall-clock time to the second for the photos
-/// whose time zone was never known. The catalog holds stills only, so videos are left out.
+/// whose time zone was never known. Failing that, when the catalog has a file of the same name taken
+/// within a day: Google's copy of a photo is often a few seconds (or a time zone) away from the time
+/// Photos keeps, and a name like IMG_8492 comes round again only every 10,000 photos. The catalog holds
+/// stills only, so videos are left out.
 ///
 /// Their tiles are named `local:<PHAsset localIdentifier>` instead of by hash, and their images come from
 /// Photos, not from the server.
@@ -26,7 +29,8 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
     }
 
     private var assets: [String: PHAsset] = [:]
-    private var known: (utc: Set<Int>, wall: Set<String>)?
+    private var screenshots: Set<String> = []     // tile names Photos tags as screenshots
+    private var known: Known?
     private var knownRevision = -1
     private var running: Task<Void, Never>?
     private var again = false
@@ -85,23 +89,87 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
         guard let known else { return }
         let found = await Task.detached(priority: .utility) { LocalPhotos.unmatched(known) }.value
         assets = Dictionary(found.map { ($0.localIdentifier, $0) }, uniquingKeysWith: { a, _ in a })
+        screenshots = Set(found.filter { $0.mediaSubtypes.contains(.photoScreenshot) }.map { LocalPhotos.prefix + $0.localIdentifier })
         let tiles = found.map(LocalPhotos.tile)
         if tiles != pending {
             pending = tiles
             revision += 1
         }
+        #if DEBUG
+        let utc = known.utc.sorted()
+        Task.detached(priority: .background) { LocalPhotos.report(found, utc) }
+        #endif
     }
 
-    /// When every catalogued photo was taken: as UTC seconds, and as wall-clock text for the ones with no zone.
-    private static func catalogTimes() async -> (utc: Set<Int>, wall: Set<String>) {
+    #if DEBUG
+    /// Debug builds: what each not-yet-uploaded photo is, in `pending.json` next to the catalog, to see
+    /// why it didn't match (`xcrun devicectl device copy from --domain-type appDataContainer ...`).
+    nonisolated private static func report(_ found: [PHAsset], _ utc: [Int]) {
+        let iso = ISO8601DateFormatter()
+        func nearest(_ s: Int) -> Int? {
+            var lo = 0, hi = utc.count
+            while lo < hi { let m = (lo + hi) / 2; if utc[m] < s { lo = m + 1 } else { hi = m } }
+            return [lo - 1, lo].filter { utc.indices.contains($0) }.map { utc[$0] - s }.min { abs($0) < abs($1) }
+        }
+        let rows: [[String: Any]] = found.map { a in
+            let rs = PHAssetResource.assetResources(for: a)
+            let s = Int((a.creationDate ?? .distantPast).timeIntervalSince1970.rounded(.down))
+            return [
+                "created": a.creationDate.map { iso.string(from: $0) } ?? "",
+                "modified": a.modificationDate.map { iso.string(from: $0) } ?? "",
+                "subtypes": a.mediaSubtypes.rawValue,
+                "source": a.sourceType.rawValue,
+                "burst": a.burstIdentifier != nil,
+                "size": "\(a.pixelWidth)x\(a.pixelHeight)",
+                "gps": a.location != nil,
+                "fav": a.isFavorite,
+                "hidden": a.isHidden,
+                "files": rs.map { "\($0.type.rawValue):\($0.originalFilename):\($0.uniformTypeIdentifier)" },
+                "nearestCatalogSeconds": nearest(s) as Any,
+            ]
+        }
+        let url = Catalog.folder.appendingPathComponent("pending.json")
+        if let data = try? JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted, .sortedKeys]) { try? data.write(to: url) }
+    }
+    #endif
+
+    /// When every catalogued photo was taken: as UTC seconds, as wall-clock text for the ones with no
+    /// zone, and by file name.
+    struct Known: Sendable {
+        var utc = Set<Int>()
+        var wall = Set<String>()
+        var names: [String: [Int]] = [:]       // "IMG_8492" -> when each file of that name was taken
+    }
+
+    private static func catalogTimes() async -> Known {
         (try? await Catalog.shared.store.read { db in
-            var utc = Set<Int>(), wall = Set<String>()
-            for (taken, local) in try db.query("SELECT taken, local FROM photos", [], { ($0.string(0), $0.string(1)) }) {
-                if let t = taken, let s = seconds(t) { utc.insert(s) } else if let t = taken { wall.insert(String(t.prefix(19))) }
-                if let l = local { wall.insert(String(l.prefix(19))) }
+            var k = Known()
+            for (taken, local, path) in try db.query("SELECT taken, local, path FROM photos", [], { ($0.string(0), $0.string(1), $0.string(2)) }) {
+                let s = taken.flatMap(seconds)
+                if let s { k.utc.insert(s) } else if let t = taken { k.wall.insert(String(t.prefix(19))) }
+                if let l = local { k.wall.insert(String(l.prefix(19))) }
+                if let path, let s = s ?? local.flatMap({ seconds($0 + "Z") }) {
+                    for n in stems(path) { k.names[n, default: []].append(s) }
+                }
             }
-            return (utc, wall)
-        }) ?? ([], [])
+            return k
+        }) ?? Known()
+    }
+
+    /// The names a catalogued file may have had on the phone: "…/IMG_8492.HEIC" as IMG_8492, with the
+    /// suffixes other copies add taken off: icloudpd's "_QVh2T0d", the uploader's "-3fa9c1b", Takeout's "(1)".
+    nonisolated static func stems(_ path: String) -> Set<String> {
+        var stem = ((path as NSString).lastPathComponent as NSString).deletingPathExtension.uppercased()
+        if stem.hasSuffix(")"), let open = stem.lastIndex(of: "("), stem[stem.index(after: open)...].dropLast().allSatisfy(\.isNumber) {
+            stem = String(stem[..<open])
+        }
+        var out: Set<String> = [stem]
+        for sep in ["_", "-"] {
+            if let r = stem.range(of: sep, options: .backwards), stem.distance(from: r.upperBound, to: stem.endIndex) == 7 {
+                out.insert(String(stem[..<r.lowerBound]))
+            }
+        }
+        return out
     }
 
     /// "2019-12-27T21:22:31+00:00" (or "Z") as seconds since 1970; nil without a zone.
@@ -139,7 +207,7 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
     }
 
     /// The still photos in the library that the catalog has no photo for, newest first.
-    nonisolated private static func unmatched(_ known: (utc: Set<Int>, wall: Set<String>)) -> [PHAsset] {
+    nonisolated private static func unmatched(_ known: Known) -> [PHAsset] {
         let opts = PHFetchOptions()
         opts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
         opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
@@ -156,7 +224,14 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
             if known.wall.contains(wall.string(from: d)) { return }
             out.append(a)
         }
-        return out
+        // Only the few left over: reading a photo's file name costs a lookup each.
+        return out.filter { a in
+            let s = Int(a.creationDate!.timeIntervalSince1970)
+            let rs = PHAssetResource.assetResources(for: a)
+            guard let name = (rs.first { $0.type == .photo } ?? rs.first)?.originalFilename else { return true }
+            let stem = (name as NSString).deletingPathExtension.uppercased()
+            return !(known.names[stem] ?? []).contains { abs($0 - s) <= 26 * 3600 }
+        }
     }
 
     private static let wallClock: DateFormatter = {
@@ -176,11 +251,12 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
 
     /// The pending tiles a question allows: only for browsing by time, favourites and dates (people,
     /// places and the rest are known only once the server has the photo).
-    func tiles(for q: Query) -> [Tile] {
+    func tiles(for q: Query, hideShots: Bool = false) -> [Tile] {
         guard show, allowed, q.text.isEmpty, q.similar == nil, q.event == nil, !q.picks.values.contains(where: { !$0.isEmpty }) else { return [] }
         let since = q.recent?.since
         return pending.filter { t in
             if q.fav && !t.fav { return false }
+            if hideShots && screenshots.contains(t.sha) { return false }
             if let since, t.when < since { return false }
             if q.from != nil || q.to != nil {
                 let ym = Catalog.monthNumber(t.when)

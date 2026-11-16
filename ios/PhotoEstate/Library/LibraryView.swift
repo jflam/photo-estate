@@ -1,13 +1,12 @@
 import SwiftUI
 
 /// The Library tab: every photo, newest first, including the ones on this iPhone the server doesn't
-/// have yet; the bar at the top narrows it to today, this week or this month. The photos run to the edges of the
+/// have yet; one bar at the top narrows it to today, this week or this month and holds the view options. The photos run to the edges of the
 /// screen and the heading leaves with them; the handle at the right edge says where you are.
 struct LibraryView: View {
     @ObservedObject var model: LibraryModel
     @EnvironmentObject private var router: Router
     @ObservedObject private var sync = SyncEngine.shared
-    @ObservedObject private var downloads = Downloader.shared
     @ObservedObject private var local = LocalPhotos.shared
     @State private var settings = false
     @State private var barHeight: CGFloat = 0
@@ -25,21 +24,10 @@ struct LibraryView: View {
                             if let r = model.query.recent { NothingRecent(recent: r) { model.query.recent = nil } } else { Welcome() }
                         }
                     }
-                RecentBar(model: model)
+                TopBar(model: model, settings: $settings)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { ViewMenu(model: model) }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { settings = true } label: {
-                        Image(systemName: !sync.online ? "wifi.slash" : sync.state == .syncing || downloads.running ? "arrow.down" : "iphone")
-                            .contentTransition(.symbolEffect(.replace))
-                            .foregroundStyle(sync.online ? Color.primary : Color.sun)
-                    }
-                    .accessibilityLabel("On this iPhone")
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
         }
         .sheet(isPresented: $settings) { ThisPhoneView() }
         .onAppear { local.start(); model.reload(reset: false) }
@@ -48,41 +36,70 @@ struct LibraryView: View {
     }
 }
 
+/// The Library's one row of controls, floating over the photos: how far back to look on the left,
+/// the view options and what is on this iPhone on the right.
+struct TopBar: View {
+    @ObservedObject var model: LibraryModel
+    @Binding var settings: Bool
+    @ObservedObject private var sync = SyncEngine.shared
+    @ObservedObject private var downloads = Downloader.shared
+
+    var body: some View {
+        HStack(spacing: 8) {
+            RecentPicker(model: model)
+            Spacer(minLength: 0)
+            HStack(spacing: 0) {
+                ViewMenu(model: model).frame(width: 42, height: 40)
+                Button { settings = true } label: {
+                    Image(systemName: !sync.online ? "wifi.slash" : sync.state == .syncing || downloads.running ? "arrow.down" : "iphone")
+                        .contentTransition(.symbolEffect(.replace))
+                        .foregroundStyle(sync.online ? Color.primary : Color.sun)
+                        .frame(width: 42, height: 40)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("On this iPhone")
+            }
+            .padding(.horizontal, 2)
+            .glassEffect(.regular.interactive(), in: .capsule)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+    }
+}
+
 /// All of it, or just the recent past: what was taken today, this week, this month.
-struct RecentBar: View {
+struct RecentPicker: View {
     @ObservedObject var model: LibraryModel
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    chip("All", nil)
-                    ForEach(Recent.allCases) { chip($0.title, $0) }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-            }
+        HStack(spacing: 0) {
+            segment("All", nil)
+            ForEach(Recent.allCases) { segment($0.short, $0) }
         }
-        .scrollClipDisabled()
+        .padding(3)
+        .glassEffect(.regular.interactive(), in: .capsule)
     }
 
-    private func chip(_ title: String, _ r: Recent?) -> some View {
+    private func segment(_ title: String, _ r: Recent?) -> some View {
         let on = model.query.recent == r
         return Button {
             guard !on else { return }
             Haptics.tick()
             var q = model.query
             q.recent = r
-            model.query = q
+            withAnimation(.snappy(duration: 0.2)) { model.query = q }
         } label: {
             Text(title)
                 .font(.subheadline.weight(.medium))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .frame(height: 34)
                 .foregroundStyle(on ? Color.black : Color.primary)
+                .background { if on { Capsule().fill(Color.sunLit) } }
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .glassEffect(on ? .regular.tint(.sunLit).interactive() : .regular.interactive(), in: .capsule)
+        .accessibilityLabel(r?.title ?? "All photos")
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
@@ -125,6 +142,7 @@ struct ViewMenu: View {
                 Label("Largest", systemImage: "rectangle.grid.1x2.fill").tag(Estate.densities[4])
             }
             Toggle("Hide near-identical shots", systemImage: "square.on.square.dashed", isOn: $model.hideDups)
+            Toggle("Hide screenshots", systemImage: "rectangle.portrait.slash", isOn: $model.hideShots)
             Toggle("Show photos not yet on the server", systemImage: "iphone", isOn: $local.show)
         } label: { Image(systemName: "line.3.horizontal.decrease").foregroundStyle(Color.primary) }
         .accessibilityLabel("View options")

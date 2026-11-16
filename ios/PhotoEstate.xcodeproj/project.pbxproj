@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		104D0D2555F23A39D05BFE35 /* Screenshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3178D012C22122C2DAE4CEF /* Screenshots.swift */; };
 		17B64E6F93B1E7DAEC732778 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18291ADB02AC4A348B6FEDDF /* SearchView.swift */; };
 		25D4464A43C536BDB69EFF31 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0EB3354475D6973BFC7E471 /* LibraryView.swift */; };
 		35CE5A370192488149A5A29B /* UploadRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49009F7D6AE27A66198655FD /* UploadRequest.swift */; };
@@ -92,6 +93,7 @@
 		C374A6ECFA2C13906E7BF025 /* FilterSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilterSheet.swift; sourceTree = "<group>"; };
 		D138D459277DE48E8CDA729B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D2D5A1D8D1E8B9DAE50D5508 /* UploadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadsView.swift; sourceTree = "<group>"; };
+		E3178D012C22122C2DAE4CEF /* Screenshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screenshots.swift; sourceTree = "<group>"; };
 		E6EA4B6B039BA595B76EF3D8 /* ExtensionStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionStatus.swift; sourceTree = "<group>"; };
 		FDFDD9520B743A0331D2FCF8 /* ForegroundUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundUploader.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -170,6 +172,7 @@
 			children = (
 				43179D06F85E6D49C954B2F5 /* Catalog.swift */,
 				9319148354993AA5F4B1F921 /* Query.swift */,
+				E3178D012C22122C2DAE4CEF /* Screenshots.swift */,
 				794AA7DFA9B8BAA96DBCB824 /* SQLite.swift */,
 				AB919F31F561BEE7CDE9A72C /* SyncEngine.swift */,
 			);
@@ -311,6 +314,7 @@
 				C767DF4E23F7FE4C51F17991 /* PhotoEstateApp.swift in Sources */,
 				82C1E09F51F7BA649B2D7294 /* Query.swift in Sources */,
 				CE22826852E92D840A7B1225 /* SQLite.swift in Sources */,
+				104D0D2555F23A39D05BFE35 /* Screenshots.swift in Sources */,
 				17B64E6F93B1E7DAEC732778 /* SearchView.swift in Sources */,
 				420D4563B4BB9ED664DE5655 /* Server.swift in Sources */,
 				3C6946841D1D482FE656E2D4 /* SyncEngine.swift in Sources */,

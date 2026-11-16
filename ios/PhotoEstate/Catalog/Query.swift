@@ -78,6 +78,15 @@ enum Recent: String, CaseIterable, Identifiable {
         }
     }
 
+    /// For the picker, where room is short.
+    var short: String {
+        switch self {
+        case .today: "Today"
+        case .week: "Week"
+        case .month: "Month"
+        }
+    }
+
     /// Where it starts, as a catalog time: local wall clock, "2026-11-09T00:00:00".
     var since: String {
         let cal = Calendar.current
@@ -347,10 +356,11 @@ struct Scope: Equatable {
 /// Answers from the phone's catalog.
 extension Catalog {
     /// Every photo the plan selects, in time order. `words`: also require these words (offline text search).
-    func tiles(_ plan: Plan, oldFirst: Bool, hideDups: Bool, words: String? = nil) async -> [Tile] {
+    func tiles(_ plan: Plan, oldFirst: Bool, hideDups: Bool, hideShots: Bool = false, words: String? = nil) async -> [Tile] {
         var (sql, args) = plan.condition()
         if let words { sql += " AND p.id IN (SELECT rowid FROM fts WHERE fts MATCH ?)"; args.append(words) }
         if hideDups { sql += " AND p.dup=0" }
+        if hideShots { sql += " AND NOT \(Screenshots.sql)" }
         let q = "SELECT p.sha, p.ar, p.whenk, p.city, p.fav FROM photos p WHERE \(sql) ORDER BY p.whenk='' , p.whenk \(oldFirst ? "ASC" : "DESC"), p.sha"
         return (try? await store.read { db in
             try db.query(q, args) { Tile(sha: $0.text(0), ar: Float($0.double(1)), when: $0.text(2), city: $0.string(3), fav: $0.bool(4)) }
