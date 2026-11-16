@@ -48,9 +48,9 @@ difference is the gap between instant and a long pause.
 
 | Caller | Scope |
 |---|---|
-| `link` | The whole index (`DELETE FROM search`, then everything) |
-| `exif` | The whole index |
-| `places run` | The whole index |
+| `link` | The whole index (`DELETE FROM search`, then everything); with `--source`, only the photos those sources brought in |
+| `exif` | The assets it just read (the whole index with `--force`) |
+| `places run` | The assets whose place, event or trip changed |
 | `tag` | One asset, after each captioned image |
 
 Re-indexing is cheap relative to the stages that call it, and calling it at the end of each stage
