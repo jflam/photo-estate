@@ -410,17 +410,21 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
     }
 }
 
-/// The big heading above the first photo: "Library", and how much is in it.
+/// The heading above the first photo: "Library", or what was asked ("white porsche"), and how much is
+/// in it. Only a little larger than a month's caption, so a long question wraps onto a second line
+/// instead of shrinking or being cut off.
 private final class HeadingView: UIView {
     private let title = UILabel(), detail = UILabel()
+    private let inset: CGFloat = 16, top: CGFloat = 12, gap: CGFloat = 3, bottom: CGFloat = 8
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        title.font = Estate.title(40, .bold)
-        title.adjustsFontSizeToFitWidth = true
-        title.minimumScaleFactor = 0.6
+        title.font = Estate.title(28, .bold)
+        title.numberOfLines = 2
+        title.lineBreakMode = .byTruncatingTail
         detail.font = .preferredFont(forTextStyle: .subheadline)
         detail.textColor = .secondaryLabel
+        detail.numberOfLines = 2
         addSubview(title)
         addSubview(detail)
         isHidden = true
@@ -438,11 +442,22 @@ private final class HeadingView: UIView {
         return true
     }
 
-    func height(for width: CGFloat) -> CGFloat { 104 }
+    private func sizes(_ width: CGFloat) -> (CGFloat, CGFloat) {
+        let w = max(width - inset * 2, 1)
+        let t = ceil(title.sizeThatFits(CGSize(width: w, height: .greatestFiniteMagnitude)).height)
+        let d = detail.text?.isEmpty ?? true ? 0 : ceil(detail.sizeThatFits(CGSize(width: w, height: .greatestFiniteMagnitude)).height)
+        return (t, d)
+    }
+
+    func height(for width: CGFloat) -> CGFloat {
+        let (t, d) = sizes(width)
+        return top + t + (d > 0 ? gap + d : 0) + bottom
+    }
 
     override func layoutSubviews() {
-        title.frame = CGRect(x: 16, y: 16, width: bounds.width - 32, height: 48)
-        detail.frame = CGRect(x: 17, y: 66, width: bounds.width - 34, height: 20)
+        let (t, d) = sizes(bounds.width)
+        title.frame = CGRect(x: inset, y: top, width: bounds.width - inset * 2, height: t)
+        detail.frame = CGRect(x: inset + 1, y: top + t + gap, width: bounds.width - inset * 2 - 2, height: d)
     }
 }
 
