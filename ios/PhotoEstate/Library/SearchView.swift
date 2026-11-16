@@ -39,6 +39,7 @@ struct SearchView: View {
         }
         .onAppear { model.reload(reset: false) }
         .onChange(of: sync.revision) { _, _ in model.catalogChanged() }
+        .onChange(of: LocalPhotos.shared.revision) { _, _ in model.catalogChanged() }
     }
 
     private func submit() {

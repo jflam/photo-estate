@@ -51,7 +51,8 @@ struct ViewerScreen: View {
             Spacer()
             VStack(spacing: 3) {
                 Text(Dates.long(tile.when)).font(.title(17))
-                Text([Dates.clock(tile.when), tile.city?.split(separator: ",").first.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: "  ·  "))
+                Text([Dates.clock(tile.when), tile.city?.split(separator: ",").first.map(String.init) ?? "", tile.isLocal ? "Not yet on the server" : ""]
+                        .filter { !$0.isEmpty }.joined(separator: "  ·  "))
                     .font(.caption).opacity(0.75)
             }
             .multilineTextAlignment(.center)
@@ -71,9 +72,11 @@ struct ViewerScreen: View {
         HStack(spacing: 4) {
             action(sharing ? "ellipsis" : "square.and.arrow.up", "Share") { share() }
             action("info.circle", "Details") { info = photo }
-            action("sparkles", "More like this") {
-                session.close()
-                route(Query(similar: tile.sha))
+            if !tile.isLocal {        // comparing looks needs the server to have seen the photo
+                action("sparkles", "More like this") {
+                    session.close()
+                    route(Query(similar: tile.sha))
+                }
             }
         }
         .padding(.horizontal, 6)
@@ -100,9 +103,10 @@ struct ViewerScreen: View {
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("share-\(sha.prefix(8))", isDirectory: true)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             var file: URL?
+            if tile.isLocal { file = await LocalPhotos.shared.original(sha) }
             var req = URLRequest(url: Server.baseURL.appendingPathComponent("original/\(sha)"))
             req.timeoutInterval = 20
-            if let (tmp, resp) = try? await URLSession.shared.download(for: req), (resp as? HTTPURLResponse)?.statusCode == 200 {
+            if file == nil, !tile.isLocal, let (tmp, resp) = try? await URLSession.shared.download(for: req), (resp as? HTTPURLResponse)?.statusCode == 200 {
                 let dest = dir.appendingPathComponent(name)
                 try? FileManager.default.removeItem(at: dest)
                 if (try? FileManager.default.moveItem(at: tmp, to: dest)) != nil { file = dest }
@@ -144,6 +148,10 @@ struct InfoView: View {
                     Text([Dates.clock(photo.when), photo.tz ?? ""].filter { !$0.isEmpty }.joined(separator: "  ·  "))
                         .font(.subheadline).foregroundStyle(.secondary)
                     if let d = photo.desc { Text(d).font(.callout).italic().foregroundStyle(.secondary).padding(.top, 6) }
+                    if LocalPhotos.id(photo.sha) != nil {
+                        Label("On this iPhone, not yet on your server. Places, people and the rest come once it is.", systemImage: "arrow.up.circle")
+                            .font(.footnote).foregroundStyle(.secondary).padding(.top, 6)
+                    }
                 }
                 if photo.place != nil || photo.lat != nil { place }
                 if photo.event != nil || photo.trip != nil {

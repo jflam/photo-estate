@@ -103,6 +103,11 @@ final class ImageStore {
 
     func thumb(_ sha: String) async -> UIImage? {
         if let i = ready(sha) { return i }
+        if LocalPhotos.id(sha) != nil {          // not on the server yet: from Photos
+            guard let image = await LocalPhotos.shared.image(sha, px: 360) else { return nil }
+            remember(sha, image)
+            return image
+        }
         var data = await thumbData(sha, network: false)
         if data == nil {            // not on the phone: ask the server, unless the grid has already scrolled past
             try? await Task.sleep(for: .milliseconds(60))
@@ -116,6 +121,7 @@ final class ImageStore {
 
     /// The JPEG: from the phone if it is here, else from the server (and then kept).
     func thumbData(_ sha: String, network: Bool = true) async -> Data? {
+        if LocalPhotos.id(sha) != nil { return nil }
         if let d = try? await thumbs.read({ try $0.one("SELECT data FROM thumbs WHERE sha=?", [sha]) { $0.data(0) } ?? nil }) { return d }
         guard network else { return nil }
         return await inflight.data(sha) {
@@ -140,6 +146,7 @@ final class ImageStore {
     /// The file for a full-screen image: kept from before, else fetched and kept. Nil when it is not on
     /// the phone and the server cannot be reached.
     func fetch(_ kind: ImageKind, _ sha: String, touch: Bool = true) async -> URL? {
+        if LocalPhotos.id(sha) != nil { return nil }     // Photos keeps those; nothing to fetch or keep
         let url = file(kind, sha)
         if FileManager.default.fileExists(atPath: url.path) {
             if touch { try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path) }
@@ -153,6 +160,7 @@ final class ImageStore {
     }
 
     func image(_ kind: ImageKind, _ sha: String) async -> UIImage? {
+        if LocalPhotos.id(sha) != nil { return await LocalPhotos.shared.image(sha, px: kind == .large ? 4096 : 1600) }
         guard let url = await fetch(kind, sha) else { return nil }
         return await Task.detached(priority: .userInitiated) { UIImage(contentsOfFile: url.path)?.preparingForDisplay() }.value
     }

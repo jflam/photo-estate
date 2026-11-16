@@ -10,6 +10,7 @@
 		17B64E6F93B1E7DAEC732778 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18291ADB02AC4A348B6FEDDF /* SearchView.swift */; };
 		25D4464A43C536BDB69EFF31 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0EB3354475D6973BFC7E471 /* LibraryView.swift */; };
 		35CE5A370192488149A5A29B /* UploadRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49009F7D6AE27A66198655FD /* UploadRequest.swift */; };
+		3A4612C0B97ADFF30F846267 /* LocalPhotos.swift in Sources */ = {isa = PBXBuildFile; fileRef = 911D864538DA2625F4E7F118 /* LocalPhotos.swift */; };
 		3C6946841D1D482FE656E2D4 /* SyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB919F31F561BEE7CDE9A72C /* SyncEngine.swift */; };
 		420D4563B4BB9ED664DE5655 /* Server.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AC0AD60359A2604EDC11F72 /* Server.swift */; };
 		4BDEA1990B788F2480481668 /* Catalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43179D06F85E6D49C954B2F5 /* Catalog.swift */; };
@@ -80,6 +81,7 @@
 		7AC0AD60359A2604EDC11F72 /* Server.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Server.swift; sourceTree = "<group>"; };
 		8218B37C6A0A15C579ABC4AE /* PhotoEstate.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PhotoEstate.entitlements; sourceTree = "<group>"; };
 		865653000E3BF15481C90F6C /* Grid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Grid.swift; sourceTree = "<group>"; };
+		911D864538DA2625F4E7F118 /* LocalPhotos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPhotos.swift; sourceTree = "<group>"; };
 		9319148354993AA5F4B1F921 /* Query.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Query.swift; sourceTree = "<group>"; };
 		9A7D1C8FD4E917F7BA7F1D67 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A21B86D5141AD45EB40AB504 /* PhotoEstate.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PhotoEstate.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -181,6 +183,7 @@
 				865653000E3BF15481C90F6C /* Grid.swift */,
 				6CC1686A083A42F8A7A48D56 /* LibraryModel.swift */,
 				B0EB3354475D6973BFC7E471 /* LibraryView.swift */,
+				911D864538DA2625F4E7F118 /* LocalPhotos.swift */,
 				18291ADB02AC4A348B6FEDDF /* SearchView.swift */,
 				1E355F1F7B58B55F09E276FB /* Viewer.swift */,
 			);
@@ -304,6 +307,7 @@
 				64CBB718E0FE9E8F498EE98D /* ImageStore.swift in Sources */,
 				CABB699FEF48F48D7B72E8A1 /* LibraryModel.swift in Sources */,
 				25D4464A43C536BDB69EFF31 /* LibraryView.swift in Sources */,
+				3A4612C0B97ADFF30F846267 /* LocalPhotos.swift in Sources */,
 				C767DF4E23F7FE4C51F17991 /* PhotoEstateApp.swift in Sources */,
 				82C1E09F51F7BA649B2D7294 /* Query.swift in Sources */,
 				CE22826852E92D840A7B1225 /* SQLite.swift in Sources */,

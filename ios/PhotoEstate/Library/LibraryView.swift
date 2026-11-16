@@ -1,44 +1,112 @@
 import SwiftUI
 
-/// The Library tab: every photo, newest first, and nothing else. The photos run to the edges of the
+/// The Library tab: every photo, newest first, including the ones on this iPhone the server doesn't
+/// have yet; the bar at the top narrows it to today, this week or this month. The photos run to the edges of the
 /// screen and the heading leaves with them; the handle at the right edge says where you are.
 struct LibraryView: View {
     @ObservedObject var model: LibraryModel
     @EnvironmentObject private var router: Router
     @ObservedObject private var sync = SyncEngine.shared
     @ObservedObject private var downloads = Downloader.shared
+    @ObservedObject private var local = LocalPhotos.shared
     @State private var settings = false
+    @State private var barHeight: CGFloat = 0
 
     var body: some View {
         NavigationStack {
-            GridView(data: model.grid, rowHeight: model.rowHeight, title: "Library", subtitle: model.subtitle,
-                     onRefresh: { ImageStore.shared.retryNetwork(); await sync.sync() },
-                     onRowHeight: { model.rowHeight = $0 },
-                     viewer: { session in AnyView(ViewerScreen(session: session, model: model, route: router.find)) })
-                .ignoresSafeArea()
-                .overlay { if model.grid.tiles.isEmpty && !model.loading { Welcome() } }
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) { ViewMenu(model: model) }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { settings = true } label: {
-                            Image(systemName: !sync.online ? "wifi.slash" : sync.state == .syncing || downloads.running ? "arrow.down" : "iphone")
-                                .contentTransition(.symbolEffect(.replace))
-                                .foregroundStyle(sync.online ? Color.primary : Color.sun)
+            ZStack(alignment: .top) {
+                GridView(data: model.grid, rowHeight: model.rowHeight, title: model.title, subtitle: model.subtitle, topInset: barHeight,
+                         onRefresh: { ImageStore.shared.retryNetwork(); await sync.sync(); local.refresh() },
+                         onRowHeight: { model.rowHeight = $0 },
+                         viewer: { session in AnyView(ViewerScreen(session: session, model: model, route: router.find)) })
+                    .ignoresSafeArea()
+                    .overlay {
+                        if model.grid.tiles.isEmpty && !model.loading {
+                            if let r = model.query.recent { NothingRecent(recent: r) { model.query.recent = nil } } else { Welcome() }
                         }
-                        .accessibilityLabel("On this iPhone")
                     }
+                RecentBar(model: model)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { ViewMenu(model: model) }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { settings = true } label: {
+                        Image(systemName: !sync.online ? "wifi.slash" : sync.state == .syncing || downloads.running ? "arrow.down" : "iphone")
+                            .contentTransition(.symbolEffect(.replace))
+                            .foregroundStyle(sync.online ? Color.primary : Color.sun)
+                    }
+                    .accessibilityLabel("On this iPhone")
                 }
+            }
         }
         .sheet(isPresented: $settings) { ThisPhoneView() }
-        .onAppear { model.reload(reset: false) }
-        .onChange(of: sync.revision) { _, _ in model.catalogChanged() }
+        .onAppear { local.start(); model.reload(reset: false) }
+        .onChange(of: sync.revision) { _, _ in local.refresh(); model.catalogChanged() }
+        .onChange(of: local.revision) { _, _ in model.catalogChanged() }
+    }
+}
+
+/// All of it, or just the recent past: what was taken today, this week, this month.
+struct RecentBar: View {
+    @ObservedObject var model: LibraryModel
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    chip("All", nil)
+                    ForEach(Recent.allCases) { chip($0.title, $0) }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+            }
+        }
+        .scrollClipDisabled()
+    }
+
+    private func chip(_ title: String, _ r: Recent?) -> some View {
+        let on = model.query.recent == r
+        return Button {
+            guard !on else { return }
+            Haptics.tick()
+            var q = model.query
+            q.recent = r
+            model.query = q
+        } label: {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .foregroundStyle(on ? Color.black : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(on ? .regular.tint(.sunLit).interactive() : .regular.interactive(), in: .capsule)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+/// Nothing taken in the stretch asked for.
+struct NothingRecent: View {
+    let recent: Recent
+    var all: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            EstateMark(progress: 0.1).frame(width: 110).opacity(0.5)
+            Text(recent == .today ? "No photos today yet" : "No photos \(recent.title.lowercased()) yet").font(.title(22, .bold))
+            Button("Show all photos", action: all).buttonStyle(.glass).padding(.top, 4)
+        }
+        .padding(36)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 /// Order, size and near-identical shots: how a list of photos is laid out.
 struct ViewMenu: View {
     @ObservedObject var model: LibraryModel
+    @ObservedObject private var local = LocalPhotos.shared
 
     var body: some View {
         Menu {
@@ -57,6 +125,7 @@ struct ViewMenu: View {
                 Label("Largest", systemImage: "rectangle.grid.1x2.fill").tag(Estate.densities[4])
             }
             Toggle("Hide near-identical shots", systemImage: "square.on.square.dashed", isOn: $model.hideDups)
+            Toggle("Show photos not yet on the server", systemImage: "iphone", isOn: $local.show)
         } label: { Image(systemName: "line.3.horizontal.decrease").foregroundStyle(Color.primary) }
         .accessibilityLabel("View options")
     }

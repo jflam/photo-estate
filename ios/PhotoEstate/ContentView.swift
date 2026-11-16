@@ -23,6 +23,8 @@ struct ContentView: View {
                 ImageStore.shared.retryNetwork()
                 await SyncEngine.shared.sync()
                 Downloader.shared.restart()
+                LocalPhotos.shared.refresh()
+                if router.library.query.recent != nil { router.library.catalogChanged() }   // "today" may be a new day
             }
         }
     }
