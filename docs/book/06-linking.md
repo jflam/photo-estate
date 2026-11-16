@@ -173,8 +173,8 @@ Details that matter:
   coordinate counts only if `latitude` or `longitude` is non-zero.
 - **People and favourites are unioned**, because "someone said this photo has Alice in it" is a
   statement that stays true however many other copies exist.
-- **Flickr tags are rebuilt** on every link: `DELETE FROM tags WHERE model='flickr'` then re-insert,
-  which is what makes the whole step idempotent (the test asserts that running `link` twice leaves
+- **Flickr tags are rebuilt** on every whole-library link: `DELETE FROM tags WHERE model='flickr'`
+  then re-insert (a `--source` run replaces only the touched photos' rows), which is what makes the step idempotent (the test asserts that running `link` twice leaves
   exactly two Flickr tag rows).
 - **The Flickr description** is built by `flickr_text`: strip HTML tags, unescape entities (`&amp;`
   → `&`), collapse whitespace, drop a title that looks like a filename (`FILENAME_TITLE`), and
@@ -199,7 +199,26 @@ re.search(rf"<{tag}>([^<]+)</{tag}>", text)
 This is deliberate. `icloudpd` writes a *flat* XMP with one element per field, so a regular
 expression per tag is enough, and avoids pulling in an XML library for four fields.
 
+## Linking only what just came in
+
+A plain `link` re-matches every occurrence in the library and rebuilds the whole text index. That is
+the simple, always-correct choice for a first import, but its cost follows the size of the library:
+after the 15,856-file OneDrive import on the Mac mini (135k photos, catalog on a USB hard disk) it
+took 42 minutes, almost all of it random reads.
+
+`link --source NAME` (repeatable; `NAME` is what `ingest` called the source: the folder's or zip's own
+name) limits the work to the photos those sources brought in. It does not stop at those sources'
+own files: **every copy of those photos, from any source, is matched again**, because an asset's
+metadata is merged from all its copies, and merging from the new copy alone would drop what another
+service said (the Flickr title of a photo that has just arrived again from OneDrive, say). Flickr's
+records are read in both modes, and only the touched photos' search rows are rebuilt.
+`ingest-iphone.sh` ([chapter 24](24-uploading.md)) and the setup page's intake jobs both link this way;
+the test in `test_poc.py` re-imports a Flickr photo from a plain folder and checks its title and place survive.
+
 ## What `link` prints
+
+While it works, `progress N of M: what` lines for the setup page, one phase at a time (matching each
+photo with its details, saving dates, places and albums, updating search). At the end:
 
 ```
 linked 11/11 occurrences to sidecars (0 Live Photo clips via their still, 2 Flickr photos);

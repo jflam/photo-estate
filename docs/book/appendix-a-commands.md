@@ -12,7 +12,7 @@ uv run estate.py [--db estate.db] <command> [options]
 | Command | Arguments and options | Purpose | Chapter |
 |---|---|---|---|
 | `ingest` | `sources...` (zips or folders); `--store DIR` (**required**); `--force` re-scan sources already ingested; `--delete-after` delete each zip once ingested | Hash and store media; record occurrences, sidecars, XMP, Flickr JSON | [4](04-store-and-ingest.md) |
-| `link` | none | Match sidecars to media; merge dates, GPS, people, favourites, albums; rebuild the text index | [6](06-linking.md) |
+| `link` | `--source NAME` (repeatable): only the photos those sources brought in, and every other copy of them; the name is the folder or zip `ingest` read | Match sidecars to media; merge dates, GPS, people, favourites, albums; rebuild the text index (only the touched photos' rows with `--source`); prints `progress N of M: what` | [6](06-linking.md) |
 | `exif` | `--store DIR` (**required**); `--workers N` (default: half the CPUs); `--batch 200`; `--limit 0` (all); `--force` | Read all metadata with `exiftool`; promote camera, lens, exposure | [7](07-places-events-trips.md) |
 | `dupes` | `--threshold 5` max dHash Hamming distance; `--limit 20`; `--json FILE` | Exact and near-duplicate report | [8](08-duplicates.md) |
 | `review` | `--store DIR` (**required**); `--threshold 5`; `--port 8765`; `--out DIR` (default `<db dir>/review`) | Local page to choose which near-duplicates to keep (records choices only) | [8](08-duplicates.md) |

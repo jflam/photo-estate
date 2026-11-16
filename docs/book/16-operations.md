@@ -61,7 +61,10 @@ ROOT/                                  e.g. /Volumes/estate
 
 The app can do all of this itself. `uv run embed.py serve` with no library shows a setup page that
 asks where the library should live and where the photos are now, then runs the stages below as one
-*intake job* per source, showing progress, and opens the library when the first photos are searchable.
+*intake job* per source and opens the library when the first photos are searchable. A job shows
+which of its seven steps it is on ("Step 2 of 7 · Copying them into your library · 9,100 of 15,856"),
+names them all, and marks the one after which photos are searchable; a step that can't count says how
+long it has been running. Its `link` covers only what the job brought in (`--source`, [chapter 6](06-linking.md)).
 Jobs are kept in `intake.db` beside the catalog and resume from their stage after a restart; the
 setup page stays at `/setup` (the **+** in the library's header) for adding sources later. The code
 is in `intake/`, and [INTAKE-PLAN.md](../../photo-estate/INTAKE-PLAN.md) explains how sources plug in.
@@ -90,9 +93,9 @@ timezone offsets exif extracts). Every stage can be run again at any time and do
 |---|---|---|
 | Acquire | Your network | 428 GiB: about 2 h at 500 Mbit/s, 10 h at 100 Mbit/s; ingest overlaps |
 | `ingest` | The store's disk (hashing every byte) | Disk speed, 150-200 MB/s on USB HDD |
-| `link` | CPU | Minutes |
+| `link` | The catalog's disk | Minutes on an SSD. On the Mac mini's USB hard disk a whole-library `link` took 42 min at 135k photos; with `--source` it follows the size of the import |
 | `exif` | `exiftool` | Per-file; progress and ETA are printed |
-| `places run` | CPU | **Seconds** |
+| `places run` | CPU, then the catalog's disk | Seconds on a laptop for a small library; about 10 min on the Mac mini at 135k photos |
 | `embed run` | CPU (the model) | About 6.8 img/s measured on a laptop: roughly 4-6 hours (PLAN.md says ~4 h for ~99k images; TAGGING-RESEARCH.md measured ~6 h) |
 | `faces run` | CPU | "About as fast as the SigLIP pass" |
 | `serve` startup | Disk reads of the catalog | 9-17 s on the Mac mini with a USB HDD; 2.4-2.8 s on a laptop SSD |
@@ -102,7 +105,9 @@ timezone offsets exif extracts). Every stage can be run again at any time and do
 New photos are a cheap increment: run **ingest → link → exif → places → embed** again (and `faces`).
 Each does only new work. For Google, request a Takeout of just the newest "Photos from YYYY" folder
 and use `PATTERN` to pick up the new zips; for iCloud, re-run `pull-icloud.sh` (the mirror makes it
-incremental). For imports run by hand, restart the app to load the new photos.
+incremental). By hand, `link --source <folder or zip name>` keeps `link` to the new photos, and the
+app needs a restart to load them. An import from the setup page (**+**) does all of this and reloads
+the app's catalog in place.
 
 **Phone uploads need none of this** ([chapter 24](24-uploading.md)). The phone tags each file with the batch it belongs to and how
 many files that batch has (`X-Batch: <id>/<count>`), so when the last one is in, the app starts
