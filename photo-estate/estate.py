@@ -276,6 +276,7 @@ def cmd_ingest(a) -> None:
     store = Path(a.store)
     (store / ".tmp").mkdir(parents=True, exist_ok=True)
     con = connect(a.db)
+    done_before = 0           # photos and videos read from the sources before this one (for --progress)
     for src in map(Path, a.sources):
         name = src.name
         row = con.execute("SELECT finished_at FROM sources WHERE name=?", (name,)).fetchone()
@@ -298,6 +299,8 @@ def cmd_ingest(a) -> None:
             if not kind:
                 continue
             st["media"] += 1
+            if a.progress and st["media"] % 25 == 0:   # for the setup page (intake/engine.py)
+                print(f"progress {done_before + st['media']}", flush=True)
             if con.execute("SELECT 1 FROM occurrences WHERE source=? AND path=?",
                            (name, path)).fetchone():
                 continue  # resuming an interrupted run
@@ -331,6 +334,7 @@ def cmd_ingest(a) -> None:
         con.execute("INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?,?,?)",
                     (name, st["entries"], st["media"], st["new"], st["seen"], st["new_bytes"], now()))
         con.commit()
+        done_before += st["media"]
         dt = max(time.time() - t0, 1e-6)
         print(f"{name}: {st['entries']} entries, {st['media']} media -> {st['new']} new, "
               f"{st['dup']} exact dups, {st['sidecars']} sidecars, "
@@ -392,39 +396,40 @@ def match_sidecar(fn: str, idx: SidecarIndex) -> int | None:
 def cmd_link(a) -> None:
     """Match sidecars and merge their metadata onto assets.
 
-    With --source NAME only that source's occurrences (and the assets they point at) are touched, and
-    only their search rows are rebuilt: the cost follows the size of the source, not of the library.
-    Flickr data is not consulted in that mode."""
+    With --source NAME (repeatable) only the photos those sources brought in are touched: every copy
+    of them, from any source, is matched again (their metadata is merged from all their copies), and only
+    their search rows are rebuilt. The cost follows the size of the sources, not of the library."""
     con = connect(a.db)
-    scoped = bool(a.source)
+    sources = a.source or []
+    scoped = bool(sources)
     if scoped:
-        occ_where = "WHERE source=?"
-        occ_args = (a.source,)
         con.execute("DROP TABLE IF EXISTS temp.touched")
         con.execute("CREATE TEMP TABLE touched(sha256 TEXT PRIMARY KEY)")
-        con.execute("INSERT OR IGNORE INTO touched SELECT sha256 FROM occurrences WHERE source=?", occ_args)
-        dirs = [r[0] for r in con.execute("SELECT DISTINCT dir FROM occurrences WHERE source=?", occ_args)]
+        con.execute("INSERT OR IGNORE INTO touched SELECT sha256 FROM occurrences WHERE source IN (%s)"
+                    % ",".join("?" * len(sources)), sources)
+        occ_where, occ_args = "WHERE sha256 IN (SELECT sha256 FROM touched)", ()
+        dirs = [r[0] for r in con.execute(f"SELECT DISTINCT dir FROM occurrences {occ_where}")]
         sc_rows = (r for i in range(0, len(dirs), 500) for r in con.execute(
             "SELECT id, dir, filename, title FROM sidecars WHERE dir IN (%s) ORDER BY id"
             % ",".join("?" * len(dirs[i:i + 500])), dirs[i:i + 500]))
         dirset = set(dirs)
         albums = {d: t for d, t in con.execute("SELECT dir, title FROM albums") if d in dirset}
-        flickr = {}
         touch_join = " JOIN touched t ON t.sha256 = o.sha256"
     else:
         occ_where, occ_args = "", ()
         sc_rows = con.execute("SELECT id, dir, filename, title FROM sidecars ORDER BY id")
         albums = dict(con.execute("SELECT dir, title FROM albums"))
-        flickr = {fid: json.loads(raw) for fid, raw in con.execute("SELECT id, data FROM flickr")}
         touch_join = ""
+    flickr = {fid: json.loads(raw) for fid, raw in con.execute("SELECT id, data FROM flickr")}
     side: dict[str, SidecarIndex] = {}
     for sid, d, fn, title in sc_rows:
         s, n = split_dupn(fn[:-5])
         side.setdefault(d, SidecarIndex()).add(sid, s, n, title)
     matched = total = live = 0
     pending, by_stem, flickr_hits = [], {}, {}
-    for oid, sha, d, fn in con.execute(
-            f"SELECT id, sha256, dir, filename FROM occurrences {occ_where}", occ_args).fetchall():
+    occ = con.execute(f"SELECT id, sha256, dir, filename FROM occurrences {occ_where}", occ_args).fetchall()
+    for i, (oid, sha, d, fn) in enumerate(occ, 1):
+        progress(i, len(occ), "matching each photo with its details", every=2000)
         sid = match_sidecar(fn, side.get(d, EMPTY_INDEX))
         album = albums.get(d) or default_album(d)
         fl = flickr_for(fn, flickr) if sid is None else None
@@ -506,12 +511,13 @@ def cmd_link(a) -> None:
                     (sha, "flickr", None, json.dumps(tags),
                      json.dumps({"id": m["id"], "photopage": m.get("photopage"), "privacy": m.get("privacy")}),
                      0, now()))
-    for sha, acc in merged.items():
+    for i, (sha, acc) in enumerate(merged.items(), 1):
+        progress(i, len(merged), "saving dates, places and albums", every=2000)
         con.execute("UPDATE assets SET taken_at=coalesce(?, exif_taken_at, ?), lat=?, lon=?,"
                     " description=?, people=?, favorited=? WHERE sha256=?",
                     (acc.get("taken"), acc.get("fallback_taken"), acc.get("lat"), acc.get("lon"),
                      acc.get("desc"), ", ".join(sorted(acc["people"])) or None, acc["fav"], sha))
-    reindex(con, [r[0] for r in con.execute("SELECT sha256 FROM touched")] if scoped else None)
+    reindex(con, [r[0] for r in con.execute("SELECT sha256 FROM touched")] if scoped else None, report=True)
     con.commit()
     print(f"linked {matched}/{total} occurrences to sidecars ({live} Live Photo clips via their still,"
           f" {len(flickr_hits)} Flickr photos); metadata merged onto {len(merged)} assets")
@@ -648,7 +654,7 @@ def cmd_exif(a) -> None:
             dt = time.time() - t0
             print(f"{time.strftime('%H:%M:%S')} {n}/{len(todo)} {n / dt:.0f} files/s,"
                   f" ~{(len(todo) - n) / max(n / dt, 1e-6) / 60:.0f} min left", flush=True)
-    reindex(con, [sha for sha, _ in todo] if not a.force else None)
+    reindex(con, [sha for sha, _ in todo] if not a.force else None, report=True)
     con.commit()
     print(f"done: {n} assets in {(time.time() - t0) / 60:.1f} min, {cams} with a camera name")
     if a.after_rowid is not None:
@@ -658,9 +664,16 @@ def cmd_exif(a) -> None:
         print(f"  {c:7}  {cam}")
 
 
-def reindex(con, shas: list[str] | None = None) -> None:
+def progress(done: int, total: int, what: str, every: int = 1000) -> None:
+    """A `progress N of M: what` line for the setup page (intake/engine.py), every `every` items and at the end."""
+    if total and (done % every == 0 or done == total):
+        print(f"progress {done} of {total}: {what}", flush=True)
+
+
+def reindex(con, shas: list[str] | None = None, report: bool = False) -> None:
     """Rebuild full-text search rows. The FTS row id is the asset's rowid, so deleting one asset's
-    row is a direct lookup (sha256 is UNINDEXED in FTS5; deleting by it scans the whole table)."""
+    row is a direct lookup (sha256 is UNINDEXED in FTS5; deleting by it scans the whole table).
+    With report, print progress lines (a whole-library rebuild takes minutes on a hard disk)."""
     if shas is not None:
         rows = []
         for i in range(0, len(shas), 500):
@@ -670,7 +683,9 @@ def reindex(con, shas: list[str] | None = None) -> None:
     else:
         con.execute("DELETE FROM search")
         rows = con.execute("SELECT rowid, sha256, description, people FROM assets").fetchall()
-    for rid, sha, desc, people in rows:
+    for i, (rid, sha, desc, people) in enumerate(rows, 1):
+        if report:
+            progress(i, len(rows), "updating search")
         parts = [desc or "", people or ""]
         for fn, album in con.execute("SELECT filename, album FROM occurrences WHERE sha256=?", (sha,)):
             parts += [fn, album or ""]
@@ -1094,10 +1109,12 @@ def main() -> None:
     s.add_argument("--force", action="store_true", help="re-scan sources already ingested")
     s.add_argument("--facts", help="folder of <sha256>.json image facts worked out on upload (used, then removed)")
     s.add_argument("--delete-after", action="store_true", help="delete each zip after it is ingested")
+    s.add_argument("--progress", action="store_true", help="print `progress N` every 25 photos and videos read")
     s.set_defaults(fn=cmd_ingest)
 
     s = sub.add_parser("link", help="match sidecars and merge metadata")
-    s.add_argument("--source", help="only this source's occurrences (fast, for incremental runs)")
+    s.add_argument("--source", action="append",
+                   help="only the photos this source brought in (repeatable; fast, for incremental runs)")
     s.set_defaults(fn=cmd_link)
 
     s = sub.add_parser("exif", help="read all EXIF/XMP/QuickTime metadata with exiftool (resumable)")
