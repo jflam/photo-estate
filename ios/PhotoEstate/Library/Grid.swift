@@ -26,6 +26,7 @@ struct GridView: UIViewControllerRepresentable {
     var title: String? = nil            // a large heading that scrolls away with the photos
     var subtitle = ""
     var topInset: CGFloat = 0           // a bar drawn over the top of the grid
+    var jump = Jump()                   // scroll to this month (or day) when it changes
     var onNearEnd: () -> Void = {}
     var onRefresh: () async -> Void = {}
     var onRowHeight: (Double) -> Void = { _ in }
@@ -42,6 +43,7 @@ struct GridView: UIViewControllerRepresentable {
         c.viewer = viewer
         c.setHeading(title, subtitle, topInset: topInset)
         c.show(data, rowHeight: rowHeight)
+        c.go(jump)
     }
 }
 
@@ -72,6 +74,7 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
     private var width: CGFloat = 0
     private var topInset: CGFloat = 0
     private var topKey: String? = nil
+    private var jump = Jump()
     private let heading = HeadingView()
     private let scrubber = Scrubber()
     private let scrim = UIView()                 // paper fading out below the status bar, so captions don't run into the clock
@@ -174,6 +177,21 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
                 collection.setContentOffset(CGPoint(x: 0, y: max(-collection.adjustedContentInset.top, attr.frame.minY - anchor.offset)), animated: false)
             }
         }
+        reportTop()
+    }
+
+    /// Put the first section whose key starts with `j.key` just under the bar.
+    func go(_ j: Jump) {
+        guard j.id != jump.id, width > 0 else { return }
+        jump = j
+        guard let s = sections.firstIndex(where: { $0.key.hasPrefix(j.key) }) else { return }
+        collection.layoutIfNeeded()
+        guard let attr = collection.layoutAttributesForSupplementaryElement(ofKind: UICollectionView.elementKindSectionHeader,
+                                                                            at: IndexPath(item: 0, section: s)) else { return }
+        let top = -collection.adjustedContentInset.top
+        let bottom = max(top, collection.contentSize.height + collection.adjustedContentInset.bottom - collection.bounds.height)
+        let y = s == 0 ? top : min(max(top, attr.frame.minY - view.safeAreaInsets.top - topInset), bottom)
+        collection.setContentOffset(CGPoint(x: 0, y: y), animated: false)
         reportTop()
     }
 

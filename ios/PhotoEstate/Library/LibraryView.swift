@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// The Library tab: every photo, newest first, including the ones on this iPhone the server doesn't
-/// have yet; one bar at the top narrows it to today, this week or this month and holds the view options. The photos run to the edges of the
-/// screen and the heading leaves with them; the handle at the right edge says where you are.
+/// have yet. As in Photos, the bar at the top zooms out to a card a year or a card a month; a year opens
+/// its months, a month opens its photos. The photos run to the edges of the screen and the heading
+/// leaves with them; the handle at the right edge says where you are.
 struct LibraryView: View {
     @ObservedObject var model: LibraryModel
     @EnvironmentObject private var router: Router
@@ -15,15 +16,19 @@ struct LibraryView: View {
         NavigationStack {
             ZStack(alignment: .top) {
                 GridView(data: model.grid, rowHeight: model.rowHeight, title: model.title, subtitle: model.subtitle, topInset: barHeight,
+                         jump: model.jump,
                          onRefresh: { ImageStore.shared.retryNetwork(); await sync.sync(); local.refresh() },
                          onRowHeight: { model.rowHeight = $0 },
                          viewer: { session in AnyView(ViewerScreen(session: session, model: model, route: router.find)) })
                     .ignoresSafeArea()
-                    .overlay {
-                        if model.grid.tiles.isEmpty && !model.loading {
-                            if let r = model.query.recent { NothingRecent(recent: r) { model.query.recent = nil } } else { Welcome() }
-                        }
-                    }
+                    .opacity(model.scale == .all ? 1 : 0)
+                    .allowsHitTesting(model.scale == .all)
+                if model.grid.tiles.isEmpty && !model.loading { Welcome().ignoresSafeArea() }
+                if model.scale != .all && !model.grid.tiles.isEmpty {
+                    PeriodsView(model: model, scale: model.scale, topInset: barHeight)
+                        .id(model.scale)
+                        .transition(.opacity)
+                }
                 TopBar(model: model, settings: $settings)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
             }
@@ -36,7 +41,7 @@ struct LibraryView: View {
     }
 }
 
-/// The Library's one row of controls, floating over the photos: how far back to look on the left,
+/// The Library's one row of controls, floating over the photos: Years / Months / All on the left,
 /// the view options and what is on this iPhone on the right.
 struct TopBar: View {
     @ObservedObject var model: LibraryModel
@@ -46,7 +51,7 @@ struct TopBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            RecentPicker(model: model)
+            ScalePicker(model: model)
             Spacer(minLength: 0)
             HStack(spacing: 0) {
                 ViewMenu(model: model).frame(width: 42, height: 40)
@@ -68,55 +73,147 @@ struct TopBar: View {
     }
 }
 
-/// All of it, or just the recent past: what was taken today, this week, this month.
-struct RecentPicker: View {
+/// Years, Months, All: how far out the Library is zoomed.
+struct ScalePicker: View {
     @ObservedObject var model: LibraryModel
+    @Namespace private var pill
 
     var body: some View {
         HStack(spacing: 0) {
-            segment("All", nil)
-            ForEach(Recent.allCases) { segment($0.short, $0) }
+            ForEach(Scale.allCases) { segment($0) }
         }
         .padding(3)
         .glassEffect(.regular.interactive(), in: .capsule)
     }
 
-    private func segment(_ title: String, _ r: Recent?) -> some View {
-        let on = model.query.recent == r
+    private func segment(_ s: Scale) -> some View {
+        let on = model.scale == s
         return Button {
             guard !on else { return }
             Haptics.tick()
-            var q = model.query
-            q.recent = r
-            withAnimation(.snappy(duration: 0.2)) { model.query = q }
+            withAnimation(.snappy(duration: 0.25)) { model.scale = s }
         } label: {
-            Text(title)
+            Text(s.title)
                 .font(.subheadline.weight(.medium))
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 13)
                 .frame(height: 34)
                 .foregroundStyle(on ? Color.black : Color.primary)
-                .background { if on { Capsule().fill(Color.sunLit) } }
+                .background { if on { Capsule().fill(Color.sunLit).matchedGeometryEffect(id: "pill", in: pill) } }
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(r?.title ?? "All photos")
+        .accessibilityLabel(s == .all ? "All photos" : s.title)
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 
-/// Nothing taken in the stretch asked for.
-struct NothingRecent: View {
-    let recent: Recent
-    var all: () -> Void
+/// A card a year or a card a month, newest first (or oldest, as the photos are ordered). Tapping one
+/// zooms in: a year to its months, a month to its photos.
+struct PeriodsView: View {
+    @ObservedObject var model: LibraryModel
+    let scale: Scale
+    let topInset: CGFloat
 
     var body: some View {
-        VStack(spacing: 14) {
-            EstateMark(progress: 0.1).frame(width: 110).opacity(0.5)
-            Text(recent == .today ? "No photos today yet" : "No photos \(recent.title.lowercased()) yet").font(.title(22, .bold))
-            Button("Show all photos", action: all).buttonStyle(.glass).padding(.top, 4)
+        let periods = scale == .years ? model.years : model.months
+        ScrollViewReader { reader in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: scale == .years ? 16 : 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(model.title).font(.title(28, .bold))
+                        Text(model.subtitle).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 2)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
+                    ForEach(periods) { p in
+                        Button { model.open(p) } label: { PeriodCard(period: p, big: scale == .years) }
+                            .buttonStyle(CardPress())
+                            .id(p.key)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 24)
+            }
+            .safeAreaPadding(.top, topInset + 6)           // under the bar, and where a tapped year scrolls to
+            .scrollIndicators(.hidden)
+            .background(Color.paper)
+            .overlay(alignment: .top) {                     // paper fading out below the status bar, as over the grid
+                GeometryReader { g in
+                    LinearGradient(stops: [.init(color: .paper, location: 0), .init(color: .paper.opacity(0.85), location: 0.7), .init(color: .paper.opacity(0), location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: g.safeAreaInsets.top + 26)
+                        .ignoresSafeArea()
+                }
+                .allowsHitTesting(false)
+            }
+            .onAppear {
+                // Coming in from a year: start at its first month.
+                if scale == .months, let year = model.takeYear(), let key = model.months.first(where: { $0.key.hasPrefix(year) })?.key {
+                    reader.scrollTo(key, anchor: .top)
+                }
+            }
         }
-        .padding(36)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// One year's or month's card: its photo, edge to edge, with the year or month over it.
+struct PeriodCard: View {
+    let period: Period
+    let big: Bool
+    @State private var image: UIImage?
+
+    var body: some View {
+        let title = big ? period.key : Dates.heading(period.key)
+        let detail = [big ? "" : period.places, "\(period.count.formatted()) \(period.count == 1 ? "photo" : "photos")"]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+        Color.well
+            .frame(height: big ? 300 : 210)
+            .overlay {
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFill().transition(.opacity)
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                LinearGradient(colors: [.black.opacity(0.5), .clear], startPoint: .top, endPoint: .center)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.title(big ? 34 : 24, .bold))
+                    Text(detail).font(.subheadline.weight(.medium)).opacity(0.9)
+                    if big && !period.places.isEmpty {
+                        Text(period.places).font(.subheadline).opacity(0.85).lineLimit(1)
+                    }
+                }
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.35), radius: 3)
+                .padding(16)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: big ? 22 : 18, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: big ? 22 : 18, style: .continuous))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(title), \(detail)")
+            .accessibilityAddTraits(.isButton)
+            .task(id: period.cover.sha) { await load(period.cover.sha) }
+    }
+
+    /// The thumbnail at once, then a sharper one: a card is far wider than a grid tile.
+    private func load(_ sha: String) async {
+        image = ImageStore.shared.ready(sha)
+        if image == nil, let t = await ImageStore.shared.thumb(sha), !Task.isCancelled { withAnimation(.easeOut(duration: 0.2)) { image = t } }
+        try? await Task.sleep(for: .milliseconds(150))         // scrolled past: don't fetch the big one
+        guard !Task.isCancelled, let big = await ImageStore.shared.image(.preview, sha), !Task.isCancelled else { return }
+        image = big
+    }
+}
+
+/// A card gives a little under the finger.
+struct CardPress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.snappy(duration: 0.18), value: configuration.isPressed)
     }
 }
 
