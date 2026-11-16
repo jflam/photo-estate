@@ -2,8 +2,9 @@ import SwiftUI
 
 /// The Library tab: every photo, newest first, including the ones on this iPhone the server doesn't
 /// have yet. As in Photos, the bar at the top zooms out to a card a year or a card a month; a year opens
-/// its months, a month opens its photos. The photos run to the edges of the screen and the heading
-/// leaves with them; the handle at the right edge says where you are.
+/// its months, a month opens its photos, and a swipe in from the left edge goes back the way you came,
+/// with the view you came from showing underneath. The photos run to the edges of the screen and the
+/// heading leaves with them; the handle at the right edge says where you are.
 struct LibraryView: View {
     @ObservedObject var model: LibraryModel
     @EnvironmentObject private var router: Router
@@ -11,10 +12,19 @@ struct LibraryView: View {
     @ObservedObject private var local = LocalPhotos.shared
     @State private var settings = false
     @State private var barHeight: CGFloat = 0
+    @State private var width: CGFloat = 400
+    @State private var swipe: CGFloat = 0           // how far the current view has been pulled right
 
     var body: some View {
+        let moving = swipe > 0
         NavigationStack {
             ZStack(alignment: .top) {
+                if moving, let last = model.trail.last {    // the view a swipe goes back to, sliding in from behind
+                    PeriodsView(model: model, scale: last.back, anchor: last.key, topInset: barHeight)
+                        .id("behind")
+                        .offset(x: (swipe - width) * 0.3)
+                        .overlay { Color.black.opacity(0.12 * (1 - swipe / width)).ignoresSafeArea().allowsHitTesting(false) }
+                }
                 GridView(data: model.grid, rowHeight: model.rowHeight, title: model.title, subtitle: model.subtitle, topInset: barHeight,
                          jump: model.jump,
                          onRefresh: { ImageStore.shared.retryNetwork(); await sync.sync(); local.refresh() },
@@ -23,16 +33,37 @@ struct LibraryView: View {
                     .ignoresSafeArea()
                     .opacity(model.scale == .all ? 1 : 0)
                     .allowsHitTesting(model.scale == .all)
+                    .offset(x: model.scale == .all ? swipe : 0)
+                    .shadow(color: .black.opacity(moving && model.scale == .all ? 0.25 : 0), radius: 10)
                 if model.grid.tiles.isEmpty && !model.loading { Welcome().ignoresSafeArea() }
                 if model.scale != .all && !model.grid.tiles.isEmpty {
-                    PeriodsView(model: model, scale: model.scale, topInset: barHeight)
+                    PeriodsView(model: model, scale: model.scale, anchor: model.anchor, topInset: barHeight)
                         .id(model.scale)
                         .transition(.opacity)
+                        .offset(x: swipe)
+                        .shadow(color: .black.opacity(moving ? 0.25 : 0), radius: 10)
                 }
                 TopBar(model: model, settings: $settings)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = max($0, 1) }
+            .gesture(EdgeSwipe(changed: { x in
+                guard !model.trail.isEmpty else { return }
+                swipe = max(0, min(x, width))
+            }, ended: { x, v in
+                guard !model.trail.isEmpty, swipe > 0 else { swipe = 0; return }
+                if x > width * 0.4 || v > 500 {
+                    Haptics.tick()
+                    withAnimation(.snappy(duration: 0.22)) { swipe = width } completion: {
+                        var t = Transaction()
+                        t.disablesAnimations = true
+                        withTransaction(t) { model.retrace(); swipe = 0 }
+                    }
+                } else {
+                    withAnimation(.snappy(duration: 0.22)) { swipe = 0 }
+                }
+            }))
         }
         .sheet(isPresented: $settings) { ThisPhoneView() }
         .onAppear { local.start(); model.reload(reset: false) }
@@ -91,7 +122,7 @@ struct ScalePicker: View {
         return Button {
             guard !on else { return }
             Haptics.tick()
-            withAnimation(.snappy(duration: 0.25)) { model.scale = s }
+            model.pick(s)
         } label: {
             Text(s.title)
                 .font(.subheadline.weight(.medium))
@@ -112,6 +143,7 @@ struct ScalePicker: View {
 struct PeriodsView: View {
     @ObservedObject var model: LibraryModel
     let scale: Scale
+    var anchor: String? = nil          // start at the first card whose key starts with this
     let topInset: CGFloat
 
     var body: some View {
@@ -148,10 +180,8 @@ struct PeriodsView: View {
                 .allowsHitTesting(false)
             }
             .onAppear {
-                // Coming in from a year: start at its first month.
-                if scale == .months, let year = model.takeYear(), let key = model.months.first(where: { $0.key.hasPrefix(year) })?.key {
-                    reader.scrollTo(key, anchor: .top)
-                }
+                // Coming in from a year, or back from a month or a year: start at that card.
+                if let anchor, let key = periods.first(where: { $0.key.hasPrefix(anchor) })?.key { reader.scrollTo(key, anchor: .top) }
             }
         }
     }
@@ -205,6 +235,29 @@ struct PeriodCard: View {
         try? await Task.sleep(for: .milliseconds(150))         // scrolled past: don't fetch the big one
         guard !Task.isCancelled, let big = await ImageStore.shared.image(.preview, sha), !Task.isCancelled else { return }
         image = big
+    }
+}
+
+/// A swipe in from the left edge of the screen. A UIKit edge pan, so it takes nothing from the grid:
+/// taps and scrolling go on as before.
+struct EdgeSwipe: UIGestureRecognizerRepresentable {
+    var changed: (CGFloat) -> Void
+    var ended: (_ distance: CGFloat, _ speed: CGFloat) -> Void
+
+    func makeUIGestureRecognizer(context: Context) -> UIScreenEdgePanGestureRecognizer {
+        let g = UIScreenEdgePanGestureRecognizer()
+        g.edges = .left
+        return g
+    }
+
+    func handleUIGestureRecognizerAction(_ g: UIScreenEdgePanGestureRecognizer, context: Context) {
+        let x = g.translation(in: g.view).x
+        switch g.state {
+        case .began, .changed: changed(x)
+        case .ended: ended(x, g.velocity(in: g.view).x)
+        case .cancelled, .failed: ended(0, 0)
+        default: break
+        }
     }
 }
 
