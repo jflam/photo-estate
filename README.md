@@ -361,7 +361,10 @@ Roughly in order. Each one is independent.
 4. **Text in photos.** OCR (PP-OCRv5) on photos that look like documents, receipts, signs and
    screenshots, with the text added to search.
 5. **Videos.** Most videos from a phone are Live Photo clips that duplicate their still; the rest
-   need keyframes embedded so they show up in search, and faces found in them.
+   need keyframes embedded so they show up in search, and faces found in them. The catalog the
+   phone syncs holds stills only, so the iPhone app shows no videos at all: neither the ones on the
+   server nor the ones on the phone that haven't been uploaded yet (it does show those for photos).
+   Videos need to be in the sync feed, play in the viewer, and join the phone's not-yet-uploaded list.
 6. **Event captions.** A local vision-language model writing one caption per event ("Matthew's
    10th birthday at home"), so every photo in it can be found by the occasion.
 7. **Backups of the store.** The app already copies the catalog on a schedule. The store only ever
@@ -386,7 +389,8 @@ Good places to start:
 - **Anything in [What's next](#whats-next).** Dates in a search is the smallest.
 - **Open performance tasks** in [PERFORMANCE.md](photo-estate/PERFORMANCE.md), each written up
   so it can be picked up as-is.
-- **Not yet supported:** RAW files and videos aren't embedded yet, and faces in them aren't found.
+- **Not yet supported:** RAW files and videos aren't embedded yet, and faces in them aren't found;
+  the iPhone app doesn't show videos (item 5 of [What's next](#whats-next)).
 - **The next tagging tiers** (captions, objects, OCR) are designed in
   [TAGGING-RESEARCH.md](photo-estate/TAGGING-RESEARCH.md).
 - **More sources:** Amazon Photos, OneDrive, Dropbox, or a phone's camera roll would each be a new

@@ -118,7 +118,7 @@ The README's roadmap, in its order, with where each would land in the code:
 | 2 | **Score search on real queries** | A page that replays the top results of queries from `query-log.jsonl` and lets you mark the wrong ones, giving a score to compare every later change against |
 | 3 | **A bigger image model** (SigLIP 2 so400m) | `embed.py run --model ...` already stores per model; the work is re-embedding and re-measuring `MATCH_FLOOR` and `MATCH_WINDOW` |
 | 4 | **Text in photos** (OCR) | A new batch job writing text into `tags`; `reindex` already includes tag text |
-| 5 | **Videos** | Keyframes through the same embedding path; faces in keyframes |
+| 5 | **Videos** | Keyframes through the same embedding path; faces in keyframes. On the phone: videos in the sync feed (`sync.py` serves stills only today), playback in the viewer, and videos in `LocalPhotos`' list of what is not yet uploaded, which skips them for now |
 | 6 | **Event captions** | `estate.py tag` on one photo per event, applied to all its photos; shows up in the full-text index |
 | 7 | **Backups of the store** | The catalog is already copied on a schedule (`--backup-dir`). A command that configures and verifies `rsync` or `restic` for the store; the append-only store makes it simple |
 | 8 | **Less memory** | The open tasks in PERFORMANCE.md: columns instead of dictionaries; the `.npy` embedding cache |
