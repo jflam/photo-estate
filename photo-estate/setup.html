@@ -67,7 +67,14 @@ ol.guide a.btn { justify-self: start; margin-top: 8px; height: 32px; font-size: 
 .stages i.done { background: var(--sun-lit); } .stages i.running, .stages i.waiting { background: linear-gradient(90deg, var(--sun-lit) var(--p, 30%), var(--well-2) 0); }
 .stages i.failed { background: var(--no); } .stages i.skip { opacity: .35; }
 .now { font-size: 14.5px; color: var(--ink-2); display: flex; gap: 8px; flex-wrap: wrap; }
-.now .num { color: var(--muted); }
+.now .num { color: var(--muted); } .now b { font-weight: 600; color: var(--ink); } .now .sep { color: var(--muted); }
+.steps { list-style: none; margin: 14px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.steps li { display: flex; gap: 8px; align-items: baseline; }
+.steps .num-mark { flex: none; width: 16px; text-align: center; font-variant-numeric: tabular-nums; }
+.steps li.done { color: var(--ink-2); } .steps li.done .num-mark { color: var(--sun-lit); }
+.steps li.running, .steps li.waiting { color: var(--ink); font-weight: 600; } .steps li.failed { color: var(--no); }
+.steps li.skip { opacity: .5; }
+.steps em { display: block; font-style: normal; font-weight: 400; font-size: 12px; color: var(--muted); }
 .job .ask { margin-top: 16px; padding: 16px; border-radius: 14px; background: var(--sun-wash); }
 .job .ask b { display: block; color: var(--ink); margin-bottom: 4px; }
 .job .ask p { color: var(--ink-2); font-size: 14px; margin-bottom: 12px; }
@@ -275,10 +282,29 @@ async function go() {
   } catch (e) { toast(e.message); } finally { btn.disabled = false; }
 }
 
+function dur(sec) {
+  if (sec < 60) return `${sec} s`;
+  const m = Math.round(sec / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+// "Step 2 of 7 · Copying them into your library · 9,100 of 15,856 (57%)". A step that can't count says
+// what it is doing and how long it has been at it, so it never looks frozen.
 function stageText(j) {
-  const st = j.stages.find(s => s.id === j.stage) || {};
-  const n = j.done != null && j.total ? ` <span class="num">${nf.format(j.done)} of ${nf.format(j.total)}</span>` : '';
-  return `<span>${h(j.detail || st.label || '')}</span>${j.state === 'running' && j.stage !== 'acquire' ? n : ''}`;
+  const i = j.stages.findIndex(s => s.id === j.stage), st = j.stages[i] || {};
+  const parts = [`<b>Step ${i + 1} of ${j.stages.length}</b>`, `<span>${h(st.label || '')}</span>`];
+  if (j.detail && j.detail !== st.label) parts.push(`<span>${h(j.detail)}</span>`);
+  if (j.state === 'running' && j.total && j.stage !== 'acquire')
+    parts.push(`<span class="num">${nf.format(j.done || 0)} of ${nf.format(j.total)} (${Math.floor(100 * (j.done || 0) / j.total)}%)</span>`);
+  else if (j.state === 'running' && j.stage_seconds >= 15) parts.push(`<span class="num">${dur(j.stage_seconds)} so far</span>`);
+  return parts.join('<span class="sep">·</span>');
+}
+
+// Every step by name under the bar: a check when it is done, the current one in ink.
+function stepList(j) {
+  return `<ol class="steps">${j.stages.map((s, i) => `<li class="${s.state}${s.skipped ? ' skip' : ''}">
+    <span class="num-mark">${s.state === 'done' ? '✓' : i + 1}</span><span>${h(s.label)}${
+      s.searchable_after ? '<em>photos searchable after this</em>' : ''}${s.optional ? '<em>optional</em>' : ''}</span></li>`).join('')}</ol>`;
 }
 
 function promptHtml(j) {
@@ -307,6 +333,7 @@ function renderJobs() {
     return `<div class="job ${live ? 'live' : ''}" id="job-${j.id}"><header><b>${h(j.source_name)}</b><span class="sub">${h(status)}</span><span class="end">${btns}</span></header>
       <div class="stages">${bars}</div>
       ${live && j.state !== 'waiting' ? `<div class="now">${stageText(j)}</div>` : ''}
+      ${live && j.state !== 'waiting' ? stepList(j) : ''}
       ${promptHtml(j)}
       ${j.state === 'failed' ? `<div class="err">${h(j.error)}</div>` : ''}
       ${j.ready && added != null ? `<div class="done-line">${added > 0 ? `<b>${nf.format(added)}</b> new photos and videos in your library.` : 'Nothing new: you already had all of these.'}

@@ -174,9 +174,8 @@ class CatalogLock:
 
 
 PROGRESS = [  # how each stage's output says how far it has got
-    re.compile(r"^progress (?P<done>\d+)$"),                              # estate.py ingest --progress
-    re.compile(r"(?P<done>\d+)/(?P<total>\d+) [\d.]+ img/s"),             # embed.py run, faces.py run
-    re.compile(r"^\s*(?P<done>\d+)/(?P<total>\d+) "),                     # estate.py exif
+    re.compile(r"^progress (?P<done>\d+)(?: of (?P<total>\d+))?(?:: (?P<what>.+))?$"),   # estate.py, places.py
+    re.compile(r"(?P<done>\d+)/(?P<total>\d+) [\d.]+ (?:img|files)/s"),  # embed.py, faces.py, estate.py exif
 ]
 TODO = re.compile(r"(?P<total>\d+) (new images )?to (do|scan)")
 
@@ -198,6 +197,7 @@ class Engine:
         self.cancelled: set[int] = set()
         self.proc: subprocess.Popen | None = None
         self.current: int | None = None
+        self.stage_started: dict[int, float] = {}   # job id -> when its current stage began (the page shows it)
         self.thread: threading.Thread | None = None
 
     # -- what the API calls
@@ -261,8 +261,11 @@ class Engine:
             return None
         src = SOURCES.get(j["source"])
         j["source_name"] = src.name if src else j["source"]
-        j["stages"] = [{"id": s, "label": label, "skipped": s in self.skip,
+        j["stages"] = [{"id": s, "label": label, "skipped": s in self.skip, "optional": s in OPTIONAL,
+                        "searchable_after": s == READY_AFTER,
                         "state": self._stage_state(j, s)} for s, label in STAGES]
+        started = self.stage_started.get(jid) if j["state"] == "running" else None
+        j["stage_seconds"] = round(time.time() - started) if started else None   # not a timestamp: clocks differ
         j["events"] = self.jobs.events(jid, events_after)
         j["ready"] = j["ready_at"] is not None
         return j
@@ -314,6 +317,7 @@ class Engine:
             for stage in STAGE_IDS[STAGE_IDS.index(j["stage"]):]:
                 self._check(jid)
                 self.jobs.set(jid, stage=stage, done=None, detail=dict(STAGES)[stage])
+                self.stage_started[jid] = time.time()
                 if stage in self.skip:
                     pass
                 elif stage == "acquire":
@@ -393,7 +397,9 @@ class Engine:
             # already recorded are skipped, so this costs a scan, never a second copy.
             return script("estate.py", "ingest", "--store", store, "--force", "--progress", *paths)
         if stage == "link":
-            return script("estate.py", "link")
+            # Only what this job brought in (ingest names a source after the folder or zip): a whole-library
+            # link takes most of an hour on a hard disk (issue #13).
+            return script("estate.py", "link", *(x for p in paths for x in ("--source", Path(p).name)))
         if stage == "exif":
             if not shutil.which("exiftool"):
                 return None
@@ -416,7 +422,8 @@ class Engine:
         self.lock.acquire(lambda: jid in self.cancelled,
                           lambda: self.jobs.set(jid, detail="Waiting for the phone's upload to finish cataloguing"))
         try:
-            self.jobs.set(jid, detail=dict(STAGES)[stage])
+            self.jobs.set(jid, detail=dict(STAGES)[stage], done=None, total=None if stage != "ingest" else self.jobs.get(jid)["total"])
+            self.stage_started[jid] = time.time()
             env = dict(os.environ, PYTHONUNBUFFERED="1")
             self.proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                          stdin=subprocess.DEVNULL, env=env, cwd=self.here)
@@ -432,13 +439,16 @@ class Engine:
                 hit = next((m for rx in PROGRESS if (m := rx.search(line))), None)
                 if hit:
                     kv = {"done": int(hit["done"])}
-                    if "total" in hit.groupdict() and hit["total"]:
+                    if hit["total"]:
                         kv["total"] = int(hit["total"])
                     elif total is not None:
                         kv["total"] = total
+                    what = hit.groupdict().get("what")
+                    if what:
+                        kv["detail"] = what[:1].upper() + what[1:]
                     self.jobs.set(jid, **kv)
-                    if stage == "ingest":
-                        continue           # one line per 25 photos: progress, not news
+                    if line.startswith("progress "):
+                        continue           # progress, not news: the bar shows it
                 self.jobs.event(jid, line)
                 tail = (tail + [line])[-6:]
             code = self.proc.wait()
