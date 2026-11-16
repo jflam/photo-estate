@@ -57,6 +57,7 @@ requires `sha` and ranks by that photo's vector (404 `{"error":"unknown photo"}`
 | `cursor` | | Position to continue from (the previous response's `next`) |
 | `limit` | | 1-500, default 120 |
 | `dedupe` | | `0` to show near-identical shots (default `1`: hide) |
+| `shots` | | `0` to hide screenshots, told from size, camera and name as the iPhone does (default `1`: show). Browsing and filtering only: a described search or More like this still finds them |
 
 Response:
 
@@ -90,6 +91,7 @@ Response:
 | Request | Returns |
 |---|---|
 | `GET /api/facets?...` (same filter parameters) | `{"facets": {country, region, city, camera, lens, trip, album, person: [[label, count], ...]}, "months": [counts], "fav": N, "matching": N}` (each facet's counts ignore its own selection; `person` counts include it) |
+| `GET /api/periods?...` (same filter parameters, plus `dedupe`, `shots`, `sort`) | The Library's Years and Months: `{"years": [...], "months": [...], "matching": N, "total": N}`, each card `{"key": "2019" or "2019-07", "n", "at", "cover", "ar", "places": [...]}`; `at` is where the card's photos start in `/api/search` with the same parameters (a `cursor`) |
 | `GET /api/info` | `{"total", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
 | `GET /stats` | The library info page ([stats.html](../../photo-estate/stats.html)) |
 | `GET /api/stats[?refresh=1]` | `{state: working|ready|error, library, disk, app}`: library figures from memory, disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |

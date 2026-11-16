@@ -40,7 +40,7 @@ Things to try:
 - Search for something that isn't there, like **kangaroo**: you get "Nothing found", not the
   least-bad guesses.
 - Open a photo, then press **More like this**.
-- Filter by **Where** or **Camera**, or drag across the timeline to pick a date range.
+- In the Library, zoom out to **Years** or **Months**; in Search, filter by **Where**, **When** or **Camera**.
 
 The demo photos come in groups of eight that look alike (lighthouses, coffee, kittens, snowy
 peaks, hot air balloons, sand dunes...), and nothing in the catalog says which group a photo is
@@ -97,9 +97,10 @@ photos that share it.
 
 ![The photo viewer with its details panel](docs/screenshots/viewer-details.jpg)
 
-**Filters with live counts.** Where, People, Albums, Trips, Camera and Favourites narrow whatever
-is showing, and combine with a description. Drag across the timeline to pick a date range, or
-click a year.
+**Filters with live counts.** Where, People, Albums, Trips, When, Camera and Favourites narrow
+whatever is showing, and combine with a description. The web app is laid out as the iPhone app is:
+a Library tab (every photo, or a card a year or a month) and a Search tab, with the same view
+options (order, five photo sizes, hide near-identical shots, hide screenshots).
 
 ![The Where filter over the library, grouped by month](docs/screenshots/library-filters.jpg)
 

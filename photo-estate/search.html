@@ -14,940 +14,1243 @@
 <meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)">
 <style>
 /*@estate.css*/
-/* Phones: the page only ever scrolls up and down. Text keeps its size in landscape, and nothing zooms the page
-   (photos zoom in the viewer); a zoomed page is what leaves everything a few pixels off to one side. */
-html { scrollbar-gutter: stable; touch-action: pan-x pan-y; }
+/* The web app is laid out as the iPhone app is (ios/PhotoEstate): two places, the Library (every photo in time
+   order, zoomed out to a card a year or a card a month) and Search (finding some of them), a tab bar between
+   them, and the same viewer. Phones: the page only ever scrolls up and down, and nothing zooms the page
+   (photos zoom in the viewer). */
+html { scrollbar-gutter: stable; touch-action: pan-x pan-y; overflow-anchor: none; }
+body { min-height: 100dvh; }
+:root { --bar: 62px; --tabs: calc(84px + env(safe-area-inset-bottom)); }
 
-/* ── header ─────────────────────────────────────────────────────────── */
-header { position: sticky; top: 0; z-index: 10; padding: 18px var(--pad) 0;
-  background: color-mix(in srgb, var(--paper) 86%, transparent);
-  -webkit-backdrop-filter: saturate(1.5) blur(20px); backdrop-filter: saturate(1.5) blur(20px);
-  box-shadow: 0 1px 0 transparent; transition: box-shadow .3s; overflow-x: clip; }
-header.scrolled { box-shadow: 0 1px 0 var(--line); }
-.bar { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
-.search { position: relative; flex: 1 1 360px; max-width: 560px; height: 44px; display: flex; align-items: center;
-  gap: 10px; padding: 0 12px 0 16px; border-radius: 999px; background: var(--well);
-  box-shadow: inset 0 0 0 1px transparent; transition: box-shadow .18s, background .18s; cursor: text; }
-.search:focus-within { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 4px var(--sun-wash); }
-.search > svg { color: var(--muted); transition: color .18s; }
-.search:focus-within > svg { color: var(--sun); }
-.search input { flex: 1 1 0; width: 0; min-width: 0; height: 100%; border: 0; outline: 0; background: none; font-size: 16px; }
-.search input::-webkit-search-cancel-button { display: none; }
-.search kbd { transition: opacity .15s; }
-.search:focus-within kbd { opacity: 0; }
-.like { display: none; align-items: center; gap: 7px; height: 30px; padding: 0 5px 0 4px; margin-left: -6px;
-  border-radius: 999px; background: var(--sun-lit); color: var(--on-sun); font-weight: 600; font-size: 13.5px; white-space: nowrap; }
-.like.on { display: inline-flex; }
-.like img { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; }
-.like button { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; opacity: .6; }
-.like button:hover { opacity: 1; }
+/* glass: controls floating over photos */
+.glass { background: color-mix(in srgb, var(--raised) 72%, transparent); -webkit-backdrop-filter: blur(22px) saturate(1.6);
+  backdrop-filter: blur(22px) saturate(1.6); box-shadow: 0 0 0 .5px var(--line-2), 0 6px 22px rgba(30,20,5,.12); }
+@media (prefers-color-scheme: dark) { .glass { background: rgba(44,44,47,.62); box-shadow: 0 0 0 .5px rgba(255,255,255,.1), 0 6px 22px rgba(0,0,0,.4); } }
+.caps { display: flex; align-items: center; border-radius: 999px; padding: 0 2px; }
+.caps .round { width: 42px; height: 40px; border-radius: 999px; color: var(--ink); }
 
-.pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.pill { height: 34px; padding: 0 13px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; background: var(--well);
-  font-weight: 600; font-size: 14px; white-space: nowrap; max-width: 240px; transition: background .15s, color .15s, transform .2s var(--ease); }
-.pill > span { overflow: hidden; text-overflow: ellipsis; }
-.pill svg { opacity: .5; transition: opacity .15s, transform .2s var(--ease); }
-.pill:hover, .pill.open { background: var(--well-2); }
-.pill:active { transform: scale(.97); }
-.pill.open .chev { transform: rotate(180deg); }
-.pill.on { background: var(--sun-lit); color: var(--on-sun); padding-right: 5px; animation: pillin .25s var(--ease); }
-.pill.on .chev { display: none; }
-.pill .x { display: none; width: 24px; height: 24px; border-radius: 50%; place-items: center; }
-.pill.on .x { display: grid; }
-.pill .x:hover { background: rgba(43,25,4,.14); }
-.pill .x:hover svg { opacity: 1; }
-.pill.fav.on svg { opacity: 1; fill: currentColor; }
-.pill.fav.on { padding-right: 13px; }
-@keyframes pillin { from { transform: scale(.94); opacity: .6; } }
-.tools { margin-left: auto; display: flex; gap: 2px; }
-.round svg { width: 18px; height: 18px; }
+/* ── tab bar ────────────────────────────────────────────────────────── */
+.tabbar { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; padding: 0 calc(18px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));
+  pointer-events: none; }
+.tabbar > * { pointer-events: auto; }
+.tabbar .tb { height: 56px; padding: 0 22px; border-radius: 999px; display: inline-flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 1px; font-size: 11px; font-weight: 600; color: var(--ink); transition: color .15s, transform .2s var(--ease); }
+.tabbar .tb svg { width: 24px; height: 24px; }
+.tabbar .tb.ts { width: 56px; padding: 0; }
+.tabbar .tb.on { color: var(--sun); }
+.tabbar .tb:active { transform: scale(.95); }
+.tabbar .lib { padding: 4px; border-radius: 999px; }
+.tabbar .lib .tb { height: 48px; padding: 0 18px; }
+.tabbar .lib .tb.on { background: var(--well); }
+.v.on ~ .tabbar { display: none; }
 
-/* ── timeline: the library through the years, and the one coloured thing on the page ── */
-.tl { position: relative; margin-top: 18px; padding-bottom: 10px; user-select: none; touch-action: none; cursor: crosshair; }
-.tl-bars { display: flex; align-items: flex-end; height: 40px; }
-.tl-bars i { flex: 1; height: 100%; min-width: 0; transform-origin: 50% 100%; transform: scaleY(0); border-radius: 1.5px 1.5px 0 0;
-  background: var(--ink); opacity: .16; transition: transform .5s var(--ease), opacity .25s, background .25s; }
-.tl.gapped .tl-bars i { margin-right: 1px; }
-.tl-bars i.in { background: var(--sun); opacity: .82; }
-.tl-bars i.hov { opacity: 1; }
-.tl-years { position: relative; height: 16px; margin-top: 5px; border-top: 1px solid var(--line); }
-.tl-years span { position: absolute; top: 5px; font-size: 11px; line-height: 12px; font-weight: 500; color: var(--muted);
-  font-variant-numeric: tabular-nums; padding-left: 5px; cursor: pointer; transition: color .15s; }
-.tl-years span::before { content: ""; position: absolute; left: 0; top: -5px; height: 5px; width: 1px; background: var(--line-2); }
-.tl-years span:hover, .tl-years span.in { color: var(--ink); }
-.tl-sel { position: absolute; top: -5px; height: 50px; border-radius: 8px; background: var(--sun-wash);
-  opacity: 0; pointer-events: none; transition: opacity .2s, left .25s var(--ease), width .25s var(--ease); }
-.tl-sel.on { opacity: 1; }
-.tl.drag .tl-sel { transition: opacity .2s; }
-.tl-here { position: absolute; top: 43px; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%;
-  background: var(--ink); box-shadow: 0 0 0 2px var(--paper); opacity: 0; pointer-events: none; transition: left .3s var(--ease), opacity .3s; }
-.tl-here.on { opacity: 1; }
-.tl-tip { position: absolute; top: -30px; transform: translateX(-50%); padding: 4px 10px; border-radius: 999px;
-  background: var(--ink); color: var(--paper); font-size: 12px; font-weight: 600; white-space: nowrap;
-  pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 2; }
-.tl-tip.on { opacity: 1; }
-.tl-tip b { font-weight: 500; opacity: .65; margin-left: 7px; }
+/* ── the Library's bar, floating over the photos ────────────────────── */
+.lbar { position: fixed; z-index: 15; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px;
+  padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px calc(14px + env(safe-area-inset-left)); pointer-events: none; }
+.lbar::before { content: ""; position: absolute; inset: 0 0 -18px; z-index: -1; pointer-events: none;
+  background: linear-gradient(var(--paper), color-mix(in srgb, var(--paper) 85%, transparent) 60%, transparent); }
+.lbar > * { pointer-events: auto; }
+.lbar .sp { flex: 1; pointer-events: none; }
+.scale { display: flex; padding: 3px; border-radius: 999px; }
+.scale button { height: 34px; padding: 0 14px; border-radius: 999px; font-size: 14.5px; font-weight: 500; color: var(--ink);
+  transition: background .2s var(--ease), color .2s; }
+.scale button.on { background: var(--sun-lit); color: var(--on-sun); }
+.lbar .back { width: 40px; height: 40px; border-radius: 50%; color: var(--ink); }
 
-/* ── page ───────────────────────────────────────────────────────────── */
-main { padding: 32px var(--pad) 96px; overflow-x: clip; }
-.head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; min-height: 70px; }
-.head > div:first-child { min-width: 0; }
-.head h1 { display: flex; align-items: center; gap: 14px; overflow-wrap: anywhere; }
-.head h1 img { flex: none; width: 46px; height: 46px; border-radius: 12px; object-fit: cover; }
-.head p { margin-top: 6px; color: var(--muted); }
-.head p b { font-weight: 600; color: var(--ink-2); }
-.head p i { font-style: normal; color: var(--faint); margin: 0 8px; }
-.head-r { display: flex; flex: none; gap: 2px; padding-bottom: 1px; }
-.txt { height: 32px; padding: 0 12px; border-radius: 999px; color: var(--muted); font-size: 14px; font-weight: 600;
-  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; transition: background .15s, color .15s; }
-.txt:hover { background: var(--well); color: var(--ink); }
-.txt.inl { height: auto; padding: 0; color: var(--sun); font: inherit; font-weight: 600; }
-.txt.inl:hover { background: none; color: var(--sun); text-decoration: underline; text-underline-offset: 3px; }
-#grid { transition: opacity .2s; }
-#grid.stale { opacity: .45; }
-#grid.fresh { animation: rise .45s var(--ease); }
+/* ── page heading and the grid ──────────────────────────────────────── */
+main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
+#libTab main, .periods { padding-top: calc(var(--bar) + env(safe-area-inset-top)); }
+.head { padding: 14px var(--pad) 6px; }
+.head h1 { font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -.025em; overflow-wrap: anywhere; }
+.head p { margin-top: 3px; color: var(--muted); font-size: 15px; }
+.grid { transition: opacity .2s; }
+.grid.stale { opacity: .45; }
+.grid.fresh { animation: rise .45s var(--ease); }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
-section { margin-top: 40px; }
-section.flat { margin-top: 26px; }
-.sh { margin-bottom: 12px; }
-.sh h2 { font-size: 22px; line-height: 1.2; font-weight: 700; letter-spacing: -.02em; }
-.sh p { margin-top: 2px; min-height: 20px; color: var(--muted); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grid section { padding-top: 22px; }
+.grid section.flat { padding-top: 14px; }
+.sh { padding: 0 var(--pad) 9px; }
+.sh h2 { font-size: 22px; line-height: 1.2; font-weight: 600; letter-spacing: -.02em; }
+.sh p { margin-top: 1px; min-height: 18px; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sh .where:not(:empty) + .n:not(:empty)::before { content: "  ·  "; white-space: pre; }
+.rows { padding: 0 var(--gpad); }
 .row { display: flex; gap: var(--gap); margin-bottom: var(--gap); content-visibility: auto; }
-.t { position: relative; flex: none; height: 100%; overflow: hidden; border-radius: 2px; background: var(--tile); cursor: pointer;
+.t { position: relative; flex: none; height: 100%; overflow: hidden; background: var(--tile); cursor: pointer;
   -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
-.t img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0;
-  transition: opacity .35s, filter .25s, transform .6s var(--ease); }
+.t img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .35s, filter .25s; }
 .t img.in { opacity: 1; }
-.t:hover img { filter: brightness(1.06); transform: scale(1.015); }
-.t .fv { position: absolute; top: 8px; right: 8px; color: var(--sun-lit); filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+.t:hover img { filter: brightness(1.06); }
+.t .fv { position: absolute; top: 6px; right: 6px; color: var(--sun-lit); filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
 .t .cap { position: absolute; inset: auto 0 0 0; padding: 24px 10px 7px; font-size: 12px; font-weight: 600; color: #fff;
   background: linear-gradient(transparent, rgba(0,0,0,.55)); opacity: 0; transition: opacity .2s; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .t:hover .cap { opacity: 1; }
-#more { height: 1px; }
+.sentinel { height: 1px; }
+:root { --gpad: var(--pad); }
+@media (max-width: 760px) { :root { --gpad: 0px; } }       /* phones: the photos run to the edges, as on the iPhone */
 
-/* ── popovers ───────────────────────────────────────────────────────── */
-.pop { position: fixed; z-index: 30; width: 320px; max-width: calc(100vw - 16px); padding: 8px; border-radius: 22px; background: var(--raised);
-  box-shadow: var(--shadow); transform-origin: 24px 0; animation: pop .18s var(--ease); }
-.pop.wide { width: 400px; }
+/* ── Years and Months: a card each ──────────────────────────────────── */
+.periods { padding-bottom: calc(var(--tabs) + 30px); }
+.cards { display: grid; gap: 12px; padding: 4px var(--cpad) 0; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); }
+.cards.years { gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); }
+:root { --cpad: max(14px, calc(var(--pad) - 6px)); }
+.periods .head { padding-left: calc(var(--cpad) + 2px); padding-right: var(--cpad); padding-bottom: 8px; }
+.card { position: relative; display: block; width: 100%; height: 210px; border-radius: 18px; overflow: hidden; background: var(--well);
+  text-align: left; color: #fff; transition: transform .18s var(--ease); scroll-margin-top: calc(var(--bar) + env(safe-area-inset-top) + 6px); }
+.years .card { height: 300px; border-radius: 22px; }
+.card:active { transform: scale(.97); }
+.card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .25s; }
+.card img.in { opacity: 1; }
+.card::after { content: ""; position: absolute; inset: 0; background: linear-gradient(rgba(0,0,0,.5), transparent 50%); }
+.card .ct { position: absolute; z-index: 1; left: 16px; right: 16px; top: 14px; text-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.card b { display: block; font-size: 24px; line-height: 1.15; font-weight: 700; letter-spacing: -.02em; }
+.years .card b { font-size: 34px; }
+.card small { display: block; margin-top: 2px; font-size: 15px; font-weight: 500; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card small + small { font-weight: 400; opacity: .85; margin-top: 0; }
+.card:hover img.in { filter: brightness(1.05); }
+
+/* the handle at the right edge: where you are in the library; drag it to go anywhere */
+.scrub { position: fixed; z-index: 14; right: calc(8px + env(safe-area-inset-right)); top: 0; height: 38px; padding: 0 8px 0 15px;
+  display: flex; align-items: center; gap: 8px; border-radius: 999px; font-size: 15px; font-weight: 600; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity .3s, height .18s, transform .18s var(--ease); touch-action: none; cursor: grab; }
+.scrub.on { opacity: 1; pointer-events: auto; }
+.scrub.drag { height: 44px; cursor: grabbing; transform: translateX(-4px); }
+.scrub svg { color: var(--muted); }
+.scrub span:empty { display: none; }
+
+/* ── Search: the field, always at the top; under it, the filters of whatever is showing ── */
+.sbar { position: sticky; top: 0; z-index: 15; padding: calc(8px + env(safe-area-inset-top)) 0 10px;
+  background: color-mix(in srgb, var(--paper) 88%, transparent); -webkit-backdrop-filter: saturate(1.5) blur(20px); backdrop-filter: saturate(1.5) blur(20px); }
+.srow { display: flex; align-items: center; gap: 8px; padding: 0 calc(var(--cpad) + env(safe-area-inset-right)) 0 calc(var(--cpad) + env(safe-area-inset-left)); }
+.srow .round { width: 38px; height: 44px; border-radius: 12px; color: var(--ink); flex: none; }
+.search { position: relative; flex: 1 1 0; min-width: 0; height: 46px; display: flex; align-items: center; gap: 9px; padding: 0 12px 0 15px;
+  border-radius: 999px; background: var(--well); transition: box-shadow .18s, background .18s; cursor: text; }
+.search:focus-within { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 4px var(--sun-wash); }
+.search > svg { color: var(--muted); }
+.search input { flex: 1 1 0; width: 0; min-width: 0; height: 100%; border: 0; outline: 0; background: none; font-size: 16px; }
+.search input::-webkit-search-cancel-button { display: none; }
+.search .qx { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--muted); color: var(--paper); flex: none; }
+.search kbd { flex: none; }
+.search:focus-within kbd { display: none; }
+#sCancel { flex: none; color: var(--sun); font-weight: 500; padding: 0 4px; height: 44px; }
+.chips { display: flex; gap: 8px; margin-top: 10px; padding: 0 var(--cpad); overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; height: 36px; padding: 0 14px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; background: var(--well);
+  font-weight: 500; font-size: 14.5px; white-space: nowrap; max-width: 260px; transition: background .15s, transform .2s var(--ease); }
+.chip > span { overflow: hidden; text-overflow: ellipsis; }
+.chip:hover { background: var(--well-2); }
+.chip:active { transform: scale(.97); }
+.chip.on { background: var(--sun-lit); color: var(--on-sun); }
+.chip .x { width: 18px; height: 18px; display: grid; place-items: center; margin-right: -4px; opacity: .7; }
+.chip.on svg.h { fill: currentColor; }
+.notice { margin: 8px calc(var(--cpad) + 2px) 0; font-size: 13.5px; color: var(--muted); }
+.notice:empty { display: none; }
+.notice button { color: var(--sun); font-weight: 500; }
+#results .head { padding-top: 12px; }
+
+/* suggestions while typing */
+.sugs { padding: 6px 0 calc(var(--tabs) + 20px); }
+.srw { width: 100%; display: flex; align-items: center; gap: 14px; padding: 11px calc(var(--cpad) + 2px); text-align: left; }
+.srw:hover, .srw.cur { background: var(--well); }
+.srw > svg { width: 26px; color: var(--sun); }
+.srw span { min-width: 0; flex: 1; }
+.srw b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srw small { display: block; color: var(--muted); font-size: 13px; }
+.srw { position: relative; }
+.srw + .srw::before { content: ""; position: absolute; top: 0; right: 0; left: calc(var(--cpad) + 42px); height: 1px; background: var(--line); }
+
+/* Search with nothing asked: the threads to pull */
+.browse { padding: 8px 0 calc(var(--tabs) + 40px); display: flex; flex-direction: column; gap: 30px; }
+.strip { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 0 var(--cpad); overscroll-behavior-x: contain; scroll-snap-type: x proximity; }
+.strip::-webkit-scrollbar { display: none; }
+.strip > * { flex: none; scroll-snap-align: start; scroll-margin-left: var(--cpad); }
+.idea { height: 38px; padding: 0 14px; border-radius: 999px; background: var(--well); display: inline-flex; align-items: center; gap: 7px; font-weight: 500; font-size: 14.5px; }
+.idea svg { color: var(--sun); }
+.idea:hover, .th:hover { background: var(--well-2); }
+.bt { display: flex; align-items: baseline; justify-content: space-between; padding: 0 calc(var(--cpad) + 2px); margin-bottom: 12px; }
+.bt h2 { font-size: 24px; font-weight: 700; letter-spacing: -.022em; }
+.bt button { color: var(--sun); font-size: 15px; }
+.trip { position: relative; width: 220px; height: 290px; border-radius: 22px; overflow: hidden; background: var(--well); text-align: left; color: #fff; }
+.trip img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .25s; }
+.trip img.in { opacity: 1; }
+.trip .ct { position: absolute; left: 0; right: 0; bottom: 0; padding: 60px 14px 14px; background: linear-gradient(transparent, rgba(0,0,0,.75)); }
+.trip b { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: 19px; line-height: 1.2; font-weight: 600; }
+.trip small { display: block; margin-top: 3px; font-size: 12px; opacity: .8; }
+.strip.trips { gap: 12px; }
+.years-bars { display: flex; align-items: flex-end; height: 118px; padding: 0 calc(var(--cpad) + 2px); }
+.years-bars button { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-end; gap: 6px; height: 100%; padding: 0 3px; }
+.years-bars.tight button { padding: 0 1.5px; }
+.years-bars i { display: block; border-radius: 3px; background: var(--sun); transition: filter .15s; }
+.years-bars button:hover i { filter: brightness(1.15); }
+.years-bars small { height: 12px; font-size: 10px; line-height: 12px; font-weight: 500; color: var(--muted); text-align: center; white-space: nowrap; overflow: visible; }
+.favs { display: flex; align-items: center; gap: 14px; margin: 0 var(--cpad); padding: 16px; border-radius: 20px; background: var(--well); text-align: left; }
+.favs:hover { background: var(--well-2); }
+.favs > svg:first-child { color: var(--sun); width: 22px; height: 22px; }
+.favs span { flex: 1; }
+.favs b { display: block; font-size: 19px; font-weight: 600; }
+.favs small { color: var(--muted); font-size: 13px; }
+.favs > svg:last-child { color: var(--faint); }
+.th { height: 42px; padding: 0 14px; border-radius: 999px; background: var(--well); display: inline-flex; align-items: center; gap: 7px; font-weight: 500; font-size: 14.5px; }
+.th small { color: var(--muted); font-size: 13px; font-weight: 400; font-variant-numeric: tabular-nums; }
+
+/* ── menus, and the sheet behind a filter chip (a popover on a wide screen) ── */
+.menu, .sheet { position: fixed; z-index: 40; background: var(--raised); box-shadow: var(--shadow); }
+.menu { width: 270px; padding: 6px; border-radius: 20px; transform-origin: calc(100% - 20px) 0; animation: pop .18s var(--ease); }
 @keyframes pop { from { opacity: 0; transform: translateY(-6px) scale(.97); } }
-.pop > .seg { display: flex; margin-bottom: 6px; }
-.pop .find { width: 100%; height: 40px; padding: 0 12px; border: 0; outline: 0; background: none;
-  border-bottom: 1px solid var(--line); margin-bottom: 6px; font-size: 15px; }
-.opts { max-height: min(380px, calc(100vh - 220px)); max-height: min(380px, calc(100dvh - 220px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--faint) transparent; }
-.opt { width: 100%; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px;
-  padding: 9px 12px 9px 10px; border-radius: 14px; text-align: left; }
-.opt:hover, .opt.cur { background: var(--well); }
-.opt .l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.opt .l em { font-style: normal; color: var(--muted); margin-left: 7px; font-size: 13.5px; }
-.opt .n { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
-.opt .ck { color: var(--sun); opacity: 0; transform: scale(.6); transition: opacity .12s, transform .2s var(--ease); }
-.opt.on .ck { opacity: 1; transform: none; }
-.opt.on .l { font-weight: 600; }
-.opt.zero { opacity: .45; }
-.opt.trip { grid-template-columns: 48px minmax(0, 1fr) auto; gap: 12px; padding: 6px 12px 6px 6px; }
-.opt.trip img { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; background: var(--tile); }
-.opt.trip.on img { box-shadow: 0 0 0 2px var(--raised), 0 0 0 4px var(--sun-lit); }
-.opt.trip .l { display: block; font-weight: 600; }
-.opt.trip small { display: block; color: var(--muted); font-size: 13px; font-weight: 400; margin-top: 1px; font-variant-numeric: tabular-nums; }
-.opt.sug svg { color: var(--muted); }
-.opt.sug.idea svg { color: var(--sun); }
-.opt.sug .n { font-size: 12.5px; }
-.cap2 { padding: 10px 12px 6px; }
-.none { padding: 22px 10px; color: var(--muted); text-align: center; }
-.set { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 9px 8px 9px 12px; }
-.set .seg button { min-width: 40px; }
+.menu h5 { margin: 8px 12px 3px; font-size: 12px; font-weight: 500; color: var(--muted); }
+.menu hr { border: 0; height: 1px; background: var(--line); margin: 6px 4px; }
+.mi { width: 100%; display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: 13px; text-align: left; font-size: 15px; }
+.mi:hover { background: var(--well); }
+.mi > svg:first-child { width: 18px; color: var(--sun); visibility: hidden; }
+.mi.on > svg:first-child { visibility: visible; }
+.mi span { flex: 1; }
+.mi .sw { width: 36px; height: 22px; }
+.mi .sw::after { width: 18px; height: 18px; }
+.mi .sw.on::after { transform: translateX(14px); }
+.mi.ln > svg:first-child { visibility: visible; color: var(--ink-2); }
+
+.scrim { position: fixed; inset: 0; z-index: 39; background: rgba(0,0,0,.28); animation: fade .2s; }
+@keyframes fade { from { opacity: 0; } }
+.sheet { display: flex; flex-direction: column; }
+.sheet.pop { width: 380px; max-height: min(560px, calc(100dvh - 120px)); border-radius: 22px; animation: pop .18s var(--ease); transform-origin: 30px 0; }
+.sheet.low { left: 0; right: 0; bottom: 0; max-height: 86dvh; height: 62dvh; border-radius: 28px 28px 0 0; padding-bottom: env(safe-area-inset-bottom);
+  animation: up .28s var(--ease); }
+.sheet.low.tall { height: 86dvh; }
+@keyframes up { from { transform: translateY(100%); } }
+.sheet.low::before { content: ""; display: block; flex: none; width: 36px; height: 5px; margin: 8px auto 0; border-radius: 3px; background: var(--line-2); }
+.sh-top { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 8px 10px 4px; }
+.sh-top b { font-weight: 600; }
+.sh-top button { justify-self: start; height: 36px; padding: 0 8px; color: var(--sun); }
+.sh-top .done { justify-self: end; font-weight: 600; }
+.sh-tools { flex: none; padding: 6px 12px 6px; display: flex; flex-direction: column; gap: 8px; }
+.sh-tools .seg button { flex: 1; }
+.sh-tools input { width: 100%; height: 38px; font-size: 16px; }
+.sh-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 6px 10px; scrollbar-width: thin; }
+.op { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 8px 12px; border-radius: 13px; text-align: left; }
+.op:hover { background: var(--well); }
+.op span { flex: 1; min-width: 0; }
+.op b { display: block; font-size: 17px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op small { display: block; color: var(--muted); font-size: 13px; }
+.op .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.op .ck { width: 16px; color: var(--sun); opacity: 0; }
+.op.on .ck { opacity: 1; }
+.op.zero { opacity: .5; }
+.op img { width: 56px; height: 56px; border-radius: 12px; object-fit: cover; background: var(--tile); flex: none; }
+.op.yr b { font-size: 20px; font-weight: 600; }
+.op .ex { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); transition: transform .2s var(--ease); }
+.op .ex.open { transform: rotate(90deg); }
+.op.mo { padding-left: 26px; min-height: 44px; }
+.op.mo b { font-size: 16px; font-weight: 400; }
+.none { padding: 30px 10px; color: var(--muted); text-align: center; }
 
 /* ── viewer: always the dark room, whatever the page is ─────────────── */
 .v { position: fixed; inset: 0; z-index: 50; display: none; overflow: hidden; color: #f4f2ee;
-  --vwell: rgba(255,255,255,.075); --vwell-2: rgba(255,255,255,.13); --vmuted: #8f8c85; }
+  --vwell: rgba(255,255,255,.075); --vwell-2: rgba(255,255,255,.13); --vmuted: #8f8c85;
+  touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .v.on { display: block; }
 .v-bg { position: absolute; inset: 0; background: #050505; }
 .v-stage { position: absolute; inset: 0; pointer-events: none; will-change: transform; }   /* the photo and its neighbours, a page apart */
-.v-pic { position: absolute; left: 0; top: 0; pointer-events: auto; border-radius: 2px; overflow: hidden; background: #111; transform-origin: 0 0;
-  will-change: transform; }
+.v-pic { position: absolute; left: 0; top: 0; pointer-events: auto; overflow: hidden; background: #111; transform-origin: 0 0; will-change: transform; }
 .v-pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .v-pic .hi { opacity: 0; }                          /* fades in; goes at once, so an emptied one never shows */
 .v-pic .hi.in { opacity: 1; transition: opacity .3s; }
 .v-ui { position: absolute; inset: 0; pointer-events: none; transition: opacity .25s; }
 .v-ui > * { pointer-events: auto; }
-.v-btn { position: absolute; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
-  color: #f4f2ee; background: rgba(70,68,64,.5); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
-  transition: background .15s, color .15s, opacity .2s, transform .2s var(--ease); }
+.v-ui::before, .v-ui::after { content: ""; position: absolute; left: 0; right: 0; pointer-events: none; transition: opacity .25s; }
+.v-ui::before { top: 0; height: calc(110px + env(safe-area-inset-top)); background: linear-gradient(rgba(0,0,0,.55), transparent); }
+.v-ui::after { bottom: 0; height: calc(130px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.5)); }
+.vglass { background: rgba(60,58,55,.5); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+  box-shadow: 0 0 0 .5px rgba(255,255,255,.12); }
+.v-btn { position: absolute; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; color: #f4f2ee;
+  transition: background .15s, opacity .2s, transform .2s var(--ease); }
 .v-btn svg { width: 18px; height: 18px; }
 .v-btn:hover { background: rgba(110,106,100,.6); }
 .v-btn:active { transform: scale(.94); }
-#vClose { top: 18px; left: 18px; }
-#vInfoBtn { top: 18px; right: 18px; transition: right .3s var(--ease), background .15s, color .15s; }
-.v.info #vInfoBtn { right: 378px; background: #ffb061; color: #2b1904; }
-#vPrev { left: 18px; top: 50%; margin-top: -22px; }
-#vNext { right: 18px; top: 50%; margin-top: -22px; transition: right .3s var(--ease), background .15s, opacity .2s; }
-.v.info #vNext { right: 378px; }
+#vClose { top: calc(12px + env(safe-area-inset-top)); left: calc(14px + env(safe-area-inset-left)); }
+#vFav { top: calc(12px + env(safe-area-inset-top)); right: calc(14px + env(safe-area-inset-right)); color: #ffb061; pointer-events: none; transition: right .3s var(--ease); }
+#vFav svg { width: 17px; height: 17px; }
+.v-title { position: absolute; top: calc(17px + env(safe-area-inset-top)); left: 74px; right: 74px; text-align: center; pointer-events: none; transition: opacity .2s, right .3s var(--ease); }
+.v-title b, .v-title span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+.v-title b { font-size: 17px; line-height: 22px; font-weight: 600; color: #fff; }
+.v-title span { font-size: 12px; line-height: 16px; color: rgba(255,255,255,.75); }
+.v-bar { position: absolute; left: 50%; bottom: calc(12px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 4px;
+  padding: 0 6px; border-radius: 999px; transition: left .3s var(--ease), opacity .2s; }
+.v-bar button { width: 62px; height: 50px; display: grid; place-items: center; color: #fff; border-radius: 999px; transition: background .15s; }
+.v-bar button:hover { background: rgba(255,255,255,.1); }
+.v-bar svg { width: 21px; height: 21px; }
+.v-bar button.on { color: #ffb061; }
+#vShare.busy svg { animation: pulse 1s ease-in-out infinite; }
+#vShare.ready { color: #ffb061; }
+@keyframes pulse { 50% { opacity: .35; } }
+.v-note { position: absolute; left: 50%; bottom: calc(74px + env(safe-area-inset-bottom)); transform: translateX(-50%); font-size: 13px; color: rgba(255,255,255,.75); white-space: nowrap; }
+.v-note:empty { display: none; }
+#vPrev { left: 18px; top: 50%; margin-top: -23px; }
+#vNext { right: 18px; top: 50%; margin-top: -23px; transition: right .3s var(--ease), opacity .2s; }
 .v-btn[disabled] { opacity: 0; pointer-events: none; }
-.v-count { position: absolute; top: 31px; left: 76px; font-size: 13.5px; font-weight: 500; color: var(--vmuted); font-variant-numeric: tabular-nums; }
-.v-title { display: none; }
-.v-info { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; padding: 30px 24px 40px; overflow-y: auto;
-  background: #131314; transform: translateX(100%); transition: transform .3s var(--ease);
-  scrollbar-width: thin; scrollbar-color: #3a3936 transparent; font-size: 14.5px; overscroll-behavior: contain; }
+.v.bare .v-btn, .v.bare .v-title, .v.bare .v-bar, .v.bare .v-note, .v.bare .v-ui::before, .v.bare .v-ui::after { opacity: 0; pointer-events: none; }
+
+/* details: what is known about a photo, laid out like the back of a print */
+.v-info { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; padding: 30px 20px calc(40px + env(safe-area-inset-bottom)); overflow-y: auto;
+  background: #161617; transform: translateX(100%); transition: transform .3s var(--ease); touch-action: pan-y; -webkit-user-select: text; user-select: text;
+  scrollbar-width: thin; scrollbar-color: #3a3936 transparent; overscroll-behavior: contain; }
 .v.info .v-info { transform: none; }
-.v-info h3 { font-size: 24px; line-height: 1.15; font-weight: 700; letter-spacing: -.022em; color: #fff; }
-.v-info .sub { margin-top: 5px; color: var(--vmuted); }
+.v.info #vNext { right: 378px; }
+.v.info .v-title, .v.info #vFav { right: 434px; }
+.v.info #vFav { right: 374px; }
+.v.info .v-bar, .v.info .v-note { left: calc(50% - 180px); }
+.v-info h3 { font-size: 26px; line-height: 1.15; font-weight: 700; letter-spacing: -.022em; color: #fff; }
+.v-info .sub { margin-top: 4px; color: var(--vmuted); font-size: 15px; }
 .v-info .note { margin-top: 10px; font-style: italic; color: #bab7b0; }
-.v-info h4 { margin: 26px 0 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--vmuted); }
-.v-info .big { font-size: 16px; font-weight: 600; color: #fff; }
-.v-info .dim { margin-top: 2px; font-size: 13.5px; color: var(--vmuted); }
-.v-info a, .lnk { color: inherit; text-decoration: none; cursor: pointer; background: linear-gradient(currentColor, currentColor) 0 100% / 100% 1px no-repeat;
-  background-size: 0 1px; transition: background-size .25s var(--ease); }
-.v-info a:hover, .lnk:hover { background-size: 100% 1px; }
-.vc { margin-top: 22px; padding: 14px 16px; border-radius: 18px; background: var(--vwell); }
-.vc + .vc, .go + .vc { margin-top: 8px; }
-.vc.at { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; align-items: start; }
-.vc.at > svg, .go > svg:first-child { color: #ffb061; margin-top: 2px; }
-.go { display: grid; grid-template-columns: 22px minmax(0, 1fr) 14px; gap: 12px; align-items: center; width: 100%; padding: 12px 14px 12px 16px;
-  margin-top: 8px; border-radius: 18px; background: var(--vwell); text-align: left; transition: background .15s; }
-.go:hover { background: var(--vwell-2); }
-.go b { display: block; font-size: 16px; font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.go small { display: block; color: var(--vmuted); font-size: 13.5px; }
-.go > svg:last-child { color: #6b6964; transition: transform .2s var(--ease), color .15s; }
-.go:hover > svg:last-child { transform: translateX(2px); color: #fff; }
-.exp { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; margin-top: 14px; }
+.v-info .here { margin-top: 10px; font-size: 13px; color: var(--vmuted); }
+.vcard { display: block; width: 100%; margin-top: 22px; border-radius: 18px; background: var(--vwell); text-align: left; overflow: hidden; }
+button.vcard:hover { background: var(--vwell-2); }
+.vrow { display: flex; align-items: center; gap: 14px; padding: 14px; width: 100%; text-align: left; }
+.vrow > svg:first-child { width: 22px; color: #ffb061; flex: none; }
+.vrow span { flex: 1; min-width: 0; }
+.vrow b { display: block; font-size: 17px; font-weight: 600; color: #fff; }
+.vrow small { display: block; margin-top: 2px; font-size: 13px; color: var(--vmuted); }
+.vrow small a { color: inherit; text-decoration: underline; text-decoration-color: rgba(255,255,255,.25); text-underline-offset: 2px; }
+.vrow > svg:last-child { width: 14px; color: #6b6964; flex: none; }
+button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
+.vcard > .vrow { position: relative; }
+.vcard > .vrow + .vrow::before { content: ""; position: absolute; top: 0; right: 0; left: 50px; height: 1px; background: rgba(255,255,255,.08); }
+.v-info h4 { margin: 22px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--vmuted); }
+.tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.tag { height: 36px; padding: 0 14px; border-radius: 999px; background: var(--vwell); color: #f4f2ee; font-size: 14.5px; font-weight: 500; }
+.tag:hover { background: var(--vwell-2); }
+.plate { margin-top: 22px; padding: 14px; border-radius: 18px; background: var(--vwell); }
+.plate .vrow { padding: 0; }
+.plate button.vrow:hover { background: none; }
+.plate button.vrow:hover b { text-decoration: underline; text-underline-offset: 3px; }
+.exp { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; margin-top: 12px; }
 .exp div { text-align: center; }
+.exp div + div { border-left: 1px solid rgba(255,255,255,.1); }
 .exp b { display: block; font: 500 15px var(--mono); color: #fff; }
 .exp small { display: block; margin-top: 3px; font-size: 9px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--vmuted); }
-.tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.tag { height: 32px; padding: 0 13px; border-radius: 999px; background: var(--vwell); color: #f4f2ee;
-  font-size: 14px; font-weight: 600; transition: background .15s; }
-.tag:hover { background: var(--vwell-2); }
-.v-info .file { margin: 22px 4px 0; font-size: 12.5px; line-height: 1.5; color: #6f6c66; overflow-wrap: anywhere; }
-.v-info .cta { margin-top: 22px; width: 100%; height: 46px; border-radius: 999px; background: #ffb061; color: #2b1904;
-  font-weight: 700; font-size: 15px; transition: background .15s, transform .2s var(--ease); }
-.v-info .cta:hover { background: #ffbd7a; }
-.v-info .cta:active { transform: scale(.985); }
+.v-info .file { margin: 22px 2px 0; font-size: 12px; line-height: 1.5; color: #6f6c66; overflow-wrap: anywhere; }
 
-@media (max-width: 1100px) {      /* search and view options share the first row; filters get their own */
-  .search { order: 0; flex: 1 1 0; min-width: 0; max-width: none; }
-  .tools { order: 1; margin-left: 0; }
-  .pills { order: 2; flex: 1 0 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
-    overscroll-behavior-x: contain; }
-  .pills::-webkit-scrollbar { display: none; }
-}
-@media (max-width: 760px) {
-  .search kbd { display: none; }
-  .head { flex-wrap: wrap; gap: 4px 16px; min-height: 0; }   /* a long title pushes Sort / Clear onto their own line */
-  .head > div:first-child { flex: 1 1 180px; max-width: 100%; }
-  .head-r { margin-left: auto; }
-  main { padding-top: 22px; }
-  section { margin-top: 30px; }
-  .tl-bars { height: 32px; }
-  .tl-sel { height: 42px; }
-  .tl-here { top: 35px; }
-}
-/* ── phone: notch and home bar (insets are 0 in a normal browser tab), touch ── */
-header { padding-top: calc(18px + env(safe-area-inset-top)); padding-left: calc(var(--pad) + env(safe-area-inset-left));
-  padding-right: calc(var(--pad) + env(safe-area-inset-right)); }
-main { padding-left: calc(var(--pad) + env(safe-area-inset-left)); padding-right: calc(var(--pad) + env(safe-area-inset-right));
-  padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
-#vClose, #vInfoBtn, #vShare { top: calc(18px + env(safe-area-inset-top)); }
-#vClose { left: calc(18px + env(safe-area-inset-left)); }
-.v-count { top: calc(31px + env(safe-area-inset-top)); left: calc(76px + env(safe-area-inset-left));
-  max-width: calc(100% - 200px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.v.info .v-count { max-width: calc(100% - 560px); }
-.v-info { padding-bottom: calc(40px + env(safe-area-inset-bottom)); padding-right: calc(24px + env(safe-area-inset-right)); }
-.v { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-.v-info { touch-action: pan-y; -webkit-user-select: text; user-select: text; }
-#vShare { right: 70px; transition: right .3s var(--ease), background .15s, opacity .2s; }
-.v.info #vShare { right: 430px; }
-#vShare.busy svg { animation: pulse 1s ease-in-out infinite; }
-#vShare.ready { background: #ffb061; color: #2b1904; }
-@keyframes pulse { 50% { opacity: .35; } }
-.v.bare .v-btn, .v.bare .v-count, .v.bare .v-title { opacity: 0; pointer-events: none; }
-.back { display: none; }
-@media (display-mode: standalone) { html.deep .back { display: grid; margin: 0 -4px 0 -8px; } }
 @media (pointer: coarse) {
   #vPrev, #vNext { display: none; }                 /* swipe instead */
-  .t:hover img { filter: none; transform: none; }
-  .pill { height: 38px; padding: 0 15px; }
-  .pop .find { font-size: 16px; }                   /* under 16px, iOS zooms the page in when the field is focused */
+  .t:hover img { filter: none; }
 }
-/* ── phone viewer (any touch screen, either way up): the photo fills the screen; date on top; a strip of
-      thumbnails to scrub through, then share / count / details, along the bottom. Details are asked for (swipe
-      up, or the button): a sheet from below when upright, the panel on the right when on its side ── */
-.v-strip { display: none; }
-@media (max-width: 760px), (pointer: coarse) {
-  .v-strip { display: block; position: absolute; left: 0; right: 0; bottom: calc(68px + env(safe-area-inset-bottom)); height: 44px;
-    overflow: hidden; touch-action: none; transition: opacity .2s;
-    -webkit-mask-image: linear-gradient(90deg, transparent, #000 9%, #000 91%, transparent);
-    mask-image: linear-gradient(90deg, transparent, #000 9%, #000 91%, transparent); }
-  .v-strip img { position: absolute; left: 0; top: 0; width: 30px; height: 44px; object-fit: cover; border-radius: 3px; background: #1b1b1e;
-    will-change: transform; transition: transform .25s var(--ease), width .25s var(--ease); }
-  .v-strip.drag img { transition: none; }
-  .v.bare .v-strip { opacity: 0; pointer-events: none; }
-  .v-ui::before, .v-ui::after { content: ""; position: absolute; left: 0; right: 0; transition: opacity .25s; }
-  .v-ui::before { top: 0; height: calc(96px + env(safe-area-inset-top)); background: linear-gradient(rgba(0,0,0,.62), transparent); }
-  .v-ui::after { bottom: 0; height: calc(160px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.7)); }
-  .v.bare .v-ui::before, .v.bare .v-ui::after { opacity: 0; }
-  .v #vClose { top: calc(8px + env(safe-area-inset-top)); left: calc(12px + env(safe-area-inset-left)); }
-  .v-title { display: block; position: absolute; top: calc(10px + env(safe-area-inset-top)); left: 66px; right: 66px;
-    text-align: center; transition: opacity .2s; pointer-events: none; }
-  .v-title b, .v-title span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .v-title b { font-size: 16px; line-height: 21px; font-weight: 600; color: #fff; }
-  .v-title span { font-size: 12.5px; line-height: 16px; color: rgba(255,255,255,.72); }
-  .v #vShare, .v #vInfoBtn { top: auto; bottom: calc(12px + env(safe-area-inset-bottom)); }
-  .v #vShare, .v.info #vShare { left: calc(14px + env(safe-area-inset-left)); right: auto; }
-  .v #vInfoBtn, .v.info #vInfoBtn { right: calc(14px + env(safe-area-inset-right)); }
-  .v.info #vNext { right: 18px; }
-  .v .v-count, .v.info .v-count { top: auto; bottom: calc(25px + env(safe-area-inset-bottom)); left: 70px; right: 70px; max-width: none;
-    text-align: center; color: rgba(255,255,255,.8); transition: opacity .2s; }
-}
+/* a phone held upright: details are a sheet from below; swipe up for it, down to put it away */
 @media (max-width: 760px) {
-  .v-info { width: 100%; top: 45%; padding: 10px 16px 40px; border-radius: 28px 28px 0 0; background: #1c1c1d;
+  .v-info { width: 100%; top: 45%; padding: 10px 20px calc(40px + env(safe-area-inset-bottom)); border-radius: 28px 28px 0 0; background: #1c1c1d;
     transform: translateY(100%); }
   .v-info::before { content: ""; display: block; width: 36px; height: 5px; margin: 0 auto 18px; border-radius: 3px; background: rgba(255,255,255,.25); }
-  .v-info h3, .v-info .sub, .v-info .note { margin-left: 4px; }
+  .v.info .v-title, .v.info #vFav { right: 74px; }
+  .v.info #vFav { right: calc(14px + env(safe-area-inset-right)); }
+  .v.info .v-bar, .v.info .v-note { opacity: 0; pointer-events: none; }
+  .head h1 { font-size: 28px; }
 }
-@media (pointer: coarse) and (min-width: 761px) {   /* on its side: the bottom row makes room for the panel */
-  .v.info #vInfoBtn { right: 374px; }
-  .v.info .v-count { right: 430px; }
-  .v.info .v-title { right: 426px; }
-  .v.info .v-strip { right: 360px; }
-}
+@media (max-width: 420px) { .scale button { padding: 0 12px; } }
+@media (pointer: coarse) { .search kbd { display: none; } }
 </style>
 </head>
 <body>
-<header id="hdr">
-  <div class="bar">
-    <button class="round back" id="backBtn" aria-label="Back"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
-    <label class="search" id="search">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14"/></svg>
-      <span class="like" id="like"><img alt=""><span>Similar photos</span><button type="button" aria-label="Clear similar photos"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m4 4 8 8m0-8-8 8"/></svg></button></span>
-      <input id="q" type="search" placeholder="Describe a photo, or find a place, person, trip or camera" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search photos">
-      <kbd>/</kbd>
-    </label>
-    <div class="pills" id="pills"></div>
-    <div class="tools">
-      <a class="round" id="peopleBtn" href="/people" style="display:none" title="Name the people in your photos" aria-label="Name people"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="5.4" r="2.6"/><path d="M2.8 13.6c.6-2.6 2.7-4 5.2-4s4.6 1.4 5.2 4"/></svg></a>
-      <a class="round" id="addBtn" href="/setup" style="display:none" title="Add photos from Google, Flickr or a folder" aria-label="Add photos"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg></a>
-      <a class="round" id="statsBtn" href="/stats" title="Library info: size, counts and stats" aria-label="Library info"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 13V8M8 13V3M13 13V6"/></svg></a>
-      <button class="round" id="viewBtn" aria-label="View options"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 5h5.5M11.5 5H14M2 11h2.5M8.5 11H14"/><circle cx="9.5" cy="5" r="1.9"/><circle cx="6.5" cy="11" r="1.9"/></svg></button>
+
+<div id="libTab" class="tab">
+  <div class="lbar" id="lbar">
+    <button class="back glass" id="libBack" hidden aria-label="Back"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
+    <div class="scale glass" id="scale" role="tablist">
+      <button data-s="years" role="tab">Years</button><button data-s="months" role="tab">Months</button><button data-s="all" role="tab" aria-label="All photos">All</button>
+    </div>
+    <div class="sp"></div>
+    <div class="caps glass">
+      <button class="round" id="libView" aria-label="View options"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.5 9h7M8 13h2"/></svg></button>
+      <button class="round" id="libMore" aria-label="Your library"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="14" cy="9" r="1.5"/></svg></button>
     </div>
   </div>
-  <div class="tl" id="tl">
-    <div class="tl-tip num" id="tlTip"></div>
-    <div class="tl-sel" id="tlSel"></div>
-    <div class="tl-bars" id="tlBars"></div>
-    <div class="tl-years" id="tlYears"></div>
-    <div class="tl-here" id="tlHere"></div>
-  </div>
-</header>
+  <main id="libAll">
+    <div class="head" id="libHead"><h1>Library</h1><p class="num">&nbsp;</p></div>
+    <div class="sentinel" id="libUp"></div>
+    <div class="grid" id="libGrid"></div>
+    <div class="sentinel" id="libDown"></div>
+  </main>
+  <div class="periods" id="libPeriods" hidden></div>
+  <div class="scrub glass" id="scrub" role="slider" aria-label="Scroll through the library"><span></span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 4.500 2.500-2.500 2.500 2.500M3.500 7.500 6 10l2.500-2.500"/></svg></div>
+</div>
 
-<main>
-  <div class="head">
-    <div><h1 id="title" class="display">Library</h1><p id="sub" class="num">&nbsp;</p></div>
-    <div class="head-r" id="headR"></div>
-  </div>
-  <div id="grid"></div>
-  <div id="more"></div>
-</main>
+<div id="searchTab" class="tab" hidden>
+  <header class="sbar" id="sbar">
+    <div class="srow">
+      <button class="round" id="sBack" hidden aria-label="Back"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
+      <label class="search" id="search">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14"/></svg>
+        <input id="q" type="search" placeholder="Describe a photo, or a name or place" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search photos">
+        <button type="button" class="qx" id="qClear" hidden aria-label="Clear text"><svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m2 2 6 6m0-6-6 6"/></svg></button>
+        <kbd>/</kbd>
+      </label>
+      <button class="txt" id="sCancel" hidden>Cancel</button>
+      <button class="round" id="sView" hidden aria-label="View options"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.500 9h7M8 13h2"/></svg></button>
+    </div>
+    <div class="chips" id="chips" hidden></div>
+    <div class="notice" id="notice"></div>
+  </header>
+  <div class="sugs" id="sugs" hidden></div>
+  <div class="browse" id="browse" hidden></div>
+  <main id="results" hidden>
+    <div class="head" id="sHead"><h1>&nbsp;</h1><p class="num">&nbsp;</p></div>
+    <div class="grid" id="sGrid"></div>
+    <div class="sentinel" id="sDown"></div>
+  </main>
+</div>
 
 <div class="v" id="v" role="dialog" aria-modal="true" aria-label="Photo">
   <div class="v-bg" id="vBg"></div>
   <div class="v-stage" id="vStage"></div>
   <div class="v-ui" id="vUi">
-    <button class="v-btn" id="vClose" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m3.5 3.5 9 9m0-9-9 9"/></svg></button>
+    <button class="v-btn vglass" id="vClose" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m3.5 3.5 9 9m0-9-9 9"/></svg></button>
     <div class="v-title" id="vTitle"></div>
-    <span class="v-count" id="vCount"></span>
-    <div class="v-strip" id="vStrip"></div>
-    <button class="v-btn" id="vShare" aria-label="Save or share"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M5 4.8 8 2l3 2.8M5.5 7H4.2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h7.600a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1H10.500"/></svg></button>
-    <button class="v-btn" id="vInfoBtn" aria-label="Details"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.3v3.6"/><circle cx="8" cy="5" r=".4" fill="currentColor"/></svg></button>
-    <button class="v-btn" id="vPrev" aria-label="Previous"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
-    <button class="v-btn" id="vNext" aria-label="Next"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 5 5-5 5"/></svg></button>
+    <span class="v-btn" id="vFav" aria-label="Favourite"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.9-5.6 7.3-5.6 7.3Z"/></svg></span>
+    <button class="v-btn vglass" id="vPrev" aria-label="Previous"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
+    <button class="v-btn vglass" id="vNext" aria-label="Next"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 5 5-5 5"/></svg></button>
+    <div class="v-note" id="vNote"></div>
+    <div class="v-bar vglass" id="vBar">
+      <button id="vShare" aria-label="Share"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 12.5V2.5M6.5 5.8 10 2.500l3.500 3.300M7 8.500H5.500a1.300 1.300 0 0 0-1.300 1.300v6.400a1.300 1.300 0 0 0 1.300 1.300h9a1.300 1.300 0 0 0 1.300-1.300V9.800A1.300 1.300 0 0 0 14.500 8.500H13"/></svg></button>
+      <button id="vInfoBtn" aria-label="Details"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7.6"/><path d="M10 9v4.800"/><circle cx="10" cy="6.300" r=".5" fill="currentColor"/></svg></button>
+      <button id="vLike" aria-label="More like this"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M8 2.500c.5 3.900 2.600 6 6.500 6.500-3.900.5-6 2.600-6.500 6.500-.5-3.900-2.600-6-6.500-6.500 3.900-.5 6-2.600 6.500-6.500ZM15 1.800c.2 1.400.9 2.100 2.300 2.300-1.400.2-2.100.9-2.300 2.300-.2-1.400-.9-2.100-2.300-2.300 1.400-.2 2.100-.9 2.300-2.300Z"/></svg></button>
+    </div>
     <aside class="v-info" id="vInfo"></aside>
   </div>
 </div>
 
+<nav class="tabbar" id="tabbar">
+  <div class="lib glass"><button class="tb on" data-tab="library" aria-label="Library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="6.500" width="14.500" height="12.500" rx="2.500"/><path d="M6.500 3.800h12a2.500 2.500 0 0 1 2.500 2.500v9.700" stroke-linecap="round"/><path d="m3.800 17 4.300-4.600 3.300 3.200 1.900-1.800 3.800 3.600" stroke-linecap="round"/></svg>Library</button></div>
+  <button class="tb ts glass" data-tab="search" aria-label="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.500" cy="10.500" r="6.300"/><path d="m15.300 15.300 5 5"/></svg></button>
+</nav>
+
 <script>
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmt = n => Number(n).toLocaleString();
 const EASE = "cubic-bezier(.2,.7,.2,1)";
+const svg = (d, w = 16, extra = "") => `<svg width="${w}" height="${w}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
 const I = {
-  chev: '<svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m2 3.75 3 3 3-3"/></svg>',
-  x: '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m2 2 6 6m0-6-6 6"/></svg>',
-  check: '<svg class="ck" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 8.5 3 3 6-7"/></svg>',
-  heart: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.9-5.600 7.300-5.600 7.300Z"/></svg>',
-  heartFill: '<svg class="fv" width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.800a3 3 0 0 1 5.600 1.500c0 3.900-5.600 7.300-5.600 7.300Z"/></svg>',
-  search: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14"/></svg>',
-  chevR: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 2.500 4.500 4.500L5 11.500"/></svg>',
-  dot: '<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>',
-  spark: '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.500c.4 3.600 2.500 5.700 6.500 6.500-4 .8-6.100 2.900-6.500 6.500-.4-3.600-2.500-5.700-6.500-6.500 4-.8 6.100-2.900 6.500-6.500Z"/></svg>',
-  pin: '<svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M11 19.500s6-5.400 6-10.200a6 6 0 0 0-12 0c0 4.800 6 10.200 6 10.200Z"/><circle cx="11" cy="9.200" r="2.200"/></svg>',
-  day: '<svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round"><rect x="3.500" y="4.500" width="15" height="14" rx="3"/><path d="M3.500 9h15M7.500 2.800v3M14.500 2.800v3"/></svg>',
-  trip: '<svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round"><path d="m3 6.500 5-2 6 2 5-2v11l-5 2-6-2-5 2v-11ZM8 4.500v11M14 6.500v11"/></svg>',
-  event: '<svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.700" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="12" height="10" rx="2.500"/><path d="M7 18h9.500a2.500 2.500 0 0 0 2.500-2.500V9"/></svg>',
+  x: svg('<path d="m4 4 8 8m0-8-8 8"/>', 10),
+  check: svg('<path d="m3.5 8.5 3 3 6-7"/>', 16, 'class="ck" stroke-width="2"'),
+  heart: svg('<path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.9-5.6 7.3-5.6 7.3Z"/>', 14, 'class="h"'),
+  heartFill: '<svg class="fv" width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.9-5.6 7.3-5.6 7.3Z"/></svg>',
+  chevR: svg('<path d="m6 3 5 5-5 5"/>', 14, 'stroke-width="2"'),
+  spark: '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5c.4 3.6 2.5 5.7 6.5 6.5-4 .8-6.1 2.9-6.5 6.5-.4-3.6-2.5-5.7-6.5-6.5 4-.8 6.1-2.9 6.5-6.5Z"/></svg>',
+  sparkSearch: svg('<circle cx="6.8" cy="6.8" r="4.6"/><path d="M10.4 10.4 14 14"/><path d="M6.8 4.6v4.4M4.6 6.8H9" stroke-width="1.3"/>', 20),
+  pin: svg('<path d="M8 14.5s4.5-4 4.5-7.6a4.5 4.5 0 0 0-9 0C3.5 10.5 8 14.5 8 14.5Z"/><circle cx="8" cy="6.9" r="1.6"/>', 20),
+  person: svg('<circle cx="8" cy="5.4" r="2.6"/><path d="M2.8 13.6c.6-2.6 2.7-4 5.2-4s4.6 1.4 5.2 4"/>', 20),
+  album: svg('<rect x="2.5" y="5" width="11" height="8.5" rx="2"/><path d="M4.5 2.8h7"/>', 20),
+  camera: svg('<path d="M2.5 5.8a1.5 1.5 0 0 1 1.5-1.5h1.6l1.1-1.6h2.6l1.1 1.6H12a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5Z"/><circle cx="8" cy="8.6" r="2.3"/>', 20),
+  plane: svg('<path d="M14 3.2 2.5 7.6l4.3 1.6M14 3.2l-3 10.300-4.200-4.300M14 3.2 6.800 9.200v3.600l1.900-2"/>', 20),
+  cal: svg('<rect x="2.5" y="3.5" width="11" height="10" rx="2.200"/><path d="M2.500 6.800h11M5.500 2v2.500M10.500 2v2.500M5 9.300h2M5 11.300h4"/>', 20),
+  calSmall: svg('<rect x="2.5" y="3.5" width="11" height="10" rx="2.200"/><path d="M2.500 6.800h11M5.500 2v2.500M10.500 2v2.500"/>', 18),
+  people: svg('<circle cx="8" cy="5.4" r="2.6"/><path d="M2.8 13.6c.6-2.6 2.7-4 5.2-4s4.6 1.4 5.2 4"/>', 18),
+  plus: svg('<path d="M8 3v10M3 8h10"/>', 18),
+  stats: svg('<path d="M3 13V8M8 13V3M13 13V6"/>', 18),
 };
 // The icon's picture: hills under a low sun. Shown where there are no photos to show.
 const MARK = '<svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>';
 const DEBUG = (() => { try { return localStorage.getItem("estate.debug") === "1"; } catch (e) { return false; } })();   // set on the Library info page
-const IDEAS = ["sunset over water", "kids playing in the snow", "birthday cake with candles", "dog on the beach",
-  "city at night", "old black and white family photo"];
+const IDEAS = ["sunset over water", "dog on the beach", "birthday cake", "snowy mountains", "city at night", "a child laughing"];
+const DEMO_IDEAS = ["latte art", "kitten", "waterfall in autumn", "dog in the snow", "city at night"];   // searches that find a group in the demo
 
-/* ── state ─────────────────────────────────────────────────────────── */
-const KEYS = ["country", "region", "city", "person", "album", "camera", "lens"];
-const KIND = { country: "Country", region: "Region", city: "Place", person: "Person", album: "Album", camera: "Camera", lens: "Lens", trip: "Trip" };
-const blank = () => ({ q: "", plain: false, sha: "", trip: "", event: "", fav: false, from: "", to: "", sort: "",
-  f: Object.fromEntries(KEYS.map(k => [k, []])) });
-let S = blank();
-let V = { size: "m", dedupe: true, info: true };
-try { Object.assign(V, JSON.parse(localStorage.getItem("estate.view") || "{}")); } catch (e) {}
+/* ── view options: how a list of photos is laid out, kept on this device, as on the iPhone ── */
+const DENS = [64, 96, 128, 180, 260], DENS_NAME = ["Smallest", "Small", "Medium", "Large", "Largest"];
+const V = { dens: 2, dedupe: true, shots: true, info: true, scale: "all" };   // shots: hide screenshots
+try {
+  const saved = JSON.parse(localStorage.getItem("estate.view") || "{}");
+  if (saved.size && saved.dens == null) saved.dens = { s: 1, m: 2, l: 3 }[saved.size] ?? 2;   // the old S / M / L
+  Object.assign(V, saved);
+} catch (e) {}
 const saveView = () => { try { localStorage.setItem("estate.view", JSON.stringify(V)); } catch (e) {} };
-const ROW_H = { s: 128, m: 196, l: 288 };
-let INFO = null, F = null;                  // library facts; facet counts under the current filters
-let D = {}, items = [], sections = [], next = null, ranked = false, gen = 0, busy = false;
+const rowH = W => DENS[V.dens] * (W >= 1000 ? 1.5 : W >= 700 ? 1.25 : 1);   // the iPhone's sizes, a little bigger on a big screen
+const viewParams = p => { p.set("dedupe", V.dedupe ? "1" : "0"); p.set("shots", V.shots ? "0" : "1"); return p; };
 
+/* ── the question Search asks ──────────────────────────────────────── */
+const KEYS = ["country", "region", "city", "person", "album", "camera", "lens", "trip"];
+const KIND = { country: "Country", region: "Region", city: "Place", person: "Person", album: "Album", camera: "Camera", lens: "Lens", trip: "Trip" };
+const blank = () => ({ q: "", plain: false, sha: "", event: "", fav: false, from: "", to: "", sort: "", f: Object.fromEntries(KEYS.map(k => [k, []])) });
+const copy = s => ({ ...s, f: Object.fromEntries(KEYS.map(k => [k, [...s.f[k]]])) });
+let S = blank();
 function toParams(s) {
   const p = new URLSearchParams();
   if (s.q) p.set("q", s.q);
   if (s.q && s.plain) p.set("names", "0");        // names typed in the search are words, not people
   if (s.sha) p.set("sha", s.sha);
   for (const k of KEYS) for (const v of s.f[k]) p.append(k, v);
-  for (const k of ["trip", "event", "from", "to", "sort"]) if (s[k]) p.set(k, s[k]);
+  for (const k of ["event", "from", "to", "sort"]) if (s[k]) p.set(k, s[k]);
   if (s.fav) p.set("fav", "1");
   return p;
 }
 function fromParams(p) {
   const s = blank();
-  for (const k of ["q", "sha", "trip", "event", "from", "to", "sort"]) s[k] = p.get(k) || "";
+  for (const k of ["q", "sha", "event", "from", "to", "sort"]) s[k] = p.get(k) || "";
   for (const k of KEYS) s.f[k] = p.getAll(k);
   s.fav = p.get("fav") === "1";
   s.plain = p.get("names") === "0";
   return s;
 }
-const filtered = () => KEYS.some(k => S.f[k].length) || S.trip || S.event || S.fav || S.from || S.to;
+const filtered = (s = S) => KEYS.some(k => s.f[k].length) || s.event || s.fav || s.from || s.to;
+const isEmpty = (s = S) => !s.q && !s.sha && !filtered(s);
 
 /* ── dates ─────────────────────────────────────────────────────────── */
 const dParts = w => { const m = /^(\d{4})-(\d\d)(?:-(\d\d))?(?:T(\d\d):(\d\d))?/.exec(w || "");
   return m && new Date(+m[1], +m[2] - 1, +(m[3] || 1), +(m[4] || 0), +(m[5] || 0)); };
 const DF = o => new Intl.DateTimeFormat(undefined, o);
 const fLong = DF({ weekday: "long", day: "numeric", month: "long", year: "numeric" });
-const fDay = DF({ weekday: "long", day: "numeric", month: "long" });
 const fTime = DF({ hour: "numeric", minute: "2-digit" });
 const fMed = DF({ day: "numeric", month: "short", year: "numeric" });
-const fMonth = DF({ month: "long" }), fMon = DF({ month: "short", year: "numeric" });
-const fTitle = DF({ day: "numeric", month: "long", year: "numeric" });
+const fMonthYear = DF({ month: "long", year: "numeric" }), fMon = DF({ month: "short", year: "numeric" }), fMonth = DF({ month: "long" });
 const when = r => r.local || r.taken || "";
 function span(a, b) {
   const x = dParts(a), y = dParts(b || a);
   if (!x) return "";
   try { return fMed.formatRange(x, y); } catch (e) { return fMed.format(x); }
 }
+const heading = key => { const d = dParts(key); return !d ? "Undated" : key.length > 7 ? fLong.format(d) : fMonthYear.format(d); };
+const shortKey = key => { const d = dParts(key); return d ? (key.length > 7 ? fMed : fMon).format(d) : ""; };
 const ymOf = s => { const m = /^(\d{4})-(\d\d)/.exec(s || ""); return m ? +m[1] * 12 + +m[2] - 1 - INFO.m0 : -1; };
-const ymStr = i => { const a = i + INFO.m0; return `${Math.floor(a / 12)}-${String(a % 12 + 1).padStart(2, "0")}`; };
-const ymDate = i => new Date(Math.floor((i + INFO.m0) / 12), (i + INFO.m0) % 12, 1);
-function rangeLabel() {
-  const a = S.from ? ymOf(S.from) : 0, b = S.to ? ymOf(S.to) : INFO.months - 1;
-  if (a === b) return fMon.format(ymDate(a));
-  const A = ymDate(a), B = ymDate(b);
-  if (A.getMonth() === 0 && B.getMonth() === 11)
-    return A.getFullYear() === B.getFullYear() ? String(A.getFullYear()) : `${A.getFullYear()} – ${B.getFullYear()}`;
-  return `${fMon.format(A)} – ${fMon.format(B)}`;
-}
-
-/* ── fetch + render ────────────────────────────────────────────────── */
-const getJSON = async u => { const r = await fetch(u); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; };
-const apiParams = () => { const p = toParams(S); p.set("dedupe", V.dedupe ? "1" : "0"); return p; };
-
-// A home-screen app has no browser back button, so the header gets one once there is somewhere to go back to.
-const depth = () => history.state?.d || 0;
-async function refresh(push = true) {
-  const g = ++gen;
-  if (push) history[push === "replace" ? "replaceState" : "pushState"]({ d: depth() + 1 }, "", toParams(S).size ? "?" + toParams(S) : location.pathname);
-  document.documentElement.classList.toggle("deep", depth() > 0);
-  closePop();
-  renderPills(); renderLike();
-  if ($("#q").value !== S.q && document.activeElement !== $("#q")) $("#q").value = S.q;
-  $("#grid").classList.add("stale");
-  getJSON("/api/facets?" + apiParams()).then(f => { if (g === gen) { F = f; renderTimeline(); renderCounts(); refreshPop(); } }).catch(() => {});
-  let data;
-  try { data = await getJSON((S.sha ? "/api/similar?" : "/api/search?") + apiParams() + "&limit=150"); }
-  catch (e) { if (g === gen) { $("#grid").classList.remove("stale"); $("#sub").textContent = "Couldn’t search: " + e.message; } return; }
-  if (g !== gen) return;
-  D = data; items = []; sections = []; next = data.next; ranked = !!(S.sha || data.text);
-  if (S.event) { renderPills(); renderPillsKeepOpen(); }
-  const grid = $("#grid");
-  grid.innerHTML = ""; grid.classList.remove("stale", "fresh"); void grid.offsetWidth; grid.classList.add("fresh");
-  renderHead();
-  window.scrollTo({ top: 0 });
-  if (!data.results.length) {
-    grid.innerHTML = data.text && !S.sha
-      ? `<div class="blank">${MARK}<h3>Nothing found</h3><p>No photo${data.people?.length && !S.plain ? ` of ${esc(data.people.join(" & "))}` : ""}${data.places?.length && !S.plain ? ` in ${esc(data.places.join(" or "))}` : ""} looks like “${esc(data.text)}”${filtered() ? " with these filters" : ""}.</p>${filtered() ? '<button class="btn pri" id="clearAll">Clear filters</button>' : ""}</div>`
-      : `<div class="blank">${MARK}<h3>Nothing matches</h3><p>No photos fit everything you’ve chosen.</p>${filtered() ? '<button class="btn pri" id="clearAll">Clear filters</button>' : ""}</div>`;
-    return;
+const ymKey = i => { const a = i + INFO.m0; return `${Math.floor(a / 12)}-${String(a % 12 + 1).padStart(2, "0")}`; };
+function rangeLabel(s = S) {
+  const a = s.from ? ymOf(s.from) : null, b = s.to ? ymOf(s.to) : null, M = i => fMonthYear.format(dParts(ymKey(i)));
+  if (a != null && b != null) {
+    if (a === b) return M(a);
+    if ((a + INFO.m0) % 12 === 0 && b === a + 11) return String(Math.floor((a + INFO.m0) / 12));
+    return `${M(a)} – ${M(b)}`;
   }
-  append(data.results);
-}
-
-async function loadMore() {
-  if (busy || next == null) return;
-  busy = true; const g = gen;
-  try {
-    const data = await getJSON((S.sha ? "/api/similar?" : "/api/search?") + apiParams() + `&limit=200&cursor=${next}`);
-    if (g === gen) { next = data.next; append(data.results); if (vCur >= 0) { arrange(); vChrome(); } }
-  } catch (e) {}
-  busy = false;
-  if (g === gen && next != null && $("#more").getBoundingClientRect().top < innerHeight + 1200) loadMore();
-}
-new IntersectionObserver(es => { if (es[0].isIntersecting) loadMore(); }, { rootMargin: "1400px" }).observe($("#more"));
-
-/* grouping: none when ranked by meaning; by day inside a trip, an event or a short date range; else by month */
-function grain() {
-  if (ranked) return 0;
-  if (D.scope || S.event) return 10;
-  if (S.from && S.to && ymOf(S.to) - ymOf(S.from) <= 1) return 10;
-  return 7;
-}
-function append(list) {
-  const g = grain(), touched = new Set();
-  for (const r of list) {
-    const key = g ? when(r).slice(0, g) : "";
-    let sec = sections[sections.length - 1];
-    if (!sec || sec.key !== key) { sec = { key, base: items.length, items: [], rows: [], el: null }; sections.push(sec); }
-    sec.items.push(r); items.push(r); touched.add(sec);
-  }
-  const W = $("#grid").clientWidth;
-  for (const sec of touched) drawSection(sec, W);
-}
-
-function drawSection(sec, W) {
-  if (!sec.el) {
-    sec.el = document.createElement("section");
-    if (sec.key || !ranked) {
-      const d = dParts(sec.key);
-      const t = !d ? "Undated" : sec.key.length > 7 ? `${fDay.format(d)} ${d.getFullYear()}` : `${fMonth.format(d)} ${d.getFullYear()}`;
-      sec.el.innerHTML = `<div class="sh"><h2>${t}</h2><p><span class="where"></span><span class="n num" data-ym="${sec.key.length === 7 ? ymOf(sec.key) : ""}"></span></p></div>`;
-    } else sec.el.className = "flat";
-    sec.box = document.createElement("div"); sec.el.append(sec.box);
-    $("#grid").append(sec.el);
-  }
-  const wh = $(".where", sec.el);
-  if (wh) {                                     // the three places that account for most of this section
-    const c = new Map();
-    for (const r of sec.items) { const p = (r.city || r.event_title || "").split(",")[0]; if (p) c.set(p, (c.get(p) || 0) + 1); }
-    wh.textContent = [...c].sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]).join("  ·  ");
-    const n = $(".n", sec.el); n.textContent = photos(F && n.dataset.ym !== "" && F.months[+n.dataset.ym] || sec.items.length);
-  }
-  // rows are stable from the left, so only an unfinished last row needs laying out again
-  let from = 0;
-  const last = sec.rows[sec.rows.length - 1];
-  if (last && !last.full) { sec.rows.pop(); sec.box.lastElementChild.remove(); from = last.start; }
-  else if (last) from = last.start + last.n;
-  const H = Math.min(ROW_H[V.size], Math.max(96, W / 2.4)), G = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gap")) || 4;
-  const ar = r => Math.min(2.6, Math.max(.5, r.ar || 1.5));
-  let html = "";
-  for (let i = from; i < sec.items.length;) {
-    let sum = 0, j = i, full = false;
-    while (j < sec.items.length) { sum += ar(sec.items[j++]); if (sum * H + G * (j - i - 1) >= W) { full = true; break; } }
-    const n = j - i, room = W - G * (n - 1);
-    if (!full && sum * H >= room * .9) full = true;
-    const h = Math.round(full ? room / sum : H);
-    const ws = sec.items.slice(i, j).map(r => Math.round(ar(r) * h));
-    if (full) { let d = room - ws.reduce((a, b) => a + b, 0); for (let k = 0; d !== 0; k = (k + 1) % n) { ws[k] += Math.sign(d); d -= Math.sign(d); } }
-    html += `<div class="row" style="height:${h}px;contain-intrinsic-size:auto ${h}px">`;
-    for (let k = 0; k < n; k++) {
-      const r = sec.items[i + k];
-      html += `<div class="t" tabindex="0" data-i="${sec.base + i + k}" style="width:${ws[k]}px"><img loading="lazy" decoding="async" alt="" src="/thumb/${r.sha}" onload="this.classList.add('in')">`
-        + (r.fav ? I.heartFill : "") + (ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
-    }
-    html += "</div>";
-    sec.rows.push({ start: i, n, full });
-    i = j;
-  }
-  sec.box.insertAdjacentHTML("beforeend", html);
+  return a != null ? `Since ${M(a)}` : b != null ? `Until ${M(b)}` : "";
 }
 const photos = n => `${fmt(n)} ${n === 1 ? "photo" : "photos"}`;
-const caption = r => { const d = dParts(when(r)); return [d && fMed.format(d), (r.city || "").split(",")[0]].filter(Boolean).join("  ·  "); };
-
-function relayout() {
-  const W = $("#grid").clientWidth;
-  for (const sec of sections) { sec.rows = []; sec.box.innerHTML = ""; drawSection(sec, W); }
-}
-let lastW = 0;
-new ResizeObserver(() => { const w = $("#grid").clientWidth; if (w !== lastW) { lastW = w; if (sections.length) relayout(); layoutYears(); } }).observe($("#grid"));
-
-function renderCounts() {
-  for (const n of document.querySelectorAll(".sh .n")) if (n.dataset.ym !== "" && F.months[+n.dataset.ym]) n.textContent = photos(F.months[+n.dataset.ym]);
-}
-
-function renderHead() {
-  let title, sub;
-  const n = `<b>${fmt(D.matching)}</b> ${D.matching === 1 ? "photo" : "photos"}`;
-  // names and places in the typed words, read as people and places (unless "search the words" was chosen)
-  const could = !S.sha && (D.people?.length || D.places?.length), read = could && !S.plain;
-  const both = (ns, w = "&") => ns.length > 1 ? `${ns.slice(0, -1).join(", ")} ${w} ${ns.at(-1)}` : ns[0];
-  const who = D.people?.length ? both(D.people) : "", where = D.places?.length ? both(D.places, "or") : "";
-  const reading = [who, where && (who ? "in " : "") + where].filter(Boolean).join(" ");
-  if (read && !D.text) { title = esc(reading); sub = n; }
-  else if (S.sha) { title = `<img src="/thumb/${S.sha}" alt="">More like this`; sub = `Closest in look and subject among ${n}`; }
-  else if (D.text) { title = `“${esc(D.text)}”`; sub = D.matching ? `${n}, best match first` : "No matches"; }
-  else if (D.scope) { title = esc(D.scope.title || "Untitled"); sub = `${esc(span(D.scope.start, D.scope.end))}<i>·</i>${n}`; }
-  else if (filtered()) {
-    const parts = [S.f.person.join(" & "), [...S.f.city, ...S.f.region, ...S.f.country].map(v => v.split(",")[0]).join(", "),
-      S.f.album.join(", "), [...S.f.camera, ...S.f.lens].join(", "), S.from || S.to ? rangeLabel() : "", ].filter(Boolean);
-    title = esc(parts.join(" · ") || (S.fav ? "Favourites" : "Photos")); sub = n + (S.fav && parts.length ? "<i>·</i>favourites" : "");
-  } else {
-    title = "Library";
-    sub = `${n}<i>·</i>${Math.floor(INFO.m0 / 12)} – ${Math.floor((INFO.m0 + INFO.months - 1) / 12)}`;
-  }
-  if (read && D.text) sub = esc([who && `with ${who}`, where && `in ${where}`].filter(Boolean).join(", ")) + `<i>·</i>` + sub;
-  for (const f of D.filters || []) sub += `<i>·</i>${esc(f)}`;
-  if (read) sub += `<i>·</i><button class="txt inl" id="namesBtn" title="Search for the words you typed instead">${
-    !where ? `Not ${D.people.length > 1 ? "them" : esc(D.people[0].split(" ")[0])}?` : "Search the words instead"}</button>`;
-  else if (could) sub += `<i>·</i><button class="txt inl" id="namesBtn">Search for ${esc(reading)} instead</button>`;
-  if (DEBUG) sub += `<i>·</i>${D.ms} ms`;
-  $("#title").innerHTML = title; $("#sub").innerHTML = sub;
-  document.title = ($("#title").textContent === "Library" ? "" : $("#title").textContent + " — ") + "Photo Estate";
-  $("#headR").innerHTML = (ranked ? "" : `<button class="txt" id="sortBtn">${D.sort === "old" ? "Oldest first" : "Newest first"}
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(${D.sort === "old" ? 180 : 0}deg);transition:transform .3s ${EASE}"><path d="M6 2v8M2.800 6.800 6 10l3.200-3.200"/></svg></button>`)
-    + (filtered() || S.q || S.sha ? `<button class="txt" id="clearAll">Clear all</button>` : "");
-}
-
-/* ── filter pills ──────────────────────────────────────────────────── */
-const PILLS = [
-  { id: "where", label: "Where", tabs: [["country", "Countries"], ["region", "Regions"], ["city", "Places"]] },
-  { id: "people", label: "People", tabs: [["person", ""]] },
-  { id: "albums", label: "Albums", tabs: [["album", ""]] },
-  { id: "trips", label: "Trips" },
-  { id: "camera", label: "Camera", tabs: [["camera", "Cameras"], ["lens", "Lenses"]] },
-];
+const about = n => { const r = n >= 10000 ? Math.round(n / 1000) * 1000 : n >= 1000 ? Math.round(n / 100) * 100 : n;   // 81K, 8.1K, 950
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(r); };
 const tripTitle = t => (t?.title || "Trip").replace(/^Trip to /, "");
 const tripById = id => INFO.trips.find(t => String(t.id) === String(id));
-function pillValue(p) {
-  if (p.id === "trips") return S.trip ? [tripTitle(tripById(S.trip))] : [];
-  return p.tabs.flatMap(([k]) => S.f[k]).map(v => p.id === "where" ? v.split(",")[0] : v);
-}
-function renderPills() {
-  if (!INFO) return;
-  let html = "";
-  if (S.from || S.to) html += `<button class="pill on" data-pill="date"><span>${esc(rangeLabel())}</span><span class="x" data-x>${I.x}</span></button>`;
-  if (S.event) html += `<button class="pill on" data-pill="event"><span>${esc(D.scope?.title || "Event")}</span><span class="x" data-x>${I.x}</span></button>`;
-  for (const p of PILLS) {
-    const v = pillValue(p);
-    html += `<button class="pill${v.length ? " on" : ""}" data-pill="${p.id}" aria-haspopup="true"><span>${esc(v.length ? v[0] + (v.length > 1 ? ` +${v.length - 1}` : "") : p.label)}</span>${I.chev}<span class="x" data-x>${I.x}</span></button>`;
-  }
-  html += `<button class="pill fav${S.fav ? " on" : ""}" data-pill="fav" aria-pressed="${S.fav}">${I.heart}<span>Favourites</span></button>`;
-  const el = $("#pills");
-  const was = new Set([...el.querySelectorAll(".pill.on")].map(b => b.dataset.pill));
-  el.innerHTML = html;
-  for (const b of el.querySelectorAll(".pill.on")) if (was.has(b.dataset.pill)) b.style.animation = "none";
-}
-$("#pills").addEventListener("click", e => {
-  const b = e.target.closest(".pill"); if (!b) return;
-  const id = b.dataset.pill, p = PILLS.find(p => p.id === id);
-  if (e.target.closest("[data-x]") || id === "date" || id === "event") {
-    if (id === "date") S.from = S.to = "";
-    else if (id === "event") S.event = "";
-    else if (id === "trips") S.trip = "";
-    else for (const [k] of p.tabs) S.f[k] = [];
-    return refresh();
-  }
-  if (id === "fav") { S.fav = !S.fav; return refresh(); }
-  if (pop && pop.anchor === b) return closePop();
-  openPop(b, id === "trips" ? tripsPop : el => facetPop(el, p));
-});
+const firstPart = v => String(v).split(",")[0].trim();
 
-/* ── popovers ──────────────────────────────────────────────────────── */
-let pop = null;
-function openPop(anchor, build, cls = "") {
-  closePop();
-  const el = document.createElement("div"); el.className = "pop " + cls;
-  document.body.append(el);
-  pop = { el, anchor, build, state: {} };
-  anchor.classList.add("open");
-  build(el, pop.state);
-  placePop();
-  const f = $(".find", el); if (f && anchor.id !== "search") f.focus({ preventScroll: true });
-}
-function placePop() {
-  if (!pop) return;
-  if (pop.anchor.id === "search") pop.el.style.width = pop.anchor.offsetWidth + "px";
-  const r = pop.anchor.getBoundingClientRect(), w = pop.el.offsetWidth;
-  const right = pop.anchor.id === "viewBtn";
-  pop.el.style.left = Math.max(8, Math.min(right ? r.right - w : r.left, document.documentElement.clientWidth - w - 8)) + "px";
-  pop.el.style.top = r.bottom + 6 + "px";
-  if (right) pop.el.style.transformOrigin = "calc(100% - 20px) 0";
-}
-function closePop() { if (!pop) return; pop.anchor.classList.remove("open"); pop.el.remove(); pop = null; }
-function refreshPop() { if (pop && pop.state.list) pop.state.list(); }
-document.addEventListener("pointerdown", e => { if (pop && !pop.el.contains(e.target) && !pop.anchor.contains(e.target)) closePop(); });
-addEventListener("resize", placePop);
+const getJSON = async u => { const r = await fetch(u); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; };
+const narrow = matchMedia("(max-width: 760px)"), coarse = matchMedia("(pointer: coarse)"), standalone = matchMedia("(display-mode: standalone)");
+let INFO = null;                                    // the library's facts (/api/info)
 
-function facetPop(el, p) {
-  const st = pop.state;
-  st.tab = st.tab || (p.tabs.find(([k]) => S.f[k].length) || p.tabs[0])[0];
-  el.innerHTML = (p.tabs.length > 1 ? `<div class="seg">${p.tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join("")}</div>` : "")
-    + `<input class="find" placeholder="Filter ${p.label.toLowerCase()}…" spellcheck="false"><div class="opts"></div>`;
-  const find = $(".find", el), opts = $(".opts", el);
-  st.list = () => {
-    const k = st.tab, q = find.value.trim().toLowerCase(), sel = new Set(S.f[k]);
-    for (const b of el.querySelectorAll("[data-tab]")) b.classList.toggle("on", b.dataset.tab === k);
-    let rows = (F || INFO).facets[k] || [];
-    const seen = new Set(rows.map(r => r[0]));
-    rows = [...S.f[k].filter(v => !seen.has(v)).map(v => [v, 0]), ...rows];        // keep what's chosen visible
-    if (q) rows = rows.filter(r => r[0].toLowerCase().includes(q));
-    find.style.display = rows.length > 8 || q ? "" : "none";
-    opts.innerHTML = rows.slice(0, 250).map(([v, n]) => {
-      const [a, ...rest] = k === "city" || k === "region" ? v.split(", ") : [v];
-      return `<button class="opt${sel.has(v) ? " on" : ""}${n ? "" : " zero"}" data-v="${esc(v)}">${I.check}<span class="l">${esc(a)}${rest.length ? `<em>${esc(rest.join(", "))}</em>` : ""}</span><span class="n">${fmt(n)}</span></button>`;
-    }).join("") || `<div class="none">Nothing here</div>`;
-  };
-  st.list();
-  find.oninput = st.list;
-  el.onclick = e => {
-    const t = e.target.closest("[data-tab]"), o = e.target.closest(".opt");
-    if (t) { st.tab = t.dataset.tab; find.value = ""; st.list(); opts.scrollTop = 0; }
-    if (o) {
-      const a = S.f[st.tab], v = o.dataset.v, i = a.indexOf(v);
-      i < 0 ? a.push(v) : a.splice(i, 1);
-      o.classList.toggle("on");
-      soft();
+/* ── the justified grid: rows as wide as the screen, every photo at its own shape (chapter 13). One per tab.
+      `items` is indexed by position in the whole list, so a grid can start part way down (the Library, opened
+      at a month) and fill in above as well as below. ── */
+class Grid {
+  constructor(o) {
+    Object.assign(this, o);
+    this.el = $(o.grid); this.items = []; this.sections = []; this.lo = 0; this.next = null; this.gen = 0; this.data = null;
+    this.first = 150; this.step = 200;               // photos in the first page, and in each one after
+    new IntersectionObserver(es => { if (es[0].isIntersecting) this.more(); }, { rootMargin: "1400px" }).observe($(o.down));
+    if (o.up) new IntersectionObserver(es => { if (es[0].isIntersecting) this.less(); }, { rootMargin: "900px" }).observe($(o.up));
+  }
+  live() { return this.el.offsetParent !== null; }
+  async load(start = 0) {
+    const g = ++this.gen;
+    this.el.classList.add("stale");
+    let data;
+    try { data = await this.fetch(start, this.first); }
+    catch (e) { if (g === this.gen) { this.el.classList.remove("stale"); this.onError?.(e); } return null; }
+    if (g !== this.gen) return null;
+    this.data = data; this.items = new Array(start); this.lo = start; this.next = data.next; this.sections = []; this.busy = this.busyUp = false;
+    this.onData?.(data);
+    const el = this.el;
+    el.innerHTML = ""; el.classList.remove("stale", "fresh"); void el.offsetWidth; el.classList.add("fresh");
+    this.add(data.results);
+    this.onGrow?.();
+    setTimeout(() => this.poke(), 30);
+    return data;
+  }
+  poke() {                                           // fill in either end that is on screen (the observers only say when that changes)
+    if (this.up && $(this.up).getBoundingClientRect().bottom > -900) this.less();
+    if ($(this.down).getBoundingClientRect().top < innerHeight + 1400) this.more();
+  }
+  async more() {
+    if (this.busy || this.next == null || !this.data || !this.live()) return;
+    this.busy = true; const g = this.gen;
+    try { const d = await this.fetch(this.next, this.step); if (g === this.gen) { this.next = d.next; this.add(d.results); this.onGrow?.(); } } catch (e) {}
+    if (g === this.gen) this.busy = false;
+    if (g === this.gen && this.next != null && $(this.down).getBoundingClientRect().top < innerHeight + 1200) this.more();
+  }
+  async less() {
+    if (this.busyUp || this.lo <= 0 || !this.data || !this.live()) return;
+    this.busyUp = true; const g = this.gen, n = Math.min(this.step, this.lo), at = this.lo - n;
+    let ok = false;
+    try { const d = await this.fetch(at, n); ok = d.results.length === n; if (g === this.gen && ok) this.add(d.results, at); } catch (e) {}   // a short page would leave a gap
+    if (g === this.gen) this.busyUp = false;
+    if (g === this.gen && ok && this.lo > 0 && $(this.up).getBoundingClientRect().bottom > -900) this.less();
+  }
+  section(key, base) {
+    const el = document.createElement("section");
+    if (key || !this.ranked) el.innerHTML = `<div class="sh"><h2>${esc(heading(key))}</h2><p><span class="where"></span><span class="n num"></span></p></div>`;
+    else el.className = "flat";
+    const box = document.createElement("div"); box.className = "rows"; el.append(box);
+    return { key, base, items: [], rows: [], el, box };
+  }
+  add(list, at = null) {                             // at null: below what is there; else the photos just above it
+    const g = this.grain(), W = this.el.clientWidth - 2 * this.gpad();
+    if (at == null) {
+      const touched = new Set();
+      for (const r of list) {
+        const i = this.items.length, key = g ? when(r).slice(0, g) : "";
+        this.items.push(r);
+        let sec = this.sections[this.sections.length - 1];
+        if (!sec || sec.key !== key) { sec = this.section(key, i); this.sections.push(sec); this.el.append(sec.el); }
+        sec.items.push(r); touched.add(sec);
+      }
+      for (const sec of touched) this.draw(sec, W);
+      return;
     }
-  };
+    const h0 = document.documentElement.scrollHeight, y0 = scrollY, fresh = [];
+    list.forEach((r, k) => {
+      const key = g ? when(r).slice(0, g) : "";
+      this.items[at + k] = r;
+      let sec = fresh[fresh.length - 1];
+      if (!sec || sec.key !== key) { sec = this.section(key, at + k); fresh.push(sec); }
+      sec.items.push(r);
+    });
+    this.lo = at;
+    const first = this.sections[0], last = fresh[fresh.length - 1];
+    if (first && last && first.key === last.key) { last.items.push(...first.items); first.el.remove(); this.sections.shift(); }
+    const before = this.sections[0]?.el || null;
+    for (const sec of fresh) { this.el.insertBefore(sec.el, before); this.draw(sec, W); }
+    this.sections.unshift(...fresh);
+    this.onGrow?.();
+    scrollTo(0, y0 + document.documentElement.scrollHeight - h0);    // what was on screen stays where it was
+  }
+  gpad() { return parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gpad")) || 0; }
+  draw(sec, W) {
+    const wh = $(".where", sec.el);
+    if (wh) {                                      // the three places that account for most of this section
+      const c = new Map();
+      for (const r of sec.items) { const p = firstPart(r.city || ""); if (p) c.set(p, (c.get(p) || 0) + 1); }
+      wh.textContent = [...c].sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]).join("  ·  ");
+      $(".n", sec.el).textContent = photos(this.count?.(sec) || sec.items.length);
+    }
+    // rows are stable from the left, so only an unfinished last row needs laying out again
+    let from = 0;
+    const last = sec.rows[sec.rows.length - 1];
+    if (last && !last.full) { sec.rows.pop(); sec.box.lastElementChild.remove(); from = last.start; }
+    else if (last) from = last.start + last.n;
+    const H = rowH(W + 2 * this.gpad()), G = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gap")) || 3;
+    const ar = r => Math.min(2.6, Math.max(.5, r.ar || 1.5));
+    let html = "";
+    for (let i = from; i < sec.items.length;) {
+      let sum = 0, j = i, full = false;
+      while (j < sec.items.length) { sum += ar(sec.items[j++]); if (sum * H + G * (j - i - 1) >= W) { full = true; break; } }
+      const n = j - i, room = W - G * (n - 1);
+      if (!full && sum * H >= room * .9) full = true;
+      const h = Math.round(full ? room / sum : H);
+      const ws = sec.items.slice(i, j).map(r => Math.round(ar(r) * h));
+      if (full) { let d = room - ws.reduce((a, b) => a + b, 0); for (let k = 0; d !== 0; k = (k + 1) % n) { ws[k] += Math.sign(d); d -= Math.sign(d); } }
+      html += `<div class="row" style="height:${h}px;contain-intrinsic-size:auto ${h}px">`;
+      for (let k = 0; k < n; k++) {
+        const r = sec.items[i + k];
+        html += `<div class="t" tabindex="0" data-i="${sec.base + i + k}" style="width:${ws[k]}px"><img loading="lazy" decoding="async" alt="" src="/thumb/${r.sha}" onload="this.classList.add('in')">`
+          + (r.fav ? I.heartFill : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
+      }
+      html += "</div>";
+      sec.rows.push({ start: i, n, full });
+      i = j;
+    }
+    sec.box.insertAdjacentHTML("beforeend", html);
+  }
+  relayout() {
+    const W = this.el.clientWidth - 2 * this.gpad();
+    for (const sec of this.sections) { sec.rows = []; sec.box.innerHTML = ""; this.draw(sec, W); }
+  }
+  counts() { for (const sec of this.sections) { const n = $(".n", sec.el); if (n) n.textContent = photos(this.count?.(sec) || sec.items.length); } }
+  top() {                                            // the section now at the top of the screen, under the bar
+    const y = barH() + 8;
+    for (const s of this.sections) if (s.el.getBoundingClientRect().bottom > y) return s;
+    return null;
+  }
+  tile(i) { return this.el.querySelector(`.t[data-i="${i}"]`); }
 }
-/* refresh without closing the open popover (choosing several values in a row) */
-function soft() { const keep = pop; pop = null; refresh().finally?.(() => {}); pop = keep; renderPillsKeepOpen(); }
-function renderPillsKeepOpen() {
-  if (!pop) return;
-  const id = pop.anchor.dataset.pill; if (!id) return;
-  const b = $(`.pill[data-pill="${id}"]`); if (b) { pop.anchor = b; b.classList.add("open"); placePop(); }
-}
+const caption = r => { const d = dParts(when(r)); return [d && fMed.format(d), firstPart(r.city || "")].filter(Boolean).join("  ·  "); };
+const barH = () => TAB === "library" ? $("#lbar").offsetHeight : $("#sbar").offsetHeight;
 
-function tripsPop(el) {
-  const st = pop.state; el.classList.add("wide");
-  el.innerHTML = `<input class="find" placeholder="Filter trips…" spellcheck="false"><div class="opts"></div>`;
-  const find = $(".find", el), opts = $(".opts", el);
-  st.list = () => {
-    const q = find.value.trim().toLowerCase();
-    const live = new Map(((F || INFO).facets.trip || []).map(([id, n]) => [id, n]));
-    const rows = INFO.trips.filter(t => (!q || (t.title || "").toLowerCase().includes(q) || t.start.startsWith(q)));
-    opts.innerHTML = rows.map(t => { const n = live.get(String(t.id)) || 0;
-      return `<button class="opt trip${String(t.id) === S.trip ? " on" : ""}${n ? "" : " zero"}" data-v="${t.id}"><img loading="lazy" src="/thumb/${t.cover}" alt=""><span class="l">${esc(tripTitle(t))}<small>${esc(span(t.start, t.end))}</small></span><span class="n">${fmt(n)}</span></button>`;
-    }).join("") || `<div class="none">No trips</div>`;
-  };
-  st.list(); find.oninput = st.list;
-  el.onclick = e => { const o = e.target.closest(".opt"); if (o) { S.trip = S.trip === o.dataset.v ? "" : o.dataset.v; S.event = ""; S.sort = ""; refresh(); } };
+/* ── where the app is. Every step is a history entry, so Back (or a swipe from the screen's edge) goes back the
+      way you came: a card you opened, a search you made, the other tab. The entry holds the whole state. ── */
+let TAB = "library";
+const L = { scale: ["years", "months", "all"].includes(V.scale) ? V.scale : "all", trail: [], anchor: null, sort: "", P: null, y: {} };
+const snap = () => ({ tab: TAB, s: String(toParams(S)), lib: { scale: L.scale, anchor: L.anchor, trail: L.trail } });
+const url = () => TAB === "library" ? location.pathname : "?" + (toParams(S).size ? toParams(S) : "search");
+function nav(mode = "push") {                         // push: a step to go back through; replace: the same step, refined
+  const prev = mode === "push" ? { tab: history.state?.tab, scale: history.state?.lib?.scale } : history.state?.prev;
+  const d = (history.state?.d || 0) + (mode === "push" ? 1 : 0);
+  history[mode === "push" ? "pushState" : "replaceState"]({ ...snap(), prev, d }, "", url());
 }
-
-$("#viewBtn").onclick = e => {
-  if (pop && pop.anchor === e.currentTarget) return closePop();
-  openPop(e.currentTarget, el => {
-    const draw = () => {
-      el.innerHTML = `<div class="set"><span>Photo size</span><div class="seg">${["s", "m", "l"].map(s => `<button data-size="${s}" class="${V.size === s ? "on" : ""}">${s.toUpperCase()}</button>`).join("")}</div></div>
-        <div class="set"><span>Hide near-identical shots</span><button class="sw${V.dedupe ? " on" : ""}" data-dedupe role="switch" aria-checked="${V.dedupe}"></button></div>`;
-    };
-    draw();
-    el.onclick = ev => {
-      const s = ev.target.closest("[data-size]");
-      if (s) { V.size = s.dataset.size; saveView(); draw(); relayout(); }
-      if (ev.target.closest("[data-dedupe]")) { V.dedupe = !V.dedupe; saveView(); draw(); soft(); }
-    };
-  }, "");
+function setTab(t, how = "push") {                 // how: push, replace, or "init" (the state is already in history)
+  if (t === TAB && how !== "init") return;
+  closeMenus();
+  if (t !== TAB) L.y[TAB + (TAB === "library" ? L.scale : "")] = scrollY;
+  TAB = t;
+  $("#libTab").hidden = t !== "library"; $("#searchTab").hidden = t !== "search";
+  for (const b of $$(".tabbar .tb")) b.classList.toggle("on", b.dataset.tab === t);
+  if (how !== "init") nav(how);
+  if (t === "library") libShow();
+  else if (sShown !== sKey()) refreshSearch();
+  else { searchShow(); scrollTo(0, L.y.search || 0); }
+  titleDoc();
+}
+$("#tabbar").onclick = e => {
+  const b = e.target.closest("[data-tab]"); if (!b) return;
+  if (b.dataset.tab === TAB) return scrollTo({ top: 0, behavior: "smooth" });   // the tab you are on: back to its top
+  setTab(b.dataset.tab);
 };
+function titleDoc() {
+  const t = TAB === "library" ? "" : isEmpty() ? "Search" : $("#sHead h1").textContent;
+  document.title = (t ? t + " — " : "") + "Photo Estate";
+}
 
-/* ── search field + suggestions ────────────────────────────────────── */
-let vocab = [], sug = [], sugCur = 0;
-function buildVocab() {
-  vocab = [];
-  for (const k of KEYS) for (const [v, n] of INFO.facets[k] || [])
-    vocab.push({ k, v, n, label: k === "city" || k === "region" ? v : v, lc: v.toLowerCase() });
-  for (const t of INFO.trips) vocab.push({ k: "trip", v: String(t.id), n: t.n, label: t.title, sub: span(t.start, t.end), lc: (t.title || "").toLowerCase() });
-}
-function suggest() {
-  const raw = $("#q").value, q = raw.trim().toLowerCase();
-  sug = [];
-  if (!q) {
-    if (!S.q) sug = IDEAS.map(t => ({ type: "idea", label: t }));
-  } else {
-    sug.push({ type: "text", label: raw.trim() });
-    const words = q.split(/\s+/), hits = [];
-    for (const it of vocab) {
-      if (!words.every(w => it.lc.includes(w))) continue;
-      const at = it.lc.indexOf(words[0]);
-      const rank = it.lc.startsWith(q) ? 3 : at === 0 || /[\s,(-]/.test(it.lc[at - 1]) ? 2 : 1;
-      hits.push([rank * 20 + Math.log10(it.n + 1) + (it.k === "lens" ? -8 : 0), it]);
-    }
-    hits.sort((a, b) => b[0] - a[0]);
-    for (const [, it] of hits.slice(0, 7)) sug.push({ type: "facet", ...it });
-    if (/^(19|20)\d\d$/.test(q)) sug.splice(1, 0, { type: "year", label: q, y: q });
-  }
-  sugCur = 0;
-  if (!sug.length) return pop?.anchor.id === "search" && closePop();
-  if (!pop || pop.anchor.id !== "search") openPop($("#search"), el => { el.onpointerdown = e => e.preventDefault();
-    el.onclick = e => { const o = e.target.closest(".opt"); if (o) pick(sug[+o.dataset.i]); }; });
-  drawSug();
-}
-function drawSug() {
-  if (!pop || pop.anchor.id !== "search") return;
-  pop.el.innerHTML = (sug[0].type === "idea" ? `<div class="cap2 label">Try describing a photo</div>` : "") + `<div class="opts">` + sug.map((s, i) => {
-    const cur = i === sugCur && s.type !== "idea" ? " cur" : "";
-    if (s.type === "idea") return `<button class="opt sug idea" data-i="${i}">${I.spark}<span class="l">${esc(s.label)}</span><span></span></button>`;
-    if (s.type === "text") return `<button class="opt sug${cur}" data-i="${i}">${I.search}<span class="l">${esc(s.label)}</span><span class="n">Describe  ↵</span></button>`;
-    if (s.type === "year") return `<button class="opt sug${cur}" data-i="${i}">${I.dot}<span class="l">${s.y}</span><span class="n">Year</span></button>`;
-    const [a, ...rest] = s.k === "city" || s.k === "region" ? s.label.split(", ") : [s.label];
-    return `<button class="opt sug${cur}" data-i="${i}">${I.dot}<span class="l">${esc(a)}<em>${esc(s.sub || rest.join(", "))}</em></span><span class="n">${KIND[s.k]}  ·  ${fmt(s.n)}</span></button>`;
-  }).join("") + `</div>`;
-  $(".cur", pop.el)?.scrollIntoView({ block: "nearest" });
-}
-function pick(s) {
-  const q = $("#q");
-  if (s.type === "idea" || s.type === "text") { S.q = s.label; S.plain = false; S.sha = ""; q.value = S.q; }
-  else {
-    q.value = S.q;                                  // the typed word became a filter, not a description
-    if (s.type === "year") { S.from = `${s.y}-01`; S.to = `${s.y}-12`; }
-    else if (s.k === "trip") { S.trip = s.v; S.event = ""; S.sort = ""; }
-    else if (!S.f[s.k].includes(s.v)) S.f[s.k].push(s.v);
-  }
-  q.blur(); refresh();
-}
-$("#q").addEventListener("input", suggest);
-$("#q").addEventListener("focus", suggest);
-$("#q").addEventListener("blur", () => { if (pop?.anchor.id === "search") closePop(); });
-$("#q").addEventListener("keydown", e => {
-  const q = e.currentTarget, open = pop?.anchor.id === "search", ideas = sug[0]?.type === "idea";
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    if (!open) return; e.preventDefault();
-    if (ideas) { q.value = sug[sugCur = (sugCur + (e.key === "ArrowDown" ? 1 : sug.length - 1)) % sug.length].label; return; }
-    sugCur = (sugCur + (e.key === "ArrowDown" ? 1 : sug.length - 1)) % sug.length; drawSug();
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    if (open && !ideas && sug[sugCur]) return pick(sug[sugCur]);
-    S.q = q.value.trim(); S.plain = false; if (S.q) S.sha = ""; q.blur(); refresh();
-  } else if (e.key === "Escape") { q.value = S.q; q.blur(); }
-  else if (e.key === "Backspace" && !q.value && S.sha) { S.sha = ""; refresh(); }
+/* ── Library: every photo, newest first. The bar zooms out to a card a year or a card a month; a year opens its
+      months, a month opens its photos. ── */
+const lgrid = new Grid({
+  grid: "#libGrid", up: "#libUp", down: "#libDown", ranked: false,
+  fetch: (c, n) => getJSON("/api/search?" + libParams() + `&limit=${n}&cursor=${c}`),
+  grain: () => 7,
+  count: sec => L.months?.get(sec.key),
+  onGrow: () => { $("#libHead").hidden = lgrid.lo > 0; if (VL === lgrid && vCur >= 0) { arrange(); vChrome(); } },
+  onError: e => { $("#libHead p").textContent = "Couldn’t load the library: " + e.message; },
 });
-function renderLike() {
-  $("#like").classList.toggle("on", !!S.sha);
-  if (S.sha) $("#like img").src = "/thumb/" + S.sha;
-  $("#q").placeholder = S.sha ? "Narrow with filters, or describe something else"
-    : F.demo ? "Try: latte art, kitten, waterfall in autumn, dog in the snow, city at night"   // demo: searches that find a group
-    : "Describe a photo, or find a place, person, trip or camera";
+const libParams = () => { const p = viewParams(new URLSearchParams()); if (L.sort) p.set("sort", L.sort); return p; };
+async function libLoad(keep) {                       // keep: the month to stay at (a view option changed)
+  const P = await getJSON("/api/periods?" + libParams()).catch(() => null);
+  if (!P) return;
+  L.P = P; L.months = new Map(P.months.map(m => [m.key, m.n]));
+  const hidden = P.total - P.matching;               // what the view options hide, so the count adds up to the whole library
+  $("#libHead p").textContent = hidden > 0 ? `${about(P.matching)} of ${about(P.total)} photos  ·  ${about(hidden)} hidden` : `${about(P.matching)} photos`;
+  if (L.scale !== "all") renderPeriods();
+  const m = keep && P.months.find(x => x.key === keep);
+  await lgrid.load(m ? m.at : 0);
+  if (m && L.scale === "all" && TAB === "library") toSection(keep);
 }
-$("#like button").onclick = e => { e.preventDefault(); S.sha = ""; refresh(); };
+function libShow() {
+  const all = L.scale === "all", jump = L.jump; L.jump = false;   // jump: arrived here by a card, or by Back / Forward
+  for (const b of $$("#scale button")) { b.classList.toggle("on", b.dataset.s === L.scale); b.setAttribute("aria-selected", b.dataset.s === L.scale); }
+  $("#libBack").hidden = !L.trail.length || coarse.matches;   // on touch, a swipe in from the left edge goes back
+  $("#libAll").hidden = !all; $("#libPeriods").hidden = all;
+  $("#scrub").classList.remove("on");
+  if (!all) {
+    renderPeriods();
+    const key = L.anchor && (L.scale === "years" ? L.P?.years : L.P?.months)?.find(p => p.key.startsWith(L.anchor))?.key;
+    const card = key && $(`.card[data-key="${key}"]`);
+    if (card) card.scrollIntoView({ block: "start" }); else scrollTo(0, L.y["library" + L.scale] || 0);
+  } else if (jump && L.anchor && L.anchor.length > 4) libJump(L.anchor);
+  else { scrollTo(0, L.y.libraryall || 0); setTimeout(() => lgrid.poke(), 30); }
+}
+function renderPeriods() {
+  const big = L.scale === "years", list = (big ? L.P?.years : L.P?.months) || [];
+  $("#libPeriods").innerHTML = `<div class="head"><h1>Library</h1><p class="num">${esc($("#libHead p").textContent)}</p></div>
+    <div class="cards ${L.scale}">${list.map(p => {
+      const title = big ? p.key : heading(p.key);
+      const detail = [big ? "" : p.places.join(" · "), photos(p.n)].filter(Boolean).join(" · ");
+      return `<button class="card" data-key="${p.key}" aria-label="${esc(title + ", " + detail)}"><img alt="" src="/thumb/${p.cover}" onload="this.classList.add('in')"><img alt="" loading="lazy" src="/preview/${p.cover}" onload="this.classList.add('in')">
+        <span class="ct"><b>${esc(title)}</b><small>${esc(detail)}</small>${big && p.places.length ? `<small>${esc(p.places.join(" · "))}</small>` : ""}</span></button>`;
+    }).join("")}</div>`;
+}
+$("#libPeriods").onclick = e => {
+  const c = e.target.closest(".card"); if (!c) return;
+  const key = c.dataset.key;
+  L.y["library" + L.scale] = scrollY;
+  L.anchor = key; nav("replace");                   // Back comes to this card
+  L.trail = [...L.trail, { key, back: L.scale }];
+  L.scale = key.length > 4 ? "all" : "months"; L.jump = true;
+  nav(); libShow();
+};
+$("#scale").onclick = e => {                          // Years, Months or All from the bar: a fresh start, nothing to go back to
+  const b = e.target.closest("[data-s]"); if (!b || b.dataset.s === L.scale) return;
+  L.y["library" + L.scale] = scrollY;
+  L.scale = V.scale = b.dataset.s; saveView();
+  L.trail = []; L.anchor = null;
+  nav("replace"); libShow();
+};
+function libBack() {                                  // one step back, like a browser: to the card you came in by
+  if (!L.trail.length) return;
+  if (history.state?.prev?.tab === "library") return history.back();
+  const p = L.trail[L.trail.length - 1];
+  L.trail = L.trail.slice(0, -1); L.anchor = p.key; L.scale = p.back; L.jump = true;
+  nav("replace"); libShow();
+}
+$("#libBack").onclick = libBack;
+function toSection(key) {
+  const sec = lgrid.sections.find(s => s.key === key);
+  if (sec) scrollTo(0, sec.el.getBoundingClientRect().top + scrollY - barH() + 4);
+  return !!sec;
+}
+async function libJump(key) {                         // the whole library, at this month
+  if (!L.P) return;
+  if (toSection(key)) return;
+  const m = L.P.months.find(x => x.key === key);
+  if (!m) return;
+  await lgrid.load(m.at);
+  if (L.scale === "all") { scrollTo(0, 0); toSection(key); setTimeout(() => lgrid.poke(), 30); }
+}
 
-/* ── timeline ──────────────────────────────────────────────────────── */
-const tl = $("#tl"), bars = $("#tlBars");
-function buildTimeline() {
-  bars.innerHTML = "<i></i>".repeat(INFO.months);
-  let h = "";
-  for (let i = 0; i < INFO.months; i++) if ((i + INFO.m0) % 12 === 0 || i === 0)
-    h += `<span data-y="${Math.floor((i + INFO.m0) / 12)}" style="left:${i / INFO.months * 100}%">${Math.floor((i + INFO.m0) / 12)}</span>`;
-  $("#tlYears").innerHTML = h;
-  layoutYears();
+/* the handle at the right edge: shows the month at the top; drag it to go anywhere in the library */
+const scrub = $("#scrub");
+let scrubHide = 0, scrubbing = null;
+function scrubPlace(frac) {
+  const top = barH() + 6, bottom = innerHeight - (narrow.matches ? 110 : 90) - scrub.offsetHeight;
+  scrub.style.top = Math.round(top + Math.max(0, Math.min(1, frac)) * Math.max(0, bottom - top)) + "px";
 }
-function layoutYears() {
-  if (!INFO) return;
-  const w = tl.clientWidth, per = w / INFO.months * 12, step = per >= 40 ? 1 : per >= 20 ? 2 : 5;
-  tl.classList.toggle("gapped", w / INFO.months >= 3);
-  for (const s of $("#tlYears").children) {         // a label that would stick out past the right edge is left out
-    s.style.display = +s.dataset.y % step === 0 ? "" : "none";
-    if (!s.style.display && s.offsetLeft + s.offsetWidth > w) s.style.display = "none";
-  }
-  let edge = -1;                                    // nor one that would run into the label before it (a library that starts late in a year)
-  for (const s of [...$("#tlYears").children].reverse()) {
-    if (s.style.display) continue;
-    if (edge >= 0 && s.offsetLeft + s.offsetWidth + 4 > edge) s.style.display = "none"; else edge = s.offsetLeft;
-  }
+function scrubShow() {
+  if (TAB !== "library" || L.scale !== "all" || !L.P || !L.P.matching || scrubbing) return;
+  const sec = lgrid.top();
+  if (!sec) return;
+  $("span", scrub).textContent = scrollY > 40 || lgrid.lo > 0 ? shortKey(sec.key) : "";
+  scrubPlace((sec.base + (sec.items.length * Math.max(0, Math.min(1, (barH() - sec.el.getBoundingClientRect().top) / sec.el.offsetHeight)))) / L.P.matching);
+  scrub.classList.add("on");
+  clearTimeout(scrubHide); scrubHide = setTimeout(() => { if (!scrubbing) scrub.classList.remove("on"); }, 1400);
 }
-const selRange = () => S.from || S.to ? [S.from ? Math.max(0, ymOf(S.from)) : 0, S.to ? Math.min(INFO.months - 1, ymOf(S.to)) : INFO.months - 1] : null;
-function renderTimeline(range = selRange()) {
-  const m = (F || INFO).months, max = Math.max(1, ...m), [a, b] = range || [0, INFO.months - 1];
-  const el = bars.children;
-  for (let i = 0; i < el.length; i++) {
-    el[i].style.transform = `scaleY(${m[i] ? Math.max(.045, Math.sqrt(m[i] / max)) : 0})`;
-    el[i].classList.toggle("in", i >= a && i <= b);
-  }
-  const sel = $("#tlSel");
-  sel.classList.toggle("on", !!range);
-  if (range) { sel.style.left = a / INFO.months * 100 + "%"; sel.style.width = (b - a + 1) / INFO.months * 100 + "%"; }
-  for (const s of $("#tlYears").children) { const y = ymOf(s.dataset.y + "-01"); s.classList.toggle("in", !!range && y + 11 >= a && y <= b); }
+function monthAt(frac) {                              // the month that holds the photo this far down the library
+  const at = frac * (L.P.matching - 1), ms = L.P.months;
+  let lo = 0, hi = ms.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (ms[mid].at <= at) lo = mid; else hi = mid - 1; }
+  return ms[lo];
 }
-const tlIdx = e => { const r = bars.getBoundingClientRect(); return Math.max(0, Math.min(INFO.months - 1, Math.floor((e.clientX - r.left) / r.width * INFO.months))); };
-let drag = null, hov = -1;
-function tip(a, b = a) {
-  const t = $("#tlTip"), m = (F || INFO).months;
-  let n = 0; for (let i = Math.min(a, b); i <= Math.max(a, b); i++) n += m[i];
-  const lo = Math.min(a, b), hi = Math.max(a, b);
-  t.innerHTML = (lo === hi ? fMon.format(ymDate(lo)) : `${fMon.format(ymDate(lo))} – ${fMon.format(ymDate(hi))}`) + `<b>${fmt(n)}</b>`;
-  const x = (lo + hi + 1) / 2 / INFO.months * tl.clientWidth, half = t.offsetWidth / 2;
-  t.style.left = Math.max(half, Math.min(tl.clientWidth - half, x)) + "px";
-  t.classList.add("on");
-}
-tl.addEventListener("pointermove", e => {
-  if (!INFO) return;
-  const i = tlIdx(e);
-  if (drag) { drag.b = i; drag.moved ||= i !== drag.a; renderTimeline([Math.min(drag.a, i), Math.max(drag.a, i)]); return tip(drag.a, i); }
-  if (e.target.closest(".tl-years")) return tlLeave();
-  if (hov >= 0) bars.children[hov]?.classList.remove("hov");
-  bars.children[hov = i].classList.add("hov"); tip(i);
+scrub.addEventListener("pointerdown", e => {
+  if (!L.P?.months.length) return;
+  e.preventDefault(); scrub.setPointerCapture(e.pointerId);
+  scrubbing = { y0: e.clientY, t0: parseFloat(scrub.style.top) || 0, m: null }; scrub.classList.add("drag", "on"); clearTimeout(scrubHide);
 });
-function tlLeave() { if (hov >= 0) bars.children[hov]?.classList.remove("hov"); hov = -1; if (!drag) $("#tlTip").classList.remove("on"); }
-tl.addEventListener("pointerleave", tlLeave);
-tl.addEventListener("pointerdown", e => {
-  if (!INFO || e.button) return;
-  const y = e.target.closest(".tl-years span");
-  if (y) { const f = `${y.dataset.y}-01`, t = `${y.dataset.y}-12`; if (S.from === f && S.to === t) S.from = S.to = ""; else { S.from = f; S.to = t; } return refresh(); }
-  drag = { a: tlIdx(e), b: tlIdx(e), moved: false }; tl.classList.add("drag"); tl.setPointerCapture(e.pointerId);
+scrub.addEventListener("pointermove", e => {
+  if (!scrubbing) return;
+  const top = barH() + 6, bottom = innerHeight - (narrow.matches ? 110 : 90) - scrub.offsetHeight;
+  const frac = Math.max(0, Math.min(1, (scrubbing.t0 + e.clientY - scrubbing.y0 - top) / Math.max(1, bottom - top)));
+  scrubPlace(frac);
+  const m = monthAt(frac);
+  if (m !== scrubbing.m) { scrubbing.m = m; $("span", scrub).textContent = shortKey(m.key); toSection(m.key); }   // loaded: go there now
 });
-tl.addEventListener("pointerup", () => {
-  if (!drag) return;
-  const a = Math.min(drag.a, drag.b), b = Math.max(drag.a, drag.b), cur = selRange();
-  drag = null; tl.classList.remove("drag"); $("#tlTip").classList.remove("on");
-  if (a === b && cur && a >= cur[0] && a <= cur[1]) S.from = S.to = "";       // a click inside the selection clears it
-  else { S.from = ymStr(a); S.to = ymStr(b); }
-  refresh();
-});
-/* a dot under the timeline marks the month now at the top of the page */
-let ticking = false;
+function scrubEnd() {
+  if (!scrubbing) return;
+  const m = scrubbing.m; scrubbing = null; scrub.classList.remove("drag");
+  if (m) libJump(m.key);
+  clearTimeout(scrubHide); scrubHide = setTimeout(() => scrub.classList.remove("on"), 1400);
+}
+scrub.addEventListener("pointerup", scrubEnd);
+scrub.addEventListener("pointercancel", scrubEnd);
 addEventListener("scroll", () => {
-  if (ticking) return; ticking = true;
-  requestAnimationFrame(() => {
-    ticking = false;
-    $("#hdr").classList.toggle("scrolled", scrollY > 4);
-    const here = $("#tlHere"), top = $("#hdr").offsetHeight + 8;
-    let sec = null;
-    if (!ranked && scrollY > 40) for (const s of sections) { if (s.el.getBoundingClientRect().bottom > top) { sec = s; break; } }
-    const i = sec ? ymOf(sec.key) : -1;
-    here.classList.toggle("on", i >= 0);
-    if (i >= 0) here.style.left = (i + .5) / INFO.months * 100 + "%";
-  });
+  if (TAB === "library" && L.scale === "all") requestAnimationFrame(scrubShow);
 }, { passive: true });
 
+/* ── menus: the view options, and the rest of your library ─────────── */
+let menu = null;
+function closeMenus() { if (menu) { menu.anchor.classList.remove("open"); menu.el.remove(); menu = null; } closeSheet(); }
+function openMenu(anchor, draw) {
+  const again = menu?.anchor === anchor; closeMenus(); if (again) return;
+  const el = document.createElement("div"); el.className = "menu"; document.body.append(el);
+  menu = { el, anchor, draw }; anchor.classList.add("open");
+  draw(el);
+  const r = anchor.getBoundingClientRect();
+  el.style.top = r.bottom + 8 + "px";
+  el.style.left = Math.max(8, Math.min(r.right - el.offsetWidth, innerWidth - el.offsetWidth - 8)) + "px";
+}
+document.addEventListener("pointerdown", e => {
+  if (menu && !menu.el.contains(e.target) && !menu.anchor.contains(e.target)) closeMenus();
+  if (sheet && !sheet.scrim && !sheet.el.contains(e.target) && !sheet.anchor.contains(e.target)) closeSheet();
+});
+function viewMenu(anchor, ctx) {
+  openMenu(anchor, el => {
+    const ranked = ctx === "search" && sgrid.ranked, old = ctx === "library" ? L.sort === "old" : (D?.sort || "new") === "old";
+    const mi = (attr, on, label) => `<button class="mi${on ? " on" : ""}" ${attr}>${I.check}<span>${label}</span></button>`;
+    const sw = (attr, on, label) => `<button class="mi" ${attr} role="switch" aria-checked="${on}"><svg></svg><span>${label}</span><i class="sw${on ? " on" : ""}"></i></button>`;
+    el.innerHTML = (ranked ? "" : `<h5>Order</h5>${mi('data-sort="new"', !old, "Newest first")}${mi('data-sort="old"', old, "Oldest first")}<hr>`)
+      + `<h5>Photo size</h5>${DENS_NAME.map((n, i) => mi(`data-dens="${i}"`, V.dens === i, n)).join("")}<hr>`
+      + sw("data-dedupe", V.dedupe, "Hide near-identical shots") + sw("data-shots", V.shots, "Hide screenshots");
+    el.onclick = e => {
+      const b = e.target.closest(".mi"); if (!b) return;
+      if (b.dataset.sort) {
+        if (ctx === "library") { L.sort = b.dataset.sort === "old" ? "old" : ""; libLoad(); }
+        else { S.sort = b.dataset.sort; refine(); }
+      } else if (b.dataset.dens) setDens(+b.dataset.dens);
+      else {
+        if (b.hasAttribute("data-dedupe")) V.dedupe = !V.dedupe; else V.shots = !V.shots;
+        saveView(); viewChanged();
+      }
+      menu.draw(menu.el);
+    };
+  });
+}
+function viewChanged() {                              // hiding more or less: both lists again, staying where you are
+  const sec = TAB === "library" && L.scale === "all" && (scrollY > 40 || lgrid.lo > 0) ? lgrid.top() : null;
+  libLoad(sec?.key);
+  refreshSearch();
+}
+function setDens(i) {
+  i = Math.max(0, Math.min(DENS.length - 1, i));
+  if (i === V.dens) return;
+  const g = TAB === "library" ? lgrid : sgrid, t = [...g.el.querySelectorAll(".t")].find(t => t.getBoundingClientRect().bottom > barH());
+  const idx = t?.dataset.i, off = t ? t.getBoundingClientRect().top : 0;
+  V.dens = i; saveView();
+  lgrid.relayout(); sgrid.relayout();
+  const n = idx != null && g.tile(idx);
+  if (n) scrollTo(0, scrollY + n.getBoundingClientRect().top - off);
+}
+$("#libView").onclick = e => viewMenu(e.currentTarget, "library");
+$("#sView").onclick = e => viewMenu(e.currentTarget, "search");
+$("#libMore").onclick = e => openMenu(e.currentTarget, el => {
+  const ln = (href, icon, label) => `<a class="mi ln" href="${href}">${icon}<span>${label}</span></a>`;
+  el.innerHTML = (INFO?.faces ? ln("/people", I.people, "Name people") : "") + (INFO && !INFO.demo ? ln("/setup", I.plus, "Add photos") : "")
+    + ln("/stats", I.stats, "Library info");
+});
+// Pinch a grid to make the photos bigger or smaller, a step at a time, as on the iPhone.
+let pinch = null;
+document.addEventListener("touchstart", e => {
+  if (e.touches.length === 2 && e.target.closest(".grid")) {
+    const [a, b] = e.touches; pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) };
+  }
+}, { passive: true });
+document.addEventListener("touchmove", e => {
+  if (!pinch || e.touches.length !== 2) return;
+  e.preventDefault();
+  const [a, b] = e.touches, d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), k = d / pinch.d;
+  if (k > 1.3 || k < .77) { setDens(V.dens + (k > 1 ? 1 : -1)); pinch.d = d; }
+}, { passive: false });
+document.addEventListener("touchend", e => { if (e.touches.length < 2) pinch = null; }, { passive: true });
+
+/* ── Search: the field, always at the top. With nothing asked, the page under it lays out the threads to pull;
+      while typing, what the words could be; with a question, the answer. ── */
+let D = null, F = null, typing = false, sug = [], sugCur = -1, sShown = null;   // sShown: the question the page shows the answer to
+const sgrid = new Grid({
+  grid: "#sGrid", down: "#sDown",
+  fetch: (c, n) => getJSON((S.sha ? "/api/similar?" : "/api/search?") + sParams() + `&limit=${n}&cursor=${c}`),
+  grain: () => sgrid.ranked ? 0 : D?.scope || S.event ? 10 : S.from && S.to && ymOf(S.to) - ymOf(S.from) <= 1 ? 10 : 7,
+  count: sec => sec.key.length === 7 && F ? F.months[ymOf(sec.key)] : null,
+  onData: d => { D = d; sgrid.ranked = !!(S.sha || d.text); },
+  onGrow: () => { if (VL === sgrid && vCur >= 0) { arrange(); vChrome(); } },
+  onError: e => { $("#sHead h1").textContent = "Couldn’t search"; $("#sHead p").textContent = e.message; },
+});
+const sParams = () => viewParams(toParams(S));
+const sKey = () => String(sParams());
+function go(s) { S = s; nav(); refreshSearch(); }           // a new question: a step to go back through
+function refine() { nav("replace"); refreshSearch(); }      // the same question, narrowed or widened
+function loadF() {
+  const g = sgrid.gen;
+  return getJSON("/api/facets?" + sParams()).then(f => { if (g === sgrid.gen) { F = f; sgrid.counts(); drawSheet(); } }).catch(() => {});
+}
+async function refreshSearch() {
+  if (TAB !== "search") return;                     // answered when Search shows again
+  sShown = sKey();
+  if (isEmpty()) { sgrid.gen++; D = null; loadF(); searchShow(); return; }
+  const loading = sgrid.load(0), g = sgrid.gen;
+  loadF(); searchShow(); scrollTo(0, 0);
+  const data = await loading;
+  if (!data || g !== sgrid.gen) return;
+  searchHead(); searchShow();
+  if (!data.results.length) $("#sGrid").innerHTML = `<div class="blank">${MARK}<h3>Nothing found</h3><p>${
+    data.text && !S.sha ? `No photo looks like “${esc(data.text)}”${filtered() ? " with these filters" : ""}.` : "No photo matches these filters."}</p><button class="btn" id="again">Start again</button></div>`;
+}
+function searchShow(quiet) {                          // which of the three shows, and the bar to match
+  const typed = $("#q").value.trim(), suggesting = typing && typed && typed !== S.q, empty = isEmpty();
+  if (!quiet) {
+    $("#sugs").hidden = !suggesting; $("#browse").hidden = suggesting || !empty; $("#results").hidden = suggesting || empty;
+    if (suggesting) drawSug();
+    if (!$("#browse").hidden && !$("#browse").childElementCount) drawBrowse();
+  }
+  $("#sBack").hidden = empty;
+  $("#sCancel").hidden = !typing;
+  $("#sView").hidden = typing || empty;
+  $("#qClear").hidden = !$("#q").value;
+  $("#chips").hidden = empty || suggesting;
+  if (!$("#chips").hidden) drawChips();
+  drawNotice(suggesting);
+  if ($("#q").value !== S.q && !typing) $("#q").value = S.q;
+  titleDoc();
+}
+function searchHead() {                               // what the answer is, in words
+  const n = photos(D.matching), both = (xs, w) => xs.length > 1 ? `${xs.slice(0, -1).join(", ")} ${w} ${xs[xs.length - 1]}` : xs[0] || "";
+  const read = !S.sha && !S.plain, who = read ? both(D.people || [], "&") : "", where = read ? both(D.places || [], "or") : "";
+  const reading = [who, where && (who ? "in " : "") + where].filter(Boolean).join(" ");
+  let title, parts = [];
+  if (reading && !D.text) { title = reading; parts = [n]; }
+  else if (S.sha) { title = "More like this"; parts = ["Closest in look and subject"]; }
+  else if (D.text) {
+    title = `“${D.text}”`; parts = [D.matching ? `${n}, best match first` : "No matches"];
+    if (reading) parts.unshift([who && `with ${who}`, where && `in ${where}`].filter(Boolean).join(", "));
+  } else if (D.scope) { title = tripTitle(D.scope); parts = [span(D.scope.start, D.scope.end), n]; }
+  else {
+    const bits = [S.f.person.join(" & "), [...S.f.city, ...S.f.region, ...S.f.country].map(firstPart).join(", "), S.f.album.join(", "),
+      [...S.f.camera, ...S.f.lens].join(", "), S.f.trip.map(id => tripTitle(tripById(id))).join(", "), rangeLabel()].filter(Boolean);
+    title = bits.join(" · ") || (S.fav ? "Favourites" : "Photos"); parts = [n, S.fav && bits.length ? "favourites" : ""];
+  }
+  parts.push(...(D.filters || []));
+  if (DEBUG) parts.push(`${D.ms} ms`);
+  $("#sHead h1").textContent = title; $("#sHead p").textContent = parts.filter(Boolean).join("  ·  ");
+  titleDoc();
+}
+function drawNotice(suggesting) {
+  const could = D && !suggesting && !isEmpty() && !S.sha && (D.people?.length || D.places?.length);
+  $("#notice").innerHTML = could ? `<button id="namesBtn">${S.plain ? "Read the names and places in it instead" : "Search for the words instead"}</button>` : "";
+}
+
+/* the filter chips under the field: what is chosen comes first */
+const PILLS = [
+  { id: "where", label: "Where", tabs: [["country", "Countries"], ["region", "Regions"], ["city", "Places"]] },
+  { id: "people", label: "People", tabs: [["person", "People"]] },
+  { id: "albums", label: "Albums", tabs: [["album", "Albums"]] },
+  { id: "trips", label: "Trips", tabs: [["trip", "Trips"]] },
+  { id: "when", label: "When" },
+  { id: "camera", label: "Camera", tabs: [["camera", "Cameras"], ["lens", "Lenses"]] },
+  { id: "fav", label: "Favourites" },
+];
+function pillValue(p, s = S) {
+  if (p.id === "fav") return s.fav ? "Favourites" : null;
+  if (p.id === "when") return s.from || s.to ? rangeLabel(s) : null;
+  let v = p.tabs.flatMap(([k]) => s.f[k]);
+  if (p.id === "trips") v = v.map(id => tripTitle(tripById(id)));
+  if (!v.length) return null;
+  const first = p.id === "where" ? firstPart(v[0]) : v[0];
+  return v.length > 1 ? `${first} +${v.length - 1}` : first;
+}
+function clearPill(p, s = S) {
+  if (p.id === "fav") s.fav = false;
+  else if (p.id === "when") s.from = s.to = "";
+  else for (const [k] of p.tabs) s.f[k] = [];
+}
+function drawChips() {
+  const order = [...PILLS].sort((a, b) => (pillValue(a) ? 0 : 1) - (pillValue(b) ? 0 : 1));
+  $("#chips").innerHTML = order.map(p => {
+    const v = pillValue(p);
+    return `<button class="chip${v ? " on" : ""}" data-pill="${p.id}">${p.id === "fav" ? I.heart : ""}<span>${esc(v || p.label)}</span>${v && p.id !== "fav" ? `<i class="x" data-x aria-label="Clear ${p.label}">${I.x}</i>` : ""}</button>`;
+  }).join("");
+}
+$("#chips").onclick = e => {
+  const b = e.target.closest(".chip"); if (!b) return;
+  const p = PILLS.find(p => p.id === b.dataset.pill);
+  if (e.target.closest("[data-x]")) { clearPill(p); return refine(); }
+  if (p.id === "fav") { S.fav = !S.fav; return refine(); }
+  openSheet(p, b);
+};
+
+/* the sheet behind a chip (a popover on a wide screen): the values with live counts, the trips, or the years.
+   Counts follow every other filter, so a value that would give nothing shows as zero rather than vanishing. */
+let sheet = null;
+function closeSheet() {
+  if (!sheet) return;
+  sheet.el.remove(); sheet.scrim?.remove(); sheet = null;
+}
+function openSheet(p, anchor) {
+  const again = sheet?.anchor === anchor; closeMenus(); if (again) return;
+  const low = narrow.matches;
+  const el = document.createElement("div"); el.className = "sheet " + (low ? "low" + (p.id === "when" || p.id === "trips" ? " tall" : "") : "pop");
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-label", p.label);
+  el.innerHTML = `<div class="sh-top"><button class="clr">Clear</button><b>${esc(p.label)}</b><button class="done">Done</button></div><div class="sh-tools"></div><div class="sh-list"></div>`;
+  let scrim = null;
+  if (low) { scrim = document.createElement("div"); scrim.className = "scrim"; scrim.onclick = closeSheet; document.body.append(scrim); }
+  document.body.append(el);
+  sheet = { el, scrim, anchor, p, tab: (p.tabs?.find(([k]) => S.f[k].length) || p.tabs?.[0] || [""])[0], open: null };
+  if (!low) {
+    const r = anchor.getBoundingClientRect();
+    el.style.top = r.bottom + 8 + "px";
+    el.style.left = Math.max(8, Math.min(r.left, innerWidth - el.offsetWidth - 8)) + "px";
+    el.style.maxHeight = `min(560px, ${innerHeight - r.bottom - 24}px)`;
+  }
+  drawTools(); drawSheet();
+  el.onclick = sheetClick;
+}
+function drawTools() {
+  const { p, el } = sheet, tools = $(".sh-tools", el);
+  if (p.id === "when") { tools.hidden = true; return; }
+  tools.innerHTML = (p.tabs.length > 1 ? `<div class="seg">${p.tabs.map(([k, l]) => `<button data-tab="${k}" class="${k === sheet.tab ? "on" : ""}">${l}</button>`).join("")}</div>` : "")
+    + `<input type="search" class="field find" placeholder="Filter" spellcheck="false" autocomplete="off">`;
+  $(".find", tools).oninput = drawSheet;
+  if (!coarse.matches) $(".find", tools).focus({ preventScroll: true });
+}
+function drawSheet() {
+  if (!sheet) return;
+  const { p, el } = sheet, list = $(".sh-list", el), q = ($(".find", el)?.value || "").trim().toLowerCase();
+  $(".clr", el).style.visibility = pillValue(p) ? "" : "hidden";
+  const counts = (F || INFO);
+  let html = "";
+  if (p.id === "when") {                             // years, newest first; a year opens its months
+    const years = new Map();
+    counts.months.forEach((n, i) => { if (!n) return; const y = Math.floor((i + INFO.m0) / 12); if (!years.has(y)) years.set(y, []); years.get(y).push([i, n]); });
+    const a = S.from ? ymOf(S.from) : null, b = S.to ? ymOf(S.to) : null;
+    html = [...years].sort((x, y) => y[0] - x[0]).map(([y, ms]) => {
+      const y0 = y * 12 - INFO.m0, whole = a === y0 && b === y0 + 11, open = sheet.open === y, total = ms.reduce((s, m) => s + m[1], 0);
+      return `<div class="op yr${whole ? " on" : ""}" role="button" tabindex="0" data-year="${y}"><span><b>${y}</b></span><span class="n">${fmt(total)}</span>${I.check}<button class="ex${open ? " open" : ""}" data-open="${y}" aria-label="${open ? "Hide" : "Show"} the months of ${y}">${I.chevR}</button></div>`
+        + (open ? ms.map(([i, n]) => `<button class="op mo${a === i && b === i ? " on" : ""}" data-month="${i}"><span><b>${esc(fMonth.format(dParts(ymKey(i))))}</b></span><span class="n">${fmt(n)}</span>${I.check}</button>`).join("") : "");
+    }).join("");
+  } else if (p.id === "trips") {
+    const live = new Map((counts.facets.trip || []).map(([id, n]) => [id, n])), picked = new Set(S.f.trip);
+    html = INFO.trips.filter(t => !q || (t.title || "").toLowerCase().includes(q)).map(t => {
+      const n = live.get(String(t.id)) || 0;
+      return `<button class="op${picked.has(String(t.id)) ? " on" : ""}${n ? "" : " zero"}" data-k="trip" data-v="${t.id}"><img loading="lazy" alt="" src="/thumb/${t.cover}"><span><b>${esc(tripTitle(t))}</b><small class="num">${esc(span(t.start, t.end))}  ·  ${fmt(n)} of ${fmt(t.n)}</small></span>${I.check}</button>`;
+    }).join("") || `<div class="none">${INFO.trips.length ? "No trips match" : "No trips yet"}</div>`;
+  } else {
+    const k = sheet.tab, picked = S.f[k], found = new Set((counts.facets[k] || []).map(r => r[0]));
+    let rows = [...picked.filter(v => !found.has(v)).map(v => [v, 0]), ...(counts.facets[k] || [])];   // what is chosen stays listed
+    if (q) rows = rows.filter(r => r[0].toLowerCase().includes(q));
+    html = rows.slice(0, 400).map(([v, n]) => {
+      const [a, ...rest] = p.id === "where" ? v.split(", ") : [v];
+      return `<button class="op${picked.includes(v) ? " on" : ""}${n ? "" : " zero"}" data-k="${k}" data-v="${esc(v)}"><span><b>${esc(a)}</b>${rest.length ? `<small>${esc(rest.join(", "))}</small>` : ""}</span><span class="n">${fmt(n)}</span>${I.check}</button>`;
+    }).join("") || `<div class="none">None in these photos</div>`;
+  }
+  const top = list.scrollTop; list.innerHTML = html; list.scrollTop = top;
+}
+function sheetClick(e) {
+  const { p } = sheet;
+  if (e.target.closest(".done")) return closeSheet();
+  if (e.target.closest(".clr")) { clearPill(p); drawSheet(); return refine(); }
+  const t = e.target.closest("[data-tab]");
+  if (t) { sheet.tab = t.dataset.tab; $(".find", sheet.el).value = ""; drawTools(); drawSheet(); $(".sh-list", sheet.el).scrollTop = 0; return; }
+  const ex = e.target.closest("[data-open]");
+  if (ex) { sheet.open = sheet.open === +ex.dataset.open ? null : +ex.dataset.open; return drawSheet(); }
+  const y = e.target.closest("[data-year]"), m = e.target.closest("[data-month]");
+  if (y || m) {
+    const [a, b] = y ? [ymKey(+y.dataset.year * 12 - INFO.m0), ymKey(+y.dataset.year * 12 - INFO.m0 + 11)] : [ymKey(+m.dataset.month), ymKey(+m.dataset.month)];
+    if (S.from === a && S.to === b) S.from = S.to = ""; else { S.from = a; S.to = b; }
+    drawSheet(); return refine();
+  }
+  const o = e.target.closest("[data-k]");
+  if (o) {
+    const xs = S.f[o.dataset.k], v = o.dataset.v, i = xs.indexOf(v);
+    i < 0 ? xs.push(v) : xs.splice(i, 1);
+    if (o.dataset.k === "trip") S.event = "";
+    o.classList.toggle("on");
+    refine();
+  }
+}
+$("#notice").onclick = e => { if (e.target.closest("#namesBtn")) { const s = copy(S); s.plain = !s.plain; go(s); } };
+
+/* Search with nothing asked yet: the ways into the library */
+function drawBrowse() {
+  if (!INFO) return;
+  const ideas = INFO.demo ? DEMO_IDEAS : IDEAS, title = (t, all) => `<div class="bt"><h2>${t}</h2>${all ? `<button data-all="${all}">See all</button>` : ""}</div>`;
+  let h = `<div class="strip">${ideas.map(t => `<button class="idea" data-idea="${esc(t)}">${I.spark}${esc(t)}</button>`).join("")}</div>`;
+  if (INFO.trips.length) h += `<div>${title("Trips", INFO.trips.length > 6 ? "trips" : "")}<div class="strip trips">${INFO.trips.slice(0, 24).map(t =>
+    `<button class="trip" data-trip="${t.id}"><img alt="" src="/thumb/${t.cover}" onload="this.classList.add('in')"><img alt="" loading="lazy" src="/preview/${t.cover}" onload="this.classList.add('in')"><span class="ct"><b>${esc(tripTitle(t))}</b><small class="num">${esc(span(t.start, t.end))}  ·  ${fmt(t.n)}</small></span></button>`).join("")}</div></div>`;
+  const years = new Map();
+  INFO.months.forEach((n, i) => { if (n) { const y = Math.floor((i + INFO.m0) / 12); years.set(y, (years.get(y) || 0) + n); } });
+  const ys = [...years].sort((a, b) => a[0] - b[0]);
+  if (ys.length > 1) {                               // the library's whole life as one line of bars: a year each, as tall as it was busy
+    const most = Math.max(...ys.map(y => y[1])), stepY = ys.length > 24 ? 5 : ys.length > 10 ? 2 : 1;
+    h += `<div>${title("Through the years")}<div class="years-bars${ys.length > 20 ? " tight" : ""}">${ys.map(([y, n]) => {
+      const k = Math.sqrt(n / most);
+      return `<button data-year="${y}" aria-label="${y}, ${photos(n)}"><i style="height:${Math.max(4, 96 * k)}px;opacity:${.35 + .65 * k}"></i><small>${y % stepY === 0 ? (ys.length > 14 ? "’" + String(y % 100).padStart(2, "0") : y) : ""}</small></button>`;
+    }).join("")}</div></div>`;
+  }
+  if (INFO.fav) h += `<button class="favs" data-fav>${svg('<path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.9-5.6 7.3-5.6 7.3Z"/>', 22, 'fill="currentColor"')}<span><b>Favourites</b><small>${photos(INFO.fav)}</small></span>${I.chevR}</button>`;
+  for (const [name, pill, k] of [["Places", "where", "country"], ["People", "people", "person"], ["Albums", "albums", "album"], ["Cameras", "camera", "camera"]]) {
+    const top = INFO.facets[k] || [];
+    if (!top.length) continue;
+    h += `<div>${title(name, top.length > 8 || pill === "where" || pill === "camera" ? pill : "")}<div class="strip">${top.slice(0, 12).map(([v, n]) =>
+      `<button class="th" data-k="${k}" data-v="${esc(v)}">${esc(v)}<small>${fmt(n)}</small></button>`).join("")}</div></div>`;
+  }
+  $("#browse").innerHTML = h;
+}
+$("#browse").onclick = e => {
+  const b = e.target.closest("button"); if (!b) return;
+  const s = blank();
+  if (b.dataset.idea) { $("#q").value = b.dataset.idea; s.q = b.dataset.idea; }
+  else if (b.dataset.trip) s.f.trip = [b.dataset.trip];
+  else if (b.dataset.year) { s.from = `${b.dataset.year}-01`; s.to = `${b.dataset.year}-12`; }
+  else if (b.hasAttribute("data-fav")) s.fav = true;
+  else if (b.dataset.k) s.f[b.dataset.k] = [b.dataset.v];
+  else if (b.dataset.all) return openSheet(PILLS.find(p => p.id === b.dataset.all), b);
+  else return;
+  go(s);
+};
+
+/* the field */
+let vocab = [];
+function buildVocab() {
+  vocab = [];
+  for (const k of KEYS) if (k !== "trip") for (const [v, n] of INFO.facets[k] || []) vocab.push({ k, v, n, label: v, lc: v.toLowerCase() });
+  for (const t of INFO.trips) vocab.push({ k: "trip", v: String(t.id), n: t.n, label: tripTitle(t), sub: span(t.start, t.end), lc: (t.title || "").toLowerCase() });
+}
+const FACET_ICON = { country: I.pin, region: I.pin, city: I.pin, person: I.person, album: I.album, camera: I.camera, lens: I.camera, trip: I.plane };
+function drawSug() {
+  const typed = $("#q").value.trim(), q = typed.toLowerCase();
+  sug = [{ type: "text", label: typed }];
+  if (/^(19|20)\d\d$/.test(q)) sug.push({ type: "year", y: q });
+  const words = q.split(/\s+/), hits = [];
+  for (const it of vocab) {
+    if (!words.every(w => it.lc.includes(w))) continue;
+    const at = it.lc.indexOf(words[0]);
+    const rank = it.lc.startsWith(q) ? 3 : at === 0 || /[\s,(-]/.test(it.lc[at - 1]) ? 2 : 1;
+    hits.push([rank * 20 + Math.log10(it.n + 1) + (it.k === "lens" ? -8 : 0), it]);
+  }
+  hits.sort((a, b) => b[0] - a[0]);
+  for (const [, it] of hits.slice(0, 8)) sug.push({ type: "facet", ...it });
+  sugCur = Math.min(sugCur, sug.length - 1);
+  const row = (i, icon, title, detail) => `<button class="srw${i === sugCur ? " cur" : ""}" data-i="${i}">${icon}<span><b>${esc(title)}</b><small class="num">${esc(detail)}</small></span></button>`;
+  $("#sugs").innerHTML = sug.map((s, i) =>
+    s.type === "text" ? row(i, I.sparkSearch, `“${s.label}”`, "Photos that look like this")
+    : s.type === "year" ? row(i, I.cal, s.y, "Year")
+    : row(i, FACET_ICON[s.k], s.k === "city" || s.k === "region" ? firstPart(s.label) : s.label,
+      [s.sub || (s.k === "city" || s.k === "region" ? s.label.split(", ").slice(1).join(", ") : ""), `${KIND[s.k]}  ·  ${fmt(s.n)}`].filter(Boolean).join("  ·  "))).join("");
+  $(".srw.cur", $("#sugs"))?.scrollIntoView({ block: "nearest" });
+}
+function submit() {
+  const typed = $("#q").value.trim();
+  typing = false; $("#q").blur();
+  const s = copy(S); s.q = typed; s.plain = false; s.sha = "";
+  if (String(toParams(s)) === String(toParams(S))) return searchShow();
+  go(s);
+}
+function pickSug(x) {
+  if (x.type === "text") return submit();
+  typing = false; $("#q").blur(); $("#q").value = "";
+  const s = copy(S); s.q = ""; s.sha = "";               // the typed words became a filter, not a description
+  if (x.type === "year") { s.from = `${x.y}-01`; s.to = `${x.y}-12`; }
+  else if (!s.f[x.k].includes(x.v)) { s.f[x.k].push(x.v); if (x.k === "trip") s.event = ""; }
+  go(s);
+}
+const q = $("#q");
+q.addEventListener("focus", () => { typing = true; sugCur = -1; searchShow(); });
+q.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== q && typing) { typing = false; if (!q.value.trim() || q.value.trim() === S.q) q.value = S.q; searchShow(); } }, 0));
+q.addEventListener("input", () => { sugCur = -1; searchShow(); });
+q.addEventListener("keydown", e => {
+  const open = !$("#sugs").hidden;
+  if ((e.key === "ArrowDown" || e.key === "ArrowUp") && open) {
+    e.preventDefault(); sugCur = (sugCur + (e.key === "ArrowDown" ? 1 : sug.length - 1) + (sugCur < 0 && e.key === "ArrowUp" ? 1 : 0)) % sug.length; drawSug();
+  } else if (e.key === "Enter") { e.preventDefault(); if (open && sugCur > 0 && sug[sugCur]) pickSug(sug[sugCur]); else submit(); }
+  else if (e.key === "Escape") { q.value = S.q; q.blur(); }
+});
+$("#sugs").addEventListener("pointerdown", e => e.preventDefault());   // keep the field focused until the pick is made
+$("#sugs").onclick = e => { const r = e.target.closest(".srw"); if (r) pickSug(sug[+r.dataset.i]); };
+$("#sCancel").onclick = () => { typing = false; q.value = S.q; q.blur(); searchShow(); };
+$("#qClear").addEventListener("pointerdown", e => e.preventDefault());
+$("#qClear").onclick = e => {
+  e.preventDefault(); q.value = "";
+  if (S.q) { const s = copy(S); s.q = ""; s.plain = false; go(s); } else searchShow();
+  if (typing) q.focus();
+};
+function sBack() {                                    // the question before this one, or none
+  typing = false; q.blur(); q.value = "";
+  if (history.state?.prev?.tab === "search") return history.back();
+  go(blank());
+}
+$("#sBack").onclick = sBack;
+
 /* ── viewer ────────────────────────────────────────────────────────── */
-// Three slides sit side by side on the stage: the photo and its two neighbours, a page apart. A swipe moves the
-// stage; when it lands, the slides change roles, so a neighbour that has already loaded is never loaded again.
+// One photo, full screen. It grows out of its tile and goes back into it; between photos you swipe; pinch or
+// double-tap to look closer; swipe up for what is known about it, down to close. Three slides sit side by side
+// on the stage: the photo and its two neighbours, a page apart. A swipe moves the stage; when it lands, the
+// slides change roles, so a neighbour that has already loaded is never loaded again.
 const v = $("#v"), stage = $("#vStage"), GAP = 28;
 const mkSlide = () => { const el = document.createElement("div"); el.className = "v-pic";
   el.innerHTML = '<img class="lo" alt="" draggable="false"><img class="hi" alt="" draggable="false">'; stage.append(el);
   return { el, lo: el.firstChild, hi: el.lastChild, r: null, large: false, failed: false, asked: false }; };
 const slides = [mkSlide(), mkSlide(), mkSlide()];
 let cur = slides[0], vPic = cur.el;
-let vCur = -1, sheet = false, vNote = "";            // sheet: details showing on a phone (never to begin with)
+let VL = null, items = [];                           // the grid the photo was opened from, and its photos
+let vCur = -1, sheetUp = false, vNote = "";          // sheetUp: details showing on a phone (never to begin with)
 let vHist = false, vBack = false;                    // an open photo is a history entry, so Back closes it
 let settle = null;                                   // finishes a swipe that is still sliding into place
-const narrow = matchMedia("(max-width: 760px)"), coarse = matchMedia("(pointer: coarse)");
 const phone = () => narrow.matches || coarse.matches;   // full-screen photo, details only when asked for
 const vw = () => v.clientWidth, vh = () => v.clientHeight;
-const infoOn = () => phone() ? sheet : V.info;
+const infoOn = () => phone() ? sheetUp : V.info;
 const infoW = () => !narrow.matches && infoOn() ? 360 : 0;   // narrow: details are a sheet from below instead
 const pageW = () => vw() - infoW() + GAP;
 function fit(r) {
-  const W = vw() - infoW(), H = narrow.matches ? vh() * (sheet ? .45 : 1) : vh(), px = phone() ? 0 : 72, py = phone() ? 0 : 28;
+  const W = vw() - infoW(), H = narrow.matches ? vh() * (sheetUp ? .45 : 1) : vh(), px = phone() ? 0 : 72, py = phone() ? 0 : 76;
   const ar = r.ar || 1.5; let w = W - px * 2, h = w / ar;
   if (h > H - py * 2) { h = H - py * 2; w = h * ar; }
   return { x: Math.round((W - w) / 2), y: Math.round((H - h) / 2), w: Math.round(w), h: Math.round(h) };
 }
 const place = (el, b) => Object.assign(el.style, { left: b.x + "px", top: b.y + "px", width: b.w + "px", height: b.h + "px" });
-const tileOf = i => $(`.t[data-i="${i}"]`);
 function fill(s, r, off) {                           // photo r in slide s, `off` pages to the right of the current one
   s.el.style.display = r ? "" : "none";
   if (!r) { s.r = null; return; }
@@ -956,7 +1259,7 @@ function fill(s, r, off) {                           // photo r in slide s, `off
     s.r = r; s.large = s.failed = s.asked = false;
     s.hi.classList.remove("in"); s.hi.removeAttribute("src"); s.lo.src = "/thumb/" + r.sha;
   }
-  if (!quick && !s.asked) preview(s);                // while scrubbing, the thumbnail is all there is time for
+  if (!s.asked) preview(s);
 }
 function preview(s) {                                // 1600 px first because it is quick
   const r = s.r; s.asked = true;
@@ -992,27 +1295,30 @@ function show(i, dir = 0) {
   sharpen();
   if (dir) vPic.animate([{ opacity: 0, transform: `translateX(${dir * 28}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE });
   vChrome(); drawInfo(items[i]);
-  if (i > items.length - 12) loadMore();
+  if (i > items.length - 12) VL.more();
+  if (VL.lo > 0 && i < VL.lo + 12) VL.less();
 }
-function vChrome() {
-  const r = items[vCur], d = dParts(when(r)), note = vNote || (cur.failed ? "full-size image didn’t load" : "");
-  $("#vPrev").disabled = vCur <= 0; $("#vNext").disabled = vCur >= items.length - 1 && next == null;
-  $("#vCount").textContent = `${fmt(vCur + 1)} of ${fmt(D.matching)}` + (note ? "  ·  " + note : "");
-  if (!scrub) drawStrip();
-  $("#vTitle").innerHTML = `<b>${d ? fTitle.format(d) : "Undated"}</b><span class="num">${esc([d && when(r).length > 10 && fTime.format(d), (r.city || "").split(",")[0]].filter(Boolean).join("  ·  "))}</span>`;
+function vChrome() {                                 // what and when, as a caption above the print
+  const r = items[vCur], d = dParts(when(r)), note = vNote || (cur.failed ? "The full-size image didn’t load" : "");
+  $("#vPrev").disabled = !items[vCur - 1]; $("#vNext").disabled = !items[vCur + 1];
+  $("#vTitle").innerHTML = `<b>${d ? fLong.format(d) : "Undated"}</b><span class="num">${esc([d && when(r).length > 10 && fTime.format(d), firstPart(r.city || "")].filter(Boolean).join("  ·  ")) || "&nbsp;"}</span>`;
+  $("#vFav").style.visibility = r.fav ? "" : "hidden";
+  $("#vInfoBtn").classList.toggle("on", infoOn());
+  $("#vNote").textContent = note;
 }
 // Opening or sharing a photo says a search found something; the server keeps these with the searches.
 const logEvent = (ev, i) => { const r = items[i]; if (!r) return;
-  const p = apiParams(); p.set("ev", ev); p.set("sha", r.sha); p.set("pos", i);
+  const p = VL === sgrid ? sParams() : libParams(); p.set("ev", ev); p.set("sha", r.sha); p.set("pos", i);
   fetch("/api/log?" + p, { keepalive: true }).catch(() => {}); };
-function openViewer(i) {
+function openViewer(grid, i) {
+  VL = grid; items = grid.items;
   logEvent("open", i);
-  sheet = false; strip.textContent = ""; thumbs.clear();
+  sheetUp = false; closeMenus();
   v.classList.add("on"); v.classList.remove("bare"); v.classList.toggle("info", infoOn());
   document.documentElement.style.overflow = "hidden";
-  if (!vHist) { history.pushState({ d: depth(), v: 1 }, ""); vHist = true; }
+  if (!vHist) { history.pushState({ ...history.state, v: 1 }, ""); vHist = true; }
   show(i);
-  const t = tileOf(i)?.getBoundingClientRect(), f = fit(items[i]);
+  const t = VL.tile(i)?.getBoundingClientRect(), f = fit(items[i]);
   if (t) vPic.animate([{ transform: `translate(${t.x - f.x}px,${t.y - f.y}px) scale(${t.width / f.w},${t.height / f.h})` }, { transform: "none" }], { duration: 380, easing: EASE });
   else vPic.animate([{ opacity: 0, transform: "scale(.97)" }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE });
   $("#vBg").animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: "ease-out" });
@@ -1027,11 +1333,11 @@ function closeViewer(instant) {
   const from = `translate(${at.x - f.x}px,${at.y - f.y}px) scale(${at.width / f.w},${at.height / f.h})`;
   for (const s of slides) { s.el.style.transform = ""; if (s !== cur) s.el.style.display = "none"; }
   Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0; place(vPic, f); bg.style.opacity = ui.style.opacity = "";
-  v.classList.remove("bare"); vCur = -1; scrubStop();
+  v.classList.remove("bare"); vCur = -1;
   if (vHist) { vHist = false; vBack = true; history.back(); }
   const done = () => { if (vCur < 0) { v.classList.remove("on"); document.documentElement.style.overflow = ""; } };
   if (instant) return done();
-  const el = tileOf(i);
+  const el = VL.tile(i);
   el?.scrollIntoView({ block: "nearest" });
   const t = el?.getBoundingClientRect();
   const a = t ? vPic.animate([{ transform: from }, { transform: `translate(${t.x - f.x}px,${t.y - f.y}px) scale(${t.width / f.w},${t.height / f.h})` }], { duration: 300, easing: EASE })
@@ -1040,65 +1346,66 @@ function closeViewer(instant) {
   ui.animate([{ opacity: hidden ? 0 : 1 }, { opacity: 0 }], { duration: 150, fill: "forwards" }).finished.then(x => setTimeout(() => x.cancel(), 200));
   a.finished.then(done, done);
 }
-const step = d => { const i = vCur + d; if (i >= 0 && i < items.length) show(i, d); };
+const step = d => { const i = vCur + d; if (items[i]) show(i, d); };
 function toggleInfo() {
-  if (phone()) sheet = !sheet; else { V.info = !V.info; saveView(); }
+  if (phone()) sheetUp = !sheetUp; else { V.info = !V.info; saveView(); }
   v.classList.toggle("info", infoOn()); if (infoOn()) v.classList.remove("bare");
   resetZoom();
-  const a = vPic.getBoundingClientRect(); arrange(); drawStrip(); const b = fit(items[vCur]);
+  const a = vPic.getBoundingClientRect(); arrange(); vChrome(); const b = fit(items[vCur]);
   vPic.animate([{ transform: `translate(${a.x - b.x}px,${a.y - b.y}px) scale(${a.width / b.w},${a.height / b.h})` }, { transform: "none" }], { duration: 300, easing: EASE });
 }
-
-function drawInfo(r) {
+// Anything that names a set of photos is a way into that set: it shows them in Search.
+function find(s) {
+  const over = vHist; vHist = false;                 // the new search takes the open photo's place in history
+  closeViewer(true);
+  S = s; typing = false; q.value = S.q;
+  if (TAB !== "search") setTab("search", over ? "replace" : "push");
+  else { nav(over ? "replace" : "push"); refreshSearch(); }
+}
+function drawInfo(r) {                               // what is known about it, laid out like the back of a print
   const d = dParts(when(r)), gps = r.lat != null && r.lon != null && (r.lat || r.lon);
-  const L = (k, val, text) => `<span class="lnk" data-k="${k}" data-v="${esc(val)}">${esc(text ?? val)}</span>`;
+  const row = (attrs, icon, title, detail, tag = "button") => `<${tag} class="vrow" ${attrs}>${icon}<span><b>${title}</b>${detail ? `<small>${detail}</small>` : ""}</span>${tag === "button" ? I.chevR : ""}</${tag}>`;
   let h = `<h3>${d ? fLong.format(d) : "Undated"}</h3>`;
-  if (d && when(r).length > 10) h += `<div class="sub num">${fTime.format(d)}${r.tz ? `  ·  ${esc(r.tz.replace(/_/g, " "))}` : ""}</div>`;
+  const sub = [d && when(r).length > 10 && fTime.format(d), r.tz && r.tz.replace(/_/g, " ")].filter(Boolean).join("  ·  ");
+  if (sub) h += `<div class="sub num">${esc(sub)}</div>`;
   if (r.desc) h += `<div class="note">${esc(r.desc)}</div>`;
   if (r.place || gps) {
-    const bits = r.place ? [r.city && L("city", r.city, r.city.split(", ")[0]), r.region && r.region !== r.country && r.region.split(", ")[0] !== (r.city || "").split(", ")[0] && L("region", r.region, r.region.split(", ")[0]), r.country && L("country", r.country)].filter(Boolean) : [];
-    h += `<div class="vc at">${I.pin}<div><div class="big">${bits.join(", ") || esc(r.place || "On the map")}</div>
-      <div class="dim num">${[r.place_inferred ? "Inferred from the photos around it" : r.county && esc(r.county),
-      gps && `<a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${r.lat}&mlon=${r.lon}#map=15/${r.lat}/${r.lon}">${(+r.lat).toFixed(4)}, ${(+r.lon).toFixed(4)}</a>`].filter(Boolean).join("  ·  ")}</div></div></div>`;
+    const map = gps ? `<a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${r.lat}&mlon=${r.lon}#map=15/${r.lat}/${r.lon}">Map</a>` : "";
+    const detail = [esc(r.county || ""), r.place_inferred ? "from photos taken around then" : "", map].filter(Boolean).join("  ·  ");
+    h += `<div class="vcard">${row(r.city ? `data-k="city" data-v="${esc(r.city)}"` : "", I.pin, esc(r.place || "On the map"), detail, r.city ? "button" : "div")}</div>`;
   }
-  const go = (k, val, icon, title, kind) => `<button class="go" data-k="${k}" data-v="${val}">${icon}<span><b>${title}</b><small>${kind}</small></span>${I.chevR}</button>`;
-  if (r.event != null && String(r.event) !== S.event) h += go("event", r.event, I.event, esc(r.event_title || "This event"), "Everything from this event");
-  if (r.trip != null && String(r.trip) !== S.trip) h += go("trip", r.trip, I.trip, esc((r.trip_title || "This trip").replace(/^Trip to /, "")), "The whole trip");
-  if (d) h += go("day", when(r).slice(0, 7), I.day, `${fMonth.format(d)} ${d.getFullYear()}`, "Everything taken that month");
-  if (r.camera || r.lens) {
-    h += `<div class="vc">`;
-    if (r.camera) h += `<div class="big">${L("camera", r.camera)}</div>`;
-    if (r.lens) {                                 // "iPhone 15 Pro Max back triple camera 2.22mm f/2.2" repeats the camera
-      const model = (r.camera || "").replace(/^\S+ /, ""), short = model && r.lens.startsWith(model) ? r.lens.slice(model.length).trim() : r.lens;
-      h += `<div class="${r.camera ? "dim" : "big"}">${L("lens", r.lens, short.charAt(0).toUpperCase() + short.slice(1))}</div>`;
-    }
-    const cells = [
-      (r.focal35 || r.focal) && [`${Math.round(r.focal35 || r.focal)} mm`, r.focal35 ? "35mm eq." : "Focal"],
-      r.fnumber && [`ƒ/${+r.fnumber.toFixed(1)}`, "Aperture"],
-      r.exposure && [r.exposure >= 1 ? `${+r.exposure.toFixed(1)}s` : `1/${Math.round(1 / r.exposure)}`, "Shutter"],
-      r.iso && [r.iso, "ISO"],
-    ].filter(Boolean);
+  if (r.event != null || r.trip != null) {
+    h += `<div class="vcard">`;
+    if (r.event != null) h += row(`data-k="event" data-v="${r.event}"`, I.cal, esc(r.event_title || "That day"), "Everything taken around then");
+    if (r.trip != null) h += row(`data-k="trip" data-v="${r.trip}"`, I.plane, esc((r.trip_title || "This trip").replace(/^Trip to /, "")), "The whole trip");
+    h += `</div>`;
+  }
+  if (r.people?.length) h += `<h4>With</h4><div class="tags">${r.people.map(p => `<button class="tag" data-k="person" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
+  if (r.albums?.length) h += `<h4>In</h4><div class="tags">${r.albums.map(p => `<button class="tag" data-k="album" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
+  const n = x => +(+x).toFixed(1);
+  const cells = [
+    (r.focal35 || r.focal) && [`${n(r.focal35 || r.focal)} mm`, "Focal"],
+    r.fnumber && [`ƒ/${n(r.fnumber)}`, "Aperture"],
+    r.exposure > 0 && [r.exposure < 1 ? `1/${Math.round(1 / r.exposure)}` : `${n(r.exposure)}s`, "Shutter"],
+    r.iso && [Math.round(r.iso), "ISO"],
+  ].filter(Boolean);
+  if (r.camera || cells.length) {                    // how it was taken, as the plate on a camera
+    h += `<div class="plate">`;
+    if (r.camera) h += `<button class="vrow" data-k="camera" data-v="${esc(r.camera)}"><span><b>${esc(r.camera)}</b>${r.lens ? `<small>${esc(r.lens)}</small>` : ""}</span>${I.chevR}</button>`;
     if (cells.length) h += `<div class="exp">${cells.map(([a, b]) => `<div><b>${a}</b><small>${b}</small></div>`).join("")}</div>`;
     h += `</div>`;
   }
-  if (r.people?.length) h += `<h4>People</h4><div class="tags">${r.people.map(p => `<button class="tag" data-k="person" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
-  if (r.albums?.length) h += `<h4>Albums</h4><div class="tags">${r.albums.map(p => `<button class="tag" data-k="album" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
-  const name = (r.path || "").split("/").pop(), folder = (r.path || "").slice(0, -name.length).replace(/\/$/, "");
-  h += `<button class="cta" data-k="like" data-v="${r.sha}">More like this</button>
-    <div class="file num">${esc(name)}${r.w && r.h ? `  ·  ${fmt(r.w)} × ${fmt(r.h)}` : ""}${r.ext ? `  ·  ${esc(r.ext.slice(1).toUpperCase())}` : ""}${folder ? `<br>${esc(folder.replace(/\//g, " › "))}` : ""}</div>`;
+  const name = (r.path || "").split("/").pop();
+  h += `<div class="file num">${esc([name, r.w && r.h ? `${r.w} × ${r.h}` : ""].filter(Boolean).join("  ·  "))}</div>`;
   const el = $("#vInfo"); el.innerHTML = h; el.scrollTop = 0;
 }
 $("#vInfo").addEventListener("click", e => {
   const t = e.target.closest("[data-k]"); if (!t) return;
-  const k = t.dataset.k, val = t.dataset.v;
-  S = blank(); $("#q").value = "";
-  if (k === "like") S.sha = val;
-  else if (k === "event" || k === "trip") S[k] = val;
-  else if (k === "day") S.from = S.to = val;
-  else S.f[k] = [val];
-  const over = vHist; vHist = false;                 // the new search takes the open photo's place in history
-  closeViewer(true); refresh(over ? "replace" : true);
+  const k = t.dataset.k, val = t.dataset.v, s = blank();
+  if (k === "event") s.event = val; else s.f[k] = [val];
+  find(s);
 });
+$("#vLike").onclick = () => { const r = items[vCur]; if (r) { const s = blank(); s.sha = r.sha; find(s); } };
 $("#vClose").onclick = () => closeViewer();
 let lastPointer = "mouse";
 v.addEventListener("pointerdown", e => { lastPointer = e.pointerType; }, true);
@@ -1106,8 +1413,7 @@ $("#vBg").onclick = () => { if (lastPointer === "mouse") closeViewer(); };   // 
 $("#vPrev").onclick = () => step(-1);
 $("#vNext").onclick = () => step(1);
 $("#vInfoBtn").onclick = toggleInfo;
-$("#backBtn").onclick = () => history.back();
-function vResize() { if (vCur < 0) return; v.classList.toggle("info", infoOn()); resetZoom(); arrange(); drawStrip(); }
+function vResize() { if (vCur < 0) return; v.classList.toggle("info", infoOn()); resetZoom(); arrange(); vChrome(); }
 addEventListener("resize", vResize);
 narrow.addEventListener("change", vResize);
 
@@ -1128,7 +1434,7 @@ function bake() {
 }
 function resetZoom() { Z.s = 1; Z.x = Z.y = 0; bake(); }
 function clampZoom() {                               // keep the photo covering the screen where it can
-  const b = fit(items[vCur]), w = b.w * Z.s, h = b.h * Z.s, W = vw(), H = vh();   // on screen the photo spans b.x + Z.x … + w
+  const b = fit(items[vCur]), w = b.w * Z.s, h = b.h * Z.s, W = vw(), H = vh();
   Z.x = w <= W ? (W - w) / 2 - b.x : Math.min(-b.x, Math.max(W - w - b.x, Z.x));
   Z.y = h <= H ? (H - h) / 2 - b.y : Math.min(-b.y, Math.max(H - h - b.y, Z.y));
 }
@@ -1147,7 +1453,7 @@ function slideTo(d, x = 0) {                         // the neighbour slides in,
   const fin = settle = () => { if (settle !== fin) return; settle = null; a.cancel(); show(vCur + d); };
   a.onfinish = fin;
 }
-const inViewerChrome = t => t.closest(".v-info, .v-btn, .v-strip");
+const inViewerChrome = t => t.closest(".v-info, .v-btn, .v-bar");
 v.addEventListener("pointerdown", e => {
   if (e.pointerType === "mouse" || inViewerChrome(e.target) || vCur < 0) return;
   if (settle) settle();
@@ -1156,7 +1462,7 @@ v.addEventListener("pointerdown", e => {
   if (pts.size === 1) g = { mode: "", x0: e.clientX, y0: e.clientY, t0: performance.now(), zx: Z.x, zy: Z.y };
   else if (pts.size === 2) {
     stage.style.transform = ""; vPic.style.transform = ""; $("#vBg").style.opacity = $("#vUi").style.opacity = ""; applyZoom();
-    if (phone() && sheet) toggleInfo();              // the photo has the whole screen again before it zooms
+    if (phone() && sheetUp) toggleInfo();            // the photo has the whole screen again before it zooms
     const [a, b] = [...pts.values()];
     g = { mode: "pinch", d0: Math.hypot(a.x - b.x, a.y - b.y), s0: Z.s, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, zx: Z.x, zy: Z.y };
   }
@@ -1175,13 +1481,15 @@ v.addEventListener("pointermove", e => {
   if (!g.mode && Math.hypot(dx, dy) > 8) g.mode = Z.s > 1 ? "pan" : Math.abs(dx) > Math.abs(dy) ? "swipe" : dy > 0 ? "down" : "up";
   if (g.mode === "pan") { Z.x = g.zx + dx; Z.y = g.zy + dy; applyZoom(); }
   else if (g.mode === "swipe") {                     // the neighbours come along; past either end it only stretches
-    const end = dx > 0 ? vCur <= 0 : vCur >= items.length - 1;
+    const end = dx > 0 ? !items[vCur - 1] : !items[vCur + 1];
     stage.style.transform = `translateX(${end ? dx * .3 : dx}px)`;
-  } else if (g.mode === "down" && !(phone() && sheet)) {   // the photo follows the finger and shrinks about its centre
+  } else if (g.mode === "down" && !(phone() && sheetUp)) {   // the photo follows the finger and shrinks about its centre
     const k = Math.max(.6, 1 - dy / vh()), b = fit(items[vCur]);
     vPic.style.transform = `translate(${dx + b.w * (1 - k) / 2}px,${dy + b.h * (1 - k) / 2}px) scale(${k})`;
     $("#vBg").style.opacity = Math.max(0, 1 - dy / (vh() * .6));
     $("#vUi").style.opacity = dy > 20 ? 0 : 1;
+  } else if (g.mode === "up" && !(phone() && sheetUp)) {   // a flick up for details: the photo gives a little
+    vPic.style.transform = `translateY(${Math.min(0, dy) * .35}px)`;
   }
 });
 function endGesture(e) {
@@ -1200,11 +1508,10 @@ function endGesture(e) {
     const now = performance.now();
     if (now - lastTap < 300) { lastTap = 0; clearTimeout(tapTimer);
       if (Z.s > 1) return resetZoomAnimated();
-      if (phone() && sheet) return toggleInfo();
-      const b = fit(items[vCur]), cover = Math.max(vw() / b.w, vh() / b.h);   // fill the screen, as Photos does
-      zoomAt(e.clientX, e.clientY, cover > 1.2 ? cover : 2.5); clampZoom(); animateTo(); return; }
+      if (phone() && sheetUp) return toggleInfo();
+      zoomAt(e.clientX, e.clientY, 2.5); clampZoom(); animateTo(); return; }
     lastTap = now;
-    tapTimer = setTimeout(() => { if (vCur < 0) return; if (phone() && sheet) toggleInfo(); else v.classList.toggle("bare"); }, 280);
+    tapTimer = setTimeout(() => { if (vCur < 0) return; if (phone() && sheetUp) toggleInfo(); else v.classList.toggle("bare"); }, 280);
     return;
   }
   if (mode === "pan") { clampZoom(); animateTo(); return; }
@@ -1214,7 +1521,7 @@ function endGesture(e) {
     const x = new DOMMatrix(getComputedStyle(stage).transform).e;
     if (d && items[vCur + d]) slideTo(d, x);
     else { stage.style.transform = ""; stage.animate([{ transform: `translateX(${x}px)` }, { transform: "none" }], { duration: 260, easing: EASE }); }
-  } else if (phone() && sheet) { if (mode === "down" && (dy > 50 || fast)) toggleInfo(); }   // down puts the details away
+  } else if (phone() && sheetUp) { if (mode === "down" && (dy > 50 || fast)) toggleInfo(); }   // down puts the details away
   else if (mode === "down") {
     if (dy > 110 || (fast && dy > 40)) closeViewer();
     else {
@@ -1223,7 +1530,11 @@ function endGesture(e) {
       vPic.animate([{ transform: from }, { transform: "none" }], { duration: 220, easing: EASE });
       bg.animate([{ opacity: dim }, { opacity: 1 }], { duration: 220 });
     }
-  } else if (mode === "up" && phone() && (dy < -50 || fast)) toggleInfo();   // swipe up brings the details up
+  } else if (mode === "up") {
+    const from = vPic.style.transform; vPic.style.transform = "";
+    if (from) vPic.animate([{ transform: from }, { transform: "none" }], { duration: 300, easing: EASE });
+    if (dy < -50 || fast) toggleInfo();              // swipe up brings the details up
+  }
 }
 function animateTo() {                               // from where the gesture left it to where Z says, then sharp
   const a = vPic.getBoundingClientRect(); bake(); const b = vPic.getBoundingClientRect();
@@ -1234,72 +1545,8 @@ v.addEventListener("pointerup", endGesture);
 v.addEventListener("pointercancel", endGesture);
 // The details sheet scrolls by itself; pulled down from its top, it goes away.
 let sheetY = null;
-$("#vInfo").addEventListener("touchstart", e => { sheetY = narrow.matches && sheet && e.currentTarget.scrollTop <= 0 ? e.touches[0].clientY : null; }, { passive: true });
-$("#vInfo").addEventListener("touchend", e => { if (sheetY != null && e.changedTouches[0].clientY - sheetY > 70 && sheet) toggleInfo(); sheetY = null; }, { passive: true });
-
-
-/* ── scrubber: a strip of thumbnails under the photo. Drag it to run through the photos, flick it and it
-      coasts, tap a thumbnail to go there. Only the thumbnails near the current photo exist. ── */
-const strip = $("#vStrip"), thumbs = new Map(), TW = 30, TH = 44, STEP = TW + 2;
-let scrub = null, quick = false, coastId = 0, scrubT = 0;
-function drawStrip(pos = vCur, rest = true) {        // rest: the current photo stands apart, at its own shape
-  const W = strip.clientWidth;
-  if (!W || vCur < 0) return;
-  const c = Math.round(pos), K = Math.ceil(W / STEP / 2) + 3, lo = Math.max(0, c - K), hi = Math.min(items.length - 1, c + K);
-  const cw = rest ? Math.round(Math.min(72, Math.max(TW, TH * (items[c].ar || 1.5)))) : TW, side = rest ? (cw - TW) / 2 + 8 : 0;
-  for (const [i, el] of thumbs) if (i < lo || i > hi || el.dataset.sha !== items[i].sha) { el.remove(); thumbs.delete(i); }
-  for (let i = lo; i <= hi; i++) {
-    let el = thumbs.get(i);
-    if (!el) { el = new Image(); el.alt = ""; el.draggable = false; el.decoding = "async"; el.dataset.i = i; el.dataset.sha = items[i].sha;
-      el.src = "/thumb/" + items[i].sha; strip.append(el); thumbs.set(i, el); }
-    const x = W / 2 + (i - pos) * STEP - TW / 2 + (i > c ? side : i < c ? -side : -(cw - TW) / 2);
-    el.style.width = (i === c ? cw : TW) + "px"; el.style.transform = `translateX(${x}px)`;
-  }
-}
-function scrubTo(pos) {
-  pos = scrub.pos = Math.max(0, Math.min(items.length - 1, pos));
-  const i = Math.round(pos);
-  if (i !== vCur) { show(i); clearTimeout(scrubT); scrubT = setTimeout(() => { if (scrub && cur.r && !cur.asked) preview(cur); }, 180); }
-  drawStrip(pos, false);
-  return pos;
-}
-function scrubStop() {                               // back to rest: the photo sharpens, its neighbours load
-  cancelAnimationFrame(coastId); clearTimeout(scrubT);
-  const was = scrub; scrub = null; quick = false; strip.classList.remove("drag");
-  if (was && vCur >= 0) { arrange(); drawStrip(); }
-}
-strip.addEventListener("pointerdown", e => {
-  if (vCur < 0 || e.button) return;
-  if (settle) settle();
-  cancelAnimationFrame(coastId);                     // a touch stops a strip that is still coasting
-  scrub = { id: e.pointerId, x0: e.clientX, p0: scrub ? scrub.pos : vCur, pos: scrub ? scrub.pos : vCur, moved: !!scrub,
-    lx: e.clientX, lt: e.timeStamp, vx: 0, tap: e.target.dataset.i };
-  strip.setPointerCapture(e.pointerId);
-});
-strip.addEventListener("pointermove", e => {
-  if (!scrub || e.pointerId !== scrub.id) return;
-  const dx = e.clientX - scrub.x0;
-  if (!scrub.moved) { if (Math.abs(dx) < 5) return; scrub.moved = true; }
-  quick = true; strip.classList.add("drag");
-  const dt = e.timeStamp - scrub.lt;
-  if (dt > 0) { scrub.vx = .7 * (e.clientX - scrub.lx) / dt + .3 * scrub.vx; scrub.lx = e.clientX; scrub.lt = e.timeStamp; }
-  scrubTo(scrub.p0 - dx / STEP);
-});
-function scrubEnd(e) {
-  if (!scrub || e.pointerId !== scrub.id) return;
-  if (!scrub.moved) { const i = scrub.tap; scrub = null; if (i != null && +i !== vCur && items[+i]) show(+i); return; }
-  let vx = e.timeStamp - scrub.lt > 80 ? 0 : scrub.vx, last = performance.now();   // px per ms as the finger left
-  scrub.id = -1;
-  const tick = now => {
-    const dt = Math.min(40, now - last); last = now;
-    const p = scrubTo(scrub.pos - vx * dt / STEP);
-    vx *= Math.pow(.95, dt / 16);
-    if (Math.abs(vx) > .04 && p > 0 && p < items.length - 1) coastId = requestAnimationFrame(tick); else scrubStop();
-  };
-  if (Math.abs(vx) > .2) coastId = requestAnimationFrame(tick); else scrubStop();
-}
-strip.addEventListener("pointerup", scrubEnd);
-strip.addEventListener("pointercancel", scrubEnd);
+$("#vInfo").addEventListener("touchstart", e => { sheetY = narrow.matches && sheetUp && e.currentTarget.scrollTop <= 0 ? e.touches[0].clientY : null; }, { passive: true });
+$("#vInfo").addEventListener("touchend", e => { if (sheetY != null && e.changedTouches[0].clientY - sheetY > 70 && sheetUp) toggleInfo(); sheetY = null; }, { passive: true });
 
 /* ── save / share: the original file, so Save to Photos keeps its date and place ── */
 let shareFile = null;                                // fetched for the current photo, waiting for a second tap
@@ -1324,7 +1571,7 @@ async function share() {
     shareFile = { sha: r.sha, file };
     await doShare(file);
   } catch (e) {
-    if (items[vCur] === r) { vNote = "couldn’t load the photo"; vChrome(); }
+    if (items[vCur] === r) { vNote = "Couldn’t load the photo"; vChrome(); }
   } finally { btn.classList.remove("busy"); }
 }
 async function doShare(file) {
@@ -1332,20 +1579,19 @@ async function doShare(file) {
   try { await navigator.share({ files: [file] }); btn.classList.remove("ready"); }
   catch (e) {
     // Safari only opens the share sheet straight from a tap; if the download took too long, ask for one more tap
-    if (e.name === "NotAllowedError") btn.classList.add("ready");
+    if (e.name === "NotAllowedError") { btn.classList.add("ready"); vNote = "Tap share again"; vChrome(); }
   }
 }
 $("#vShare").onclick = share;
 
 /* ── page events ───────────────────────────────────────────────────── */
-$("#grid").addEventListener("click", e => { const t = e.target.closest(".t"); if (t) openViewer(+t.dataset.i); });
-document.addEventListener("click", e => {
-  if (e.target.closest("#clearAll")) { S = blank(); $("#q").value = ""; refresh(); }
-  if (e.target.closest("#namesBtn")) { S.plain = !S.plain; refresh(); }
-  if (e.target.closest("#sortBtn")) { S.sort = D.sort === "old" ? "new" : "old"; refresh(); }
+$("#libGrid").addEventListener("click", e => { const t = e.target.closest(".t"); if (t) openViewer(lgrid, +t.dataset.i); });
+$("#sGrid").addEventListener("click", e => {
+  const t = e.target.closest(".t"); if (t) return openViewer(sgrid, +t.dataset.i);
+  if (e.target.closest("#again")) { q.value = ""; go(blank()); }
 });
 document.addEventListener("keydown", e => {
-  const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
+  const inField = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
   if (vCur >= 0) {
     if (e.key === "Escape") closeViewer();
     else if (e.key === "ArrowLeft") step(-1);
@@ -1353,30 +1599,50 @@ document.addEventListener("keydown", e => {
     else if (e.key === "i") toggleInfo();
     return;
   }
-  if (e.key === "Escape" && pop) { closePop(); return; }
-  if (typing) return;
-  if (e.key === "/") { e.preventDefault(); $("#q").focus(); $("#q").select(); }
-  if (e.key === "Enter" && document.activeElement.classList.contains("t")) openViewer(+document.activeElement.dataset.i);
+  if (e.key === "Escape" && (menu || sheet)) { closeMenus(); return; }
+  if (inField) return;
+  if (e.key === "/") { e.preventDefault(); if (TAB !== "search") setTab("search"); q.focus(); q.select(); }
+  if (e.key === "Enter" && document.activeElement.classList.contains("t"))
+    openViewer(document.activeElement.closest("#libGrid") ? lgrid : sgrid, +document.activeElement.dataset.i);
 });
+// A home-screen app has no browser to swipe back in, so a swipe in from the left edge goes back here, as on the iPhone.
+let edge = null;
+document.addEventListener("touchstart", e => {
+  edge = standalone.matches && vCur < 0 && e.touches.length === 1 && e.touches[0].clientX < 20 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+}, { passive: true });
+document.addEventListener("touchend", e => {
+  if (!edge) return;
+  const t = e.changedTouches[0], dx = t.clientX - edge.x, dy = Math.abs(t.clientY - edge.y); edge = null;
+  if (dx > innerWidth * .3 && dy < dx) { if (TAB === "library") libBack(); else if (!isEmpty()) sBack(); }
+}, { passive: true });
+function restore(st) {                               // a history entry: the whole state it holds
+  if (!st) st = { tab: location.search ? "search" : "library", s: location.search.slice(1) };
+  if (st.lib) { L.trail = st.lib.trail || []; L.anchor = st.lib.anchor; L.scale = st.lib.scale || L.scale; L.jump = true; }
+  S = fromParams(new URLSearchParams(st.s ?? location.search)); typing = false; q.value = S.q;
+  setTab(st.tab || "library", "init");
+}
 addEventListener("popstate", () => {
   if (vBack) { vBack = false; return; }             // the viewer closed itself and took its entry back
   if (vHist) { vHist = false; return closeViewer(); }   // Back, or a swipe from the screen edge, closes the photo
   if (history.state?.v) return history.back();      // the entry left by a photo that is no longer open: step over it
-  closeViewer(true); document.documentElement.classList.toggle("deep", depth() > 0);
-  const to = fromParams(new URLSearchParams(location.search));
-  if (items.length && String(toParams(to)) === String(toParams(S))) return;   // already showing this search
-  S = to; $("#q").value = S.q; refresh(false); });
+  closeViewer(true); closeMenus();
+  restore(history.state);
+});
+let lastW = 0;
+new ResizeObserver(() => { const w = document.documentElement.clientWidth; if (w !== lastW) { lastW = w; lgrid.relayout(); sgrid.relayout(); } }).observe(document.documentElement);
 
+history.scrollRestoration = "manual";               // the page puts you back where you were, card or month, itself
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});   // the "can't reach" page
 (async function init() {
-  F = await getJSON("/api/info");                 // unfiltered counts double as the first facet state
-  INFO = { ...F, months: F.months.length };
-  if (INFO.faces) $("#peopleBtn").style.display = "";
-  if (!INFO.demo) $("#addBtn").style.display = "";   // the demo has no setup page
-  S =fromParams(new URLSearchParams(location.search));
-  $("#q").value = S.q;
-  buildVocab(); buildTimeline(); renderTimeline();
-  refresh(false);
+  INFO = await getJSON("/api/info");                // the library's facts; its facet counts double as the first ones
+  if (INFO.demo) q.placeholder = "Try: latte art, kitten, waterfall in autumn";
+  buildVocab();
+  const params = new URLSearchParams(location.search);
+  S = fromParams(params); q.value = S.q;
+  TAB = [...params].length ? "search" : "library";
+  history.replaceState({ ...snap(), d: 0 }, "", url());
+  libLoad();
+  setTab(TAB, "init");
 })();
 </script>
 </body>
