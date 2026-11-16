@@ -158,6 +158,7 @@ final class LibraryModel: ObservableObject {
         gen += 1
         let g = gen
         loading = true
+        next = nil                                 // the old list's place: no page is fetched from it while this loads
         Task {
             let rev = SyncEngine.shared.revision
             if vocabRevision != rev {
@@ -235,7 +236,8 @@ final class LibraryModel: ObservableObject {
         let g = gen
         Task {
             defer { loadingMore = false }
-            guard let page = try? await Remote.search(query, cursor: cursor, dedupe: hideDups), g == gen else { return }
+            // Only onto the list it was asked for, still at the place it was asked from.
+            guard let page = try? await Remote.search(query, cursor: cursor, dedupe: hideDups), g == gen, next == cursor else { return }
             for p in page.photos { served[p.sha] = p }
             next = page.next
             grid = GridData(tiles: grid.tiles + page.photos.map(LibraryModel.tile), grain: 0, id: grid.id + 1, reset: grid.reset)
