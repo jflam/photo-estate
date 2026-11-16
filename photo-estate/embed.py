@@ -54,6 +54,32 @@ COMMON_WORDS = set("""sunny lily rose rosie daisy iris violet ivy holly heather 
     glen dale cliff rocco sandy dusty misty penny chip bud bunny kitty angel star sterling destiny""".split())
 # Countries and states that are also everyday words: read as a place only when capitalized
 COMMON_PLACES = {"china", "turkey", "chad", "jordan", "georgia", "guinea", "japan", "chile", "cuba", "wales", "jersey"}
+
+# Screenshots, told from what the catalog already holds, as the iPhone app does (ios/.../Screenshots.swift): a
+# camera always writes its make and model and a screenshot never has one, so a screenshot is a photo with no
+# camera that is exactly a phone or tablet screen's size (either way round), or whose name says it is one.
+# Camera photos that lost their EXIF come back at 4:3 or 16:9, which are also iPad and old Android sizes; a
+# real screenshot of those is a PNG, so for JPEG and HEIC those two shapes don't count.
+SCREEN_SIZES = {
+    (320, 480), (640, 960), (640, 1136), (750, 1334), (828, 1792), (1080, 1920), (1242, 2208), (1125, 2436),
+    (1242, 2688), (1080, 2340), (1170, 2532), (1284, 2778), (1179, 2556), (1290, 2796), (1206, 2622),
+    (1320, 2868), (1260, 2736),
+    (768, 1024), (1536, 2048), (1668, 2224), (1668, 2388), (2048, 2732), (1620, 2160), (1640, 2360),
+    (1488, 2266), (2064, 2752), (1668, 2420),
+    (720, 1280), (1080, 2160), (1080, 2220), (1080, 2280), (1080, 2316), (1080, 2400), (1440, 2560),
+    (1440, 2960), (1440, 3040), (1440, 3120), (1440, 3200),
+}
+
+
+def is_screenshot(m: dict) -> bool:
+    if m.get("camera") or m.get("lens"):
+        return False
+    path = (m.get("path") or "").lower()
+    if "screenshot" in path or "screen shot" in path:
+        return True
+    w, h = m.get("w") or 0, m.get("h") or 0
+    a, b = min(w, h), max(w, h)
+    return (a, b) in SCREEN_SIZES and ((m.get("ext") or "").lower() == ".png" or (a * 4 != b * 3 and a * 16 != b * 9))
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".gif", ".webp", ".tif", ".tiff", ".avif"}  # decodable stills
 SKIP_EXT = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"}  # Pillow can't decode RAW
 
@@ -527,6 +553,8 @@ def cmd_serve(a) -> None:
         event_of = col(lambda m: m.get("event"))
         trip_of = col(lambda m: m.get("trip"))
         fav = np.array([meta[s]["fav"] for s in shas])
+        shot = np.array([is_screenshot(meta[s]) for s in shas], bool)
+        ars = np.array([meta[s]["ar"] for s in shas], np.float32)
         oldest = np.argsort(when, kind="stable")
         oldest = np.concatenate([oldest[when[oldest] != ""], oldest[when[oldest] == ""]])   # undated last, either way
         newest = np.concatenate([oldest[when[oldest] != ""][::-1], oldest[when[oldest] == ""]])
@@ -610,15 +638,15 @@ def cmd_serve(a) -> None:
 
     # The names load_state() produces. Handlers read them as plain variables; install() rebinds them all
     # at once while no request is being served, so a search never sees half of an old and half of a new catalog.
-    STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re')
-    shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info = (None,) * 29
+    STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'shot', 'ars', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re')
+    shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info = (None,) * 31
 
     loaded = {}   # what the installed state was read from: the next reload starts from it
 
     def install(st: dict) -> None:
         loaded["raw"] = st["_raw"]
-        nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info
-        shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re = (st[k] for k in STATE)
+        nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info
+        shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re = (st[k] for k in STATE)
         info = {"total": N, "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
                 "demo": bool(a.demo), "faces": has_faces, **facet_counts({})}
 
@@ -694,7 +722,7 @@ def cmd_serve(a) -> None:
     # Devices that keep their own copy of the catalog (the iPhone app) follow it through a change feed
     # (sync.py). The feed's versions live beside the catalog, never in it.
     feed = Feed(Path(a.db).resolve().parent / "sync-feed.db")
-    feed_dups = set()
+    feed_dups = None   # set once feed_update has run
 
     def feed_update():
         """Tell the feed what the catalog now holds. A row is the photo's search result, plus `dup` for a
@@ -874,6 +902,51 @@ def cmd_serve(a) -> None:
             text = rest
         return masks, text, applied, scope or typed_scope, names, places
 
+    def view_masks(qs: dict, masks: dict, text: str, similar: bool) -> bool:
+        """The view options, for browsing and filtering (no words to rank by, not "More like this"), as the
+        iPhone app has them: screenshots out (`shots=0`), and near-identical shots out (`dedupe=1`) by the
+        library-wide flag the iPhone uses too, so a count is the count of what shows, and a cursor is a
+        position in that list. True when browsing: take() then skips nothing page by page."""
+        if text or similar:
+            return False
+        if (qs.get("shots") or ["1"])[0] == "0":
+            masks["shots"] = ~shot
+        if (qs.get("dedupe") or ["1"])[0] == "1" and feed_dups is not None:   # (until the flag is worked out, none are)
+            dups, S = feed_dups, shas
+            masks["dup"] = remember(("dups", id(dups), id(S)), lambda: ~np.fromiter((x in dups for x in S), bool, len(S)))
+        return True
+
+    def periods(order) -> dict:
+        """The photos in `order` (by time), as a card a year and a card a month, as the iPhone's Library
+        has them: each with its key ("2019", "2019-07"), how many, where it starts in `order`, the photo on
+        the front (a favourite if there is one, a landscape one if not, nearest the middle) and its places."""
+        out = {}
+        city = single["city"]
+        for name, key_of, top in (("years", lambda m: m // 12, 3), ("months", lambda m: m, 2)):
+            k = np.where(ym[order] >= 0, key_of(ym[order] + m0), -1)
+            cuts = np.flatnonzero(np.diff(k)) + 1
+            starts, ends = np.concatenate([[0], cuts]), np.concatenate([cuts, [len(order)]])
+            cards = []
+            for a0, b0 in zip(starts.tolist(), ends.tolist()):
+                if not len(order) or k[a0] < 0:   # undated photos have no year or month
+                    continue
+                run = order[a0:b0]
+                score = fav[run] * 4_000_000 + ((ars[run] >= 1.2) & (ars[run] <= 1.9)) * 2_000_000 \
+                    - np.abs(np.arange(len(run)) - len(run) // 2)
+                cover = int(run[int(np.argmax(score))])
+                codes = city["codes"][run]
+                codes = codes[codes >= 0]
+                names = {}
+                for c, n in zip(*np.unique(codes, return_counts=True)):
+                    nm = city["labels"][c].split(",")[0].strip()
+                    names[nm] = names.get(nm, 0) + int(n)
+                v = int(k[a0])
+                cards.append({"key": str(v) if name == "years" else f"{v // 12}-{v % 12 + 1:02d}", "n": b0 - a0, "at": a0,
+                              "cover": shas[cover], "ar": round(float(ars[cover]), 4),
+                              "places": [x for x, _ in sorted(names.items(), key=lambda kv: (-kv[1], kv[0]))[:top]]})
+            out[name] = cards
+        return out
+
     def take(order, start: int, limit: int, dedupe: bool):
         """One page from a ranked list, skipping copies of a shot just shown (Google + iCloud, bursts)."""
         kept, hidden, pos = [], 0, start
@@ -980,7 +1053,7 @@ def cmd_serve(a) -> None:
     # This is the raw material for choosing evaluation queries from real use; nothing reads it back.
     qlog = Path(a.query_log or Path(a.db).resolve().parent / "query-log.jsonl")
     qlog_lock = threading.Lock()
-    unlogged = {"cursor", "limit", "dedupe", "ev", "sha", "pos"}
+    unlogged = {"cursor", "limit", "dedupe", "shots", "ev", "sha", "pos"}
 
     def record(req, ev: str, qs: dict, **fields):
         line = {"ts": now(), "ev": ev,
@@ -1226,13 +1299,14 @@ def cmd_serve(a) -> None:
                     limit = max(1, min(int(one("limit", "120")), 500))
                     start = max(0, int(one("cursor", "0")))
                     masks, text, applied, scope, names, places = select(qs)
+                    deduped = view_masks(qs, masks, text, u.path == "/api/similar")
                     mask = combine(masks)
                     sha = one("sha")
                     if u.path == "/api/similar" and sha not in index:
                         return self.json({"error": "unknown photo"}, 404)
                     sort = one("sort") or ("old" if scope else "new")
                     key = (u.path, sha, text, sort, tuple(sorted((k, tuple(v)) for k, v in qs.items()
-                                                                 if k not in ("cursor", "limit", "dedupe"))))
+                                                                 if k not in ("cursor", "limit"))))
 
                     def ranked():
                         if u.path == "/api/similar":
@@ -1250,7 +1324,7 @@ def cmd_serve(a) -> None:
                         return np.argsort(-sims)[: int(np.isfinite(sims).sum())]
 
                     order = remember(key, ranked)
-                    results, hidden, nxt = take(order, start, limit, one("dedupe", "1") == "1")
+                    results, hidden, nxt = take(order, start, limit, one("dedupe", "1") == "1" and not deduped)
                     record(self, "similar" if u.path == "/api/similar" else "search", qs, sha=one("sha") or None, text=text,
                            filters=applied, people=names, places=places, cursor=start, matching=int(len(order)),
                            ms=round((time.time() - t) * 1000),
@@ -1264,7 +1338,19 @@ def cmd_serve(a) -> None:
                         record(self, one("ev"), qs, sha=one("sha"), pos=int(pos) if pos.isdigit() else None)
                     return self.send(204, b"", "text/plain")
                 if u.path == "/api/facets":
-                    return self.json(facet_counts(select(qs)[0]))
+                    masks, text = select(qs)[:2]
+                    view_masks(qs, masks, text, bool(one("sha")))
+                    return self.json(facet_counts(masks))
+                if u.path == "/api/periods":   # the Library's Years and Months
+                    masks, text = select(qs)[:2]
+                    view_masks(qs, masks, "", False)
+                    mask, sort = combine(masks), one("sort") or "new"
+                    key = ("periods", sort, tuple(sorted((k, tuple(v)) for k, v in qs.items())))
+
+                    def make():
+                        by_time = oldest if sort == "old" else newest
+                        return {**periods(by_time[mask[by_time]]), "matching": int(mask.sum()), "total": N}
+                    return self.json(remember(key, make))
                 if u.path in ("/stats", "/stats.html"):
                     body = pages.page("stats.html")
                     return self.send(200, body, "text/html; charset=utf-8", "no-cache",
@@ -1282,7 +1368,7 @@ def cmd_serve(a) -> None:
                     since = one("since", "0")
                     ids, deleted, (ver, after), more = feed.page(one("epoch"), int(since) if since.isdigit() else 0,
                                                                  one("after"), max(1, min(int(one("limit", "2000")), 10000)))
-                    rows = [dict(sha=s, **meta[s], **({"dup": True} if s in feed_dups else {})) for s in ids if s in meta]
+                    rows = [dict(sha=s, **meta[s], **({"dup": True} if feed_dups and s in feed_dups else {})) for s in ids if s in meta]
                     return self.json({"epoch": feed.epoch, "photos": rows, "deleted": deleted, "since": ver, "after": after,
                                       "more": more, "total": N, "trips": [] if more else trip_list})
                 if u.path in app_files:
