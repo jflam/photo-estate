@@ -546,6 +546,7 @@ class Grid {
   async load(start = 0) {
     const g = ++this.gen;
     this.el.classList.add("stale");
+    this.data = this.next = null; this.busy = this.busyUp = false;   // the old list's place is gone now: nothing may be added from it (#42)
     let data;
     try { data = await this.fetch(start, this.first); }
     catch (e) { if (g === this.gen) { this.el.classList.remove("stale"); this.onError?.(e); } return null; }
@@ -565,8 +566,8 @@ class Grid {
   }
   async more() {
     if (this.busy || this.next == null || !this.data || !this.live()) return;
-    this.busy = true; const g = this.gen;
-    try { const d = await this.fetch(this.next, this.step); if (g === this.gen) { this.next = d.next; this.add(d.results); this.onGrow?.(); } } catch (e) {}
+    this.busy = true; const g = this.gen, at = this.next;
+    try { const d = await this.fetch(at, this.step); if (g === this.gen && at === this.next) { this.next = d.next; this.add(d.results); this.onGrow?.(); } } catch (e) {}
     if (g === this.gen) this.busy = false;
     if (g === this.gen && this.next != null && $(this.down).getBoundingClientRect().top < innerHeight + 1200) this.more();
   }
@@ -574,7 +575,7 @@ class Grid {
     if (this.busyUp || this.lo <= 0 || !this.data || !this.live()) return;
     this.busyUp = true; const g = this.gen, n = Math.min(this.step, this.lo), at = this.lo - n;
     let ok = false;
-    try { const d = await this.fetch(at, n); ok = d.results.length === n; if (g === this.gen && ok) this.add(d.results, at); } catch (e) {}   // a short page would leave a gap
+    try { const d = await this.fetch(at, n); ok = d.results.length === n && at + n === this.lo; if (g === this.gen && ok) this.add(d.results, at); } catch (e) {}   // a short page, or one that no longer meets the list, would leave a gap
     if (g === this.gen) this.busyUp = false;
     if (g === this.gen && ok && this.lo > 0 && $(this.up).getBoundingClientRect().bottom > -900) this.less();
   }
