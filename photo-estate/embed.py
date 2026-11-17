@@ -1199,10 +1199,12 @@ def cmd_serve(a) -> None:
 
         def changes_route(self, method: str, u, qs: dict, body) -> bool:
             """Change sets (changes.py): the review page and its API. Proposing, deciding and applying
-            change what everyone sees, so they take the same permission as uploading (--upload-user)."""
+            change what everyone sees, so they take the same permission as uploading (--upload-user), or
+            come from this computer itself (not through `tailscale serve`): that is where the agent runs."""
             if not u.path.startswith(("/changes", "/api/changes")):
                 return False
-            if method == "POST" and not self.allowed():
+            from intake.server import is_local
+            if method == "POST" and not (self.allowed() or is_local(self)):
                 self.send(403, b'{"error":"not allowed"}', "application/json")
                 return True
             got = changes.handle(method, u.path, qs, body, self.who())
