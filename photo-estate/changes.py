@@ -1,10 +1,11 @@
 """Change sets: a bulk edit to the library, proposed first and applied only once a person has looked.
 
 An agent (or a person) proposes a set of photos and what to do to them. Nothing in the library changes
-until the set is applied; before that, each photo is accepted or rejected on the review page
-(/changes/<id>), and every such decision is saved as it is made, so a review of ten thousand photos
-can stop and carry on later. Applying can be done part-way, as often as wanted: it makes the library
-match the decisions made so far. Undoing a set takes back everything it did, as one unit.
+until the set is applied. Before that, a person looks the set over on the review page (/changes/<id>)
+and marks the exceptions: the photos to keep. Every photo not marked is done to as proposed, so the
+review is a last look, not a decision per photo. Each mark is saved as it is made, so a review of ten
+thousand photos can stop and carry on later. Applying can be done as often as wanted: it makes the
+library match the marks made so far. Undoing a set takes back everything it did, as one unit.
 
 The first (and so far only) operation is `hide`: the photo stays in the store and in the catalog, and
 is left out of every view (search, the library, People, the copy a phone keeps). Files are never
@@ -17,7 +18,7 @@ touched.
   POST /api/changes          {title, prompt?, op?, items: [{sha, score?, reason?}]}   propose a set
   POST /api/changes/<id>/items   {items?: [...], remove?: [sha]}    add to it, or take photos out of it
   POST /api/changes/<id>/decide  {shas: [...], decision: accept | reject | pending}
-  POST /api/changes/<id>/apply          make the library match the decisions made so far
+  POST /api/changes/<id>/apply          do it to every photo not marked reject; put back those that are
   POST /api/changes/<id>/revert         undo everything the set did (the decisions are kept)
   POST /api/changes/<id>/discard        forget a set that hides nothing
 
@@ -42,7 +43,7 @@ CREATE TABLE IF NOT EXISTS change_sets(
   created_by TEXT, created_at TEXT, updated_at TEXT, applied_at TEXT, reverted_at TEXT);
 CREATE TABLE IF NOT EXISTS change_items(
   set_id INT, sha256 TEXT,
-  decision TEXT DEFAULT 'pending',   -- pending | accept | reject
+  decision TEXT DEFAULT 'pending',   -- pending (nobody has said: as proposed) | accept | reject (keep it)
   applied INT DEFAULT 0,             -- 1 while this set is hiding the photo
   score REAL, reason TEXT, decided_at TEXT, PRIMARY KEY(set_id, sha256));
 CREATE TABLE IF NOT EXISTS hidden(   -- a photo is hidden while any row names it
@@ -99,11 +100,11 @@ class Changes:
                 "SELECT decision, applied, count(*) FROM change_items WHERE set_id=? GROUP BY 1, 2", (sid,)):
             n[decision] += k
             applied += k if was_applied else 0
-            todo += k if (decision == "accept") != bool(was_applied) else 0
+            todo += k if (decision != "reject") != bool(was_applied) else 0
         total = sum(n.values())
         # what the set has come to: nothing in it, undone, still being worked on, or finished
         s["state"] = ("empty" if not total else "reverted" if s["status"] == "reverted" and not applied
-                      else "review" if n["pending"] or todo else "applied")
+                      else "review" if todo else "applied")
         return {**s, "n": total, **n, "applied": applied, "todo": todo}
 
     def listing(self) -> dict:
@@ -231,12 +232,12 @@ class Changes:
                         ((decision, t, sid, s, decision) for s in shas if isinstance(s, str))).rowcount
                 elif what == "apply":
                     hide = [r[0] for r in con.execute(
-                        "SELECT sha256 FROM change_items WHERE set_id=? AND decision='accept' AND applied=0", (sid,))]
+                        "SELECT sha256 FROM change_items WHERE set_id=? AND decision!='reject' AND applied=0", (sid,))]
                     show = [r[0] for r in con.execute(
-                        "SELECT sha256 FROM change_items WHERE set_id=? AND decision!='accept' AND applied=1", (sid,))]
+                        "SELECT sha256 FROM change_items WHERE set_id=? AND decision='reject' AND applied=1", (sid,))]
                     con.executemany("INSERT OR IGNORE INTO hidden VALUES (?,?,?)", ((s, sid, t) for s in hide))
                     con.executemany("DELETE FROM hidden WHERE sha256=? AND set_id=?", ((s, sid) for s in show))
-                    con.execute("UPDATE change_items SET applied = (decision='accept') WHERE set_id=?", (sid,))
+                    con.execute("UPDATE change_items SET applied = (decision!='reject') WHERE set_id=?", (sid,))
                     con.execute("UPDATE change_sets SET status='open', applied_at=? WHERE id=?", (t, sid))
                     extra, changed = {"hid": len(hide), "showed": len(show)}, bool(hide or show)
                 elif what == "revert":

@@ -2,8 +2,8 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""Change sets (changes.py), end to end on the demo library: a set of 50 photos is proposed, decided
-on bit by bit, applied part-way, changed, undone and applied again, and after each step the photos
+"""Change sets (changes.py), end to end on the demo library: a set of 50 photos is proposed, the ones
+to keep are marked bit by bit, it is applied, changed, undone and applied again, and after each step the photos
 it hides are in no view (search, More like this, the Library's months, the counts, the copy a phone
 keeps) while every other photo still is. Starts the real app (`embed.py serve --demo`) and talks to
 it over HTTP, as the page and an agent do."""
@@ -118,7 +118,7 @@ try:
     call("/api/changes", {"title": "x", "op": "delete"}, expect=400)
     views_agree(set(), everything, phone, sid)
 
-    # decisions are saved one request at a time and read back as they were left
+    # marks are saved one request at a time and read back as they were left; marking alone hides nothing
     hide, keep = fifty[:30], fifty[30:35]
     for s in hide[:3]:
         call(f"/api/changes/{sid}/decide", {"shas": [s], "decision": "accept"})
@@ -126,54 +126,55 @@ try:
     call(f"/api/changes/{sid}/decide", {"shas": keep, "decision": "reject"})
     call(f"/api/changes/{sid}/decide", {"shas": keep, "decision": "maybe"}, expect=400)
     d = call(f"/api/changes/{sid}")
-    assert (d["accept"], d["reject"], d["pending"], d["applied"], d["todo"]) == (30, 5, 15, 0, 30)
+    assert (d["accept"], d["reject"], d["pending"], d["applied"], d["todo"]) == (30, 5, 15, 0, 45)
     assert {it["sha"]: it["decision"] for it in d["items"]} == {
         **{s: "accept" for s in hide}, **{s: "reject" for s in keep}, **{s: "pending" for s in fifty[35:]}}
     assert d["items"][0]["reason"].startswith("number ") and "ar" in d["items"][0]
-    views_agree(set(), everything, phone, sid)   # deciding alone hides nothing
+    views_agree(set(), everything, phone, sid)
 
-    # applying part-way hides what was accepted so far, everywhere
+    # applying hides every photo of the set not marked to keep (looked at or not), everywhere
     r = call(f"/api/changes/{sid}/apply", {})
-    assert (r["hid"], r["showed"], r["applied"], r["todo"], r["state"]) == (30, 0, 30, 0, "review")
+    assert (r["hid"], r["showed"], r["applied"], r["todo"], r["state"]) == (45, 0, 45, 0, "applied")
     c = settled(sid)
-    assert c["ok"] and (c["hidden"], c["visible"]) == (30, 20), c
-    views_agree(set(hide), everything, phone, sid)
+    assert c["ok"] and (c["hidden"], c["visible"]) == (45, 5), c
+    now_hidden = set(fifty) - set(keep)
+    views_agree(now_hidden, everything, phone, sid)
     assert call(f"/thumb/{hide[0]}")[:2] == b"\xff\xd8", "a hidden photo can still be looked at by the review page"
 
-    # changing one's mind after applying: three come back, two more go
+    # changing one's mind after applying: three are kept after all
     call(f"/api/changes/{sid}/decide", {"shas": hide[:3], "decision": "reject"})
-    call(f"/api/changes/{sid}/decide", {"shas": fifty[35:37], "decision": "accept"})
-    assert call(f"/api/changes/{sid}")["todo"] == 5
-    views_agree(set(hide), everything, phone)    # ...but not until it is applied
+    d = call(f"/api/changes/{sid}")
+    assert (d["todo"], d["state"]) == (3, "review")
+    views_agree(now_hidden, everything, phone)    # ...but not until it is applied
     r = call(f"/api/changes/{sid}/apply", {})
-    assert (r["hid"], r["showed"]) == (2, 3)
+    assert (r["hid"], r["showed"]) == (0, 3)
     settled(sid)
-    now_hidden = set(hide[3:]) | set(fifty[35:37])
+    now_hidden -= set(hide[:3])
     views_agree(now_hidden, everything, phone, sid)
     assert call(f"/api/changes/{sid}/apply", {})["hid"] == 0, "applying again changes nothing"
 
     # a second set that hides one of the same photos, and one more
-    other = call("/api/changes", {"title": "Overlap", "items": [hide[5], fifty[45]]}, expect=201)["id"]
-    call(f"/api/changes/{other}/decide", {"shas": [hide[5], fifty[45]], "decision": "accept"})
+    extra = sorted(everything)[50]
+    other = call("/api/changes", {"title": "Overlap", "items": [hide[5], extra]}, expect=201)["id"]
     call(f"/api/changes/{other}/apply", {})
     settled(other)
-    views_agree(now_hidden | {fifty[45]}, everything, phone, other)
-    assert call("/api/changes")["hidden"] == 30
+    views_agree(now_hidden | {extra}, everything, phone, other)
+    assert call("/api/changes")["hidden"] == 43
 
     # undoing the first set brings back all it hid, except the photo the second set also hides
     call(f"/api/changes/{sid}/discard", {}, expect=409)
     r = call(f"/api/changes/{sid}/revert", {})
-    assert (r["showed"], r["applied"], r["state"], r["accept"]) == (29, 0, "reverted", 29)
+    assert (r["showed"], r["applied"], r["state"], r["reject"]) == (42, 0, "reverted", 8)
     settled(sid)
-    views_agree({hide[5], fifty[45]}, everything, phone, sid)
+    views_agree({hide[5], extra}, everything, phone, sid)
 
-    # the decisions were kept, so it can be applied again; taking a photo out of a set shows it again
-    assert call(f"/api/changes/{sid}/apply", {})["hid"] == 29
+    # the marks were kept, so it can be applied again; taking a photo out of a set shows it again
+    assert call(f"/api/changes/{sid}/apply", {})["hid"] == 42
     settled(sid)
     r = call(f"/api/changes/{sid}/items", {"remove": [hide[10]], "items": [fifty[49], fifty[48]]})
     assert (r["removed"], r["added"], r["n"]) == (1, 0, 49)
     settled(sid)
-    views_agree((now_hidden | {fifty[45]}) - {hide[10]}, everything, phone, sid)
+    views_agree((now_hidden | {extra}) - {hide[10]}, everything, phone, sid)
 
     # undo both; a set that hides nothing can be forgotten
     call(f"/api/changes/{sid}/revert", {})
