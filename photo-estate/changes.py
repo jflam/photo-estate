@@ -5,7 +5,8 @@ until the set is applied. Before that, a person looks the set over on the review
 and marks the exceptions: the photos to keep. Every photo not marked is done to as proposed, so the
 review is a last look, not a decision per photo. Each mark is saved as it is made, so a review of ten
 thousand photos can stop and carry on later. Applying can be done as often as wanted: it makes the
-library match the marks made so far. Undoing a set takes back everything it did, as one unit.
+library match the marks made so far, for the whole set or only as far as the person has looked.
+Undoing a set takes back everything it did, as one unit.
 
 The first (and so far only) operation is `hide`: the photo stays in the store and in the catalog, and
 is left out of every view (search, the library, People, the copy a phone keeps). Files are never
@@ -18,7 +19,9 @@ touched.
   POST /api/changes          {title, prompt?, op?, items: [{sha, score?, reason?}]}   propose a set
   POST /api/changes/<id>/items   {items?: [...], remove?: [sha]}    add to it, or take photos out of it
   POST /api/changes/<id>/decide  {shas: [...], decision: accept | reject | pending}
-  POST /api/changes/<id>/apply          do it to every photo not marked reject; put back those that are
+  POST /api/changes/<id>/apply   {through?: sha}   do it to every photo not marked reject; put back those
+                                        that are. With `through`, only as far as that photo, in the order
+                                        the page shows them: the rest of the set is left as it is
   POST /api/changes/<id>/revert         undo everything the set did (the decisions are kept)
   POST /api/changes/<id>/discard        forget a set that hides nothing
 
@@ -57,6 +60,11 @@ ROUTE = re.compile(r"^/api/changes(?:/(\d+)(?:/(items|decide|apply|revert|discar
 
 def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def place(when: str, sha: str) -> tuple:
+    """Where a photo comes in a set: oldest first, those with no date last."""
+    return (when == "", when, sha)
 
 
 def hidden_shas(con: sqlite3.Connection) -> set[str]:
@@ -131,7 +139,7 @@ class Changes:
                     "SELECT sha256, decision, applied, score, reason FROM change_items WHERE set_id=?", (sid,)):
                 m = self.facts(sha) or {}
                 it = {"sha": sha, "decision": decision, "applied": bool(applied), "score": score, "reason": reason,
-                      "when": m.get("local") or m.get("taken") or "", "ar": m.get("ar") or 1.5,
+                      "when": self.when(sha), "ar": m.get("ar") or 1.5,
                       "place": m.get("place"), "event": m.get("event"), "event_title": m.get("event_title"),
                       "people": m.get("people") or []}
                 if sha in others:
@@ -139,7 +147,7 @@ class Changes:
                 if not m:
                     it["missing"] = True         # no longer a photo of the library
                 items.append(it)
-            items.sort(key=lambda it: (it["when"] == "", it["when"], it["sha"]))
+            items.sort(key=lambda it: place(it["when"], it["sha"]))
             return {**s, "items": items, "busy": bool(self.busy())}
         finally:
             con.close()
@@ -170,6 +178,10 @@ class Changes:
                                      "in_library": got["library"], "in_sync": got["sync"]})
         busy = bool(self.busy())
         return {"id": sid, "busy": busy, "ok": not busy and not out["wrong"], "todo": s["todo"], "n": s["n"], **out}
+
+    def when(self, sha: str) -> str:
+        m = self.facts(sha) or {}
+        return m.get("local") or m.get("taken") or ""
 
     # -- writing ---------------------------------------------------------------------------------
 
@@ -231,13 +243,19 @@ class Changes:
                         "UPDATE change_items SET decision=?, decided_at=? WHERE set_id=? AND sha256=? AND decision != ?",
                         ((decision, t, sid, s, decision) for s in shas if isinstance(s, str))).rowcount
                 elif what == "apply":
-                    hide = [r[0] for r in con.execute(
-                        "SELECT sha256 FROM change_items WHERE set_id=? AND decision!='reject' AND applied=0", (sid,))]
-                    show = [r[0] for r in con.execute(
-                        "SELECT sha256 FROM change_items WHERE set_id=? AND decision='reject' AND applied=1", (sid,))]
+                    rows = con.execute("SELECT sha256, decision, applied FROM change_items WHERE set_id=?", (sid,)).fetchall()
+                    through = body.get("through")
+                    if through is not None:   # only as far as this photo; what comes after it is left alone
+                        if through not in {r[0] for r in rows}:
+                            return {"error": "`through` is not a photo of this set"}, 400
+                        cut = place(self.when(through), through)
+                        rows = [r for r in rows if place(self.when(r[0]), r[0]) <= cut]
+                    hide = [sha for sha, decision, applied in rows if decision != "reject" and not applied]
+                    show = [sha for sha, decision, applied in rows if decision == "reject" and applied]
                     con.executemany("INSERT OR IGNORE INTO hidden VALUES (?,?,?)", ((s, sid, t) for s in hide))
                     con.executemany("DELETE FROM hidden WHERE sha256=? AND set_id=?", ((s, sid) for s in show))
-                    con.execute("UPDATE change_items SET applied = (decision!='reject') WHERE set_id=?", (sid,))
+                    con.executemany("UPDATE change_items SET applied=1 WHERE set_id=? AND sha256=?", ((sid, s) for s in hide))
+                    con.executemany("UPDATE change_items SET applied=0 WHERE set_id=? AND sha256=?", ((sid, s) for s in show))
                     con.execute("UPDATE change_sets SET status='open', applied_at=? WHERE id=?", (t, sid))
                     extra, changed = {"hid": len(hide), "showed": len(show)}, bool(hide or show)
                 elif what == "revert":

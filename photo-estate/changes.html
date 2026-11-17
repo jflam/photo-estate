@@ -211,8 +211,10 @@ function paintBars() {
   dock.innerHTML = `<span class="say num">${todo.length ? `<b>${todo.join(", ")}</b>${n.keep && n.hide ? ` · keeping ${fmt(n.keep)}` : ""}`
       : n.applied ? `<b>${plural(n.applied, "photo")}</b> hidden · ${fmt(n.keep)} kept` : "Every photo is kept: nothing to hide"}</span>
     ${n.applied ? '<button class="btn" id="undo">Undo all</button>' : ""}
-    <button class="btn pri" id="apply" ${todo.length ? "" : "disabled"}>Apply <kbd>A</kbd></button>`;
-  $("#apply").onclick = apply;
+    <button class="btn" id="upto" ${todo.length && cur ? "" : "disabled"} title="Apply only as far as the photo you are on; the rest waits">Apply up to here <kbd>U</kbd></button>
+    <button class="btn pri" id="apply" ${todo.length ? "" : "disabled"}>Apply all <kbd>A</kbd></button>`;
+  $("#apply").onclick = () => apply();
+  $("#upto").onclick = () => apply(cur);
   if ($("#undo")) $("#undo").onclick = undo;
 }
 
@@ -290,7 +292,7 @@ async function openSet(id) {
       <div class="seg" id="seg"><button data-f="all">All<span></span></button><button data-f="keep">Kept<span></span></button></div>
       <span class="size"><button class="round" data-size="-1" aria-label="Smaller photos">−</button><button class="round" data-size="1" aria-label="Bigger photos">+</button></span>
       <span>Everything here will be hidden, except what you mark to keep.</span>
-      <span class="keys"><span><b>Click</b> or <kbd>K</kbd> keep</span><span><kbd>Space</kbd> zoom</span><span><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move</span><span><kbd>−</kbd><kbd>+</kbd> size</span></span></div>
+      <span class="keys"><span><b>Click</b> or <kbd>K</kbd> keep</span><span><kbd>Space</kbd> zoom</span><span><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move</span><span><kbd>−</kbd><kbd>+</kbd> size</span><span><kbd>U</kbd> apply up to here</span></span></div>
     <div class="why" id="why">${esc(S.prompt || "")}</div>
     <div class="grid" id="grid" style="--h:${SIZES[size]}px"></div>`;
   $("#seg").onclick = e => { const b = e.target.closest("button"); if (b) { filter = b.dataset.f; render(); scrollTo(0, 0); } };
@@ -358,19 +360,25 @@ addEventListener("keydown", e => {
   else if (k === "-" || k === "_") setSize(size - 1);
   else if (k === "=" || k === "+") setSize(size + 1);
   else if (k === "a" && !$("#apply").disabled) apply();
+  else if (k === "u" && !$("#upto").disabled) apply(cur);
   else return;
   e.preventDefault();
 });
 
 // ── applying, undoing, checking ─────────────────────────────────────────────────────────────
-async function apply() {
-  $("#apply").disabled = true;
+// All of the set, or only as far as one photo (in the order of the set, whatever is listed now): the
+// rest waits, so a long set can be looked over and applied a stretch at a time.
+async function apply(through) {
+  $("#apply").disabled = $("#upto").disabled = true;
   try {
-    const r = await api(`/api/changes/${S.id}/apply`, {});
-    S.items.forEach(it => { it.applied = !kept(it); paintTile(it); });
+    const r = await api(`/api/changes/${S.id}/apply`, through ? { through } : {});
+    const end = through ? S.items.findIndex(it => it.sha === through) + 1 : S.items.length;
+    S.items.slice(0, end).forEach(it => { it.applied = !kept(it); paintTile(it); });
     paintBars(); paintZoom();
-    toast([r.hid && `${plural(r.hid, "photo")} hidden`, r.showed && `${plural(r.showed, "photo")} shown again`].filter(Boolean).join(", ") || "Nothing to apply");
-    settle();
+    const did = [r.hid && `${plural(r.hid, "photo")} hidden`, r.showed && `${plural(r.showed, "photo")} shown again`].filter(Boolean).join(", ");
+    const left = tally().hide;
+    toast((did || (through ? "Nothing to apply up to here" : "Nothing to apply")) + (did && left ? ` · ${fmt(left)} still to look at` : ""));
+    if (r.hid || r.showed) settle();
   } catch (e) { toast(e.message); paintBars(); }
 }
 async function undo() {

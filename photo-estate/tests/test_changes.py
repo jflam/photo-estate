@@ -185,6 +185,31 @@ try:
     call(f"/api/changes/{other}", expect=404)
     assert [s["id"] for s in call("/api/changes")["sets"]] == [sid]
 
+    # a long set, a stretch at a time: applying through a photo does what the marks say as far as that
+    # photo, in the order the page lists them, and leaves the rest as it was
+    long = call("/api/changes", {"title": "In sittings", "items": sorted(everything)[60:100]}, expect=201)["id"]
+    order = [it["sha"] for it in call(f"/api/changes/{long}")["items"]]
+    call(f"/api/changes/{long}/decide", {"shas": [order[2], order[30]], "decision": "reject"})
+    call(f"/api/changes/{long}/apply", {"through": order[0][::-1]}, expect=400)
+    r = call(f"/api/changes/{long}/apply", {"through": order[9]})
+    assert (r["hid"], r["showed"], r["applied"], r["todo"], r["state"]) == (9, 0, 9, 29, "review")
+    settled(long)
+    first = set(order[:10]) - {order[2]}
+    views_agree(first, everything, phone, long)
+    d = {it["sha"]: it["applied"] for it in call(f"/api/changes/{long}")["items"]}
+    assert {s for s, on in d.items() if on} == first
+    assert call(f"/api/changes/{long}/apply", {"through": order[9]})["hid"] == 0, "the same stretch again changes nothing"
+    call(f"/api/changes/{long}/decide", {"shas": [order[4]], "decision": "reject"})   # a change of mind in the part done
+    r = call(f"/api/changes/{long}/apply", {"through": order[19]})
+    assert (r["hid"], r["showed"], r["applied"], r["todo"]) == (10, 1, 18, 19)
+    r = call(f"/api/changes/{long}/apply", {})                                       # and the rest in one go
+    assert (r["hid"], r["applied"], r["todo"], r["state"]) == (19, 37, 0, "applied")
+    settled(long)
+    views_agree(set(order) - {order[2], order[4], order[30]}, everything, phone, long)
+    assert call(f"/api/changes/{long}/revert", {})["showed"] == 37
+    settled(long)
+    assert call(f"/api/changes/{long}/discard", {}) == {"discarded": long}
+
     # the page
     assert b"<title>Changes" in call("/changes") and b"<title>Changes" in call(f"/changes/{sid}")
     call("/api/changes/999", expect=404)
