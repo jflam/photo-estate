@@ -74,10 +74,10 @@ try:
 
     tools = {t["name"]: t for t in rpc("tools/list")["result"]["tools"]}
     assert set(tools) == {"library_overview", "search_photos", "similar_photos", "get_photos", "list_change_sets",
-                          "get_change_set", "create_change_set", "amend_change_set"}
+                          "get_change_set", "create_change_set", "amend_change_set", "submit_task", "get_task", "cancel_task"}
     assert all(t["inputSchema"]["type"] == "object" and t["description"] for t in tools.values())
     assert not [n for n in tools if "apply" in n or "revert" in n or "hide" in n], "an agent proposes; a person applies"
-    assert {n for n, t in tools.items() if not t["annotations"]["readOnlyHint"]} == {"create_change_set", "amend_change_set"}
+    assert {n for n, t in tools.items() if not t["annotations"]["readOnlyHint"]} == {"create_change_set", "amend_change_set", "submit_task", "cancel_task"}
 
     # finding: every match is summarised, a page of them is listed, and a row is facts only
     over = tool("library_overview")

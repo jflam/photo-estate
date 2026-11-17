@@ -1285,13 +1285,13 @@ def cmd_serve(a) -> None:
             """Change sets (changes.py): the review page and its API. Proposing, deciding and applying
             change what everyone sees, so they take the same permission as uploading (--upload-user), or
             come from this computer itself (not through `tailscale serve`): that is where the agent runs."""
-            if not u.path.startswith(("/changes", "/api/changes")):
+            if not u.path.startswith(("/changes", "/api/changes", "/api/tasks")):
                 return False
             from intake.server import is_local
             if method == "POST" and not (self.allowed() or is_local(self)):
                 self.send(403, b'{"error":"not allowed"}', "application/json")
                 return True
-            got = changes.handle(method, u.path, qs, body, self.who())
+            got = (tasks if u.path.startswith("/api/tasks") else changes).handle(method, u.path, qs, body, self.who())
             self.send(*(got or (404, b"not found", "text/plain", "no-store")))
             return True
 
@@ -1299,7 +1299,8 @@ def cmd_serve(a) -> None:
             """The library as tools for an agent (estate_mcp.py). Anyone who can open the app can search
             with it; proposing a change set takes what the Changes page takes."""
             from intake.server import is_local
-            self.send(*mcp.handle(method, self.headers, body, self.allowed() or is_local(self), self.who()))
+            local = is_local(self)
+            self.send(*mcp.handle(method, self.headers, body, self.allowed() or local, self.who(), local))
 
         def do_POST(self):
             u = urlparse(self.path)
@@ -1605,8 +1606,14 @@ def cmd_serve(a) -> None:
                       shown=lambda sha: {"library": sha in index and bool(visible[index[sha]]), "sync": sha in feed.rows},
                       busy=lambda: settling["n"] > 0 or reload_state["running"], on_change=on_hidden_change)
 
+    # Tasks (tasks.py): a request in words, worked on by an agent on this computer that uses the MCP
+    # endpoint below like any other client, and ends in a change set.
     from types import SimpleNamespace
-    mcp = MCPServer(SimpleNamespace(find=agent_find, row=agent_row, faces=agent_faces, overview=agent_overview, changes=changes))
+    from tasks import Tasks
+    tasks = Tasks(a.db, f"http://127.0.0.1:{a.port or (8767 if a.demo else 8768 if a.sandbox else 8766)}/mcp",
+                  command=a.agent_cmd, env_file=a.agent_env, model=a.agent_model, log=lambda msg: print(msg, flush=True))
+    mcp = MCPServer(SimpleNamespace(find=agent_find, row=agent_row, faces=agent_faces, overview=agent_overview,
+                                    changes=changes, tasks=tasks))
 
     if ingest:
         ingest.on_added = reload_catalog
@@ -1770,6 +1777,10 @@ def main() -> None:
     s.add_argument("--cache", help="thumbnail cache dir (default: <db dir>/review, shared with estate.py review)")
     s.add_argument("--fast-cache", help="cache dir on a faster disk (e.g. the internal SSD), filled from --cache")
     s.add_argument("--no-pregenerate", action="store_true", help="don't build missing thumbnails in the background")
+    s.add_argument("--agent-cmd", help="the Claude Code program that works on tasks (tasks.py); default: `claude` on PATH or in ~/.local/bin")
+    s.add_argument("--agent-env", help="a file of KEY=VALUE lines put in the agent's environment, for its sign-in token; "
+                                       "default ~/.config/photo-estate/agent.env")
+    s.add_argument("--agent-model", help="the model the agent uses; default: Claude Code's own")
     s.add_argument("--match-floor", type=float, default=MATCH_FLOOR,
                    help="typed searches show no photo below this similarity (-1 = no floor)")
     s.add_argument("--match-window", type=float, default=MATCH_WINDOW,

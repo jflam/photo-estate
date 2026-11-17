@@ -14,6 +14,10 @@ and gives it `app`, the handful of functions the tools are made of:
   app.faces(ids)      -> {id: (faces found, faces named)} where faces have been looked for
   app.overview()      -> the library in numbers
   app.changes         -> the change sets (changes.Changes)
+  app.tasks           -> requests handed to the agent that runs on this computer (tasks.Tasks)
+
+That agent uses this same endpoint. It is told apart by a header (X-Estate-Task, honoured only from
+this computer): the change sets it makes carry its task's name, and it is not offered the task tools.
 """
 from __future__ import annotations
 
@@ -37,7 +41,13 @@ Changing. Nothing you do changes what the library shows. To hide photos, create 
 photos to it (by id, or everything a search finds), and give the person its review link: they look it
 over, keep the photos that should not be hidden, and apply it themselves. Each photo you add should
 carry a short reason a person can read. If a set has been reviewed, get_change_set tells you which
-photos they kept: those are your mistakes, and the best guide to doing better."""
+photos they kept: those are your mistakes, and the best guide to doing better.
+
+Handing it over. For a request that covers many photos or needs judgement ("hide the photos from the
+school"), submit_task gives it, in the person's own words, to an agent that runs on the computer the
+library is on and works through it with these same tools. It takes minutes and keeps going if this
+conversation ends. Check on it with get_task; when it is done, give the person its report and the
+review link of the change set it made."""
 
 FILTERS = {
     "people": {"type": "array", "items": {"type": "string"},
@@ -112,13 +122,52 @@ class Tools:
                                        "description": "Take out every photo of the set that this search finds."},
                      "reason": {"type": "string", "description": "Why these photos, for the person reviewing; set on the photos added by this call."}},
                     ["change_set"]), self.amend_set),
+            ("submit_task", True,
+             "Hand a request to the agent that runs on the library's own computer. It works out which photos are meant and proposes a change set for the person to review. Returns at once with a task number; the work takes minutes. One task runs at a time.",
+             schema({"request": {"type": "string", "description": "What the person wants, in their own words, with anything they said about which photos and which not."}},
+                    ["request"]), self.submit_task),
+            ("get_task", False,
+             "How a task is going: its status (queued, running, done, failed, cancelled), what the agent has done since event `after`, and when done its report and the change set to review.",
+             schema({"task": {"type": "integer"}, "after": {"type": "integer", "description": "Only events after this event id (from last_event)."}},
+                    ["task"]), self.get_task),
+            ("cancel_task", True, "Stop a task that is queued or running. A change set it already made stays, unapplied.",
+             schema({"task": {"type": "integer"}}, ["task"]), self.cancel_task),
         ]
         self.by_name = {t[0]: t for t in self.tools}
 
-    def listing(self) -> list[dict]:
+    TASK_TOOLS = ("submit_task", "get_task", "cancel_task")   # not for the agent a task runs
+
+    def listing(self, in_task: bool = False) -> list[dict]:
         return [{"name": n, "description": d, "inputSchema": s,
                  "annotations": {"readOnlyHint": not w, "destructiveHint": False, "openWorldHint": False}}
-                for n, w, d, s, _ in self.tools]
+                for n, w, d, s, _ in self.tools if not (in_task and n in self.TASK_TOOLS)]
+
+    # -- tasks -----------------------------------------------------------------------------------
+
+    def task_brief(self, t: dict) -> dict:
+        out = {"task": t["id"], "status": t["status"], "request": t["prompt"], "report": t["result"], "error": t["error"],
+               "change_sets": t["change_sets"], "last_event": (t["last"] or {}).get("id")}
+        if "events" in t:
+            out["events"] = [{"kind": e["kind"], "text": e["text"]} for e in t["events"][-40:]]
+        return {k: v for k, v in out.items() if v is not None}
+
+    def submit_task(self, args, who=""):
+        got, code = self.app.tasks.submit(args.get("request"), who)
+        if code >= 400:
+            raise ValueError(got["error"])
+        return {**self.task_brief(got), "next": "get_task shows how it is going; it usually takes a few minutes"}
+
+    def get_task(self, args):
+        got = self.app.tasks.get(int(args["task"]), max(0, int(args.get("after") or 0)))
+        if not got:
+            raise ValueError("no such task")
+        return self.task_brief(got)
+
+    def cancel_task(self, args, who=""):
+        got, code = self.app.tasks.cancel(int(args["task"]))
+        if code >= 400:
+            raise ValueError(got["error"])
+        return self.task_brief(got)
 
     # -- finding ---------------------------------------------------------------------------------
 
@@ -230,7 +279,7 @@ class Server:
     def __init__(self, app, name="photo-estate", version="1"):
         self.tools, self.info = Tools(app), {"name": name, "title": "Photo Estate", "version": version}
 
-    def call(self, msg, can_write: bool, who: str):
+    def call(self, msg, can_write: bool, who: str, in_task: bool = False):
         if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method"), str):
             return {"jsonrpc": "2.0", "id": msg.get("id") if isinstance(msg, dict) else None,
                     "error": {"code": -32600, "message": "not a JSON-RPC 2.0 request"}}
@@ -246,10 +295,10 @@ class Server:
         if method == "ping":
             return ok({})
         if method == "tools/list":
-            return ok({"tools": self.tools.listing()})
+            return ok({"tools": self.tools.listing(in_task)})
         if method == "tools/call":
             tool = self.tools.by_name.get(params.get("name"))
-            if not tool:
+            if not tool or in_task and tool[0] in Tools.TASK_TOOLS:
                 return err(-32602, f"unknown tool: {params.get('name')}")
             name, writes, _, _, fn = tool
             args = params.get("arguments") or {}
@@ -266,7 +315,7 @@ class Server:
                 return ok({"content": [{"type": "text", "text": text}], "isError": True})
         return err(-32601, f"method not found: {method}")
 
-    def handle(self, method: str, headers, body, can_write: bool, who: str = ""):
+    def handle(self, method: str, headers, body, can_write: bool, who: str = "", local: bool = False):
         """One HTTP request to /mcp -> (status, body bytes, content type, Cache-Control)."""
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":"), default=str).encode(), "application/json", "no-store")
         # A page on another site must not be able to drive this from someone's browser.
@@ -277,8 +326,12 @@ class Server:
             return 405, b"", "text/plain", "no-store"
         if body is None:
             return js({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "the body is not JSON"}}, 400)
+        task = headers.get("X-Estate-Task") or ""
+        in_task = local and task.isdigit()
+        if in_task:
+            who = f"task:{task}"
         if isinstance(body, list):
-            got = [r for r in (self.call(m, can_write, who) for m in body) if r is not None]
+            got = [r for r in (self.call(m, can_write, who, in_task) for m in body) if r is not None]
             return js(got) if got else (202, b"", "application/json", "no-store")
-        got = self.call(body, can_write, who)
+        got = self.call(body, can_write, who, in_task)
         return js(got) if got is not None else (202, b"", "application/json", "no-store")
