@@ -304,12 +304,13 @@ def cmd_serve(a) -> None:
     import json
     import re
     import threading
-    from collections import OrderedDict
+    from collections import Counter, OrderedDict
     from concurrent.futures import ThreadPoolExecutor
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, quote, unquote, urlparse
 
     from changes import Changes, hidden_shas
+    from estate_mcp import Server as MCPServer
     from estate import facts_of as estate_facts
     from sync import Feed
     from upload import IngestJob, save_upload, staging_dir
@@ -924,6 +925,89 @@ def cmd_serve(a) -> None:
             masks["dup"] = remember(("dups", id(dups), id(S)), lambda: ~np.fromiter((x in dups for x in S), bool, len(S)))
         return True
 
+    # What an agent's tools are made of (estate_mcp.py). An agent says exactly what it wants, so nothing
+    # is read out of its words (no names or places taken from the description) and no view option
+    # applies: it finds near-identical shots and screenshots too, and every match, not a screenful.
+    def agent_find(args: dict):
+        """Photos matching the filters, best first: ([ids], [scores]), or ([ids], None) newest first
+        when there is nothing to rank by. Ranks by `query` (words) or `like` (a photo's id)."""
+        mask = ~visible if args.get("hidden_only") else visible.copy()
+        for key in ("place", "album", "camera"):
+            if args.get(key):
+                v = str(args[key]).lower()
+                mask &= np.fromiter((v in x for x in cols[key]), bool, N)
+        for name in args.get("people") or []:
+            if name not in people_ix:
+                raise ValueError(f"nobody in the library is named {name!r}; library_overview lists the names")
+            mask &= person_mask(name)
+        if args.get("named_people") in ("none", "some"):
+            has = np.fromiter((bool(x) for x in cols["person"]), bool, N)
+            mask &= has if args["named_people"] == "some" else ~has
+        lo, hi = month_index(str(args.get("date_from") or "")), month_index(str(args.get("date_to") or ""), end=True)
+        if lo is not None or hi is not None:
+            mask &= (ym >= max(lo or 0, 0)) & (ym <= (hi if hi is not None else nmonths))
+        if args.get("event") is not None:
+            mask &= event_of == int(args["event"])
+        if args.get("trip") is not None:
+            mask &= trip_of == int(args["trip"])
+        if args.get("favorite"):
+            mask &= fav
+        if args.get("screenshots") is False:
+            mask &= ~shot
+        like, text = args.get("like"), str(args.get("query") or "").strip()
+        if like:
+            if like not in index:
+                raise ValueError("no photo has that id")
+            sims = M @ M[index[like]]
+            mask[index[like]] = False
+        elif text:
+            sims = M @ remember(("text", text), lambda: text_vec(text))
+        else:
+            return [shas[i] for i in newest[mask[newest]]], None
+        sims = np.where(mask, sims, -np.inf)
+        if args.get("min_score") is not None:
+            sims[sims < float(args["min_score"])] = -np.inf
+        elif not like and mask.any():   # as a typed search in the app: near the best match, above the floor
+            sims[sims < max(a.match_floor, sims.max() - a.match_window)] = -np.inf
+        order = np.argsort(-sims)[: int(np.isfinite(sims).sum())]
+        return [shas[i] for i in order], [round(float(sims[i]), 4) for i in order]
+
+    def agent_row(sha: str):
+        m = meta.get(sha)
+        if m is None:
+            return None
+        row = {"id": sha, "date": m.get("local") or m["taken"], "place": m.get("place"), "people": m["people"],
+               "albums": m["albums"], "event": m.get("event_title"), "event_id": m.get("event"), "trip": m.get("trip_title"),
+               "camera": m.get("camera"), "favorite": m["fav"] or None, "screenshot": is_screenshot(m) or None,
+               "source_path": m["path"], "hidden": (not visible[index[sha]]) or None}
+        return {k: v for k, v in row.items() if v not in (None, [], "")}
+
+    def agent_faces(ids) -> dict:
+        """{id: (faces found, faces named)} for the photos in which faces were looked for and found."""
+        if not has_faces or not ids:
+            return {}
+        con = sqlite3.connect(a.db, timeout=30)
+        try:
+            return {sha: (n, named or 0) for c in chunks(ids) for sha, n, named in con.execute(
+                "SELECT sha256, count(*), sum(person_id > 0) FROM faces WHERE sha256 IN (%s) GROUP BY 1" % ",".join("?" * len(c)), c)}
+        except sqlite3.OperationalError:
+            return {}
+        finally:
+            con.close()
+
+    def agent_overview() -> dict:
+        top = lambda pairs, n=40: [{"name": k, "photos": v} for k, v in pairs[:n]]
+        f = info["facets"]
+        month = lambda i: f"{(m0 + i) // 12}-{(m0 + i) % 12 + 1:02d}"
+        dated = [i for i, n in enumerate(info["months"]) if n]
+        return {"photos": info["total"], "hidden": int(N - visible.sum()),
+                "first_month": month(dated[0]) if dated else None, "last_month": month(dated[-1]) if dated else None,
+                "by_year": dict(sorted(Counter(str(y) if y else "undated" for y in year[visible].tolist()).items())),
+                "people": top(f["person"], 200), "countries": top(f["country"]), "cities": top(f["city"]),
+                "albums": top(f["album"]), "cameras": top(f["camera"]), "trips": len(trip_list),
+                "faces_found": has_faces,
+                "search": {"model": a.model, "match_floor": a.match_floor, "match_window": a.match_window}}
+
     def periods(order) -> dict:
         """The photos in `order` (by time), as a card a year and a card a month, as the iPhone's Library
         has them: each with its key ("2019", "2019-07"), how many, where it starts in `order`, the photo on
@@ -1211,6 +1295,12 @@ def cmd_serve(a) -> None:
             self.send(*(got or (404, b"not found", "text/plain", "no-store")))
             return True
 
+        def mcp_route(self, method: str, body):
+            """The library as tools for an agent (estate_mcp.py). Anyone who can open the app can search
+            with it; proposing a change set takes what the Changes page takes."""
+            from intake.server import is_local
+            self.send(*mcp.handle(method, self.headers, body, self.allowed() or is_local(self), self.who()))
+
         def do_POST(self):
             u = urlparse(self.path)
             if u.path in ("/api/ingest", "/api/restart"):
@@ -1222,6 +1312,8 @@ def cmd_serve(a) -> None:
             except ValueError:
                 body = None
             try:
+                if u.path == "/mcp":
+                    return self.mcp_route("POST", body)
                 if intake and u.path.startswith("/api/intake"):
                     return self.intake_route("POST", u, parse_qs(u.query), body)
                 if self.changes_route("POST", u, parse_qs(u.query), body):
@@ -1314,6 +1406,8 @@ def cmd_serve(a) -> None:
                     return self.intake_route("GET", u, qs, None)
                 if self.people_page("GET", u, qs, None) or self.changes_route("GET", u, qs, None):
                     return
+                if u.path == "/mcp":
+                    return self.mcp_route("GET", None)
                 if u.path in ("/", "/index.html"):  # revalidated each load, so edits show up at once
                     body = pages.page("search.html")
                     return self.send(200, body, "text/html; charset=utf-8", "no-cache",
@@ -1510,6 +1604,9 @@ def cmd_serve(a) -> None:
     changes = Changes(a.db, facts=lambda sha: meta.get(sha),
                       shown=lambda sha: {"library": sha in index and bool(visible[index[sha]]), "sync": sha in feed.rows},
                       busy=lambda: settling["n"] > 0 or reload_state["running"], on_change=on_hidden_change)
+
+    from types import SimpleNamespace
+    mcp = MCPServer(SimpleNamespace(find=agent_find, row=agent_row, faces=agent_faces, overview=agent_overview, changes=changes))
 
     if ingest:
         ingest.on_added = reload_catalog
