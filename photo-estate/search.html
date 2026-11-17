@@ -446,6 +446,7 @@ const I = {
   calSmall: svg('<rect x="2.5" y="3.5" width="11" height="10" rx="2.200"/><path d="M2.500 6.800h11M5.500 2v2.500M10.500 2v2.500"/>', 18),
   people: svg('<circle cx="8" cy="5.4" r="2.6"/><path d="M2.8 13.6c.6-2.6 2.7-4 5.2-4s4.6 1.4 5.2 4"/>', 18),
   plus: svg('<path d="M8 3v10M3 8h10"/>', 18),
+  changes: svg('<path d="M3 4.5h10M3 8h6M3 11.5h4"/><path d="m10 11 1.6 1.6L14 9.6"/>', 18),
   stats: svg('<path d="M3 13V8M8 13V3M13 13V6"/>', 18),
 };
 // The icon's picture: hills under a low sun. Shown where there are no photos to show.
@@ -892,7 +893,7 @@ $("#sView").onclick = e => viewMenu(e.currentTarget, "search");
 $("#libMore").onclick = e => openMenu(e.currentTarget, el => {
   const ln = (href, icon, label) => `<a class="mi ln" href="${href}">${icon}<span>${label}</span></a>`;
   el.innerHTML = (INFO?.faces ? ln("/people", I.people, "Name people") : "") + (INFO && !INFO.demo ? ln("/setup", I.plus, "Add photos") : "")
-    + ln("/stats", I.stats, "Library info");
+    + ln("/changes", I.changes, "Changes") + ln("/stats", I.stats, "Library info");
 });
 // Pinch a grid to make the photos bigger or smaller, a step at a time, as on the iPhone.
 let pinch = null;

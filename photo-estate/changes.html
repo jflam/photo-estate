@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Changes — Photo Estate</title>
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="theme-color" content="#f8f6f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)">
+<style>
+/*@estate.css*/
+main { padding: 12px calc(var(--pad) + env(safe-area-inset-right)) 170px calc(var(--pad) + env(safe-area-inset-left)); max-width: 1500px; margin: 0 auto; }
+h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032em; }
+.sub { margin: 8px 0 0; max-width: 72ch; }
+.prompt { margin: 14px 0 0; padding: 12px 16px; border-radius: 14px; background: var(--well); color: var(--ink-2); max-width: 80ch; white-space: pre-wrap; }
+.pill { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: var(--well-2); color: var(--ink-2); vertical-align: 3px; margin-left: 8px; letter-spacing: 0; }
+.pill.review { background: var(--sun-wash); color: var(--sun); }
+
+/* ── every change set ───────────────────────────────────────────────── */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; margin-top: 26px; }
+.card { display: block; padding: 20px; border-radius: var(--r); background: var(--well); transition: background .15s; }
+.card:hover { background: var(--well-2); }
+.card h3 { font-size: 20px; font-weight: 700; letter-spacing: -.018em; }
+.card p { margin-top: 3px; color: var(--muted); font-size: 14px; }
+.card .strip { display: flex; gap: 3px; margin-top: 14px; height: 64px; overflow: hidden; border-radius: 10px; }
+.card .strip img { height: 64px; flex: 1 1 0; min-width: 0; object-fit: cover; background: var(--tile); }
+
+/* ── one change set ─────────────────────────────────────────────────── */
+.tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 26px 0 0; }
+.seg button span { opacity: .6; font-weight: 500; margin-left: 5px; }
+.day { margin-top: 34px; content-visibility: auto; contain-intrinsic-size: auto 360px; }
+.day .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.day h2 { font-size: 20px; font-weight: 700; letter-spacing: -.018em; }
+.day .where { color: var(--muted); font-size: 14px; margin-right: auto; }
+.day .btn { height: 30px; padding: 0 12px; font-size: 13px; }
+.grid { display: flex; flex-wrap: wrap; gap: var(--gap); }
+.grid::after { content: ""; flex: 100 1 0; }
+.t { --h: 150px; position: relative; height: var(--h); flex: 1 1 calc(var(--h) * var(--ar)); background: var(--tile); border-radius: 6px; overflow: hidden; cursor: pointer; }
+.t img { width: 100%; height: 100%; object-fit: cover; display: block; transition: opacity .15s, filter .15s; }
+.t .b { position: absolute; left: 6px; bottom: 6px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700;
+  display: none; align-items: center; background: rgba(0,0,0,.62); color: #fff; }
+.t.accept img { opacity: .38; filter: grayscale(.7); }
+.t.accept .b, .t.reject .b { display: inline-flex; }
+.t.reject { box-shadow: inset 0 0 0 3px var(--yes); }
+.t.reject img { transform: scale(.955); border-radius: 4px; }
+.t.reject .b { background: var(--yes); }
+.t.on { outline: 2px solid var(--sun); outline-offset: 1px; }
+.t .z { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border-radius: 50%; background: rgba(0,0,0,.5); color: #fff;
+  display: grid; place-items: center; opacity: 0; transition: opacity .15s; }
+.t:hover .z, .t .z:focus-visible { opacity: 1; }
+@media (hover: none) { .t .z { opacity: .85; } }
+@media (max-width: 760px) { .t { --h: 104px; } }
+
+/* what is waiting to be applied */
+.dock { position: fixed; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 20;
+  display: flex; align-items: center; gap: 14px; padding: 10px 10px 10px 20px; border-radius: 999px; background: var(--raised);
+  box-shadow: var(--shadow); max-width: calc(100vw - 24px); }
+.dock .say { font-size: 14px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dock .say b { color: var(--ink); }
+.toast { bottom: calc(92px + env(safe-area-inset-bottom)); }
+.note { margin-top: 18px; padding: 12px 16px; border-radius: 14px; background: var(--well); max-width: 80ch; }
+.note.ok b { color: var(--yes); }
+.note.bad b { color: var(--no); }
+
+/* one photo, large */
+.lb { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.92); display: grid; grid-template-rows: 1fr auto; color: #fff; }
+.lb img { width: 100%; height: 100%; object-fit: contain; min-height: 0; }
+.lb .stage { min-height: 0; padding: 18px; }
+.lb .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 18px calc(14px + env(safe-area-inset-bottom)); }
+.lb .t2 { margin-right: auto; font-size: 14px; color: rgba(255,255,255,.75); max-width: 70ch; }
+.lb .t2 b { color: #fff; }
+.lb .btn { background: rgba(255,255,255,.14); color: #fff; }
+.lb .btn.sel { background: var(--sun-lit); color: var(--on-sun); }
+.lb .btn.sel.keep { background: var(--yes); color: #fff; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="round" id="back" href="/" aria-label="Back"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></a>
+  <div class="crumb" id="crumb"></div>
+  <div class="end num" id="sum"></div>
+</header>
+<main id="main"></main>
+<div class="dock" id="dock" hidden></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt = n => Number(n).toLocaleString("en-US");
+const plural = (n, one, many = one + "s") => `${fmt(n)} ${n === 1 ? one : many}`;
+const api = async (path, body) => {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `${path}: ${r.status}`);
+  return r.json();
+};
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("on");
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2600);
+}
+const MARK = '<svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>';
+const STATES = { empty: "Nothing in it", review: "To review", applied: "Applied", reverted: "Undone" };
+const counts = s => [s.applied && `${fmt(s.applied)} hidden`, s.pending && `${fmt(s.pending)} to look at`,
+  s.reject && `${fmt(s.reject)} kept`].filter(Boolean).join(" · ") || "Nothing decided yet";
+const day = when => {
+  const d = new Date(when.slice(0, 10) + "T12:00:00");
+  return isNaN(d) ? "No date" : d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "long", year: "numeric" });
+};
+
+// ── every change set ────────────────────────────────────────────────────────────────────────
+async function home() {
+  const d = await api("/api/changes");
+  document.title = "Changes — Photo Estate";
+  $("#back").href = "/";
+  $("#crumb").innerHTML = "Changes";
+  $("#sum").textContent = d.hidden ? `${plural(d.hidden, "photo")} hidden` : "";
+  $("#dock").hidden = true;
+  $("#main").innerHTML = d.sets.length ? `<h1>Changes</h1>
+    <p class="sub">A change set is a group of photos and what to do with them. Nothing happens to the library until you have looked and applied it, and every set can be undone.</p>
+    <div class="cards">${d.sets.map(s => `<a class="card" href="/changes/${s.id}">
+      <h3>${esc(s.title)}<span class="pill ${s.state}">${STATES[s.state]}</span></h3>
+      <p class="num">${plural(s.n, "photo")} · ${counts(s)}</p>
+      <div class="strip">${s.cover.map(sha => `<img loading="lazy" src="/thumb/${sha}" alt="">`).join("")}</div></a>`).join("")}</div>`
+    : `<div class="blank">${MARK}<h3>No changes yet</h3><p>When photos are proposed for hiding, they wait here for you to look at before anything happens.</p></div>`;
+}
+
+// ── one change set ──────────────────────────────────────────────────────────────────────────
+let S = null, filter = "pending", cursor = null, lb = null;
+const by = () => S.items.filter(it => filter === "all" || it.decision === filter);
+const tile = sha => document.getElementById("t" + sha);
+const LABEL = it => it.decision === "reject" ? "Keep" : it.applied ? "Hidden" : "Hide";
+
+function paintTile(it) {
+  const el = tile(it.sha);
+  if (!el) return;
+  el.className = `t ${it.decision}${cursor === it.sha ? " on" : ""}`;
+  $(".b", el).textContent = LABEL(it);
+}
+function tally() {
+  const n = { pending: 0, accept: 0, reject: 0 }; let hide = 0, show = 0;
+  for (const it of S.items) {
+    n[it.decision]++;
+    if (it.decision === "accept" && !it.applied) hide++;
+    if (it.decision !== "accept" && it.applied) show++;
+  }
+  return { ...n, hide, show, all: S.items.length, applied: S.items.filter(it => it.applied).length };
+}
+function paintBars() {
+  const n = tally(), done = n.all - n.pending;
+  $("#sum").innerHTML = n.pending ? `<b>${fmt(done)}</b> of ${fmt(n.all)} looked at` : `All ${fmt(n.all)} looked at`;
+  for (const b of document.querySelectorAll("#seg button")) {
+    b.classList.toggle("on", b.dataset.f === filter);
+    $("span", b).textContent = fmt(b.dataset.f === "all" ? n.all : n[b.dataset.f]);
+  }
+  const dock = $("#dock");
+  dock.hidden = false;
+  const todo = [n.hide && `hide ${plural(n.hide, "photo")}`, n.show && `show ${plural(n.show, "photo")} again`].filter(Boolean);
+  dock.innerHTML = `<span class="say num">${todo.length ? `Not applied yet: <b>${todo.join(", ")}</b>`
+      : n.applied ? `<b>${plural(n.applied, "photo")}</b> hidden by this set` : "Nothing to apply yet"}</span>
+    ${n.applied ? '<button class="btn" id="undo">Undo all</button>' : ""}
+    <button class="btn" id="check">Check</button>
+    <button class="btn pri" id="apply" ${todo.length ? "" : "disabled"}>Apply</button>`;
+  $("#apply").onclick = apply;
+  $("#check").onclick = () => check(true);
+  if ($("#undo")) $("#undo").onclick = undo;
+}
+
+// Every decision is saved as it is made; the page shows it at once and puts it back if saving fails.
+async function decide(items, decision) {
+  items = items.filter(it => it.decision !== decision);
+  if (!items.length) return;
+  const was = items.map(it => it.decision);
+  items.forEach(it => { it.decision = decision; paintTile(it); });
+  paintBars();
+  try {
+    await api(`/api/changes/${S.id}/decide`, { shas: items.map(it => it.sha), decision });
+  } catch (e) {
+    items.forEach((it, i) => { it.decision = was[i]; paintTile(it); });
+    paintBars();
+    toast("Could not save that. Try again");
+  }
+}
+const toggleKeep = it => decide([it], it.decision === "reject" ? (it.applied ? "accept" : "pending") : "reject");
+
+function render() {
+  const items = by(), groups = new Map();
+  for (const it of items) {
+    const k = it.when.slice(0, 10) || "";
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(it);
+  }
+  const empty = { pending: "Nothing left to look at. Apply what you decided, or see the other lists.", accept: "No photos marked to hide.",
+    reject: "No photos marked to keep.", all: "This set has no photos." }[filter];
+  $("#days").innerHTML = items.length ? [...groups].map(([k, its]) => {
+    const top = f => { const c = {}; its.forEach(it => { const v = f(it); if (v) c[v] = (c[v] || 0) + 1; }); return Object.keys(c).sort((a, b) => c[b] - c[a])[0]; };
+    const where = [top(it => it.event_title), top(it => it.place)].filter(Boolean).join(" · ");
+    return `<section class="day" data-k="${k}"><div class="head"><h2>${k ? day(k) : "No date"}</h2>
+      <span class="where num">${plural(its.length, "photo")}${where ? " · " + esc(where) : ""}</span>
+      <button class="btn" data-all="reject">Keep all</button><button class="btn ask" data-all="accept">Hide all</button></div>
+      <div class="grid">${its.map(it => `<div class="t ${it.decision}" id="t${it.sha}" data-sha="${it.sha}" style="--ar:${it.ar}" title="${esc(it.reason || "")}">
+        <img loading="lazy" src="/thumb/${it.sha}" alt=""><span class="b">${LABEL(it)}</span>
+        <button class="z" aria-label="Look closer"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="7" cy="7" r="4.2"/><path d="m10.2 10.2 3.3 3.3"/></svg></button></div>`).join("")}</div></section>`;
+  }).join("") : `<div class="blank">${MARK}<h3>${filter === "pending" ? "All looked at" : "None"}</h3><p>${empty}</p></div>`;
+  paintBars();
+}
+
+async function openSet(id) {
+  S = await api(`/api/changes/${id}`);
+  document.title = `${S.title} — Changes — Photo Estate`;
+  $("#back").href = "/changes";
+  $("#crumb").innerHTML = `<a href="/changes">Changes</a><i>›</i><span>${esc(S.title)}</span>`;
+  if (!S.pending) filter = "all";
+  $("#main").innerHTML = `<h1>${esc(S.title)}<span class="pill ${S.state}">${STATES[S.state]}</span></h1>
+    <p class="sub">Photos in this set are proposed for hiding: they stay in the estate, and leave every view. Click a photo to keep it; use <b>Hide all</b> for the rest of a day. Every choice is saved as you make it, and nothing is hidden until you apply.</p>
+    ${S.prompt ? `<div class="prompt">${esc(S.prompt)}</div>` : ""}
+    <div id="note"></div>
+    <div class="tools"><div class="seg" id="seg">${[["pending", "To look at"], ["accept", "Hide"], ["reject", "Keep"], ["all", "All"]]
+      .map(([f, l]) => `<button data-f="${f}">${l}<span></span></button>`).join("")}</div>
+      <span class="sub" style="margin:0"><kbd>H</kbd> hide <kbd>K</kbd> keep <kbd>Space</kbd> look closer</span></div>
+    <div id="days"></div>`;
+  $("#seg").onclick = e => { const b = e.target.closest("button"); if (b) { filter = b.dataset.f; cursor = null; render(); scrollTo(0, 0); } };
+  $("#days").onclick = e => {
+    const all = e.target.closest("[data-all]"), t = e.target.closest(".t");
+    if (all) {
+      const k = all.closest(".day").dataset.k;
+      return decide(by().filter(it => (it.when.slice(0, 10) || "") === k), all.dataset.all);
+    }
+    if (!t) return;
+    const it = S.items.find(it => it.sha === t.dataset.sha);
+    setCursor(it.sha);
+    e.target.closest(".z") ? look(it) : toggleKeep(it);
+  };
+  render();
+  if (S.busy) settle();
+}
+
+function setCursor(sha) {
+  const old = cursor && tile(cursor);
+  cursor = sha;
+  old?.classList.remove("on");
+  tile(sha)?.classList.add("on");
+}
+function step(d) {
+  const tiles = [...document.querySelectorAll(".t")], i = tiles.findIndex(t => t.dataset.sha === cursor);
+  const n = tiles[Math.max(0, Math.min(tiles.length - 1, i < 0 ? 0 : i + d))];
+  if (n) { setCursor(n.dataset.sha); n.scrollIntoView({ block: "nearest" }); }
+  return n && S.items.find(it => it.sha === n.dataset.sha);
+}
+
+// ── one photo, large ────────────────────────────────────────────────────────────────────────
+function look(it) {
+  lb?.remove();
+  lb = document.createElement("div");
+  lb.className = "lb";
+  const facts = [it.when ? day(it.when) : "No date", it.place, it.people.length && it.people.join(", ")].filter(Boolean).map(esc).join(" · ");
+  lb.innerHTML = `<div class="stage"><img src="/preview/${it.sha}" alt=""></div>
+    <div class="bar"><span class="t2"><b>${facts}</b>${it.reason ? `<br>${esc(it.reason)}` : ""}</span>
+      <button class="btn ${it.decision === "reject" ? "sel keep" : ""}" data-d="reject">Keep <kbd>K</kbd></button>
+      <button class="btn ${it.decision === "accept" ? "sel" : ""}" data-d="accept">Hide <kbd>H</kbd></button>
+      <button class="btn" data-x>Close <kbd>Esc</kbd></button></div>`;
+  lb.onclick = e => {
+    const b = e.target.closest("button");
+    if (b?.dataset.d) decide([it], b.dataset.d).then(() => look(it));
+    else if (b || e.target === lb || e.target.classList.contains("stage")) closeLook();
+  };
+  document.body.append(lb);
+}
+function closeLook() { lb?.remove(); lb = null; }
+
+addEventListener("keydown", e => {
+  if (!S || e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, textarea")) return;
+  const it = cursor && S.items.find(it => it.sha === cursor);
+  const k = e.key.toLowerCase();
+  if (k === "escape") return closeLook();
+  if (k === "arrowright" || k === "arrowleft") {
+    e.preventDefault();
+    const n = step(k === "arrowright" ? 1 : -1);
+    if (lb && n) look(n);
+  } else if ((k === "h" || k === "k") && it) {
+    decide([it], k === "h" ? "accept" : "reject").then(() => { if (lb) look(it); });
+  } else if (k === " " && it) {
+    e.preventDefault();
+    lb ? closeLook() : look(it);
+  }
+});
+
+// ── applying, undoing, checking ─────────────────────────────────────────────────────────────
+async function apply() {
+  $("#apply").disabled = true;
+  try {
+    const r = await api(`/api/changes/${S.id}/apply`, {});
+    S.items.forEach(it => { it.applied = it.decision === "accept"; paintTile(it); });
+    paintBars();
+    toast([r.hid && `${plural(r.hid, "photo")} hidden`, r.showed && `${plural(r.showed, "photo")} shown again`].filter(Boolean).join(", ") || "Nothing to apply");
+    settle();
+  } catch (e) { toast(e.message); paintBars(); }
+}
+async function undo() {
+  const n = tally().applied;
+  if (!confirm(`Show all ${plural(n, "photo")} this set hides again? Your choices are kept, so you can apply it again later.`)) return;
+  try {
+    await api(`/api/changes/${S.id}/revert`, {});
+    S.items.forEach(it => { it.applied = false; paintTile(it); });
+    paintBars();
+    toast(`${plural(n, "photo")} shown again`);
+    settle();
+  } catch (e) { toast(e.message); }
+}
+// After a change the app re-reads the library; when it has, say whether every photo is where it should be.
+async function settle() {
+  $("#note").innerHTML = `<div class="note">Updating the library…</div>`;
+  for (;;) {
+    await new Promise(r => setTimeout(r, 700));
+    if (await check(false)) return;
+  }
+}
+async function check(say) {
+  let c;
+  try { c = await api(`/api/changes/${S.id}/check`); } catch (e) { $("#note").innerHTML = ""; toast(e.message); return true; }
+  if (c.busy) { if (say) $("#note").innerHTML = `<div class="note">Updating the library…</div>`; return false; }
+  const parts = [c.hidden && `${plural(c.hidden, "hidden photo")} ${c.hidden === 1 ? "is" : "are"} in no view and not on phones`,
+    c.visible && `${plural(c.visible, "other photo")} of this set ${c.visible === 1 ? "is" : "are"} still in the library`].filter(Boolean);
+  $("#note").innerHTML = c.wrong.length
+    ? `<div class="note bad"><b>${plural(c.wrong.length, "photo")} not where ${c.wrong.length === 1 ? "it" : "they"} should be.</b> ${c.wrong.slice(0, 5).map(w => `${w.sha.slice(0, 10)} should be ${w.should_be}`).join("; ")}</div>`
+    : `<div class="note ok"><b>Checked.</b> ${parts.join("; ") || "This set has no photos"}.${c.todo ? ` ${plural(c.todo, "choice")} not applied yet.` : ""}</div>`;
+  return true;
+}
+
+const id = location.pathname.match(/^\/changes\/(\d+)/)?.[1];
+(id ? openSet(id) : home()).catch(e => {
+  $("#main").innerHTML = `<div class="blank">${MARK}<h3>Could not open this</h3><p>${esc(e.message)}</p><a class="btn" href="/changes">All changes</a></div>`;
+});
+</script>
+</body>
+</html>

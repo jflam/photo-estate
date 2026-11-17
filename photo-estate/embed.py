@@ -309,6 +309,7 @@ def cmd_serve(a) -> None:
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, quote, unquote, urlparse
 
+    from changes import Changes, hidden_shas
     from estate import facts_of as estate_facts
     from sync import Feed
     from upload import IngestJob, save_upload, staging_dir
@@ -494,6 +495,7 @@ def cmd_serve(a) -> None:
             if sha in fresh or face_names.get(sha) != old_names.get(sha):
                 own(sha)["people"] = list(dict.fromkeys(tagged[sha] + face_names.get(sha, [])))
         has_faces = bool(optional("SELECT 1 FROM faces LIMIT 1"))
+        hidden = hidden_shas(con)   # photos a change set hides (changes.py): in the catalog, in no view
         con.close()
         _raw = {"shas": shas, "index": index, "M": M, "meta": meta, "tagged": tagged, "orphans": orphans,
                 "marks": marks, "place_key": place_key, "face_names": face_names}
@@ -554,6 +556,7 @@ def cmd_serve(a) -> None:
         trip_of = col(lambda m: m.get("trip"))
         fav = np.array([meta[s]["fav"] for s in shas])
         shot = np.array([is_screenshot(meta[s]) for s in shas], bool)
+        visible = np.array([s not in hidden for s in shas], bool)
         ars = np.array([meta[s]["ar"] for s in shas], np.float32)
         oldest = np.argsort(when, kind="stable")
         oldest = np.concatenate([oldest[when[oldest] != ""], oldest[when[oldest] == ""]])   # undated last, either way
@@ -578,7 +581,7 @@ def cmd_serve(a) -> None:
 
         trip_list = []
         for tid, t in sorted(trips.items(), key=lambda kv: kv[1]["start"] or "", reverse=True):
-            ids = np.flatnonzero(trip_of == tid)
+            ids = np.flatnonzero((trip_of == tid) & visible)
             if len(ids):
                 ids = ids[np.argsort(when[ids], kind="stable")]
                 favs = ids[fav[ids]]
@@ -614,7 +617,8 @@ def cmd_serve(a) -> None:
         return {k: v for k, v in locals().items() if k in STATE or k == "_raw"}
 
     def combine(masks: dict, skip: str | None = None):
-        out = np.ones(N, bool)
+        # Hidden photos are in no view, unless the hidden ones are what was asked for (`hidden=1`).
+        out = np.ones(N, bool) if "hidden" in masks else visible.copy()
         for k, m in masks.items():
             if k != skip:
                 out &= m
@@ -638,16 +642,16 @@ def cmd_serve(a) -> None:
 
     # The names load_state() produces. Handlers read them as plain variables; install() rebinds them all
     # at once while no request is being served, so a search never sees half of an old and half of a new catalog.
-    STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'shot', 'ars', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re')
-    shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info = (None,) * 31
+    STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'shot', 'ars', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re', 'visible')
+    shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, info = (None,) * 32
 
     loaded = {}   # what the installed state was read from: the next reload starts from it
 
     def install(st: dict) -> None:
         loaded["raw"] = st["_raw"]
-        nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info
-        shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re = (st[k] for k in STATE)
-        info = {"total": N, "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
+        nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, info
+        shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible = (st[k] for k in STATE)
+        info = {"total": int(visible.sum()), "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
                 "demo": bool(a.demo), "faces": has_faces, **facet_counts({})}
 
     class Gate:
@@ -729,14 +733,16 @@ def cmd_serve(a) -> None:
         shot the library view hides as near-identical to the one before it (take(), newest first), which a
         device cannot work out without the vectors."""
         nonlocal feed_dups
-        t, S, V, mt, kept, dups = time.time(), shas, M, meta, [], set()
+        t, S, V, mt, vis, kept, dups = time.time(), shas, M, meta, visible, [], set()
         for i in newest:
             i = int(i)
+            if not vis[i]:   # a hidden photo is not in the feed, and no shot is a copy of it
+                continue
             if kept and float(np.max(V[kept[-8:]] @ V[i])) > 0.97:
                 dups.add(S[i])
             else:
                 kept.append(i)
-        n = feed.update({s: dict(mt[s], dup=True) if s in dups else mt[s] for s in S})
+        n = feed.update({s: dict(mt[s], dup=True) if s in dups else mt[s] for s, v in zip(S, vis) if v})
         feed_dups = dups
         print(f"sync feed: version {feed.version}, {n} rows changed ({time.time() - t:.1f}s)", flush=True)
 
@@ -883,6 +889,8 @@ def cmd_serve(a) -> None:
             masks["date"] = (ym >= (lo if lo is not None else 0)) & (ym <= (hi if hi is not None else nmonths))
         if (qs.get("fav") or ["0"])[0] == "1":
             masks["fav"] = fav
+        if (qs.get("hidden") or ["0"])[0] == "1":
+            masks["hidden"] = ~visible
         scope = None
         ev = (qs.get("event") or [""])[0]
         if ev.lstrip("-").isdigit():
@@ -1189,6 +1197,18 @@ def cmd_serve(a) -> None:
             self.send(*(got or (404, b"not found", "text/plain", "no-store")))
             return True
 
+        def changes_route(self, method: str, u, qs: dict, body) -> bool:
+            """Change sets (changes.py): the review page and its API. Proposing, deciding and applying
+            change what everyone sees, so they take the same permission as uploading (--upload-user)."""
+            if not u.path.startswith(("/changes", "/api/changes")):
+                return False
+            if method == "POST" and not self.allowed():
+                self.send(403, b'{"error":"not allowed"}', "application/json")
+                return True
+            got = changes.handle(method, u.path, qs, body, self.who())
+            self.send(*(got or (404, b"not found", "text/plain", "no-store")))
+            return True
+
         def do_POST(self):
             u = urlparse(self.path)
             if u.path in ("/api/ingest", "/api/restart"):
@@ -1202,6 +1222,8 @@ def cmd_serve(a) -> None:
             try:
                 if intake and u.path.startswith("/api/intake"):
                     return self.intake_route("POST", u, parse_qs(u.query), body)
+                if self.changes_route("POST", u, parse_qs(u.query), body):
+                    return
                 if not self.people_page("POST", u, parse_qs(u.query), body):
                     self.send(404, b"not found", "text/plain")
             except (BrokenPipeError, ConnectionResetError):
@@ -1288,7 +1310,7 @@ def cmd_serve(a) -> None:
             try:
                 if intake and u.path.startswith(("/setup", "/api/intake")):
                     return self.intake_route("GET", u, qs, None)
-                if self.people_page("GET", u, qs, None):
+                if self.people_page("GET", u, qs, None) or self.changes_route("GET", u, qs, None):
                     return
                 if u.path in ("/", "/index.html"):  # revalidated each load, so edits show up at once
                     body = pages.page("search.html")
@@ -1329,7 +1351,7 @@ def cmd_serve(a) -> None:
                            filters=applied, people=names, places=places, cursor=start, matching=int(len(order)),
                            ms=round((time.time() - t) * 1000),
                            top=[r["sha"] for r in results[:20]] if start == 0 else None)
-                    return self.json({"results": results, "next": nxt, "hidden": hidden, "total": N,
+                    return self.json({"results": results, "next": nxt, "hidden": hidden, "total": info["total"],
                                       "matching": int(len(order)), "text": text, "filters": applied, "people": names, "places": places,
                                       "scope": scope, "sort": sort, "ms": round((time.time() - t) * 1000)})
                 if u.path == "/api/log":  # the page reports photos opened or shared from a result list
@@ -1349,7 +1371,7 @@ def cmd_serve(a) -> None:
 
                     def make():
                         by_time = oldest if sort == "old" else newest
-                        return {**periods(by_time[mask[by_time]]), "matching": int(mask.sum()), "total": N}
+                        return {**periods(by_time[mask[by_time]]), "matching": int(mask.sum()), "total": info["total"]}
                     return self.json(remember(key, make))
                 if u.path in ("/stats", "/stats.html"):
                     body = pages.page("stats.html")
@@ -1370,7 +1392,7 @@ def cmd_serve(a) -> None:
                                                                  one("after"), max(1, min(int(one("limit", "2000")), 10000)))
                     rows = [dict(sha=s, **meta[s], **({"dup": True} if feed_dups and s in feed_dups else {})) for s in ids if s in meta]
                     return self.json({"epoch": feed.epoch, "photos": rows, "deleted": deleted, "since": ver, "after": after,
-                                      "more": more, "total": N, "trips": [] if more else trip_list})
+                                      "more": more, "total": info["total"], "trips": [] if more else trip_list})
                 if u.path in app_files:
                     body = app_files[u.path].read_bytes()
                     return self.send(200, body, app_types[app_files[u.path].suffix], "no-cache",
@@ -1465,6 +1487,27 @@ def cmd_serve(a) -> None:
                 reload_state["running"] = False
         if ingest and not reload_state["error"]:
             ingest.fresh = False
+
+    # Change sets (changes.py). When one hides or shows photos, the catalog is re-read as after an ingest:
+    # every view, count and cover is rebuilt without them, phones are told through the feed, and the
+    # People page loads again without their faces. `settling` covers the moment before the reload starts.
+    settling = {"n": 0}
+
+    def hidden_changed():
+        try:
+            reload_catalog()
+            if has_faces:
+                load_people()
+        finally:
+            settling["n"] -= 1
+
+    def on_hidden_change():
+        settling["n"] += 1
+        threading.Thread(target=hidden_changed, daemon=True).start()
+
+    changes = Changes(a.db, facts=lambda sha: meta.get(sha),
+                      shown=lambda sha: {"library": sha in index and bool(visible[index[sha]]), "sync": sha in feed.rows},
+                      busy=lambda: settling["n"] > 0 or reload_state["running"], on_change=on_hidden_change)
 
     if ingest:
         ingest.on_added = reload_catalog
