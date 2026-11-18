@@ -56,7 +56,7 @@ body { min-height: 100dvh; }
 .scale button { height: 34px; padding: 0 14px; border-radius: 999px; font-size: 14.5px; font-weight: 500; color: var(--ink);
   transition: background .2s var(--ease), color .2s; }
 .scale button.on { background: var(--sun-lit); color: var(--on-sun); }
-.lbar .back { width: 40px; height: 40px; border-radius: 50%; color: var(--ink); }
+.lbar .back { width: 40px; height: 40px; border-radius: 50%; color: var(--ink); display: grid; place-items: center; }
 
 /* ── page heading and the grid ──────────────────────────────────────── */
 main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
@@ -82,6 +82,9 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .t img.in { opacity: 1; }
 .t:hover img { filter: brightness(1.06); }
 .t .fv { position: absolute; top: 6px; right: 6px; color: var(--sun-lit); filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+.t .stk { position: absolute; top: 6px; left: 6px; display: flex; align-items: center; gap: 4px; padding: 2px 7px 2px 5px; border: 0;
+  border-radius: 999px; background: rgba(0,0,0,.55); color: #fff; font: 600 12px/18px inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.t .stk:hover, .t .stk:focus-visible { background: rgba(0,0,0,.8); }
 .t .cap { position: absolute; inset: auto 0 0 0; padding: 24px 10px 7px; font-size: 12px; font-weight: 600; color: #fff;
   background: linear-gradient(transparent, rgba(0,0,0,.55)); opacity: 0; transition: opacity .2s; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
@@ -99,6 +102,8 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .card { position: relative; display: block; width: 100%; height: 210px; border-radius: 18px; overflow: hidden; background: var(--well);
   text-align: left; color: #fff; transition: transform .18s var(--ease); scroll-margin-top: calc(var(--bar) + env(safe-area-inset-top) + 6px); }
 .years .card { height: 300px; border-radius: 22px; }
+.cards .yr { grid-column: 1 / -1; margin: 14px 2px 0; font-size: 22px; font-weight: 700; letter-spacing: -.02em; scroll-margin-top: calc(var(--bar) + env(safe-area-inset-top) + 6px); }   /* Months: each year starts its own row, so a year's months are never beside another's */
+.cards .yr:first-child { margin-top: 0; }
 .card:active { transform: scale(.97); }
 .card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .25s; }
 .card img.in { opacity: 1; }
@@ -352,7 +357,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
 
 <div id="libTab" class="tab">
   <div class="lbar" id="lbar">
-    <button class="back glass" id="libBack" hidden aria-label="Back"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
+    <button class="back glass" id="libBack" hidden aria-label="Back"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 3 5.5 8l5 5"/></svg></button>
     <div class="scale glass" id="scale" role="tablist">
       <button data-s="years" role="tab">Years</button><button data-s="months" role="tab">Months</button><button data-s="all" role="tab" aria-label="All photos">All</button>
     </div>
@@ -441,6 +446,7 @@ const I = {
   person: svg('<circle cx="8" cy="5.4" r="2.6"/><path d="M2.8 13.6c.6-2.6 2.7-4 5.2-4s4.6 1.4 5.2 4"/>', 20),
   album: svg('<rect x="2.5" y="5" width="11" height="8.5" rx="2"/><path d="M4.5 2.8h7"/>', 20),
   camera: svg('<path d="M2.5 5.8a1.5 1.5 0 0 1 1.5-1.5h1.6l1.1-1.6h2.6l1.1 1.6H12a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5Z"/><circle cx="8" cy="8.6" r="2.3"/>', 20),
+  stack: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2" y="5.500" width="9.500" height="8" rx="1.800"/><path d="M5 3h7.200A1.800 1.800 0 0 1 14 4.800V11"/></svg>',
   plane: svg('<path d="M14 3.2 2.5 7.6l4.3 1.6M14 3.2l-3 10.300-4.200-4.300M14 3.2 6.800 9.200v3.600l1.900-2"/>', 20),
   cal: svg('<rect x="2.5" y="3.5" width="11" height="10" rx="2.200"/><path d="M2.500 6.800h11M5.500 2v2.500M10.500 2v2.500M5 9.300h2M5 11.300h4"/>', 20),
   calSmall: svg('<rect x="2.5" y="3.5" width="11" height="10" rx="2.200"/><path d="M2.500 6.800h11M5.500 2v2.500M10.500 2v2.500"/>', 18),
@@ -470,7 +476,7 @@ const viewParams = p => { p.set("dedupe", V.dedupe ? "1" : "0"); p.set("shots", 
 /* ── the question Search asks ──────────────────────────────────────── */
 const KEYS = ["country", "region", "city", "person", "album", "camera", "lens", "trip"];
 const KIND = { country: "Country", region: "Region", city: "Place", person: "Person", album: "Album", camera: "Camera", lens: "Lens", trip: "Trip" };
-const blank = () => ({ q: "", plain: false, sha: "", event: "", fav: false, from: "", to: "", sort: "", f: Object.fromEntries(KEYS.map(k => [k, []])) });
+const blank = () => ({ q: "", plain: false, sha: "", event: "", stack: "", fav: false, from: "", to: "", sort: "", f: Object.fromEntries(KEYS.map(k => [k, []])) });
 const copy = s => ({ ...s, f: Object.fromEntries(KEYS.map(k => [k, [...s.f[k]]])) });
 let S = blank();
 function toParams(s) {
@@ -479,19 +485,19 @@ function toParams(s) {
   if (s.q && s.plain) p.set("names", "0");        // names typed in the search are words, not people
   if (s.sha) p.set("sha", s.sha);
   for (const k of KEYS) for (const v of s.f[k]) p.append(k, v);
-  for (const k of ["event", "from", "to", "sort"]) if (s[k]) p.set(k, s[k]);
+  for (const k of ["event", "stack", "from", "to", "sort"]) if (s[k]) p.set(k, s[k]);
   if (s.fav) p.set("fav", "1");
   return p;
 }
 function fromParams(p) {
   const s = blank();
-  for (const k of ["q", "sha", "event", "from", "to", "sort"]) s[k] = p.get(k) || "";
+  for (const k of ["q", "sha", "event", "stack", "from", "to", "sort"]) s[k] = p.get(k) || "";
   for (const k of KEYS) s.f[k] = p.getAll(k);
   s.fav = p.get("fav") === "1";
   s.plain = p.get("names") === "0";
   return s;
 }
-const filtered = (s = S) => KEYS.some(k => s.f[k].length) || s.event || s.fav || s.from || s.to;
+const filtered = (s = S) => KEYS.some(k => s.f[k].length) || s.event || s.stack || s.fav || s.from || s.to;
 const isEmpty = (s = S) => !s.q && !s.sha && !filtered(s);
 
 /* ── dates ─────────────────────────────────────────────────────────── */
@@ -560,6 +566,9 @@ class Grid {
     this.onGrow?.();
     setTimeout(() => this.poke(), 30);
     return data;
+  }
+  clear() {                                          // nothing showing, and nothing more to come from the old list (its thumbnails stop loading too)
+    this.gen++; this.data = this.next = null; this.items = []; this.sections = []; this.lo = 0; this.el.innerHTML = "";
   }
   poke() {                                           // fill in either end that is on screen (the observers only say when that changes)
     if (this.up && $(this.up).getBoundingClientRect().bottom > -900) this.less();
@@ -647,7 +656,7 @@ class Grid {
       for (let k = 0; k < n; k++) {
         const r = sec.items[i + k];
         html += `<div class="t" tabindex="0" data-i="${sec.base + i + k}" style="width:${ws[k]}px"><img loading="lazy" decoding="async" alt="" src="/thumb/${r.sha}" onload="this.classList.add('in')">`
-          + (r.fav ? I.heartFill : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
+          + (r.fav ? I.heartFill : "") + (r.stack && V.dedupe && !(this === sgrid && S.stack) ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
       }
       html += "</div>";
       sec.rows.push({ start: i, n, full });
@@ -735,7 +744,7 @@ function libShow() {
   if (!all) {
     renderPeriods();
     const key = L.anchor && (L.scale === "years" ? L.P?.years : L.P?.months)?.find(p => p.key.startsWith(L.anchor))?.key;
-    const card = key && $(`.card[data-key="${key}"]`);
+    const card = key && (L.scale === "months" && L.anchor.length === 4 && $(`.yr[data-year="${L.anchor}"]`) || $(`.card[data-key="${key}"]`));   // a year opens at its heading
     if (card) card.scrollIntoView({ block: "start" }); else scrollTo(0, L.y["library" + L.scale] || 0);
   } else if (jump && L.anchor && L.anchor.length > 4) libJump(L.anchor);
   else { scrollTo(0, L.y.libraryall || 0); setTimeout(() => lgrid.poke(), 30); }
@@ -743,10 +752,11 @@ function libShow() {
 function renderPeriods() {
   const big = L.scale === "years", list = (big ? L.P?.years : L.P?.months) || [];
   $("#libPeriods").innerHTML = `<div class="head"><h1>Library</h1><p class="num">${esc($("#libHead p").textContent)}</p></div>
-    <div class="cards ${L.scale}">${list.map(p => {
-      const title = big ? p.key : heading(p.key);
+    <div class="cards ${L.scale}">${list.map((p, i) => {
+      const title = big ? p.key : heading(p.key), y = p.key.slice(0, 4);
+      const yr = !big && y !== list[i - 1]?.key.slice(0, 4) ? `<h2 class="yr" data-year="${y}">${y}</h2>` : "";
       const detail = [big ? "" : p.places.join(" · "), photos(p.n)].filter(Boolean).join(" · ");
-      return `<button class="card" data-key="${p.key}" aria-label="${esc(title + ", " + detail)}"><img alt="" src="/thumb/${p.cover}" onload="this.classList.add('in')"><img alt="" loading="lazy" src="/preview/${p.cover}" onload="this.classList.add('in')">
+      return yr + `<button class="card" data-key="${p.key}" aria-label="${esc(title + ", " + detail)}"><img alt="" src="/thumb/${p.cover}" onload="this.classList.add('in')"><img alt="" loading="lazy" src="/preview/${p.cover}" onload="this.classList.add('in')">
         <span class="ct"><b>${esc(title)}</b><small>${esc(detail)}</small>${big && p.places.length ? `<small>${esc(p.places.join(" · "))}</small>` : ""}</span></button>`;
     }).join("")}</div>`;
 }
@@ -784,6 +794,7 @@ async function libJump(key) {                         // the whole library, at t
   if (toSection(key)) return;
   const m = L.P.months.find(x => x.key === key);
   if (!m) return;
+  lgrid.clear(); scrollTo(0, 0);                      // not the photos of wherever the grid was, while this month's are on their way
   await lgrid.load(m.at);
   if (L.scale === "all") { scrollTo(0, 0); toSection(key); setTimeout(() => lgrid.poke(), 30); }
 }
@@ -853,16 +864,16 @@ document.addEventListener("pointerdown", e => {
 });
 function viewMenu(anchor, ctx) {
   openMenu(anchor, el => {
-    const ranked = ctx === "search" && sgrid.ranked, old = ctx === "library" ? L.sort === "old" : (D?.sort || "new") === "old";
+    const ranked = ctx === "search" && !!(S.sha || D?.text), cur = ctx === "library" ? L.sort || "new" : S.sort || D?.sort || "new";   // ranked: by the words or the likeness, so no order to choose
     const mi = (attr, on, label) => `<button class="mi${on ? " on" : ""}" ${attr}>${I.check}<span>${label}</span></button>`;
     const sw = (attr, on, label) => `<button class="mi" ${attr} role="switch" aria-checked="${on}"><svg></svg><span>${label}</span><i class="sw${on ? " on" : ""}"></i></button>`;
-    el.innerHTML = (ranked ? "" : `<h5>Order</h5>${mi('data-sort="new"', !old, "Newest first")}${mi('data-sort="old"', old, "Oldest first")}<hr>`)
+    el.innerHTML = (ranked ? "" : `<h5>Order</h5>${mi('data-sort="new"', cur === "new", "Newest first")}${mi('data-sort="old"', cur === "old", "Oldest first")}${INFO?.best ? mi('data-sort="best"', cur.startsWith("best"), ctx === "library" ? "Best first in each month" : "Best first") : ""}<hr>`)
       + `<h5>Photo size</h5>${DENS_NAME.map((n, i) => mi(`data-dens="${i}"`, V.dens === i, n)).join("")}<hr>`
-      + sw("data-dedupe", V.dedupe, "Hide near-identical shots") + sw("data-shots", V.shots, "Hide screenshots");
+      + sw("data-dedupe", V.dedupe, "Stack near-identical shots") + sw("data-shots", V.shots, "Hide screenshots");
     el.onclick = e => {
       const b = e.target.closest(".mi"); if (!b) return;
       if (b.dataset.sort) {
-        if (ctx === "library") { L.sort = b.dataset.sort === "old" ? "old" : ""; libLoad(); }
+        if (ctx === "library") { L.sort = { old: "old", best: "best-month" }[b.dataset.sort] || ""; libLoad(); }
         else { S.sort = b.dataset.sort; refine(); }
       } else if (b.dataset.dens) setDens(+b.dataset.dens);
       else {
@@ -918,7 +929,7 @@ const sgrid = new Grid({
   fetch: (c, n) => getJSON((S.sha ? "/api/similar?" : "/api/search?") + sParams() + `&limit=${n}&cursor=${c}`),
   grain: () => sgrid.ranked ? 0 : D?.scope || S.event ? 10 : S.from && S.to && ymOf(S.to) - ymOf(S.from) <= 1 ? 10 : 7,
   count: sec => sec.key.length === 7 && F ? F.months[ymOf(sec.key)] : null,
-  onData: d => { D = d; sgrid.ranked = !!(S.sha || d.text); },
+  onData: d => { D = d; sgrid.ranked = !!(S.sha || d.text) || d.sort === "best"; },   // best first is not by time: no months to head
   onGrow: () => { if (VL === sgrid && vCur >= 0) { arrange(); vChrome(); } },
   onError: e => { $("#sHead h1").textContent = "Couldn’t search"; $("#sHead p").textContent = e.message; },
 });
@@ -969,7 +980,8 @@ function searchHead() {                               // what the answer is, in 
   else if (D.text) {
     title = `“${D.text}”`; parts = [D.matching ? `${n}, best match first` : "No matches"];
     if (reading) parts.unshift([who && `with ${who}`, where && `in ${where}`].filter(Boolean).join(", "));
-  } else if (D.scope) { title = tripTitle(D.scope); parts = [span(D.scope.start, D.scope.end), n]; }
+  } else if (S.stack) { title = `Stack of ${D.matching}`; parts = ["Near-identical shots taken together", D.sort === "best" ? "best first" : ""]; }
+  else if (D.scope) { title = tripTitle(D.scope); parts = [span(D.scope.start, D.scope.end), n]; }
   else {
     const bits = [S.f.person.join(" & "), [...S.f.city, ...S.f.region, ...S.f.country].map(firstPart).join(", "), S.f.album.join(", "),
       [...S.f.camera, ...S.f.lens].join(", "), S.f.trip.map(id => tripTitle(tripById(id))).join(", "), rangeLabel()].filter(Boolean);
@@ -1382,6 +1394,7 @@ function drawInfo(r) {                               // what is known about it, 
     if (r.trip != null) h += row(`data-k="trip" data-v="${r.trip}"`, I.plane, esc((r.trip_title || "This trip").replace(/^Trip to /, "")), "The whole trip");
     h += `</div>`;
   }
+  if (r.stack) h += `<div class="vcard">${row(`data-k="stack" data-v="${r.sha}"`, I.stack.replace(/1[3]"/g, '20"'), `Stack of ${r.stack}`, "Near-identical shots taken together")}</div>`;
   if (r.people?.length) h += `<h4>With</h4><div class="tags">${r.people.map(p => `<button class="tag" data-k="person" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
   if (r.albums?.length) h += `<h4>In</h4><div class="tags">${r.albums.map(p => `<button class="tag" data-k="album" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
   const n = x => +(+x).toFixed(1);
@@ -1404,7 +1417,7 @@ function drawInfo(r) {                               // what is known about it, 
 $("#vInfo").addEventListener("click", e => {
   const t = e.target.closest("[data-k]"); if (!t) return;
   const k = t.dataset.k, val = t.dataset.v, s = blank();
-  if (k === "event") s.event = val; else s.f[k] = [val];
+  if (k === "event") s.event = val; else if (k === "stack") s.stack = val; else s.f[k] = [val];
   find(s);
 });
 $("#vLike").onclick = () => { const r = items[vCur]; if (r) { const s = blank(); s.sha = r.sha; find(s); } };
@@ -1587,8 +1600,10 @@ async function doShare(file) {
 $("#vShare").onclick = share;
 
 /* ── page events ───────────────────────────────────────────────────── */
-$("#libGrid").addEventListener("click", e => { const t = e.target.closest(".t"); if (t) openViewer(lgrid, +t.dataset.i); });
+const openStack = e => { const b = e.target.closest(".stk"); if (b) { const s = blank(); s.stack = b.dataset.stack; find(s); } return !!b; };   // the count on a tile: the whole stack
+$("#libGrid").addEventListener("click", e => { if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(lgrid, +t.dataset.i); });
 $("#sGrid").addEventListener("click", e => {
+  if (openStack(e)) return;
   const t = e.target.closest(".t"); if (t) return openViewer(sgrid, +t.dataset.i);
   if (e.target.closest("#again")) { q.value = ""; go(blank()); }
 });

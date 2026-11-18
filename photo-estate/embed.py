@@ -310,6 +310,8 @@ def cmd_serve(a) -> None:
     from urllib.parse import parse_qs, quote, unquote, urlparse
 
     from changes import Changes, hidden_shas
+    from scores import best_first, load as load_scorers
+    from stacks import group as stack_group, seconds as stack_seconds, tops as stack_tops
     from estate_mcp import Server as MCPServer
     from estate import facts_of as estate_facts
     from sync import Feed
@@ -497,6 +499,7 @@ def cmd_serve(a) -> None:
                 own(sha)["people"] = list(dict.fromkeys(tagged[sha] + face_names.get(sha, [])))
         has_faces = bool(optional("SELECT 1 FROM faces LIMIT 1"))
         hidden = hidden_shas(con)   # photos a change set hides (changes.py): in the catalog, in no view
+        scorers = load_scorers(con, a.model)   # what "Best first" goes by (scores.py); none in a catalog without them
         con.close()
         _raw = {"shas": shas, "index": index, "M": M, "meta": meta, "tagged": tagged, "orphans": orphans,
                 "marks": marks, "place_key": place_key, "face_names": face_names}
@@ -562,6 +565,17 @@ def cmd_serve(a) -> None:
         oldest = np.argsort(when, kind="stable")
         oldest = np.concatenate([oldest[when[oldest] != ""], oldest[when[oldest] == ""]])   # undated last, either way
         newest = np.concatenate([oldest[when[oldest] != ""][::-1], oldest[when[oldest] == ""]])
+        best = best_first(M, scorers)   # every photo, best first; None when the catalog has no scorers
+        rank = None                     # each photo's place in that order (0 is the best)
+        if best is not None:
+            rank = np.empty(len(shas), np.int64)
+            rank[best] = np.arange(len(shas))
+        # Near-identical shots taken together are one stack (stacks.py): the best one shows, the rest are behind it.
+        # By the instant it was taken (`taken`), not the local time a view sorts by: two shots a second apart
+        # must not come out hours apart because only one of them has a place, and so a time zone.
+        stack_of = stack_group(np.array([stack_seconds(meta[x]["taken"]) for x in shas]), M, visible)
+        top, stack_n = stack_tops(stack_of, rank)
+        dup = ~top                      # behind another photo of its stack
 
         # Facets. `single`: one value per photo, choosing several means any of them. `multi`: a photo can
         # have several (albums: any of the chosen; people: all of the chosen, i.e. photos of them together).
@@ -586,7 +600,8 @@ def cmd_serve(a) -> None:
             if len(ids):
                 ids = ids[np.argsort(when[ids], kind="stable")]
                 favs = ids[fav[ids]]
-                cover = int(favs[len(favs) // 2]) if len(favs) else int(ids[len(ids) // 2])
+                pick = favs if len(favs) else ids   # a favourite if there is one: the best of them, or the middle one
+                cover = int(pick[np.argmin(rank[pick])]) if rank is not None else int(pick[len(pick) // 2])
                 trip_list.append({"id": tid, "title": t["title"], "start": t["start"], "end": t["end"],
                                   "n": int(len(ids)), "cover": shas[cover]})
         people_ix = multi["person"]["ix"]
@@ -643,17 +658,17 @@ def cmd_serve(a) -> None:
 
     # The names load_state() produces. Handlers read them as plain variables; install() rebinds them all
     # at once while no request is being served, so a search never sees half of an old and half of a new catalog.
-    STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'shot', 'ars', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re', 'visible')
-    shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, info = (None,) * 32
+    STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'shot', 'ars', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re', 'visible', 'best', 'rank', 'stack_of', 'stack_n', 'dup')
+    shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, best, rank, stack_of, stack_n, dup, info = (None,) * 37
 
     loaded = {}   # what the installed state was read from: the next reload starts from it
 
     def install(st: dict) -> None:
         loaded["raw"] = st["_raw"]
-        nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, info
-        shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible = (st[k] for k in STATE)
+        nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, best, rank, stack_of, stack_n, dup, info
+        shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, best, rank, stack_of, stack_n, dup = (st[k] for k in STATE)
         info = {"total": int(visible.sum()), "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
-                "demo": bool(a.demo), "faces": has_faces, **facet_counts({})}
+                "demo": bool(a.demo), "faces": has_faces, "best": best is not None, **facet_counts({})}
 
     class Gate:
         """Requests share it; install() takes it alone. Writers wait first, so a stream of requests can't starve a reload."""
@@ -731,18 +746,11 @@ def cmd_serve(a) -> None:
 
     def feed_update():
         """Tell the feed what the catalog now holds. A row is the photo's search result, plus `dup` for a
-        shot the library view hides as near-identical to the one before it (take(), newest first), which a
-        device cannot work out without the vectors."""
+        shot that is behind another in its stack (stacks.py), which a device cannot work out without the
+        vectors."""
         nonlocal feed_dups
-        t, S, V, mt, vis, kept, dups = time.time(), shas, M, meta, visible, [], set()
-        for i in newest:
-            i = int(i)
-            if not vis[i]:   # a hidden photo is not in the feed, and no shot is a copy of it
-                continue
-            if kept and float(np.max(V[kept[-8:]] @ V[i])) > 0.97:
-                dups.add(S[i])
-            else:
-                kept.append(i)
+        t, S, mt, vis = time.time(), shas, meta, visible
+        dups = {S[i] for i in np.flatnonzero(dup & vis).tolist()}
         n = feed.update({s: dict(mt[s], dup=True) if s in dups else mt[s] for s, v in zip(S, vis) if v})
         feed_dups = dups
         print(f"sync feed: version {feed.version}, {n} rows changed ({time.time() - t:.1f}s)", flush=True)
@@ -892,6 +900,9 @@ def cmd_serve(a) -> None:
             masks["fav"] = fav
         if (qs.get("hidden") or ["0"])[0] == "1":
             masks["hidden"] = ~visible
+        member = index.get((qs.get("stack") or [""])[0])
+        if member is not None:   # the photos of one stack, named by any of them
+            masks["stack"] = stack_of == stack_of[member] if stack_of[member] >= 0 else np.arange(N) == member
         scope = None
         ev = (qs.get("event") or [""])[0]
         if ev.lstrip("-").isdigit():
@@ -913,16 +924,16 @@ def cmd_serve(a) -> None:
 
     def view_masks(qs: dict, masks: dict, text: str, similar: bool) -> bool:
         """The view options, for browsing and filtering (no words to rank by, not "More like this"), as the
-        iPhone app has them: screenshots out (`shots=0`), and near-identical shots out (`dedupe=1`) by the
-        library-wide flag the iPhone uses too, so a count is the count of what shows, and a cursor is a
-        position in that list. True when browsing: take() then skips nothing page by page."""
+        iPhone app has them: screenshots out (`shots=0`), and stacks shown as their top photo (`dedupe=1`) by
+        the library-wide flag the iPhone uses too, so a count is the count of what shows, and a cursor is a
+        position in that list. True when browsing: take() then skips nothing page by page.
+        Stacks collapse in every list, a ranked one too, except the list that is one stack's photos."""
+        if (qs.get("dedupe") or ["1"])[0] == "1" and "stack" not in masks:
+            masks["dup"] = ~dup
         if text or similar:
             return False
         if (qs.get("shots") or ["1"])[0] == "0":
             masks["shots"] = ~shot
-        if (qs.get("dedupe") or ["1"])[0] == "1" and feed_dups is not None:   # (until the flag is worked out, none are)
-            dups, S = feed_dups, shas
-            masks["dup"] = remember(("dups", id(dups), id(S)), lambda: ~np.fromiter((x in dups for x in S), bool, len(S)))
         return True
 
     # What an agent's tools are made of (estate_mcp.py). An agent says exactly what it wants, so nothing
@@ -1011,7 +1022,8 @@ def cmd_serve(a) -> None:
     def periods(order) -> dict:
         """The photos in `order` (by time), as a card a year and a card a month, as the iPhone's Library
         has them: each with its key ("2019", "2019-07"), how many, where it starts in `order`, the photo on
-        the front (a favourite if there is one, a landscape one if not, nearest the middle) and its places."""
+        the front and its places. The front is a favourite if there is one, a landscape one if not; among
+        those, the best photo (scores.py), or the one nearest the middle in a catalog with no scorers."""
         out = {}
         city = single["city"]
         for name, key_of, top in (("years", lambda m: m // 12, 3), ("months", lambda m: m, 2)):
@@ -1024,7 +1036,7 @@ def cmd_serve(a) -> None:
                     continue
                 run = order[a0:b0]
                 score = fav[run] * 4_000_000 + ((ars[run] >= 1.2) & (ars[run] <= 1.9)) * 2_000_000 \
-                    - np.abs(np.arange(len(run)) - len(run) // 2)
+                    - (rank[run] if rank is not None else np.abs(np.arange(len(run)) - len(run) // 2))
                 cover = int(run[int(np.argmax(score))])
                 codes = city["codes"][run]
                 codes = codes[codes >= 0]
@@ -1049,7 +1061,8 @@ def cmd_serve(a) -> None:
                 hidden += 1
                 continue
             kept.append(i)
-        return [dict(sha=shas[i], **meta[shas[i]]) for i in kept], hidden, pos if pos < len(order) else None
+        rows = [dict(sha=shas[i], **meta[shas[i]], **({"stack": int(stack_n[i])} if stack_n[i] > 1 else {})) for i in kept]
+        return rows, hidden, pos if pos < len(order) else None
 
     def image(sha: str, kind: str, side: int) -> bytes | None:
         dest = cache / kind / f"{sha}.jpg"
@@ -1423,7 +1436,10 @@ def cmd_serve(a) -> None:
                     sha = one("sha")
                     if u.path == "/api/similar" and sha not in index:
                         return self.json({"error": "unknown photo"}, 404)
-                    sort = one("sort") or ("old" if scope else "new")
+                    by_default = "best" if "stack" in masks else "old" if scope else "new"   # a stack: its top photo first
+                    sort = one("sort") or by_default
+                    if sort in ("best", "best-month") and best is None:   # a catalog with no scorers: as if nothing was asked
+                        sort = "old" if scope or "stack" in masks else "new"
                     key = (u.path, sha, text, sort, tuple(sorted((k, tuple(v)) for k, v in qs.items()
                                                                  if k not in ("cursor", "limit"))))
 
@@ -1433,8 +1449,12 @@ def cmd_serve(a) -> None:
                         elif text:
                             vec = remember(("text", text), lambda: text_vec(text))
                         else:  # nothing to rank by: what the filters select, by time
-                            by_time = oldest if sort == "old" else newest
-                            return by_time[mask[by_time]]
+                            by = best if sort == "best" else oldest if sort == "old" else newest
+                            ids = by[mask[by]]
+                            if sort == "best-month":   # the Library: months newest first as ever, the best first in each
+                                runs = np.cumsum(np.concatenate([[0], np.diff(ym[ids]) != 0]))
+                                ids = ids[np.lexsort((rank[ids], runs))]
+                            return ids
                         sims = np.where(mask, M @ vec, -np.inf)
                         if u.path == "/api/similar":
                             sims[index[sha]] = -np.inf
