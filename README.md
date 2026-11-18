@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/screenshots/icon.png" width="128" alt="The Photo Estate icon: a house-shaped photo print on a field of sun"></p>
+
 # Photo Estate
 
 **Your whole photo library, on your own disk, searchable by what's in a photo, who's in it and where it was taken.**
@@ -11,6 +13,63 @@ in your photos once, and "ben and matthew on a beach" or "ben san diego" finds e
 ![Searching the demo library for "latte art"](docs/screenshots/search-latte-art.jpg)
 
 **📖 [Read the book](https://jflam.github.io/photo-estate/)**: a technical book on how it all works, chapter by chapter, with diagrams. It covers the pipeline, the search, the faces and the native iPhone app.
+
+## The AI in it
+
+Every model here runs on your own computer, on the CPU, and none of them is sent a photo. Four
+things are built on them:
+
+| | What it does | What it runs on |
+|---|---|---|
+| **Describe a photo to find it** | "dog in the snow" finds those photos, with no tags | SigLIP 2 image and text embeddings |
+| **Who is in it** | Name a person once and they are found everywhere, from baby to adult | InsightFace face embeddings, compared a couple of years at a time |
+| **Your best photos first** | The cover of a year, the order of a month and the top of a burst are the photos you would pick | Two small scorers on the same SigLIP 2 embeddings |
+| **An agent that asks first** | "Hide the photos from the school" becomes a set of photos for you to look over | Any MCP client, or Claude Code on the library's computer |
+
+The last two are new.
+
+**Your best photos first.** A library of 100,000 photos has a few thousand that matter. Photo Estate
+now scores every photo twice: a *quality* scorer tells a real photo from junk (it was taught by a
+general aesthetic model on 20,000 sample photos), and a *taste* scorer orders the good ones the way
+their owner would (it was taught on 653 "which of these two is better?" picks, made in a small
+judging app). A scorer is one weight per embedding dimension, so a photo's score is a dot product
+with numbers the app already holds: scoring 100,000 photos takes milliseconds when the catalog
+loads, and a photo that arrives tomorrow needs no extra step. The scores are used wherever the app
+chooses a photo for you. Each year, month and trip is shown by its best photo:
+
+![The Library by year, each year shown by its best photo](docs/screenshots/library-years.jpg)
+
+A month can be put **best first**, and so can a described search, which then keeps only the closest
+matches and shows the best of them first:
+
+![A search for "mountains", the closest matches with the best first](docs/screenshots/search-best-first.jpg)
+
+**Stacks.** Shots taken within ten seconds of each other that look almost the same (a burst, or
+the same photo saved twice) show as one photo with the others behind it, and the one on top is the
+best. On a 106,000-photo library that is about 13,200 stacks holding 34,600 photos. Nothing is
+deleted; open the stack to see them all.
+
+**An agent that asks first.** The running app is also an [MCP](https://modelcontextprotocol.io/)
+server (`/mcp`), so an agent can search the library with the same models you do. Two rules keep
+that safe. The agent never sees a photo: every tool answers with ids, scores, dates, places and
+names, so nothing of what a photo shows leaves your computer. And it cannot change anything: all it
+can do is propose a **change set**, a list of photos and what to do to them. You look the set over
+as a wall of photos, mark the ones to keep, and apply it; a set can be reverted as one unit until
+you commit it. The first operation is *hide*, which leaves a photo in the store and takes it out of
+every view.
+
+![A change set to review: six photos an agent proposed hiding](docs/screenshots/changes-review.jpg)
+
+You can also type the request into the Changes page. It is then worked on by an agent on the
+library's own computer (Claude Code, run with every built-in tool switched off, so it can call the
+library's tools and nothing else), and ends in a change set like the one above.
+
+The demo library has no scorers, so it has no "Best first" and its covers are the middle photo of
+each period; these pictures are of the demo photos with the author's scorers installed.
+[Chapter 25 of the book](docs/book/25-best-photos.md) tells how the scorers were made, including
+the first plan, which was wrong.
+
+## Plain files underneath
 
 Everything runs on your own machine. The archive is deliberately boring: **plain files plus one
 SQLite file.** No app, this one included, is needed to read it. If every script here disappeared,
@@ -41,6 +100,7 @@ Things to try:
   least-bad guesses.
 - Open a photo, then press **More like this**.
 - In the Library, zoom out to **Years** or **Months**; in Search, filter by **Where**, **When** or **Camera**.
+- Open **Changes** from the Library's **⋯** menu to see where an agent's proposals are reviewed.
 
 The demo photos come in groups of eight that look alike (lighthouses, coffee, kittens, snowy
 peaks, hot air balloons, sand dunes...), and nothing in the catalog says which group a photo is
@@ -102,7 +162,7 @@ whatever is showing, and combine with a description. The web app is laid out as 
 a Library tab (every photo, or a card a year or a month) and a Search tab, with the same view
 options (order, five photo sizes, stack near-identical shots, hide screenshots).
 
-![The Where filter over the library, grouped by month](docs/screenshots/library-filters.jpg)
+![The Where filter, open over a search for "sunset"](docs/screenshots/search-filters.jpg)
 
 <img align="right" width="260" src="docs/screenshots/phone-kitten.jpg" alt="The app on a phone, searching for kitten">
 
@@ -130,16 +190,18 @@ and full-screen copies of favourites and anything you've opened, within a size c
 
 <table>
 <tr>
-<td width="25%"><img src="docs/screenshots/ios-library.jpg" alt="The Library tab: photos grouped by month and place"></td>
+<td width="25%"><img src="docs/screenshots/ios-library.jpg" alt="The Library tab by year, each year shown by its best photo"></td>
 <td width="25%"><img src="docs/screenshots/ios-search.jpg" alt="The Search tab: trips, photos through the years"></td>
-<td width="25%"><img src="docs/screenshots/ios-kitten.jpg" alt="Searching for kitten"></td>
+<td width="25%"><img src="docs/screenshots/ios-best-first.jpg" alt="A search for kitten, with the view options open: best match first or best first"></td>
 <td width="25%"><img src="docs/screenshots/ios-details.jpg" alt="A photo's details: date, camera, exposure"></td>
 </tr>
 </table>
 
-- **Library** is a justified grid grouped by month and place, with a viewer (zoom, swipe, share)
-  and details like the back of a print: date, camera and exposure, with a tap to "everything
-  taken around then".
+- **Library** is a justified grid grouped by month and place, or a card for each year or month,
+  with a viewer (zoom, swipe, share) and details like the back of a print: date, camera and
+  exposure, with a tap to "everything taken around then".
+- **Best first, covers and stacks** work as on the web, and offline: the server sends each photo's
+  score and stack with the catalog, so the phone orders and stacks them itself.
 - **Search** runs on the phone against its own copy: people, places, dates, albums, cameras and
   typed filters (`place:denmark`), with the same live-count filters as the web app. Trips and a
   photos-per-year chart sit under the search field.
@@ -282,6 +344,19 @@ often but have no name are grouped for you to name. Everything you decide is als
 in a photo already settled for someone is never suggested as them. The model weights are for
 non-commercial use.
 
+**Best photos and stacks.** The catalog keeps the two scorers (`scores.py`), not a score per photo:
+"best first" is the good photos (quality of 5 or more, on the aesthetic model's scale of about 1 to
+7) by taste, then the rest by quality. Stacks (`stacks.py`) join photos taken within 10 seconds
+whose embeddings are at least 0.97 alike, comparing each photo only with the eight before it. Both
+are worked out when the catalog loads, not stored. The scorers are made with the tools in
+`tools/aesthetics/` (`score_library.py`, `judge.py`, `train_taste.py`) and put in the catalog with
+`scores.py install`.
+
+**Change sets, MCP and tasks.** `changes.py` holds proposed edits and what was decided about each
+photo; `estate_mcp.py` is the `/mcp` endpoint (find photos, read what is known of one, propose a
+set); `tasks.py` hands a request in words to an agent on this computer and keeps what it did as a
+list of events.
+
 **Query log.** The app appends every search and every photo opened from a result list to
 `query-log.jsonl` next to the catalog, on your machine only (`--query-log` to move it). It's there
 to pick evaluation queries from real use: each search keeps its top 20 results and how it was
@@ -328,6 +403,12 @@ photo-estate/
   sync.py              GET /api/sync: the catalog as a change feed, for devices that keep a copy
   upload.py            receives phone uploads into an inbox folder (PUT /api/upload)
   ingest-iphone.sh     catalogue what the phone uploaded, touching only the new photos
+  scores.py            which photos are best: the two scorers, kept in the catalog
+  stacks.py            near-identical shots as one stack
+  changes.py           change sets: an edit is proposed, looked over, then applied (and can be undone)
+  changes.html         the page for reviewing a change set, at /changes in the photo app
+  estate_mcp.py        the library as tools for an agent, at /mcp on the running app
+  tasks.py             a request in words, worked on by an agent on the library's computer
   faces.py             faces: run (detect and embed), serve; who is who, with your help
   people.html          the page for naming people, at /people in the photo app
   app/                 home-screen app files: manifest, icons, service worker
@@ -341,6 +422,7 @@ photo-estate/
   tests/test_mcp.py    the MCP endpoint: handshake, finding photos, proposing a change set; an agent cannot apply one
   tests/test_tasks.py  tasks: a request handed to the agent on this computer, with a stand-in for Claude Code
   tools/               demo builder, screenshots, icon maker, speed benchmarks
+  tools/aesthetics/    making the scorers: score a sample, judge pairs, train the taste scorer
   deploy/              running the app as an always-on service (launchd agents, Mac mini guide)
   PLAN.md              the overall plan and phases
   DISK-SETUP.md        choosing and preparing storage, the overnight pull, checking the archive
@@ -409,7 +491,9 @@ catalog stays readable without this code.
 
 The demo photos are CC0 Unsplash photos hosted on Wikimedia Commons; each one's author and source
 is in [photo-estate/demo/CREDITS.md](photo-estate/demo/CREDITS.md). Search uses Google's
-[SigLIP 2](https://huggingface.co/google/siglip2-base-patch16-256), places use
+[SigLIP 2](https://huggingface.co/google/siglip2-base-patch16-256), the quality scorer was taught by
+[Aesthetic Predictor V2.5](https://github.com/discus0434/aesthetic-predictor-v2-5) (used as a teacher
+only; it is not part of the app), places use
 [GeoNames](https://www.geonames.org/) through `reverse_geocode`, and metadata comes from
 [ExifTool](https://exiftool.org/).
 
