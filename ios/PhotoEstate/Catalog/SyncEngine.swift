@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import SwiftUI
 
 /// Keeps the phone's catalog in step with the server's.
@@ -17,7 +18,9 @@ final class SyncEngine: ObservableObject {
     @Published private(set) var photos = 0            // in the phone's catalog
     @Published private(set) var serverTotal = 0       // in the server's, as last heard
     @Published private(set) var lastSynced: Date?
-    @Published private(set) var online = true         // did the last request to the server get an answer
+    /// Did the last request to the server get an answer. Kept current while the app is open: any request
+    /// says so (`markOnline`), a change of network asks again, and while it is false so does a slow knock.
+    @Published private(set) var online = true { didSet { if !online && oldValue { knock() } } }
     /// Goes up whenever the catalog's contents changed: views reload on it.
     @Published private(set) var revision = 0
 
@@ -29,9 +32,41 @@ final class SyncEngine: ObservableObject {
         return URLSession(configuration: c)
     }()
 
+    private let monitor = NWPathMonitor()
+    private var connected = true
+    private var knocking: Task<Void, Never>?
+
     private init() {
         if let t = UserDefaults.standard.object(forKey: "lastSynced") as? Date { lastSynced = t }
         Task { photos = await Catalog.shared.count() }
+        monitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                guard let self else { return }
+                let now = path.status == .satisfied
+                guard now != self.connected else { return }
+                self.connected = now
+                if now { ImageStore.shared.retryNetwork(); await self.sync() } else { self.online = false }   // airplane mode: no need to ask
+            }
+        }
+        monitor.start(queue: .global(qos: .utility))
+    }
+
+    /// While the server can't be reached and the app is in front, ask again, soon and then every half minute, so the
+    /// app notices on its own when it is back (the tailnet coming up changes no network the phone reports).
+    private func knock() {
+        knocking?.cancel()
+        knocking = Task {
+            var wait = 5            // soon the first time: one request that failed is often only a blip
+            while !online {
+                try? await Task.sleep(for: .seconds(wait))
+                wait = 30
+                if Task.isCancelled || online { return }
+                guard connected, UIApplication.shared.applicationState == .active else { continue }
+                ImageStore.shared.retryNetwork()
+                await sync()
+                if online { Downloader.shared.restart() }
+            }
+        }
     }
 
     /// Start a sync unless one is running; returns when it ends.

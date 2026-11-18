@@ -73,11 +73,13 @@ final class ImageStore {
         let url = Server.baseURL.appendingPathComponent("\(kind.rawValue)/\(sha)")
         do {
             let (data, resp) = try await session.data(from: url)
+            Task { @MainActor in SyncEngine.shared.markOnline(true) }
             guard (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { return nil }
             return data
         } catch {
             if (error as? URLError)?.code != .cancelled {
                 lock.lock(); quietUntil = Date().addingTimeInterval(8); lock.unlock()
+                Task { @MainActor in SyncEngine.shared.markOnline(false) }
             }
             return nil
         }
