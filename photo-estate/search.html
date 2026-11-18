@@ -747,17 +747,25 @@ function libShow() {
     const key = L.anchor && (L.scale === "years" ? L.P?.years : L.P?.months)?.find(p => p.key.startsWith(L.anchor))?.key;
     const card = key && (L.scale === "months" && L.anchor.length === 4 && $(`.yr[data-year="${L.anchor}"]`) || $(`.card[data-key="${key}"]`));   // a year opens at its heading
     if (card) card.scrollIntoView({ block: "start" }); else scrollTo(0, L.y["library" + L.scale] || 0);
-  } else if (jump && L.anchor && L.anchor.length > 4) libJump(L.anchor);
-  else { scrollTo(0, L.y.libraryall || 0); setTimeout(() => lgrid.poke(), 30); }
+  } else {
+    clearPeriods();                                  // every photo now: the cards are drawn again when they are next shown
+    if (jump && L.anchor && L.anchor.length > 4) libJump(L.anchor);
+    else { scrollTo(0, L.y.libraryall || 0); setTimeout(() => lgrid.poke(), 30); }
+  }
 }
+// The cards' pictures still on their way are let go: a view that has gone must not hold up the one that replaced it.
+// (A month's own photos queued behind 242 cards' pictures, and the page stayed empty for seconds on a slow link.)
+function dropPending(el) { for (const i of $$("img", el)) if (!i.complete) i.removeAttribute("src"); }
+function clearPeriods() { const el = $("#libPeriods"); dropPending(el); el.innerHTML = ""; }
 function renderPeriods() {
   const big = L.scale === "years", list = (big ? L.P?.years : L.P?.months) || [];
+  dropPending($("#libPeriods"));
   $("#libPeriods").innerHTML = `<div class="head"><h1>Library</h1><p class="num">${esc($("#libHead p").textContent)}</p></div>
     <div class="cards ${L.scale}">${list.map((p, i) => {
       const title = big ? p.key : heading(p.key), y = p.key.slice(0, 4);
       const yr = !big && y !== list[i - 1]?.key.slice(0, 4) ? `<h2 class="yr" data-year="${y}">${y}</h2>` : "";
       const detail = [big ? "" : p.places.join(" · "), photos(p.n)].filter(Boolean).join(" · ");
-      return yr + `<button class="card" data-key="${p.key}" aria-label="${esc(title + ", " + detail)}"><img alt="" src="/thumb/${p.cover}" onload="this.classList.add('in')"><img alt="" loading="lazy" src="/preview/${p.cover}" onload="this.classList.add('in')">
+      return yr + `<button class="card" data-key="${p.key}" aria-label="${esc(title + ", " + detail)}"><img alt="" loading="lazy" src="/thumb/${p.cover}" onload="this.classList.add('in')"><img alt="" loading="lazy" src="/preview/${p.cover}" onload="this.classList.add('in')">
         <span class="ct"><b>${esc(title)}</b><small>${esc(detail)}</small>${big && p.places.length ? `<small>${esc(p.places.join(" · "))}</small>` : ""}</span></button>`;
     }).join("")}</div>`;
 }
@@ -796,6 +804,8 @@ async function libJump(key) {                         // the whole library, at t
   const m = L.P.months.find(x => x.key === key);
   if (!m) return;
   lgrid.clear(); scrollTo(0, 0);                      // not the photos of wherever the grid was, while this month's are on their way
+  lgrid.el.innerHTML = `<section><div class="sh"><h2>${esc(heading(key))}</h2><p><span class="n num">${photos(m.n)}</span></p></div></section>`;   // the month, said at once
+  $("#libHead").hidden = true;
   await lgrid.load(m.at);
   if (L.scale === "all") { scrollTo(0, 0); toSection(key); setTimeout(() => lgrid.poke(), 30); }
 }
