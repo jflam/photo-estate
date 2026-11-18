@@ -310,7 +310,7 @@ def cmd_serve(a) -> None:
     from urllib.parse import parse_qs, quote, unquote, urlparse
 
     from changes import Changes, hidden_shas
-    from scores import best_first, load as load_scorers
+    from scores import best as best_score, best_first, load as load_scorers
     from stacks import group as stack_group, seconds as stack_seconds, tops as stack_tops
     from estate_mcp import Server as MCPServer
     from estate import facts_of as estate_facts
@@ -565,6 +565,7 @@ def cmd_serve(a) -> None:
         oldest = np.argsort(when, kind="stable")
         oldest = np.concatenate([oldest[when[oldest] != ""], oldest[when[oldest] == ""]])   # undated last, either way
         newest = np.concatenate([oldest[when[oldest] != ""][::-1], oldest[when[oldest] == ""]])
+        score = best_score(M, scorers)  # what "Best first" sorts by, larger is better; None with no scorers
         best = best_first(M, scorers)   # every photo, best first; None when the catalog has no scorers
         rank = None                     # each photo's place in that order (0 is the best)
         if best is not None:
@@ -658,15 +659,15 @@ def cmd_serve(a) -> None:
 
     # The names load_state() produces. Handlers read them as plain variables; install() rebinds them all
     # at once while no request is being served, so a search never sees half of an old and half of a new catalog.
-    STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'shot', 'ars', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re', 'visible', 'best', 'rank', 'stack_of', 'stack_n', 'dup')
-    shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, best, rank, stack_of, stack_n, dup, info = (None,) * 37
+    STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'shot', 'ars', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re', 'visible', 'best', 'rank', 'stack_of', 'stack_n', 'dup', 'score')
+    shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, best, rank, stack_of, stack_n, dup, score, info = (None,) * 38
 
     loaded = {}   # what the installed state was read from: the next reload starts from it
 
     def install(st: dict) -> None:
         loaded["raw"] = st["_raw"]
-        nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, best, rank, stack_of, stack_n, dup, info
-        shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, best, rank, stack_of, stack_n, dup = (st[k] for k in STATE)
+        nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, best, rank, stack_of, stack_n, dup, score, info
+        shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, best, rank, stack_of, stack_n, dup, score = (st[k] for k in STATE)
         info = {"total": int(visible.sum()), "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
                 "demo": bool(a.demo), "faces": has_faces, "best": best is not None, **facet_counts({})}
 
@@ -744,14 +745,26 @@ def cmd_serve(a) -> None:
     feed = Feed(Path(a.db).resolve().parent / "sync-feed.db")
     feed_dups = None   # set once feed_update has run
 
+    def feed_extra(i: int) -> dict:
+        """What a device needs to order and stack a photo as the app does, and cannot work out without the
+        vectors: `dup` for a shot behind another in its stack, `stack_of` naming the stack (its earliest
+        photo), and `best`, what "Best first" sorts by (larger is better). The score, not the photo's
+        place in the order: a place changes for every photo whenever one arrives, a score does not."""
+        out = {}
+        if dup[i]:
+            out["dup"] = True
+        if stack_of[i] >= 0:
+            out["stack_of"] = shas[stack_of[i]]
+        if score is not None:
+            out["best"] = round(float(score[i]), 3)
+        return out
+
     def feed_update():
-        """Tell the feed what the catalog now holds. A row is the photo's search result, plus `dup` for a
-        shot that is behind another in its stack (stacks.py), which a device cannot work out without the
-        vectors."""
+        """Tell the feed what the catalog now holds. A row is the photo's search result, plus feed_extra."""
         nonlocal feed_dups
         t, S, mt, vis = time.time(), shas, meta, visible
         dups = {S[i] for i in np.flatnonzero(dup & vis).tolist()}
-        n = feed.update({s: dict(mt[s], dup=True) if s in dups else mt[s] for s, v in zip(S, vis) if v})
+        n = feed.update({s: dict(mt[s], **feed_extra(i)) for i, (s, v) in enumerate(zip(S, vis)) if v})
         feed_dups = dups
         print(f"sync feed: version {feed.version}, {n} rows changed ({time.time() - t:.1f}s)", flush=True)
 
@@ -1061,7 +1074,7 @@ def cmd_serve(a) -> None:
                 hidden += 1
                 continue
             kept.append(i)
-        rows = [dict(sha=shas[i], **meta[shas[i]], **({"stack": int(stack_n[i])} if stack_n[i] > 1 else {})) for i in kept]
+        rows = [dict(sha=shas[i], **meta[shas[i]], **({"stack": int(stack_n[i]), "stack_of": shas[stack_of[i]]} if stack_n[i] > 1 else {})) for i in kept]
         return rows, hidden, pos if pos < len(order) else None
 
     def image(sha: str, kind: str, side: int) -> bytes | None:
@@ -1507,7 +1520,7 @@ def cmd_serve(a) -> None:
                     since = one("since", "0")
                     ids, deleted, (ver, after), more = feed.page(one("epoch"), int(since) if since.isdigit() else 0,
                                                                  one("after"), max(1, min(int(one("limit", "2000")), 10000)))
-                    rows = [dict(sha=s, **meta[s], **({"dup": True} if feed_dups and s in feed_dups else {})) for s in ids if s in meta]
+                    rows = [dict(sha=s, **meta[s], **feed_extra(index[s])) for s in ids if s in meta]
                     return self.json({"epoch": feed.epoch, "photos": rows, "deleted": deleted, "since": ver, "after": after,
                                       "more": more, "total": info["total"], "trips": [] if more else trip_list})
                 if u.path in app_files:

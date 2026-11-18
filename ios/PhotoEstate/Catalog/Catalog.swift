@@ -34,6 +34,9 @@ struct Photo: Identifiable, Equatable {
     var tripTitle: String?
     var people: [String] = []
     var albums: [String] = []
+    var stackOf: String?      // the stack it is in (near-identical shots taken together), named by one of its photos
+    var stackN = 0            // how many photos that stack holds
+    var best: Double?         // what "Best first" sorts by: larger is better
 
     var id: String { sha }
     var when: String { local ?? taken ?? "" }
@@ -55,11 +58,13 @@ struct Photo: Identifiable, Equatable {
         placeInferred = (j["place_inferred"] as? Bool) ?? false
         event = n("event"); eventTitle = s("event_title"); trip = n("trip"); tripTitle = s("trip_title")
         people = (j["people"] as? [String]) ?? []; albums = (j["albums"] as? [String]) ?? []
+        stackOf = s("stack_of"); stackN = n("stack").map(Int.init) ?? 0; best = d("best")
     }
 
     static let columns = """
         sha, ext, taken, local, tz, lat, lon, descr, fav, w, h, ar, path, camera, lens, focal, focal35, fnumber, \
-        exposure, iso, place, city, region, country, county, place_inferred, event, event_title, trip, trip_title, people, albums
+        exposure, iso, place, city, region, country, county, place_inferred, event, event_title, trip, trip_title, people, albums, \
+        stack, best
         """
 
     /// From a row selected with `columns`.
@@ -75,6 +80,7 @@ struct Photo: Identifiable, Equatable {
         place = r.string(20); city = r.string(21); region = r.string(22); country = r.string(23); county = r.string(24)
         placeInferred = r.bool(25); event = r.optInt(26); eventTitle = r.string(27); trip = r.optInt(28); tripTitle = r.string(29)
         people = list(30); albums = list(31)
+        stackOf = r.string(32); best = r.optDouble(33)
     }
 }
 
@@ -85,6 +91,8 @@ struct Tile: Equatable {
     let when: String      // local wall-clock time, "" if undated
     let city: String?     // "Paris, Île-de-France, France"
     let fav: Bool
+    var stack: Int32 = 0              // photos in its stack, 0 for a photo on its own
+    var best: Float = -.infinity      // what "Best first" sorts by; -infinity when the server has not said
 }
 
 struct Trip: Identifiable, Equatable {
@@ -121,7 +129,8 @@ final class Catalog {
             focal REAL, focal35 REAL, fnumber REAL, exposure REAL, iso REAL,
             place TEXT, city TEXT, region TEXT, country TEXT, county TEXT, place_inferred INTEGER NOT NULL DEFAULT 0,
             event INTEGER, event_title TEXT, trip INTEGER, trip_title TEXT, people TEXT, albums TEXT,
-            place_lc TEXT, place_words TEXT, camera_lc TEXT, albums_lc TEXT, people_lc TEXT, epoch TEXT);
+            place_lc TEXT, place_words TEXT, camera_lc TEXT, albums_lc TEXT, people_lc TEXT, epoch TEXT,
+            stack TEXT, best REAL);
         CREATE INDEX IF NOT EXISTS photos_when ON photos(whenk);
         CREATE INDEX IF NOT EXISTS photos_event ON photos(event);
         CREATE INDEX IF NOT EXISTS photos_trip ON photos(trip);
@@ -131,15 +140,24 @@ final class Catalog {
         CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(text, tokenize='unicode61 remove_diacritics 2');
         """
 
+    /// A catalog from a build before stacks and "Best first" gets their two columns. They fill in as the
+    /// server sends every photo again (its rows changed when it began to send them).
+    private static func migrate(_ db: SQLite) throws {
+        let have = Set(try db.query("PRAGMA table_info(photos)") { $0.text(1) })
+        if !have.contains("stack") { try db.exec("ALTER TABLE photos ADD COLUMN stack TEXT") }
+        if !have.contains("best") { try db.exec("ALTER TABLE photos ADD COLUMN best REAL") }
+        try db.exec("CREATE INDEX IF NOT EXISTS photos_stack ON photos(stack)")
+    }
+
     let store: Store
 
     private init() {
         let path = Catalog.folder.appendingPathComponent("catalog.db").path
         do {
-            store = try Store(path: path, schema: Catalog.schema)
+            store = try Store(path: path, schema: Catalog.schema, migrate: Catalog.migrate)
         } catch {     // a damaged replica is not worth repairing: start again
             for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) }
-            store = try! Store(path: path, schema: Catalog.schema)
+            store = try! Store(path: path, schema: Catalog.schema, migrate: Catalog.migrate)
         }
     }
 
@@ -165,8 +183,8 @@ final class Catalog {
     private static let upsert = """
         INSERT INTO photos (sha, ext, taken, local, tz, whenk, ym, lat, lon, descr, fav, dup, w, h, ar, path, camera, lens,
             focal, focal35, fnumber, exposure, iso, place, city, region, country, county, place_inferred, event, event_title,
-            trip, trip_title, people, albums, place_lc, place_words, camera_lc, albums_lc, people_lc, epoch)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            trip, trip_title, people, albums, place_lc, place_words, camera_lc, albums_lc, people_lc, epoch, stack, best)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(sha) DO UPDATE SET ext=excluded.ext, taken=excluded.taken, local=excluded.local, tz=excluded.tz,
             whenk=excluded.whenk, ym=excluded.ym, lat=excluded.lat, lon=excluded.lon, descr=excluded.descr, fav=excluded.fav,
             dup=excluded.dup, w=excluded.w, h=excluded.h, ar=excluded.ar, path=excluded.path, camera=excluded.camera,
@@ -175,7 +193,8 @@ final class Catalog {
             country=excluded.country, county=excluded.county, place_inferred=excluded.place_inferred, event=excluded.event,
             event_title=excluded.event_title, trip=excluded.trip, trip_title=excluded.trip_title, people=excluded.people,
             albums=excluded.albums, place_lc=excluded.place_lc, place_words=excluded.place_words, camera_lc=excluded.camera_lc,
-            albums_lc=excluded.albums_lc, people_lc=excluded.people_lc, epoch=excluded.epoch
+            albums_lc=excluded.albums_lc, people_lc=excluded.people_lc, epoch=excluded.epoch,
+            stack=excluded.stack, best=excluded.best
         """
 
     /// One page of the server's feed. Runs inside the caller's transaction.
@@ -195,7 +214,8 @@ final class Catalog {
                 p.exposure, p.iso, p.place, p.city, p.region, p.country, p.county, p.placeInferred, p.event, p.eventTitle,
                 p.trip, p.tripTitle, json(p.people), json(p.albums), placeText.lowercased(), words(placeText),
                 [p.camera, p.lens].compactMap { $0 }.joined(separator: " ").lowercased(),
-                p.albums.joined(separator: " | ").lowercased(), p.people.joined(separator: " | ").lowercased(), epoch])
+                p.albums.joined(separator: " | ").lowercased(), p.people.joined(separator: " | ").lowercased(), epoch,
+                p.stackOf, p.best])
             guard let id = try db.one("SELECT id FROM photos WHERE sha=?", [p.sha], { $0.int(0) }) else { continue }
             try db.run("DELETE FROM tags WHERE id=?", [id])
             try db.run("DELETE FROM fts WHERE rowid=?", [id])
@@ -233,7 +253,16 @@ final class Catalog {
     }
 
     func photo(_ sha: String) async -> Photo? {
-        try? await store.read { try $0.one("SELECT \(Photo.columns) FROM photos WHERE sha=?", [sha]) { Photo(row: $0) } }
+        try? await store.read { db in
+            guard var p = try db.one("SELECT \(Photo.columns) FROM photos WHERE sha=?", [sha], { Photo(row: $0) }) else { return nil }
+            if let s = p.stackOf { p.stackN = try db.one("SELECT count(*) FROM photos WHERE stack=?", [s]) { Int($0.int(0)) } ?? 0 }
+            return p
+        }
+    }
+
+    /// Has the server said which photos are best. Until it has, there is no "Best first".
+    func hasBest() async -> Bool {
+        ((try? await store.read { try $0.one("SELECT 1 FROM photos WHERE best IS NOT NULL LIMIT 1") { _ in true } }) ?? nil) ?? false
     }
 
     func trips() async -> [Trip] {

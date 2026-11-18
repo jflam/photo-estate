@@ -560,12 +560,45 @@ private final class Scrubber: UIView {
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { bounds.insetBy(dx: -14, dy: -10).contains(point) }
 }
 
+/// The count on the top photo of a stack.
+private final class StackBadge: UIView {
+    private let icon = UIImageView(image: UIImage(systemName: "square.stack.fill",
+                                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .semibold)))
+    private let label = UILabel()
+    var count = 0 { didSet { label.text = String(count) } }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        isUserInteractionEnabled = false
+        icon.tintColor = .white
+        icon.contentMode = .center
+        label.textColor = .white
+        label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        addSubview(icon)
+        addSubview(label)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func sizeThatFits(_ size: CGSize) -> CGSize {
+        CGSize(width: 24 + ceil(label.intrinsicContentSize.width), height: 18)
+    }
+
+    override func layoutSubviews() {
+        layer.cornerRadius = bounds.height / 2
+        icon.frame = CGRect(x: 4, y: 0, width: 14, height: bounds.height)
+        label.frame = CGRect(x: 19, y: 0, width: max(0, bounds.width - 23), height: bounds.height)
+    }
+}
+
 /// One photo in a row.
 private final class TileView: UIImageView {
     private var sha = ""
     private var task: Task<Void, Never>?
     private let heart = UIImageView(image: UIImage(systemName: "heart.fill"))
     private let mine = UIImageView(image: UIImage(systemName: "arrow.up.circle.fill"))   // on this iPhone, not yet on the server
+    private let stack = StackBadge()      // the top of a stack: how many shots it holds
     var index = 0
 
     override init(frame: CGRect) {
@@ -588,6 +621,7 @@ private final class TileView: UIImageView {
         mine.layer.shadowOffset = .zero
         mine.contentMode = .scaleAspectFit
         addSubview(mine)
+        addSubview(stack)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -596,14 +630,18 @@ private final class TileView: UIImageView {
         super.layoutSubviews()
         heart.frame = CGRect(x: 6, y: bounds.height - 19, width: 14, height: 13)
         mine.frame = CGRect(x: bounds.width - 20, y: bounds.height - 20, width: 15, height: 15)
+        let s = stack.sizeThatFits(.zero)
+        stack.frame = CGRect(x: 5, y: 5, width: s.width, height: s.height)
     }
 
     func show(_ tile: Tile, index i: Int) {
         index = i
         heart.isHidden = !tile.fav
         mine.isHidden = !tile.isLocal
+        stack.isHidden = tile.stack < 2
+        if !stack.isHidden { stack.count = Int(tile.stack); setNeedsLayout() }
         accessibilityLabel = [Dates.long(tile.when), tile.city?.split(separator: ",").first.map(String.init), tile.fav ? "favourite" : nil,
-                              tile.isLocal ? "not yet on the server" : nil]
+                              stack.isHidden ? nil : "stack of \(tile.stack)", tile.isLocal ? "not yet on the server" : nil]
             .compactMap { $0 }.joined(separator: ", ")
         guard tile.sha != sha || image == nil else { return }
         task?.cancel()

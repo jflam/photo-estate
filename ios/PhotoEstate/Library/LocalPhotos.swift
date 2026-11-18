@@ -253,7 +253,7 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
     /// The pending tiles a question allows: only for browsing by time, favourites and dates (people,
     /// places and the rest are known only once the server has the photo).
     func tiles(for q: Query, hideShots: Bool = false) -> [Tile] {
-        guard show, allowed, q.text.isEmpty, q.similar == nil, q.event == nil, !q.picks.values.contains(where: { !$0.isEmpty }) else { return [] }
+        guard show, allowed, q.text.isEmpty, q.similar == nil, q.event == nil, q.stack == nil, !q.picks.values.contains(where: { !$0.isEmpty }) else { return [] }
         return pending.filter { t in
             if q.fav && !t.fav { return false }
             if hideShots && screenshots.contains(t.sha) { return false }

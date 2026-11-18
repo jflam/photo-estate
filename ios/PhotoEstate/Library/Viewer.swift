@@ -168,6 +168,10 @@ struct InfoView: View {
                     }
                     .background(Color.well, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
+                if let s = photo.stackOf, photo.stackN > 1 {
+                    link("square.stack", "Stack of \(photo.stackN)", "Near-identical shots taken together") { go(Query(stack: s)) }
+                        .background(Color.well, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
                 if !photo.people.isEmpty { chips("With", photo.people, .person) }
                 if !photo.albums.isEmpty { chips("In", photo.albums, .album) }
                 if photo.camera != nil || !exposure.isEmpty { camera }

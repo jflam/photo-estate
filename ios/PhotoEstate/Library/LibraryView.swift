@@ -278,9 +278,12 @@ struct ViewMenu: View {
     var body: some View {
         Menu {
             if !model.ranked {
-                Picker("Order", selection: Binding(get: { model.oldFirst }, set: { v in var q = model.query; q.oldFirst = v; model.query = q })) {
-                    Label("Newest first", systemImage: "arrow.down").tag(false)
-                    Label("Oldest first", systemImage: "arrow.up").tag(true)
+                Picker("Order", selection: Binding(get: { model.order }, set: { v in var q = model.query; q.order = v; model.query = q })) {
+                    Label("Newest first", systemImage: "arrow.down").tag(Order.new)
+                    Label("Oldest first", systemImage: "arrow.up").tag(Order.old)
+                    if model.hasBest {
+                        Label(model.query.isEmpty ? "Best first in each month" : "Best first", systemImage: "sparkles").tag(Order.best)
+                    }
                 }
             }
             Picker("Photo size", selection: Binding(get: { Estate.densities.min { abs($0 - model.rowHeight) < abs($1 - model.rowHeight) } ?? 128 },
@@ -291,7 +294,7 @@ struct ViewMenu: View {
                 Label("Large", systemImage: "square.grid.2x2.fill").tag(Estate.densities[3])
                 Label("Largest", systemImage: "rectangle.grid.1x2.fill").tag(Estate.densities[4])
             }
-            Toggle("Hide near-identical shots", systemImage: "square.on.square.dashed", isOn: $model.hideDups)
+            Toggle("Stack near-identical shots", systemImage: "square.stack", isOn: $model.hideDups)
             Toggle("Hide screenshots", systemImage: "rectangle.portrait.slash", isOn: $model.hideShots)
             Toggle("Show photos not yet on the server", systemImage: "iphone", isOn: $local.show)
         } label: { Image(systemName: "line.3.horizontal.decrease").foregroundStyle(Color.primary) }
