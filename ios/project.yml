@@ -9,6 +9,8 @@ settings:
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: M52ASUK669
     CODE_SIGN_STYLE: Automatic
+    # Which build this is, shown in the app's settings. `deploy.sh` counts it up; 0 is a build made by hand.
+    CURRENT_PROJECT_VERSION: 0
     # The photo app, as `tailscale serve` publishes it. Override for the Simulator against a local server:
     #   xcodebuild ... SERVER_BASE=http://127.0.0.1:8791
     SERVER_BASE: https://johns-mac-mini.taila5abb.ts.net:8766
@@ -21,6 +23,7 @@ targets:
       path: PhotoEstate/Info.plist
       properties:
         CFBundleDisplayName: Photo Estate
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         NSPhotoLibraryUsageDescription: Photo Estate uploads the photos and videos you take to your own server.
@@ -44,6 +47,7 @@ targets:
       path: UploadExtension/Info.plist
       properties:
         CFBundleDisplayName: Photo Estate Upload
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         EXAppExtensionAttributes:
           EXExtensionPointIdentifier: com.apple.photos.background-upload
         BackgroundUploadURLBase: $(SERVER_BASE)

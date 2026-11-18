@@ -12,6 +12,8 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     CODE_SIGN_STYLE: Automatic
+    # Which build this is, shown in the app's settings. `deploy.sh` counts it up; 0 is a build made by hand.
+    CURRENT_PROJECT_VERSION: 0
     SERVER_BASE: http://127.0.0.1:8791
 targets:
   PhotoEstate:
@@ -26,6 +28,7 @@ targets:
       path: build/sim-Info.plist
       properties:
         CFBundleDisplayName: Photo Estate
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         NSPhotoLibraryUsageDescription: Photo Estate uploads the photos and videos you take to your own server.
