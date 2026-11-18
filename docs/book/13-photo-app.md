@@ -199,11 +199,14 @@ month. Each card has its `key` (`"2019"`, `"2019-07"`), how many photos, `at` (w
 the Library's list, which is a `cursor`), a cover chosen by the server (a favourite if there is one, a
 landscape photo if not, nearest the middle) and its top places. `renderPeriods` draws them as a grid of
 large cards: the cover's thumbnail at once, its 1600 px preview over it once loaded, the title and places
-over a gradient. Years cards are taller than month cards.
+over a gradient. Years cards are taller than month cards. In Months, each year's cards start a new row
+under a heading with the year, so a row never holds months of two years.
 
-- **Tap a year** and you see Months, scrolled to that year's months.
+- **Tap a year** and you see Months, scrolled to that year's heading.
 - **Tap a month** and you see All, at that month: `libJump` scrolls there if it has loaded, and otherwise
-  calls `lgrid.load(m.at)`, opening the grid at that month's position and letting it fill in above and below.
+  empties the grid (`lgrid.clear()`, so the photos of wherever it was are not what shows while the month's
+  are on their way, and their thumbnails stop loading) and calls `lgrid.load(m.at)`, opening the grid at
+  that month's position and letting it fill in above and below.
 
 Each card opened is pushed onto `L.trail` as `{key, back}` (the card, and the scale it was opened from) and
 becomes a history step. **Back** (the bar's button, the browser's, or a swipe in from the left edge) walks
