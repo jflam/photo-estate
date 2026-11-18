@@ -8,7 +8,9 @@ struct ContentView: View {
 
     var body: some View {
         TabView(selection: $router.tab) {
-            Tab("Library", systemImage: "photo.on.rectangle.angled", value: Router.Tab.library) {
+            // The Library is home, so its tab carries the app's mark (the icon's house-shaped print) as a glyph
+            // that takes the bar's tint, as a tab's image should; the icon itself, in colour, is not for bars.
+            Tab("Library", image: "LibraryTab", value: Router.Tab.library) {
                 LibraryView(model: router.library)
             }
             Tab(value: Router.Tab.search, role: .search) {
