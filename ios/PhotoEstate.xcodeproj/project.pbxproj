@@ -36,6 +36,7 @@
 		CE22826852E92D840A7B1225 /* SQLite.swift in Sources */ = {isa = PBXBuildFile; fileRef = 794AA7DFA9B8BAA96DBCB824 /* SQLite.swift */; };
 		EA1710B04115F1FD66E800EE /* ThisPhoneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21728C81D6B57F7D6EEF0A0C /* ThisPhoneView.swift */; };
 		F01E75E6D291E3A81B31322C /* Design.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4503FC9D5C8552FE236265A /* Design.swift */; };
+		F363B95365004BDB71DE19E0 /* OnPhone.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5E560BE3107136057AF0BF1 /* OnPhone.swift */; };
 		F58F69FB3166A10E8F99D0D4 /* UploadExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DF2FAB3068A53E42312D37B /* UploadExtension.swift */; };
 /* End PBXBuildFile section */
 
@@ -91,6 +92,7 @@
 		AEE651EC1DD5BDE7F2916803 /* Downloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Downloader.swift; sourceTree = "<group>"; };
 		B0EB3354475D6973BFC7E471 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		C374A6ECFA2C13906E7BF025 /* FilterSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilterSheet.swift; sourceTree = "<group>"; };
+		C5E560BE3107136057AF0BF1 /* OnPhone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnPhone.swift; sourceTree = "<group>"; };
 		D138D459277DE48E8CDA729B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D2D5A1D8D1E8B9DAE50D5508 /* UploadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadsView.swift; sourceTree = "<group>"; };
 		E3178D012C22122C2DAE4CEF /* Screenshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screenshots.swift; sourceTree = "<group>"; };
@@ -187,6 +189,7 @@
 				6CC1686A083A42F8A7A48D56 /* LibraryModel.swift */,
 				B0EB3354475D6973BFC7E471 /* LibraryView.swift */,
 				911D864538DA2625F4E7F118 /* LocalPhotos.swift */,
+				C5E560BE3107136057AF0BF1 /* OnPhone.swift */,
 				18291ADB02AC4A348B6FEDDF /* SearchView.swift */,
 				1E355F1F7B58B55F09E276FB /* Viewer.swift */,
 			);
@@ -311,6 +314,7 @@
 				CABB699FEF48F48D7B72E8A1 /* LibraryModel.swift in Sources */,
 				25D4464A43C536BDB69EFF31 /* LibraryView.swift in Sources */,
 				3A4612C0B97ADFF30F846267 /* LocalPhotos.swift in Sources */,
+				F363B95365004BDB71DE19E0 /* OnPhone.swift in Sources */,
 				C767DF4E23F7FE4C51F17991 /* PhotoEstateApp.swift in Sources */,
 				82C1E09F51F7BA649B2D7294 /* Query.swift in Sources */,
 				CE22826852E92D840A7B1225 /* SQLite.swift in Sources */,
@@ -389,6 +393,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 0;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = M52ASUK669;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -502,6 +507,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 0;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = M52ASUK669;
 				ENABLE_NS_ASSERTIONS = NO;

@@ -72,7 +72,7 @@ struct ThisPhoneView: View {
                     NavigationLink("Name people") { web("people", "People") }
                     NavigationLink("Library info") { web("stats", "Library info") }
                 } header: { Text("Server") } footer: {
-                    Text(Server.baseURL.host() ?? "")
+                    Text([Server.baseURL.host() ?? "", "Build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?")"].filter { !$0.isEmpty }.joined(separator: "  ·  "))
                 }
             }
             .scrollContentBackground(.hidden)
