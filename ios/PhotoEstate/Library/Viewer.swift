@@ -1,3 +1,4 @@
+import Combine
 import MapKit
 import SwiftUI
 import UIKit
@@ -9,6 +10,7 @@ import UIKit
 struct ViewerScreen: View {
     @ObservedObject var session: ViewerSession
     @ObservedObject var model: LibraryModel
+    @ObservedObject private var sync = SyncEngine.shared
     var route: (Query) -> Void              // a link out of the viewer: show these photos instead
 
     @State private var chrome = true
@@ -51,7 +53,7 @@ struct ViewerScreen: View {
             Spacer()
             VStack(spacing: 3) {
                 Text(Dates.long(tile.when)).font(.title(17))
-                Text([Dates.clock(tile.when), tile.city?.split(separator: ",").first.map(String.init) ?? "", tile.isLocal ? "Not yet on the server" : ""]
+                Text([Dates.clock(tile.when), tile.city?.split(separator: ",").first.map(String.init) ?? "", tile.isLocal ? "Not yet on the server" : "", sync.online ? "" : "Offline"]
                         .filter { !$0.isEmpty }.joined(separator: "  ·  "))
                     .font(.caption).opacity(0.75)
             }
@@ -429,6 +431,9 @@ final class PhotoPage: UIViewController, UIScrollViewDelegate {
     private var fitted = CGSize.zero
     private var task: Task<Void, Never>?
     private var large = false
+    private var sharp = false           // the full-screen image is showing, not just the thumbnail
+    private var asked = false           // ...and it has been asked for, and didn't come
+    private var back: AnyCancellable?
 
     init(tile: Tile, index: Int) {
         self.tile = tile
@@ -464,13 +469,33 @@ final class PhotoPage: UIViewController, UIScrollViewDelegate {
         scroll.addGestureRecognizer(single)
 
         imageView.image = ImageStore.shared.ready(tile.sha)
+        load()
+        // A page that could only show its thumbnail (the server was away) sharpens when the server is back.
+        back = SyncEngine.shared.$online.removeDuplicates().dropFirst().filter { $0 }.receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.sharpen() }
+    }
+
+    private func load() {
+        task?.cancel()
+        asked = false
         let sha = tile.sha
         task = Task { [weak self] in
             if self?.imageView.image == nil, let t = await ImageStore.shared.thumb(sha), !Task.isCancelled { self?.imageView.image = t }
-            if let p = await ImageStore.shared.image(.preview, sha), !Task.isCancelled, let self, !self.large {
-                UIView.transition(with: self.imageView, duration: 0.15, options: .transitionCrossDissolve) { self.imageView.image = p }
-            }
+            let p = await ImageStore.shared.image(.preview, sha)
+            guard !Task.isCancelled, let self else { return }
+            guard let p else { self.asked = true; return }
+            self.sharp = true
+            if !self.large { UIView.transition(with: self.imageView, duration: 0.15, options: .transitionCrossDissolve) { self.imageView.image = p } }
         }
+    }
+
+    private func sharpen() { if asked && !sharp { load() } }
+
+    // The pager keeps the pages either side made ready, so one made while the server was away comes
+    // back as it was: ask again when it is the one being looked at.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        sharpen()
     }
 
     deinit { task?.cancel() }
