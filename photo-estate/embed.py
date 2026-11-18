@@ -46,6 +46,12 @@ CREATE TABLE IF NOT EXISTS embeddings(
 #     "unicorn" -> horses). Narrower drops real matches from a small library.
 MATCH_FLOOR = 0.085
 MATCH_WINDOW = 0.04
+# Shown best first, a search's matches are no longer in order of how well they match, so the loose ones at
+# the end of the list are no longer out of the way: the best of them rise to the top. Measured on "mountain"
+# in a 108k-photo library (3,614 matches): photos of slot canyons and desert rock are 1-2% of the matches
+# within 0.025 of the best, and 7-15% of those beyond it; best first, half of the first 60 photos came from
+# the loosest third. So best first keeps only what is within this of the best match.
+BEST_WINDOW = 0.025
 # First names that are also everyday words: read as a person only when capitalized ("Sunny") or "Sunny's"
 COMMON_WORDS = set("""sunny lily rose rosie daisy iris violet ivy holly heather hazel jasmine poppy ruby amber pearl
     jade crystal coral olive berry autumn summer winter april may june august dawn eve faith hope joy grace
@@ -1477,7 +1483,8 @@ def cmd_serve(a) -> None:
                             sims[index[sha]] = -np.inf
                         else:  # only what matches the words: near the best match, and above the floor
                             sims[sims < max(a.match_floor, sims.max() - a.match_window)] = -np.inf
-                            if sort == "best":    # the same photos (what matches the words), the best of them first
+                            if sort == "best":    # the closest matches only (see BEST_WINDOW), the best of them first
+                                sims[sims < sims.max() - a.best_window] = -np.inf
                                 found = np.flatnonzero(np.isfinite(sims))
                                 return found[np.argsort(rank[found], kind="stable")]
                         return np.argsort(-sims)[: int(np.isfinite(sims).sum())]
@@ -1825,6 +1832,8 @@ def main() -> None:
                    help="typed searches show no photo below this similarity (-1 = no floor)")
     s.add_argument("--match-window", type=float, default=MATCH_WINDOW,
                    help="...nor more than this below the best match (2 = show every photo, ranked)")
+    s.add_argument("--best-window", type=float, default=BEST_WINDOW,
+                   help="a described search shown best first keeps only matches within this of the best match")
     s.add_argument("--inbox", help="where phone uploads (PUT /api/upload/...) are saved; default <db dir>/iphone (none with --demo)")
     s.add_argument("--ingest-script", help="script the Library info page runs to catalogue uploads (default: ingest-iphone.sh)")
     s.add_argument("--ingest-quiet", type=float, default=60.0,

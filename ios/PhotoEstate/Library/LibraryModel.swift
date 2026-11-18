@@ -366,7 +366,7 @@ final class LibraryModel: ObservableObject {
             title = "More like this"; parts = ["Closest in look and subject"]
         } else if !plan.text.isEmpty {
             title = "“\(plan.text)”"
-            parts = [matching == 0 ? "No matches" : ranked ? "\(n), \(order == .best ? "your best first" : "best match first")" : n]
+            parts = [matching == 0 ? "No matches" : ranked ? "\(n), \(order == .best ? "the closest matches, your best first" : "best match first")" : n]
             if !reading.isEmpty { parts.insert([who.isEmpty ? "" : "with \(who)", place.isEmpty ? "" : "in \(place)"].filter { !$0.isEmpty }.joined(separator: ", "), at: 0) }
         } else if q.stack != nil {
             title = "Stack of \(matching.formatted())"

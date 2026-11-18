@@ -983,7 +983,7 @@ function searchHead() {                               // what the answer is, in 
   if (reading && !D.text) { title = reading; parts = [n]; }
   else if (S.sha) { title = "More like this"; parts = ["Closest in look and subject"]; }
   else if (D.text) {
-    title = `“${D.text}”`; parts = [D.matching ? `${n}, ${D.sort === "best" ? "your best first" : "best match first"}` : "No matches"];
+    title = `“${D.text}”`; parts = [D.matching ? `${n}, ${D.sort === "best" ? "the closest matches, your best first" : "best match first"}` : "No matches"];
     if (reading) parts.unshift([who && `with ${who}`, where && `in ${where}`].filter(Boolean).join(", "));
   } else if (S.stack) { title = `Stack of ${D.matching}`; parts = ["Near-identical shots taken together", D.sort === "best" ? "best first" : ""]; }
   else if (D.scope) { title = tripTitle(D.scope); parts = [span(D.scope.start, D.scope.end), n]; }
