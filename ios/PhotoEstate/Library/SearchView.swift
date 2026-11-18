@@ -83,7 +83,7 @@ struct SearchView: View {
                 if typing {
                     Button("Cancel") { typing = false; draft = model.query.text }.foregroundStyle(Color.sun)
                 } else if !model.query.isEmpty {
-                    ViewMenu(model: model).frame(width: 36, height: 44)
+                    ViewMenu(model: model, width: 40)
                 }
             }
             .padding(.horizontal, 14)

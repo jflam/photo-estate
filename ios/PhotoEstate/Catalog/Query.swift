@@ -337,6 +337,16 @@ extension Catalog {
         }) ?? []
     }
 
+    /// The photos of one stack, best first (the one on top first), for the viewer's strip.
+    func stackTiles(_ stack: String) async -> [Tile] {
+        (try? await store.read { db in
+            try db.query("SELECT sha, ar, whenk, city, fav, best FROM photos WHERE stack=? ORDER BY best IS NULL, best DESC, whenk, sha", [stack]) {
+                Tile(sha: $0.text(0), ar: Float($0.double(1)), when: $0.text(2), city: $0.string(3), fav: $0.bool(4),
+                     best: $0.optDouble(5).map { Float($0) } ?? -.infinity)
+            }
+        }) ?? []
+    }
+
     /// How many photos the plan selects, nothing hidden: what a heading's "of N" counts.
     func count(_ plan: Plan) async -> Int {
         let (sql, args) = plan.condition()

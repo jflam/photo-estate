@@ -17,19 +17,36 @@ struct ViewerScreen: View {
     @State private var info: Photo?           // the photo whose details are showing
     @State private var photo: Photo?
     @State private var sharing = false
+    @State private var stack: [Tile] = []     // the photos of this one's stack, best first; empty for a photo on its own
+    @State private var picked: Tile?          // the one of them showing, when it is not the one on top
 
-    private var tile: Tile { session.tile }
+    /// The photo on screen: the list's own, or the one picked from its stack.
+    private var tile: Tile { picked ?? session.tile }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             PagerView(session: session, onTap: { withAnimation(.easeOut(duration: 0.2)) { chrome.toggle() } },
                       onInfo: { info = photo }, onZoomedIn: { withAnimation(.easeOut(duration: 0.2)) { chrome = false } }, visible: chrome,
+                      shown: picked, shownAt: session.index,
                       top: AnyView(caption.environment(\.colorScheme, .dark)),
-                      bottom: AnyView(actions.environment(\.colorScheme, .dark).tint(.sunLit)))
+                      bottom: AnyView(VStack(spacing: 2) { strip; actions }.environment(\.colorScheme, .dark).tint(.sunLit)))
                 .ignoresSafeArea()
         }
-        .task(id: session.index) { photo = await model.photo(tile.sha) }
+        .task(id: session.index) {
+            // Another photo of the list: its own stack, from the top. Left and right go from stack to stack;
+            // the strip is how to look through one.
+            picked = nil
+            stack = []
+            let top = session.tile
+            let p = await model.photo(top.sha)
+            photo = p
+            if top.stack > 1, let id = p?.stackOf {
+                let members = await Catalog.shared.stackTiles(id)
+                if !Task.isCancelled, session.tile.sha == top.sha, members.count > 1 { stack = members }
+            }
+        }
+        .task(id: picked?.sha) { photo = await model.photo(tile.sha) }
         .sheet(item: $info) { shown in
             InfoView(photo: shown) { q in
                 info = nil
@@ -68,6 +85,41 @@ struct ViewerScreen: View {
         .padding(.horizontal, 14)
         .padding(.top, 6)
         .padding(.bottom, 10)
+    }
+
+    /// The stack this photo is on top of, as a row of small prints: tap one to look at it. Slide the row
+    /// when it is longer than the screen.
+    @ViewBuilder private var strip: some View {
+        if stack.count > 1 {
+            ScrollViewReader { reader in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        ForEach(Array(stack.enumerated()), id: \.element.sha) { i, t in
+                            let on = t.sha == tile.sha
+                            Button {
+                                Haptics.tick()
+                                picked = t.sha == session.tile.sha ? nil : t
+                                withAnimation(.snappy(duration: 0.2)) { reader.scrollTo(t.sha, anchor: .center) }
+                            } label: {
+                                Thumb(sha: t.sha)
+                                    .frame(width: on ? 46 : 38, height: 52)
+                                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(.white, lineWidth: on ? 2 : 0))
+                                    .opacity(on ? 1 : 0.7)
+                            }
+                            .buttonStyle(.plain)
+                            .id(t.sha)
+                            .accessibilityLabel("Shot \(i + 1) of \(stack.count)" + (i == 0 ? ", the best" : ""))
+                            .accessibilityAddTraits(on ? .isSelected : [])
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(minWidth: UIScreen.main.bounds.width)      // a short stack sits in the middle
+                }
+                .frame(width: UIScreen.main.bounds.width, height: 58)
+                .animation(.snappy(duration: 0.2), value: tile.sha)
+            }
+        }
     }
 
     private var actions: some View {
@@ -306,6 +358,8 @@ struct PagerView: UIViewControllerRepresentable {
     var onInfo: () -> Void
     var onZoomedIn: () -> Void  // looking closer: the caption and controls get out of the way
     var visible: Bool           // the caption and the controls; a tap on the photo hides them
+    var shown: Tile? = nil      // a photo of the stack to show in place of the one on top
+    var shownAt = 0             // ...of the photo at this place in the list
     var top: AnyView
     var bottom: AnyView
 
@@ -329,6 +383,7 @@ struct PagerView: UIViewControllerRepresentable {
         c.top.rootView = top
         c.bottom.rootView = bottom
         c.setChrome(visible)
+        c.show(shown, at: shownAt)
     }
 }
 
@@ -390,6 +445,19 @@ final class PagerController: UIPageViewController, UIPageViewControllerDataSourc
     }
 
     private var current: PhotoPage? { viewControllers?.first as? PhotoPage }
+
+    /// Show `tile` on the page that is up (another photo of its stack), or with nil the list's own photo
+    /// again. The page keeps its place in the list, so a swipe still goes to the next photo of the list.
+    func show(_ tile: Tile?, at index: Int) {
+        // Only the page it was picked for: just after a swipe the page is already the next photo's.
+        guard let c = current, c.index == index, tiles.indices.contains(c.index) else { return }
+        let want = tile ?? tiles[c.index]
+        guard c.tile.sha != want.sha else { return }
+        let p = PhotoPage(tile: want, index: c.index)
+        p.onTap = { [weak self] in self?.onTap() }
+        p.onZoom = { [weak self] z in self?.onZoom(z) }
+        setViewControllers([p], direction: .forward, animated: false)
+    }
 
     func pageViewController(_ pvc: UIPageViewController, viewControllerBefore vc: UIViewController) -> UIViewController? {
         page((vc as! PhotoPage).index - 1)

@@ -54,6 +54,9 @@ final class LibraryModel: ObservableObject {
     @Published private(set) var ranked = false
     @Published private(set) var loading = true
     @Published private(set) var order = Order.new
+    /// The order in words when it is not the one this list would have anyway ("best first"), for the line
+    /// under the title and the mark on the view button.
+    @Published private(set) var orderNote: String?
     /// Has the server said which photos are best: without that there is no "Best first" to offer.
     @Published private(set) var hasBest = false
     @Published private(set) var canGoBack = false
@@ -92,6 +95,23 @@ final class LibraryModel: ObservableObject {
     }
     @Published var rowHeight = UserDefaults.standard.object(forKey: "view.rowHeight") as? Double ?? 128 {
         didSet { UserDefaults.standard.set(rowHeight, forKey: "view.rowHeight") }
+    }
+
+    /// The Library remembers the order chosen for it, like the other view options. Search does not: what is
+    /// asked for there has its own natural order (a trip from its start, a stack best first).
+    private let remembersOrder: Bool
+
+    init(remembersOrder: Bool = false) {
+        self.remembersOrder = remembersOrder
+        if remembersOrder { query.order = UserDefaults.standard.string(forKey: "view.order").flatMap(Order.init(rawValue:)) }
+    }
+
+    /// The order picked in the view menu.
+    func setOrder(_ o: Order) {
+        if remembersOrder { UserDefaults.standard.set(o.rawValue, forKey: "view.order") }
+        var q = query
+        q.order = o
+        query = q
     }
 
     private var gen = 0
@@ -178,7 +198,8 @@ final class LibraryModel: ObservableObject {
             var pending = 0
             let scope = await Catalog.shared.scope(plan)
             // A stack shows its best photo first; an event or a trip reads from its start; anything else, newest first.
-            var order = q.order ?? (q.stack != nil ? .best : scope != nil ? .old : .new)
+            let usual: Order = q.stack != nil ? .best : scope != nil ? .old : .new
+            var order = q.order ?? usual
             if order == .best && !hasBest { order = scope != nil || q.stack != nil ? .old : .new }
             let old = order == .old
             let collapse = hideDups && q.stack == nil       // a stack's own photos are never behind one another
@@ -225,6 +246,8 @@ final class LibraryModel: ObservableObject {
             self.plan = plan
             ranked = isRanked
             self.order = order
+            let said = isRanked || order == usual && !(order == .best && !hasBest)
+            orderNote = said ? nil : order == .best ? (q.isEmpty ? "best first in each month" : "best first") : order == .old ? "oldest first" : "newest first"
             notice = note
             self.pending = pending
             var grain = 7
@@ -343,7 +366,7 @@ final class LibraryModel: ObservableObject {
             if !reading.isEmpty { parts.insert([who.isEmpty ? "" : "with \(who)", place.isEmpty ? "" : "in \(place)"].filter { !$0.isEmpty }.joined(separator: ", "), at: 0) }
         } else if q.stack != nil {
             title = "Stack of \(matching.formatted())"
-            parts = ["Near-identical shots taken together"] + (order == .best ? ["best first"] : [])
+            parts = ["Near-identical shots taken together"] + (order == .best && orderNote == nil ? ["best first"] : [])
         } else if let scope {
             title = scope.title.replacingOccurrences(of: "Trip to ", with: ""); parts = [Dates.span(scope.start, scope.end), n]
         } else if q.isFiltered {
@@ -360,6 +383,7 @@ final class LibraryModel: ObservableObject {
                                : ["\(LibraryModel.about(matching)) photos"]
         }
         parts += plan.applied
+        if let orderNote { parts.append(orderNote) }
         if pending > 0 { parts.append("\(pending.formatted()) not uploaded") }
         subtitle = parts.filter { !$0.isEmpty }.joined(separator: " · ")
     }
@@ -372,7 +396,7 @@ final class LibraryModel: ObservableObject {
 final class Router: ObservableObject {
     enum Tab: Hashable { case library, search }
     @Published var tab = Tab.library
-    let library = LibraryModel()
+    let library = LibraryModel(remembersOrder: true)
     let search = LibraryModel()
 
     func find(_ q: Query) {
