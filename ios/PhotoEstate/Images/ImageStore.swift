@@ -159,10 +159,25 @@ final class ImageStore {
         return ok == nil ? nil : url
     }
 
+    /// The image to show: the copy kept here, else the iPhone's own Photos if the photo is in it (no
+    /// download, and there with no network), else the server.
     func image(_ kind: ImageKind, _ sha: String) async -> UIImage? {
-        if LocalPhotos.id(sha) != nil { return await LocalPhotos.shared.image(sha, px: kind == .large ? 4096 : 1600) }
-        guard let url = await fetch(kind, sha) else { return nil }
+        let px: CGFloat = kind == .large ? 4096 : 1600
+        if LocalPhotos.id(sha) != nil { return await LocalPhotos.shared.image(sha, px: px) }
+        var soft: UIImage?          // Photos has it, but only a smaller copy on the phone
+        if !has(kind, sha), let mine = await OnPhone.image(sha, px: px) {
+            if mine.sharp { return mine.image }
+            soft = mine.image
+        }
+        guard let url = await fetch(kind, sha) else { return soft }
         return await Task.detached(priority: .userInitiated) { UIImage(contentsOfFile: url.path)?.preparingForDisplay() }.value
+    }
+
+    /// Have the full-screen image ready before it is asked for. A photo in the iPhone's own Photos needs nothing.
+    func warm(_ sha: String) async {
+        if has(.preview, sha) { return }
+        if await OnPhone.asset(sha) != nil { return }
+        _ = await fetch(.preview, sha)
     }
 
     // MARK: housekeeping

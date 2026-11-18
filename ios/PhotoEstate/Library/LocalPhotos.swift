@@ -64,6 +64,7 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
     }
 
     nonisolated func photoLibraryDidChange(_ change: PHChange) {
+        OnPhone.forget()
         Task { @MainActor in self.refresh() }
     }
 
