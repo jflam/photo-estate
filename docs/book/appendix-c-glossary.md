@@ -19,6 +19,8 @@ exactly on at least one piece; used to find near-duplicates without comparing al
 
 **Batch (upload).** The files a phone sends together, named in an `X-Batch: <id>/<count>` header; when the last arrives, the server starts cataloguing at once ([24](24-uploading.md)).
 
+**Bradley–Terry model.** A model of pairwise choices: each item has a score, and the chance A is picked over B is `sigmoid(score A − score B)`. The taste scorer is one ([25](25-best-photos.md)).
+
 **Catalog.** The SQLite file `estate.db`.
 
 **Centroid.** The mean (normalised sum) of a person's trusted face vectors for one year.
@@ -83,6 +85,8 @@ edited.
 
 **PWA.** Progressive Web App: a web page that can be installed on a phone's home screen.
 
+**Quality (score).** A photo's score from the general aesthetic scorer, about 1 to 7; at least 5.0 counts as a good photo ([25](25-best-photos.md)).
+
 **Scrubber.** The handle at the iPhone grid's right edge that shows the month you are in and lets you drag to any date ([23](23-native-interface.md)).
 
 **Sidecar.** A small metadata file next to a photo. Google's is JSON; iCloud's (via `icloudpd`) is XMP.
@@ -94,6 +98,8 @@ edited.
 **Source (of a file).** The zip or folder a file was ingested from; recorded in `sources` and
 `occurrences`.
 
+**Stack.** Near-identical shots taken within 10 seconds of each other, shown as their best-ranked photo with a count ([25](25-best-photos.md)).
+
 **Store.** The directory `store/ab/cd/<sha256>.<ext>` holding every unique original file.
 
 **Stranger.** A face you chose not to name (`person_id = 0`); never asked about again.
@@ -104,6 +110,10 @@ edited.
 
 **Tailscale.** A private network (a "tailnet") used here to reach the app from a phone, with
 `tailscale serve` providing HTTPS.
+
+**Taste (score).** A photo's score from the scorer trained on the owner's own "which is better?" picks; it ranks good photos only ([25](25-best-photos.md)).
+
+**Teacher (scorer).** Aesthetic Predictor V2.5, used only as a local tool to label photos for the quality scorer; never shipped ([25](25-best-photos.md)).
 
 **Tile.** What the iPhone grid needs to draw a photo and nothing else: its hash, aspect ratio, local time, city and favourite flag ([21](21-offline-search.md)).
 

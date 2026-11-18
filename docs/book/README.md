@@ -41,6 +41,7 @@ problem it solves and ends with where to look in the code.
 | Know which photos the phone keeps, and how it decides | [22. Photos on the phone](22-photos-on-the-phone.md) |
 | Understand the native grid, viewer and search page | [23. The native interface](23-native-interface.md) |
 | Understand background upload and how a photo reaches the catalog | [24. Uploading from the phone](24-uploading.md) |
+| See how the app learnt which photos are best, and how stacks pick their top photo | [25. Choosing the best photos](25-best-photos.md) |
 | Look something up | [Appendix A: command reference](appendix-a-commands.md), [B: HTTP API](appendix-b-http-api.md), [C: glossary](appendix-c-glossary.md) |
 
 ## The system on one page
