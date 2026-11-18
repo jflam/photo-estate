@@ -20,8 +20,9 @@ enum Facet: String, CaseIterable, Identifiable {
     }
 }
 
-/// How a list is ordered when nothing ranks it: by time, or the best photos first.
-enum Order: String { case new, old, best }
+/// How a list is ordered: by time, or the best photos first; and for a described search, which the server
+/// ranks, by how well each photo matches (`match`) or, of the photos that match, the best first.
+enum Order: String { case new, old, best, match }
 
 /// The whole question, as the web app's `S` (chapter 13 of the book).
 struct Query: Equatable {

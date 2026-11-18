@@ -280,7 +280,16 @@ struct ViewMenu: View {
 
     var body: some View {
         Menu {
-            if !model.ranked {
+            if model.ranked {
+                // A described search: the photos that match, closest first or your best first. ("More like this"
+                // is by likeness and nothing else.)
+                if model.query.similar == nil && model.hasBest {
+                    Picker("Order", selection: Binding(get: { model.order }, set: { model.setOrder($0) })) {
+                        Label("Best match first", systemImage: "text.magnifyingglass").tag(Order.match)
+                        Label("Best first", systemImage: "sparkles").tag(Order.best)
+                    }
+                }
+            } else {
                 Picker("Order", selection: Binding(get: { model.order }, set: { model.setOrder($0) })) {
                     Label("Newest first", systemImage: "arrow.down").tag(Order.new)
                     Label("Oldest first", systemImage: "arrow.up").tag(Order.old)

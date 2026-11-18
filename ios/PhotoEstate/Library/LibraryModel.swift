@@ -199,7 +199,7 @@ final class LibraryModel: ObservableObject {
             let scope = await Catalog.shared.scope(plan)
             // A stack shows its best photo first; an event or a trip reads from its start; anything else, newest first.
             let usual: Order = q.stack != nil ? .best : scope != nil ? .old : .new
-            var order = q.order ?? usual
+            var order = (q.order == .match ? nil : q.order) ?? usual       // `match` is only for a described search
             if order == .best && !hasBest { order = scope != nil || q.stack != nil ? .old : .new }
             let old = order == .old
             let collapse = hideDups && q.stack == nil       // a stack's own photos are never behind one another
@@ -215,6 +215,9 @@ final class LibraryModel: ObservableObject {
                     total = matching
                     plan.text = page.text; plan.names = page.names; plan.places = page.places
                     isRanked = true
+                    // The server chose the photos (what matches the words) and their order: closest match first,
+                    // or the best of them first if that was asked for. "More like this" is by likeness only.
+                    order = q.order == .best && hasBest && q.similar == nil ? .best : .match
                 } catch {
                     guard g == gen else { return }
                     SyncEngine.shared.markOnline(false)
@@ -223,6 +226,7 @@ final class LibraryModel: ObservableObject {
                         note = "“More like this” compares what photos look like, which needs your server. It isn't reachable right now."
                     } else {
                         tiles = await Catalog.shared.tiles(plan, oldFirst: old, hideDups: false, words: Reader.match(plan.text) ?? "\"\"")
+                        if order == .best { tiles = LibraryModel.bestFirst(tiles, within: nil) }
                         note = "Offline: showing photos whose people, places, albums, captions or file names contain “\(plan.text)”. Finding photos by what's in them needs your server."
                     }
                     matching = tiles.count
@@ -246,7 +250,7 @@ final class LibraryModel: ObservableObject {
             self.plan = plan
             ranked = isRanked
             self.order = order
-            let said = isRanked || order == usual && !(order == .best && !hasBest)
+            let said = isRanked ? order == .match : order == usual
             orderNote = said ? nil : order == .best ? (q.isEmpty ? "best first in each month" : "best first") : order == .old ? "oldest first" : "newest first"
             notice = note
             self.pending = pending
@@ -362,7 +366,7 @@ final class LibraryModel: ObservableObject {
             title = "More like this"; parts = ["Closest in look and subject"]
         } else if !plan.text.isEmpty {
             title = "“\(plan.text)”"
-            parts = [matching == 0 ? "No matches" : ranked ? "\(n), best match first" : n]
+            parts = [matching == 0 ? "No matches" : ranked ? "\(n), \(order == .best ? "your best first" : "best match first")" : n]
             if !reading.isEmpty { parts.insert([who.isEmpty ? "" : "with \(who)", place.isEmpty ? "" : "in \(place)"].filter { !$0.isEmpty }.joined(separator: ", "), at: 0) }
         } else if q.stack != nil {
             title = "Stack of \(matching.formatted())"
@@ -383,7 +387,7 @@ final class LibraryModel: ObservableObject {
                                : ["\(LibraryModel.about(matching)) photos"]
         }
         parts += plan.applied
-        if let orderNote { parts.append(orderNote) }
+        if let orderNote, !ranked { parts.append(orderNote) }      // a ranked list has said its order already
         if pending > 0 { parts.append("\(pending.formatted()) not uploaded") }
         subtitle = parts.filter { !$0.isEmpty }.joined(separator: " · ")
     }

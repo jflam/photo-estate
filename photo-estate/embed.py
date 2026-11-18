@@ -1453,6 +1453,10 @@ def cmd_serve(a) -> None:
                     sort = one("sort") or by_default
                     if sort in ("best", "best-month") and best is None:   # a catalog with no scorers: as if nothing was asked
                         sort = "old" if scope or "stack" in masks else "new"
+                    if u.path == "/api/similar":
+                        sort = "match"            # by likeness: there is no other order to choose
+                    elif text and sort != "best":
+                        sort = "match"            # words to rank by: the closest match first, unless the best was asked for
                     key = (u.path, sha, text, sort, tuple(sorted((k, tuple(v)) for k, v in qs.items()
                                                                  if k not in ("cursor", "limit"))))
 
@@ -1473,6 +1477,9 @@ def cmd_serve(a) -> None:
                             sims[index[sha]] = -np.inf
                         else:  # only what matches the words: near the best match, and above the floor
                             sims[sims < max(a.match_floor, sims.max() - a.match_window)] = -np.inf
+                            if sort == "best":    # the same photos (what matches the words), the best of them first
+                                found = np.flatnonzero(np.isfinite(sims))
+                                return found[np.argsort(rank[found], kind="stable")]
                         return np.argsort(-sims)[: int(np.isfinite(sims).sum())]
 
                     order = remember(key, ranked)

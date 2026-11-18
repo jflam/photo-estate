@@ -864,17 +864,22 @@ document.addEventListener("pointerdown", e => {
 });
 function viewMenu(anchor, ctx) {
   openMenu(anchor, el => {
-    const ranked = ctx === "search" && !!(S.sha || D?.text), cur = ctx === "library" ? L.sort || "new" : S.sort || D?.sort || "new";   // ranked: by the words or the likeness, so no order to choose
+    // "More like this" is by likeness and nothing else. A described search is by how well a photo matches, or,
+    // of the photos that match, the best first.
+    const like = ctx === "search" && !!S.sha, words = ctx === "search" && !like && !!D?.text;
+    const cur = ctx === "library" ? L.sort || "new" : words ? (S.sort === "best" && INFO?.best ? "best" : "match") : S.sort || D?.sort || "new";
     const mi = (attr, on, label) => `<button class="mi${on ? " on" : ""}" ${attr}>${I.check}<span>${label}</span></button>`;
     const sw = (attr, on, label) => `<button class="mi" ${attr} role="switch" aria-checked="${on}"><svg></svg><span>${label}</span><i class="sw${on ? " on" : ""}"></i></button>`;
-    el.innerHTML = (ranked ? "" : `<h5>Order</h5>${mi('data-sort="new"', cur === "new", "Newest first")}${mi('data-sort="old"', cur === "old", "Oldest first")}${INFO?.best ? mi('data-sort="best"', cur.startsWith("best"), ctx === "library" ? "Best first in each month" : "Best first") : ""}<hr>`)
+    const best = INFO?.best ? mi('data-sort="best"', cur.startsWith("best"), ctx === "library" ? "Best first in each month" : "Best first") : "";
+    el.innerHTML = (like || words && !best ? "" : words ? `<h5>Order</h5>${mi('data-sort="match"', cur === "match", "Best match first")}${best}<hr>`
+        : `<h5>Order</h5>${mi('data-sort="new"', cur === "new", "Newest first")}${mi('data-sort="old"', cur === "old", "Oldest first")}${best}<hr>`)
       + `<h5>Photo size</h5>${DENS_NAME.map((n, i) => mi(`data-dens="${i}"`, V.dens === i, n)).join("")}<hr>`
       + sw("data-dedupe", V.dedupe, "Stack near-identical shots") + sw("data-shots", V.shots, "Hide screenshots");
     el.onclick = e => {
       const b = e.target.closest(".mi"); if (!b) return;
       if (b.dataset.sort) {
         if (ctx === "library") { L.sort = { old: "old", best: "best-month" }[b.dataset.sort] || ""; libLoad(); }
-        else { S.sort = b.dataset.sort; refine(); }
+        else { S.sort = b.dataset.sort === "match" ? "" : b.dataset.sort; refine(); }
       } else if (b.dataset.dens) setDens(+b.dataset.dens);
       else {
         if (b.hasAttribute("data-dedupe")) V.dedupe = !V.dedupe; else V.shots = !V.shots;
@@ -978,7 +983,7 @@ function searchHead() {                               // what the answer is, in 
   if (reading && !D.text) { title = reading; parts = [n]; }
   else if (S.sha) { title = "More like this"; parts = ["Closest in look and subject"]; }
   else if (D.text) {
-    title = `“${D.text}”`; parts = [D.matching ? `${n}, best match first` : "No matches"];
+    title = `“${D.text}”`; parts = [D.matching ? `${n}, ${D.sort === "best" ? "your best first" : "best match first"}` : "No matches"];
     if (reading) parts.unshift([who && `with ${who}`, where && `in ${where}`].filter(Boolean).join(", "));
   } else if (S.stack) { title = `Stack of ${D.matching}`; parts = ["Near-identical shots taken together", D.sort === "best" ? "best first" : ""]; }
   else if (D.scope) { title = tripTitle(D.scope); parts = [span(D.scope.start, D.scope.end), n]; }
