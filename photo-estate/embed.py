@@ -504,6 +504,10 @@ def cmd_serve(a) -> None:
             if sha in fresh or face_names.get(sha) != old_names.get(sha):
                 own(sha)["people"] = list(dict.fromkeys(tagged[sha] + face_names.get(sha, [])))
         has_faces = bool(optional("SELECT 1 FROM faces LIMIT 1"))
+        # A favourite set in the app (set_favorite) takes the place of what the photo's source said.
+        for sha, on in optional("SELECT sha256, fav FROM favorites"):
+            if sha in meta and meta[sha]["fav"] != bool(on):
+                own(sha)["fav"] = bool(on)
         hidden = hidden_shas(con)   # photos a change set hides (changes.py): in the catalog, in no view
         scorers = load_scorers(con, a.model)   # what "Best first" goes by (scores.py); none in a catalog without them
         con.close()
@@ -717,12 +721,12 @@ def cmd_serve(a) -> None:
 
     # The People page (/people): who each face is, and the questions worth asking. It's faces.py's,
     # mounted here so naming works wherever the app does. Loads in the background, like the encoder.
-    people = {}
+    people = {"state": "loading" if has_faces else "none", "p": None}   # none (no faces found yet) | loading | ready
 
-    def load_people():
+    def load_people():      # again after a reload: the one that is ready keeps answering until the new one is
         from faces import People
-        people["p"] = People(a.db, a.store, [cache] if cache == seed else [cache, seed],
-                             log=lambda msg: print(msg, flush=True))
+        p = People(a.db, a.store, [cache] if cache == seed else [cache, seed], log=lambda msg: print(msg, flush=True))
+        people.update(p=p, state="ready")
 
     if has_faces:
         threading.Thread(target=load_people, daemon=True).start()
@@ -1070,6 +1074,21 @@ def cmd_serve(a) -> None:
             out[name] = cards
         return out
 
+    def browse_order(mask, sort: str):
+        """The photos `mask` selects with nothing to rank them by: by time, or the best first."""
+        by = best if sort == "best" else oldest if sort == "old" else newest
+        ids = by[mask[by]]
+        if sort == "best-month":   # the Library: months newest first as ever, the best first in each
+            runs = np.cumsum(np.concatenate([[0], np.diff(ym[ids]) != 0]))
+            ids = ids[np.lexsort((rank[ids], runs))]
+        return ids
+
+    def shapes(order) -> bytes:
+        """Every photo's shape, a byte each, in the order a list shows them: what the page needs to lay a
+        month out before it has been told which photos are in it. The byte is the aspect ratio between
+        0.5 and 2.6 (the grid shows nothing narrower or wider) in 255 steps; search.html reads it back."""
+        return np.round((np.clip(ars[order], 0.5, 2.6) - 0.5) * (255 / 2.1)).astype(np.uint8).tobytes()
+
     def take(order, start: int, limit: int, dedupe: bool):
         """One page from a ranked list, skipping copies of a shot just shown (Google + iCloud, bursts)."""
         kept, hidden, pos = [], 0, start
@@ -1254,7 +1273,7 @@ def cmd_serve(a) -> None:
                 "error": st["error"], "computed_at": st["at"] or None, "library": st["lib"], "disk": st["disk"],
                 "catalog_assets_now": assets_now(),
                 "app": {"uptime_s": round(time.time() - started), "rss_bytes": stats.rss_bytes(), "model": a.model,
-                        "demo": bool(a.demo), "python": sys.version.split()[0], "faces_ready": "p" in people,
+                        "demo": bool(a.demo), "python": sys.version.split()[0], "faces_ready": people["state"] == "ready",
                         "query_log_bytes": qsize, "query_log_lines": qlines, "cache_dir": str(cache),
                         "store": str(store), "db": str(a.db)}}
 
@@ -1276,7 +1295,7 @@ def cmd_serve(a) -> None:
                 self.send_header("ETag", etag)
                 self.send_header("Cache-Control", cache)
                 return self.end_headers()
-            text = ctype.startswith(("application/json", "text/"))
+            text = ctype.startswith(("application/json", "text/", "application/octet-stream"))   # (the shapes: mostly four values)
             gzipped = text and len(body) > 1024 and "gzip" in self.headers.get("Accept-Encoding", "")
             if gzipped:  # JSON and the page shrink 4-6x; JPEGs don't
                 body = gzip.compress(body, 5)
@@ -1303,7 +1322,7 @@ def cmd_serve(a) -> None:
             """Answer a People page request; False if the path isn't one."""
             if not has_faces or not u.path.startswith(("/people", "/face/", "/api/people")):
                 return False
-            if "p" not in people:
+            if people["state"] != "ready":
                 if method == "GET" and u.path.rstrip("/") == "/people":   # the page itself: wait, and ask again
                     self.send(503, pages.waiting("Finding everyone", "Faces load after the library does. This takes under a minute; the page opens by itself."), "text/html; charset=utf-8")
                 else:
@@ -1347,6 +1366,8 @@ def cmd_serve(a) -> None:
             try:
                 if u.path == "/mcp":
                     return self.mcp_route("POST", body)
+                if u.path == "/api/favorite":
+                    return self.favorite(body)
                 if intake and u.path.startswith("/api/intake"):
                     return self.intake_route("POST", u, parse_qs(u.query), body)
                 if self.changes_route("POST", u, parse_qs(u.query), body):
@@ -1355,6 +1376,17 @@ def cmd_serve(a) -> None:
                     self.send(404, b"not found", "text/plain")
             except (BrokenPipeError, ConnectionResetError):
                 pass
+
+        def favorite(self, body):
+            """POST /api/favorite {sha, fav}: a photo is, or is no longer, a favourite. It changes what
+            everyone sees (a month's cover is a favourite if it has one), so it takes what uploading takes."""
+            from intake.server import is_local
+            if not (self.allowed() or is_local(self)):
+                return self.send(403, b'{"error":"not allowed"}', "application/json")
+            sha, on = (body.get("sha"), body.get("fav")) if isinstance(body, dict) else (None, None)
+            if not isinstance(sha, str) or sha not in index or not isinstance(on, bool):
+                return self.json({"error": "say which photo (sha) and fav: true or false"}, 400)
+            self.json({"sha": sha, "fav": on, "favourites": set_favorite(sha, on, self.who())})
 
         def intake_route(self, method: str, u, qs: dict, body):
             """The setup page and its API (intake/api.py). Starting a job reads any folder on this computer,
@@ -1472,12 +1504,7 @@ def cmd_serve(a) -> None:
                         elif text:
                             vec = remember(("text", text), lambda: text_vec(text))
                         else:  # nothing to rank by: what the filters select, by time
-                            by = best if sort == "best" else oldest if sort == "old" else newest
-                            ids = by[mask[by]]
-                            if sort == "best-month":   # the Library: months newest first as ever, the best first in each
-                                runs = np.cumsum(np.concatenate([[0], np.diff(ym[ids]) != 0]))
-                                ids = ids[np.lexsort((rank[ids], runs))]
-                            return ids
+                            return browse_order(mask, sort)
                         sims = np.where(mask, M @ vec, -np.inf)
                         if u.path == "/api/similar":
                             sims[index[sha]] = -np.inf
@@ -1517,6 +1544,16 @@ def cmd_serve(a) -> None:
                         by_time = oldest if sort == "old" else newest
                         return {**periods(by_time[mask[by_time]]), "matching": int(mask.sum()), "total": info["total"]}
                     return self.json(remember(key, make))
+                if u.path == "/api/layout":    # the shapes of the Library's photos, in /api/search's order
+                    masks, text = select(qs)[:2]
+                    view_masks(qs, masks, "", False)
+                    sort = one("sort") or "new"
+                    if sort in ("best", "best-month") and best is None:
+                        sort = "new"
+                    key = ("layout", sort, tuple(sorted((k, tuple(v)) for k, v in qs.items())))
+                    body = remember(key, lambda: shapes(browse_order(combine(masks), sort)))
+                    return self.send(200, body, "application/octet-stream", "no-cache",
+                                     etag=f'"{hashlib.md5(body).hexdigest()}"')
                 if u.path in ("/stats", "/stats.html"):
                     body = pages.page("stats.html")
                     return self.send(200, body, "text/html; charset=utf-8", "no-cache",
@@ -1574,7 +1611,46 @@ def cmd_serve(a) -> None:
     for _name in ("do_GET", "do_POST"):
         setattr(Handler, _name, gated(getattr(Handler, _name)))
 
-    reload_state = {"running": False, "again": False, "at": None, "seconds": None, "error": None}
+    # Favourites set in the app. The catalog's own flag (assets.favorited) is what the photo's source said,
+    # and `estate.py link` writes it again on every ingest, so what a person says here is kept beside it
+    # (the `favorites` table) and wins. It shows at once: the photo's row, the count and every cached
+    # order and cover are brought up to date here rather than by re-reading the catalog (load_state reads
+    # the table too, so a reload agrees). `fav_log` is every one set since the start, so a reload that
+    # read the table a moment too early can be put right as it is swapped in.
+    fav_lock, fav_log = threading.Lock(), []
+
+    def show_favorite(sha: str, on: bool) -> None:
+        i = index.get(sha)
+        if i is not None and bool(fav[i]) != on:
+            meta[sha] = dict(meta[sha], fav=on)
+            fav[i] = on
+            info["fav"] = int((combine({}) & fav).sum())
+
+    def set_favorite(sha: str, on: bool, who: str) -> int:
+        """Record it, show it, tell the phones. Returns how many favourites there now are."""
+        with fav_lock:
+            con = connect(a.db)
+            try:
+                con.execute("CREATE TABLE IF NOT EXISTS favorites(sha256 TEXT PRIMARY KEY, fav INT NOT NULL,"
+                            " set_at TEXT, set_by TEXT)")
+                con.execute("INSERT OR REPLACE INTO favorites VALUES (?,?,?,?)", (sha, int(on), now(), who or None))
+                con.commit()
+            finally:
+                con.close()
+            fav_log.append((sha, on))
+            show_favorite(sha, on)
+            with lru_lock:
+                lru.clear()      # covers and "favourites only" lists were worked out without it
+            with st_lock:
+                st["lib"] = None
+        i = index[sha]
+        if feed.ready and visible[i]:
+            feed.touch({sha: dict(meta[sha], **feed_extra(i))})
+        return info["fav"]
+
+    # Re-reading the catalog is in one of three states: idle, running, or rerun (asked again while
+    # running: when this run ends, another starts, so nothing that was asked for is missed).
+    reload_state = {"state": "idle", "at": None, "seconds": None, "error": None}
     reload_lock = threading.Lock()
 
     def reload_differences(got: dict, want: dict) -> str:
@@ -1599,19 +1675,23 @@ def cmd_serve(a) -> None:
         """Re-read the catalog and swap it in, with no restart. The new state is built on the side while the
         old one keeps answering; only the swap waits for requests in flight. Asked again mid-run, it runs again."""
         with reload_lock:
-            if reload_state["running"]:
-                reload_state["again"] = True
+            if reload_state["state"] != "idle":
+                reload_state["state"] = "rerun"
                 return
-            reload_state["running"] = True
+            reload_state["state"] = "running"
         try:
             while True:
-                reload_state["again"] = False
-                t = time.time()
+                t, mark = time.time(), len(fav_log)
                 try:
                     fresh = load_state(loaded.get("raw"))
                     if os.environ.get("PHOTO_ESTATE_CHECK_RELOAD"):   # tools/bench_ingest.py --check
                         print(f"reload check: {reload_differences(fresh, load_state()) or 'same as a full load'}", flush=True)
-                    gate.swap(lambda: install(fresh))
+
+                    def swap_in():
+                        install(fresh)
+                        for sha, on in fav_log[mark:]:   # set while this load was reading
+                            show_favorite(sha, on)
+                    gate.swap(swap_in)
                     with lru_lock:
                         lru.clear()      # cached masks and rankings are the old catalog's
                     with st_lock:
@@ -1624,18 +1704,22 @@ def cmd_serve(a) -> None:
                 except Exception as e:   # keep serving the old catalog
                     reload_state["error"] = f"{type(e).__name__}: {e}"
                     print(f"catalog reload failed: {reload_state['error']}", flush=True)
-                if not reload_state["again"]:
-                    break
-        finally:
+                with reload_lock:
+                    if reload_state["state"] != "rerun":
+                        reload_state["state"] = "idle"
+                        break
+                    reload_state["state"] = "running"
+        except BaseException:
             with reload_lock:
-                reload_state["running"] = False
+                reload_state["state"] = "idle"
+            raise
         if ingest and not reload_state["error"]:
             ingest.fresh = False
 
     # Change sets (changes.py). When one hides or shows photos, the catalog is re-read as after an ingest:
     # every view, count and cover is rebuilt without them, phones are told through the feed, and the
     # People page loads again without their faces. `settling` covers the moment before the reload starts.
-    settling = {"n": 0}
+    settling, settling_lock = {"n": 0}, threading.Lock()
 
     def hidden_changed():
         try:
@@ -1643,15 +1727,17 @@ def cmd_serve(a) -> None:
             if has_faces:
                 load_people()
         finally:
-            settling["n"] -= 1
+            with settling_lock:
+                settling["n"] -= 1
 
     def on_hidden_change():
-        settling["n"] += 1
+        with settling_lock:
+            settling["n"] += 1
         threading.Thread(target=hidden_changed, daemon=True).start()
 
     changes = Changes(a.db, facts=lambda sha: meta.get(sha),
                       shown=lambda sha: {"library": sha in index and bool(visible[index[sha]]), "sync": sha in feed.rows},
-                      busy=lambda: settling["n"] > 0 or reload_state["running"], on_change=on_hidden_change)
+                      busy=lambda: settling["n"] > 0 or reload_state["state"] != "idle", on_change=on_hidden_change)
 
     # Tasks (tasks.py): a request in words, worked on by an agent on this computer that uses the MCP
     # endpoint below like any other client, and ends in a change set.
