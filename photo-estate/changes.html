@@ -15,7 +15,8 @@ h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032
 .sub { margin: 8px 0 0; max-width: 72ch; }
 .pill { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
   background: var(--well-2); color: var(--ink-2); vertical-align: 3px; margin-left: 8px; letter-spacing: 0; }
-.pill.review { background: var(--sun-wash); color: var(--sun); }
+.pill.review, .pill.applied { background: var(--sun-wash); color: var(--sun); }
+.pill.done { background: var(--yes); color: #fff; }
 
 /* ── every change set ───────────────────────────────────────────────── */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; margin-top: 26px; }
@@ -52,6 +53,10 @@ h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032
 .why { padding: 0 4px 10px; color: var(--ink-2); font-size: 13.5px; max-width: 110ch; }
 .why .ok { color: var(--yes); font-weight: 700; }
 .why .bad { color: var(--no); font-weight: 700; }
+.fin { margin: 0 4px 12px; padding: 14px 18px; border-radius: var(--r); background: var(--well); font-size: 15px; color: var(--ink-2); max-width: 110ch; }
+.fin b { color: var(--ink); }
+.fin.done b:first-child { color: var(--yes); }
+.locked .t { cursor: zoom-in; }
 .grid { --h: 120px; display: flex; flex-wrap: wrap; gap: 2px; }
 .grid::after { content: ""; flex: 100 1 0; }
 .m { height: var(--h); flex: 0 0 auto; padding: 0 10px 6px 6px; display: flex; align-items: flex-end; font-size: 12px; font-weight: 700;
@@ -118,7 +123,7 @@ function toast(msg) {
   clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2600);
 }
 const MARK = '<svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>';
-const STATES = { empty: "Nothing in it", review: "To review", applied: "Applied", reverted: "Undone" };
+const STATES = { empty: "Nothing in it", review: "To review", applied: "To commit", done: "Done", reverted: "Reverted" };
 const day = when => {
   const d = new Date(when.slice(0, 10) + "T12:00:00");
   return isNaN(d) ? "No date" : d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "long", year: "numeric" });
@@ -146,7 +151,7 @@ async function home() {
     s.reject && `${fmt(s.reject)} kept`].filter(Boolean).join(" · ");
   const draft = $("#ask")?.value ?? "", typing = document.activeElement?.id === "ask";
   $("#main").innerHTML = `<h1>Changes</h1>
-    <p class="sub">Say what should go, and an agent on this computer works out which photos you mean. It proposes them as a change set; nothing happens to the library until you have looked and applied it, and every set can be undone.</p>
+    <p class="sub">Say what should go, and an agent on this computer works out which photos you mean. It proposes them as a change set; nothing happens to the library until you have looked and applied it. An applied set is then committed, or reverted to show every photo again.</p>
     <form class="ask" id="askForm"><textarea id="ask" rows="2" placeholder="Hide the photos from the school: young children nobody has named, outdoors or in a classroom" ${k.available ? "" : "disabled"}></textarea>
       <button class="btn pri" ${k.available ? "" : "disabled"}>Ask</button></form>
     ${k.available ? "" : `<p class="sub">${esc(k.why)}.</p>`}
@@ -200,30 +205,47 @@ function tally() {
 }
 function paintBars() {
   const n = tally();
-  $("#sum").innerHTML = `${fmt(n.all - n.keep)} to hide · <b>${fmt(n.keep)}</b> kept`;
+  $("#sum").innerHTML = `${n.hide || !n.applied ? `${fmt(n.all - n.keep)} to hide` : `${fmt(n.applied)} hidden`} · <b>${fmt(n.keep)}</b> kept`;
   for (const b of document.querySelectorAll("#seg button")) {
     b.classList.toggle("on", b.dataset.f === filter);
     $("span", b).textContent = fmt(b.dataset.f === "all" ? n.all : n.keep);
   }
   const todo = [n.hide && `Hide ${plural(n.hide, "photo")}`, n.show && `${n.hide ? "show" : "Show"} ${plural(n.show, "photo")} again`].filter(Boolean);
+  const done = S.state === "done", ready = !todo.length && n.all > 0;
+  const stands = `<b>${plural(n.applied, "photo")}</b> hidden · ${fmt(n.keep)} kept`;
+  // How the set stands, in words above the photos: what is in effect, and what is left to decide.
+  const fin = $("#fin");
+  fin.hidden = !(done || (ready && S.state !== "reverted") || (n.applied && !ready));
+  fin.className = `fin${done ? " done" : ""}`;
+  fin.innerHTML = done ? `<b>Done.</b> ${stands}. Committed ${day(S.done_at || "")}. To change or revert it, reopen it first.`
+    : ready ? `<b>Applied, not yet committed.</b> ${stands}. Look at the library; then <b>Commit</b> to finish, or <b>Revert</b> to show every photo again.`
+    : `<b>Partly applied.</b> ${stands} so far; ${todo.join(", ").toLowerCase()} still to apply.`;
+  $("#main").classList.toggle("locked", done);
+  $("#hint").textContent = done ? "This set is done. Nothing here can be changed until it is reopened."
+    : "Everything here will be hidden, except what you mark to keep.";
   const dock = $("#dock");
   dock.hidden = false;
-  dock.innerHTML = `<span class="say num">${todo.length ? `<b>${todo.join(", ")}</b>${n.keep && n.hide ? ` · keeping ${fmt(n.keep)}` : ""}`
-      : n.applied ? `<b>${plural(n.applied, "photo")}</b> hidden · ${fmt(n.keep)} kept` : "Every photo is kept: nothing to hide"}</span>
-    ${n.applied ? '<button class="btn" id="undo">Undo all</button>' : ""}
-    <button class="btn" id="upto" ${todo.length && cur ? "" : "disabled"} title="Apply only as far as the photo you are on; the rest waits">Apply up to here <kbd>U</kbd></button>
-    <button class="btn pri" id="apply" ${todo.length ? "" : "disabled"}>Apply all <kbd>A</kbd></button>`;
-  $("#apply").onclick = () => apply();
-  $("#upto").onclick = () => apply(cur);
-  if ($("#undo")) $("#undo").onclick = undo;
+  dock.innerHTML = `<span class="say num">${done ? `<b>Done</b> · ${fmt(n.applied)} hidden · ${fmt(n.keep)} kept`
+      : todo.length ? `<b>${todo.join(", ")}</b>${n.keep && n.hide ? ` · keeping ${fmt(n.keep)}` : ""}`
+      : n.applied ? stands : n.all ? "Every photo is kept: nothing to hide" : "Nothing in this set"}</span>
+    ${done ? '<button class="btn" id="reopen">Reopen</button>' : `
+    ${n.applied ? '<button class="btn" id="undo">Revert</button>' : ""}
+    ${todo.length ? `<button class="btn" id="upto" ${cur ? "" : "disabled"} title="Apply only as far as the photo you are on; the rest waits">Apply up to here <kbd>U</kbd></button>
+    <button class="btn pri" id="apply">Apply all <kbd>A</kbd></button>` : ""}
+    ${ready ? '<button class="btn pri" id="commit">Commit</button>' : ""}`}`;
+  const on = (id, fn) => { if ($(id)) $(id).onclick = fn; };
+  on("#apply", () => apply()); on("#upto", () => apply(cur)); on("#undo", undo);
+  on("#commit", () => finish("commit")); on("#reopen", () => finish("reopen"));
 }
 
 // A mark shows at once and is saved behind it; if saving fails it is put back.
 async function setKeep(items, keep) {
   items = items.filter(it => kept(it) !== keep);
   if (!items.length) return;
+  if (S.state === "done") return toast("This set is done. Reopen it to change it");
   const was = items.map(it => it.decision), decision = keep ? "reject" : "accept";
   items.forEach(it => { it.decision = decision; paintTile(it); });
+  if (S.state === "applied") S.state = "review";   // a new mark is something left to apply
   paintBars(); paintZoom();
   try {
     await api(`/api/changes/${S.id}/decide`, { shas: items.map(it => it.sha), decision });
@@ -291,8 +313,9 @@ async function openSet(id) {
   $("#main").innerHTML = `<div class="tools">
       <div class="seg" id="seg"><button data-f="all">All<span></span></button><button data-f="keep">Kept<span></span></button></div>
       <span class="size"><button class="round" data-size="-1" aria-label="Smaller photos">−</button><button class="round" data-size="1" aria-label="Bigger photos">+</button></span>
-      <span>Everything here will be hidden, except what you mark to keep.</span>
+      <span id="hint"></span>
       <span class="keys"><span><b>Click</b> or <kbd>K</kbd> keep</span><span><kbd>Space</kbd> zoom</span><span><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move</span><span><kbd>−</kbd><kbd>+</kbd> size</span><span><kbd>U</kbd> apply up to here</span></span></div>
+    <div class="fin" id="fin" hidden></div>
     <div class="why" id="why">${esc(S.prompt || "")}</div>
     <div class="grid" id="grid" style="--h:${SIZES[size]}px"></div>`;
   $("#seg").onclick = e => { const b = e.target.closest("button"); if (b) { filter = b.dataset.f; render(); scrollTo(0, 0); } };
@@ -359,8 +382,8 @@ addEventListener("keydown", e => {
   else if (k === "escape") unzoom();
   else if (k === "-" || k === "_") setSize(size - 1);
   else if (k === "=" || k === "+") setSize(size + 1);
-  else if (k === "a" && !$("#apply").disabled) apply();
-  else if (k === "u" && !$("#upto").disabled) apply(cur);
+  else if (k === "a" && $("#apply") && !$("#apply").disabled) apply();
+  else if (k === "u" && $("#upto") && !$("#upto").disabled) apply(cur);
   else return;
   e.preventDefault();
 });
@@ -372,6 +395,7 @@ async function apply(through) {
   $("#apply").disabled = $("#upto").disabled = true;
   try {
     const r = await api(`/api/changes/${S.id}/apply`, through ? { through } : {});
+    S.state = r.state;
     const end = through ? S.items.findIndex(it => it.sha === through) + 1 : S.items.length;
     S.items.slice(0, end).forEach(it => { it.applied = !kept(it); paintTile(it); });
     paintBars(); paintZoom();
@@ -383,13 +407,22 @@ async function apply(through) {
 }
 async function undo() {
   const n = tally().applied;
-  if (!confirm(`Show all ${plural(n, "photo")} this set hides again? What you marked to keep is remembered, so you can apply it again later.`)) return;
+  if (!confirm(`Revert: show all ${plural(n, "photo")} this set hides again? What you marked to keep is remembered, so you can apply it again later.`)) return;
   try {
-    await api(`/api/changes/${S.id}/revert`, {});
+    S.state = (await api(`/api/changes/${S.id}/revert`, {})).state;
     S.items.forEach(it => { it.applied = false; paintTile(it); });
     paintBars(); paintZoom();
     toast(`${plural(n, "photo")} shown again`);
     settle();
+  } catch (e) { toast(e.message); }
+}
+// Commit: the set is done and can no longer be changed. Reopen: it can be again. Neither moves a photo.
+async function finish(what) {
+  try {
+    const r = await api(`/api/changes/${S.id}/${what}`, {});
+    S.state = r.state; S.done_at = r.done_at;
+    paintBars(); paintZoom();
+    toast(what === "commit" ? "Done" : "Reopened");
   } catch (e) { toast(e.message); }
 }
 // After a change the app re-reads the library; when it has, say whether every photo is where it should be.

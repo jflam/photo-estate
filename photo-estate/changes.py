@@ -6,7 +6,8 @@ and marks the exceptions: the photos to keep. Every photo not marked is done to 
 review is a last look, not a decision per photo. Each mark is saved as it is made, so a review of ten
 thousand photos can stop and carry on later. Applying can be done as often as wanted: it makes the
 library match the marks made so far, for the whole set or only as far as the person has looked.
-Undoing a set takes back everything it did, as one unit.
+Reverting a set takes back everything it did, as one unit. When the library is as the person wants it,
+they commit the set: it is done, and nothing about it can change until it is reopened.
 
 The first (and so far only) operation is `hide`: the photo stays in the store and in the catalog, and
 is left out of every view (search, the library, People, the copy a phone keeps). Files are never
@@ -23,6 +24,8 @@ touched.
                                         that are. With `through`, only as far as that photo, in the order
                                         the page shows them: the rest of the set is left as it is
   POST /api/changes/<id>/revert         undo everything the set did (the decisions are kept)
+  POST /api/changes/<id>/commit         the set is done: possible once nothing is left to apply
+  POST /api/changes/<id>/reopen         a done set can be changed (or reverted) again
   POST /api/changes/<id>/discard        forget a set that hides nothing
 
 Like faces.People and intake's API it is one object with a `handle` method, mounted by `embed.py serve`.
@@ -42,8 +45,8 @@ import pages
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS change_sets(
   id INTEGER PRIMARY KEY, title TEXT, prompt TEXT, op TEXT DEFAULT 'hide',
-  status TEXT DEFAULT 'open',        -- open | reverted
-  created_by TEXT, created_at TEXT, updated_at TEXT, applied_at TEXT, reverted_at TEXT);
+  status TEXT DEFAULT 'open',        -- open | reverted | done
+  created_by TEXT, created_at TEXT, updated_at TEXT, applied_at TEXT, reverted_at TEXT, done_at TEXT);
 CREATE TABLE IF NOT EXISTS change_items(
   set_id INT, sha256 TEXT,
   decision TEXT DEFAULT 'pending',   -- pending (nobody has said: as proposed) | accept | reject (keep it)
@@ -55,7 +58,7 @@ CREATE TABLE IF NOT EXISTS hidden(   -- a photo is hidden while any row names it
 OPS = ("hide",)
 DECISIONS = ("pending", "accept", "reject")
 SHA = re.compile(r"^[0-9a-f]{64}$")
-ROUTE = re.compile(r"^/api/changes(?:/(\d+)(?:/(items|decide|apply|revert|discard|check))?)?$")
+ROUTE = re.compile(r"^/api/changes(?:/(\d+)(?:/(items|decide|apply|revert|commit|reopen|discard|check))?)?$")
 
 
 def now() -> str:
@@ -85,6 +88,8 @@ class Changes:
         self.lock = threading.Lock()   # one writer at a time; reads take no lock (WAL)
         con = self.con()
         con.executescript(SCHEMA)
+        if "done_at" not in {r[1] for r in con.execute("PRAGMA table_info(change_sets)")}:
+            con.execute("ALTER TABLE change_sets ADD COLUMN done_at TEXT")   # catalogs from before sets could be done
         con.commit()
         con.close()
 
@@ -97,11 +102,11 @@ class Changes:
 
     def summary(self, con, sid: int) -> dict | None:
         row = con.execute("SELECT id, title, prompt, op, status, created_by, created_at, updated_at, applied_at,"
-                          " reverted_at FROM change_sets WHERE id=?", (sid,)).fetchone()
+                          " reverted_at, done_at FROM change_sets WHERE id=?", (sid,)).fetchone()
         if not row:
             return None
         s = dict(zip(("id", "title", "prompt", "op", "status", "created_by", "created_at", "updated_at",
-                      "applied_at", "reverted_at"), row))
+                      "applied_at", "reverted_at", "done_at"), row))
         n = {d: 0 for d in DECISIONS}
         applied = todo = 0
         for decision, was_applied, k in con.execute(
@@ -110,8 +115,10 @@ class Changes:
             applied += k if was_applied else 0
             todo += k if (decision != "reject") != bool(was_applied) else 0
         total = sum(n.values())
-        # what the set has come to: nothing in it, undone, still being worked on, or finished
-        s["state"] = ("empty" if not total else "reverted" if s["status"] == "reverted" and not applied
+        # what the set has come to: nothing in it, reverted, still being looked over, applied in full
+        # and waiting to be committed or reverted, or done
+        s["state"] = ("empty" if not total else "done" if s["status"] == "done" and not todo
+                      else "reverted" if s["status"] == "reverted" and not applied
                       else "review" if todo else "applied")
         return {**s, "n": total, **n, "applied": applied, "todo": todo}
 
@@ -224,8 +231,11 @@ class Changes:
         with self.lock:
             con = self.con()
             try:
-                if not self.summary(con, sid):
+                was = self.summary(con, sid)
+                if not was:
                     return {"error": "no such change set"}, 404
+                if was["state"] == "done" and what in ("items", "decide", "apply", "revert"):
+                    return {"error": "this set is done; reopen it to change it"}, 409
                 extra, t = {}, now()
                 if what == "items":
                     extra = self.add_items(con, sid, body.get("items"))
@@ -263,6 +273,14 @@ class Changes:
                     con.execute("UPDATE change_items SET applied=0 WHERE set_id=?", (sid,))
                     con.execute("UPDATE change_sets SET status='reverted', reverted_at=? WHERE id=?", (t, sid))
                     extra, changed = {"showed": shown}, bool(shown)
+                elif what == "commit":
+                    if was["todo"] or not was["n"]:
+                        return {"error": "apply the set first: some photos are not yet as marked"
+                                if was["n"] else "there is nothing in this set"}, 409
+                    con.execute("UPDATE change_sets SET status='done', done_at=? WHERE id=?", (t, sid))
+                elif what == "reopen":
+                    if was["state"] == "done":
+                        con.execute("UPDATE change_sets SET status='open', done_at=NULL WHERE id=?", (sid,))
                 elif what == "discard":
                     if con.execute("SELECT 1 FROM hidden WHERE set_id=? LIMIT 1", (sid,)).fetchone():
                         return {"error": "this set is hiding photos; undo it first"}, 409

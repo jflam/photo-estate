@@ -206,6 +206,27 @@ try:
     assert (r["hid"], r["applied"], r["todo"], r["state"]) == (19, 37, 0, "applied")
     settled(long)
     views_agree(set(order) - {order[2], order[4], order[30]}, everything, phone, long)
+
+    # commit: the set is done, and stays as it is until it is reopened; neither moves a photo
+    assert (call(f"/api/changes/{long}")["state"], call(f"/api/changes/{long}")["done_at"]) == ("applied", None)
+    call(f"/api/changes/{long}/decide", {"shas": [order[5]], "decision": "reject"})
+    assert "apply the set first" in call(f"/api/changes/{long}/commit", {}, expect=409)["error"]
+    call(f"/api/changes/{long}/decide", {"shas": [order[5]], "decision": "accept"})
+    r = call(f"/api/changes/{long}/commit", {})
+    assert (r["state"], r["applied"], bool(r["done_at"])) == ("done", 37, True)
+    for what, body in (("decide", {"shas": [order[6]], "decision": "reject"}), ("items", {"remove": [order[6]]}),
+                       ("apply", {}), ("revert", {})):
+        assert "reopen" in call(f"/api/changes/{long}/{what}", body, expect=409)["error"]
+    call(f"/api/changes/{long}/discard", {}, expect=409)
+    d = call(f"/api/changes/{long}")
+    assert (d["state"], d["applied"], d["reject"], d["n"]) == ("done", 37, 3, 40)
+    assert [x["state"] for x in call("/api/changes")["sets"] if x["id"] == long] == ["done"]
+    views_agree(set(order) - {order[2], order[4], order[30]}, everything, phone, long)
+    r = call(f"/api/changes/{long}/reopen", {})
+    assert (r["state"], r["done_at"], r["applied"]) == ("applied", None, 37)
+    empty = call("/api/changes", {"title": "Nothing"}, expect=201)["id"]
+    call(f"/api/changes/{empty}/commit", {}, expect=409)
+    call(f"/api/changes/{empty}/discard", {})
     assert call(f"/api/changes/{long}/revert", {})["showed"] == 37
     settled(long)
     assert call(f"/api/changes/{long}/discard", {}) == {"discarded": long}
