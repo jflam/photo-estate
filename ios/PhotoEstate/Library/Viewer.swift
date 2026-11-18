@@ -379,7 +379,7 @@ final class PagerController: UIPageViewController, UIPageViewControllerDataSourc
         p.onTap = { [weak self] in self?.onTap() }
         p.onZoom = { [weak self] z in self?.onZoom(z) }
         // Keep the neighbours' full-screen copies warm, so a swipe lands on a sharp photo.
-        for j in [i + 1, i - 1] where tiles.indices.contains(j) { Task { _ = await ImageStore.shared.fetch(.preview, tiles[j].sha) } }
+        for j in [i + 1, i - 1] where tiles.indices.contains(j) { Task { await ImageStore.shared.warm(tiles[j].sha) } }
         return p
     }
 
