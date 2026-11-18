@@ -20,6 +20,10 @@ enum Facet: String, CaseIterable, Identifiable {
     }
 }
 
+/// How a list is ordered: by time, or the best photos first; and for a described search, which the server
+/// ranks, by how well each photo matches (`match`) or, of the photos that match, the best first.
+enum Order: String { case new, old, best, match }
+
 /// The whole question, as the web app's `S` (chapter 13 of the book).
 struct Query: Equatable {
     var text = ""
@@ -27,12 +31,13 @@ struct Query: Equatable {
     var similar: String?              // "More like this" for this photo
     var picks: [Facet: [String]] = [:]
     var event: Int64?
+    var stack: String?                // the photos of one stack, named as the catalog names it
     var from: Int?                    // months as year*12 + month-1, inclusive
     var to: Int?
     var fav = false
-    var oldFirst: Bool?
+    var order: Order?
 
-    var isFiltered: Bool { picks.values.contains { !$0.isEmpty } || event != nil || from != nil || to != nil || fav }
+    var isFiltered: Bool { picks.values.contains { !$0.isEmpty } || event != nil || stack != nil || from != nil || to != nil || fav }
     var isEmpty: Bool { text.isEmpty && similar == nil && !isFiltered }
 
     func picked(_ f: Facet) -> [String] { picks[f] ?? [] }
@@ -56,7 +61,8 @@ struct Query: Equatable {
         if let from { out.append(.init(name: "from", value: Query.month(from))) }
         if let to { out.append(.init(name: "to", value: Query.month(to))) }
         if fav { out.append(.init(name: "fav", value: "1")) }
-        if let oldFirst { out.append(.init(name: "sort", value: oldFirst ? "old" : "new")) }
+        if let stack { out.append(.init(name: "stack", value: stack)) }
+        if let order { out.append(.init(name: "sort", value: order.rawValue)) }
         out += [.init(name: "limit", value: String(limit)), .init(name: "cursor", value: String(cursor)),
                 .init(name: "dedupe", value: dedupe ? "1" : "0")]
         return out
@@ -246,6 +252,7 @@ enum Reader {
             p.clauses.append(Clause(key: "date", sql: "p.ym BETWEEN ? AND ?", args: [q.from ?? 0, q.to ?? 1_000_000]))
         }
         if q.fav { p.clauses.append(Clause(key: "fav", sql: "p.fav=1", args: [])) }
+        if let s = q.stack { p.clauses.append(Clause(key: "stack", sql: "p.stack=?", args: [s])) }
         if let e = q.event {
             p.clauses.append(Clause(key: "event", sql: "p.event=?", args: [e]))
             p.scopeEvent = e
@@ -321,9 +328,23 @@ extension Catalog {
         if let words { sql += " AND p.id IN (SELECT rowid FROM fts WHERE fts MATCH ?)"; args.append(words) }
         if hideDups { sql += " AND p.dup=0" }
         if hideShots { sql += " AND NOT \(Screenshots.sql)" }
-        let q = "SELECT p.sha, p.ar, p.whenk, p.city, p.fav FROM photos p WHERE \(sql) ORDER BY p.whenk='' , p.whenk \(oldFirst ? "ASC" : "DESC"), p.sha"
+        let size = "CASE WHEN p.stack IS NULL THEN 0 ELSE (SELECT count(*) FROM photos s WHERE s.stack=p.stack) END"
+        let q = "SELECT p.sha, p.ar, p.whenk, p.city, p.fav, \(size), p.best FROM photos p WHERE \(sql) ORDER BY p.whenk='' , p.whenk \(oldFirst ? "ASC" : "DESC"), p.sha"
         return (try? await store.read { db in
-            try db.query(q, args) { Tile(sha: $0.text(0), ar: Float($0.double(1)), when: $0.text(2), city: $0.string(3), fav: $0.bool(4)) }
+            try db.query(q, args) {
+                Tile(sha: $0.text(0), ar: Float($0.double(1)), when: $0.text(2), city: $0.string(3), fav: $0.bool(4),
+                     stack: Int32($0.int(5)), best: $0.optDouble(6).map { Float($0) } ?? -.infinity)
+            }
+        }) ?? []
+    }
+
+    /// The photos of one stack, best first (the one on top first), for the viewer's strip.
+    func stackTiles(_ stack: String) async -> [Tile] {
+        (try? await store.read { db in
+            try db.query("SELECT sha, ar, whenk, city, fav, best FROM photos WHERE stack=? ORDER BY best IS NULL, best DESC, whenk, sha", [stack]) {
+                Tile(sha: $0.text(0), ar: Float($0.double(1)), when: $0.text(2), city: $0.string(3), fav: $0.bool(4),
+                     best: $0.optDouble(5).map { Float($0) } ?? -.infinity)
+            }
         }) ?? []
     }
 

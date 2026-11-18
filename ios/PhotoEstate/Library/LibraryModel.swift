@@ -53,7 +53,12 @@ final class LibraryModel: ObservableObject {
     @Published private(set) var notice: String?
     @Published private(set) var ranked = false
     @Published private(set) var loading = true
-    @Published private(set) var oldFirst = false
+    @Published private(set) var order = Order.new
+    /// The order in words when it is not the one this list would have anyway ("best first"), for the line
+    /// under the title and the mark on the view button.
+    @Published private(set) var orderNote: String?
+    /// Has the server said which photos are best: without that there is no "Best first" to offer.
+    @Published private(set) var hasBest = false
     @Published private(set) var canGoBack = false
     @Published private(set) var vocab = Vocab()
     @Published private(set) var trips: [Trip] = []
@@ -90,6 +95,23 @@ final class LibraryModel: ObservableObject {
     }
     @Published var rowHeight = UserDefaults.standard.object(forKey: "view.rowHeight") as? Double ?? 128 {
         didSet { UserDefaults.standard.set(rowHeight, forKey: "view.rowHeight") }
+    }
+
+    /// The Library remembers the order chosen for it, like the other view options. Search does not: what is
+    /// asked for there has its own natural order (a trip from its start, a stack best first).
+    private let remembersOrder: Bool
+
+    init(remembersOrder: Bool = false) {
+        self.remembersOrder = remembersOrder
+        if remembersOrder { query.order = UserDefaults.standard.string(forKey: "view.order").flatMap(Order.init(rawValue:)) }
+    }
+
+    /// The order picked in the view menu.
+    func setOrder(_ o: Order) {
+        if remembersOrder { UserDefaults.standard.set(o.rawValue, forKey: "view.order") }
+        var q = query
+        q.order = o
+        query = q
     }
 
     private var gen = 0
@@ -164,6 +186,7 @@ final class LibraryModel: ObservableObject {
             if vocabRevision != rev {
                 vocab = await Catalog.shared.vocab()
                 trips = await Catalog.shared.trips()
+                hasBest = await Catalog.shared.hasBest()
                 vocabRevision = rev
             }
             guard g == gen else { return }
@@ -174,10 +197,15 @@ final class LibraryModel: ObservableObject {
             var isRanked = false
             var pending = 0
             let scope = await Catalog.shared.scope(plan)
-            let old = q.oldFirst ?? (scope != nil)
+            // A stack shows its best photo first; an event or a trip reads from its start; anything else, newest first.
+            let usual: Order = q.stack != nil ? .best : scope != nil ? .old : .new
+            var order = (q.order == .match ? nil : q.order) ?? usual       // `match` is only for a described search
+            if order == .best && !hasBest { order = scope != nil || q.stack != nil ? .old : .new }
+            let old = order == .old
+            let collapse = hideDups && q.stack == nil       // a stack's own photos are never behind one another
             if q.similar != nil || !plan.text.isEmpty {
                 do {
-                    let page = try await Remote.search(q, cursor: 0, dedupe: hideDups)
+                    let page = try await Remote.search(q, cursor: 0, dedupe: collapse)
                     guard g == gen else { return }
                     SyncEngine.shared.markOnline(true)
                     served = Dictionary(page.photos.map { ($0.sha, $0) }, uniquingKeysWith: { a, _ in a })
@@ -187,6 +215,9 @@ final class LibraryModel: ObservableObject {
                     total = matching
                     plan.text = page.text; plan.names = page.names; plan.places = page.places
                     isRanked = true
+                    // The server chose the photos (what matches the words) and their order: closest match first,
+                    // or the best of them first if that was asked for. "More like this" is by likeness only.
+                    order = q.order == .best && hasBest && q.similar == nil ? .best : .match
                 } catch {
                     guard g == gen else { return }
                     SyncEngine.shared.markOnline(false)
@@ -195,32 +226,41 @@ final class LibraryModel: ObservableObject {
                         note = "“More like this” compares what photos look like, which needs your server. It isn't reachable right now."
                     } else {
                         tiles = await Catalog.shared.tiles(plan, oldFirst: old, hideDups: false, words: Reader.match(plan.text) ?? "\"\"")
+                        if order == .best { tiles = LibraryModel.bestFirst(tiles, within: nil) }
                         note = "Offline: showing photos whose people, places, albums, captions or file names contain “\(plan.text)”. Finding photos by what's in them needs your server."
                     }
                     matching = tiles.count
                     total = matching
                 }
             } else {
-                tiles = await Catalog.shared.tiles(plan, oldFirst: old, hideDups: hideDups, hideShots: hideShots)
+                tiles = await Catalog.shared.tiles(plan, oldFirst: old, hideDups: collapse, hideShots: hideShots)
                 let mine = LocalPhotos.shared.tiles(for: q, hideShots: hideShots)        // on this iPhone, not yet on the server
                 tiles = mergeByTime(tiles, mine, oldFirst: old)
+                // Best first is per view: in the whole library it is the best of each month, the months in order as
+                // ever; in anything asked for (a person, a trip, a year, a stack) it is the best of all of it.
+                if order == .best { tiles = LibraryModel.bestFirst(tiles, within: q.isEmpty ? 7 : nil) }
                 pending = mine.count
                 next = nil
                 matching = tiles.count
                 total = await Catalog.shared.count(plan) + LocalPhotos.shared.tiles(for: q).count
             }
             guard g == gen else { return }
+            // The count on a tile says "there are more behind this one": not so when stacks are spread out.
+            if !collapse { for i in tiles.indices where tiles[i].stack != 0 { tiles[i].stack = 0 } }
             self.plan = plan
             ranked = isRanked
-            oldFirst = old
+            self.order = order
+            let said = isRanked ? order == .match : order == usual
+            orderNote = said ? nil : order == .best ? (q.isEmpty ? "best first in each month" : "best first") : order == .old ? "oldest first" : "newest first"
             notice = note
             self.pending = pending
             var grain = 7
-            if isRanked { grain = 0 }
+            let flat = order == .best && !q.isEmpty      // not in time order: no months or days to head
+            if isRanked || flat { grain = 0 }
             else if scope != nil { grain = 10 }
             else if let a = q.from, let b = q.to, b - a <= 1 { grain = 10 }
             grid = GridData(tiles: tiles, grain: grain, id: grid.id + 1, reset: grid.reset + (reset ? 1 : 0))
-            if !isRanked {
+            if !isRanked && !flat {
                 years = LibraryModel.periods(tiles, 4)
                 months = LibraryModel.periods(tiles, 7)
             }
@@ -240,12 +280,36 @@ final class LibraryModel: ObservableObject {
             guard let page = try? await Remote.search(query, cursor: cursor, dedupe: hideDups), g == gen, next == cursor else { return }
             for p in page.photos { served[p.sha] = p }
             next = page.next
-            grid = GridData(tiles: grid.tiles + page.photos.map(LibraryModel.tile), grain: 0, id: grid.id + 1, reset: grid.reset)
+            var more = page.photos.map(LibraryModel.tile)
+            if !(hideDups && query.stack == nil) { for i in more.indices { more[i].stack = 0 } }
+            grid = GridData(tiles: grid.tiles + more, grain: 0, id: grid.id + 1, reset: grid.reset)
         }
     }
 
+    /// The best photos first (ties keep their order). `within` 7: inside each month only, for a list in time
+    /// order, so the months stay where they are.
+    static func bestFirst(_ tiles: [Tile], within grain: Int?) -> [Tile] {
+        // Sorted by place, not in place: Swift's sort is not promised to keep ties in order.
+        func sorted(_ run: ArraySlice<Tile>) -> [Tile] {
+            run.enumerated().sorted { a, b in a.element.best != b.element.best ? a.element.best > b.element.best : a.offset < b.offset }.map(\.element)
+        }
+        guard let grain else { return sorted(tiles[...]) }
+        var out: [Tile] = []
+        out.reserveCapacity(tiles.count)
+        var i = 0
+        while i < tiles.count {
+            let key = tiles[i].when.prefix(grain)
+            var j = i + 1
+            while j < tiles.count, tiles[j].when.prefix(grain) == key { j += 1 }
+            out += sorted(tiles[i..<j])
+            i = j
+        }
+        return out
+    }
+
     /// The photos grouped by year (`grain` 4) or month (7), in the list's order. The card's photo is a
-    /// favourite if there is one, a landscape one if not, nearest the middle of the stretch.
+    /// favourite if there is one, a landscape one if not; among those the best one, or the one nearest
+    /// the middle of the stretch when the server has not said which photos are best.
     static func periods(_ tiles: [Tile], _ grain: Int) -> [Period] {
         var out: [Period] = []
         var i = 0
@@ -259,10 +323,10 @@ final class LibraryModel: ObservableObject {
             }
             if key.count == grain {                          // undated photos have no year or month
                 let mid = (i + j) / 2
-                var best = i, score = -Int.max
+                var best = i, score = (-1, -Float.infinity, -Int.max)
                 for k in i..<j {
                     let t = tiles[k]
-                    let s = (t.fav ? 4_000_000 : 0) + (t.ar >= 1.2 && t.ar <= 1.9 ? 2_000_000 : 0) - abs(k - mid)
+                    let s = ((t.fav ? 2 : 0) + (t.ar >= 1.2 && t.ar <= 1.9 ? 1 : 0), t.best, -abs(k - mid))
                     if s > score { score = s; best = k }
                 }
                 let top = cities.sorted { ($0.value, $1.key) > ($1.value, $0.key) }.prefix(grain == 4 ? 3 : 2).map { String($0.key) }
@@ -280,7 +344,8 @@ final class LibraryModel: ObservableObject {
     }
 
     private static func tile(_ p: Photo) -> Tile {
-        Tile(sha: p.sha, ar: Float(p.ar), when: p.when, city: p.city, fav: p.fav)
+        Tile(sha: p.sha, ar: Float(p.ar), when: p.when, city: p.city, fav: p.fav,
+             stack: Int32(p.stackN), best: p.best.map { Float($0) } ?? -.infinity)
     }
 
     private func describe(_ q: Query, _ plan: Plan, _ scope: Scope?) {
@@ -301,8 +366,11 @@ final class LibraryModel: ObservableObject {
             title = "More like this"; parts = ["Closest in look and subject"]
         } else if !plan.text.isEmpty {
             title = "“\(plan.text)”"
-            parts = [matching == 0 ? "No matches" : ranked ? "\(n), best match first" : n]
+            parts = [matching == 0 ? "No matches" : ranked ? "\(n), \(order == .best ? "the closest matches, your best first" : "best match first")" : n]
             if !reading.isEmpty { parts.insert([who.isEmpty ? "" : "with \(who)", place.isEmpty ? "" : "in \(place)"].filter { !$0.isEmpty }.joined(separator: ", "), at: 0) }
+        } else if q.stack != nil {
+            title = "Stack of \(matching.formatted())"
+            parts = ["Near-identical shots taken together"] + (order == .best && orderNote == nil ? ["best first"] : [])
         } else if let scope {
             title = scope.title.replacingOccurrences(of: "Trip to ", with: ""); parts = [Dates.span(scope.start, scope.end), n]
         } else if q.isFiltered {
@@ -319,6 +387,7 @@ final class LibraryModel: ObservableObject {
                                : ["\(LibraryModel.about(matching)) photos"]
         }
         parts += plan.applied
+        if let orderNote, !ranked { parts.append(orderNote) }      // a ranked list has said its order already
         if pending > 0 { parts.append("\(pending.formatted()) not uploaded") }
         subtitle = parts.filter { !$0.isEmpty }.joined(separator: " · ")
     }
@@ -331,7 +400,7 @@ final class LibraryModel: ObservableObject {
 final class Router: ObservableObject {
     enum Tab: Hashable { case library, search }
     @Published var tab = Tab.library
-    let library = LibraryModel()
+    let library = LibraryModel(remembersOrder: true)
     let search = LibraryModel()
 
     func find(_ q: Query) {

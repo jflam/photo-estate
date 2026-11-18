@@ -124,9 +124,11 @@ final class Store {
     private let writeQueue = DispatchQueue(label: "store.write", qos: .utility)
     private let readQueue = DispatchQueue(label: "store.read", qos: .userInitiated)
 
-    init(path: String, schema: String) throws {
+    /// `migrate` runs after the schema, for what `CREATE TABLE IF NOT EXISTS` cannot do to a file from an older build.
+    init(path: String, schema: String, migrate: (SQLite) throws -> Void = { _ in }) throws {
         writer = try SQLite(path: path)
         try writer.exec(schema)
+        try migrate(writer)
         reader = try SQLite(path: path)
     }
 

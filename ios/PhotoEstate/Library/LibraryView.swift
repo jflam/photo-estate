@@ -84,13 +84,15 @@ struct TopBar: View {
         HStack(spacing: 8) {
             ScalePicker(model: model)
             Spacer(minLength: 0)
-            HStack(spacing: 0) {
-                ViewMenu(model: model).frame(width: 42, height: 40)
+            // Two buttons side by side: each is a full finger wide and answers anywhere in its own half, with a
+            // gap between, so a tap meant for one never lands on the other.
+            HStack(spacing: 6) {
+                ViewMenu(model: model, width: 46)
                 Button { settings = true } label: {
                     Image(systemName: !sync.online ? "wifi.slash" : sync.state == .syncing || downloads.running ? "arrow.down" : "iphone")
                         .contentTransition(.symbolEffect(.replace))
                         .foregroundStyle(sync.online ? Color.primary : Color.sun)
-                        .frame(width: 42, height: 40)
+                        .frame(width: 46, height: 44)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -273,14 +275,27 @@ struct CardPress: ButtonStyle {
 /// Order, size and near-identical shots: how a list of photos is laid out.
 struct ViewMenu: View {
     @ObservedObject var model: LibraryModel
+    var width: CGFloat = 44
     @ObservedObject private var local = LocalPhotos.shared
 
     var body: some View {
         Menu {
-            if !model.ranked {
-                Picker("Order", selection: Binding(get: { model.oldFirst }, set: { v in var q = model.query; q.oldFirst = v; model.query = q })) {
-                    Label("Newest first", systemImage: "arrow.down").tag(false)
-                    Label("Oldest first", systemImage: "arrow.up").tag(true)
+            if model.ranked {
+                // A described search: the photos that match, closest first or your best first. ("More like this"
+                // is by likeness and nothing else.)
+                if model.query.similar == nil && model.hasBest {
+                    Picker("Order", selection: Binding(get: { model.order }, set: { model.setOrder($0) })) {
+                        Label("Best match first", systemImage: "text.magnifyingglass").tag(Order.match)
+                        Label("Best first", systemImage: "sparkles").tag(Order.best)
+                    }
+                }
+            } else {
+                Picker("Order", selection: Binding(get: { model.order }, set: { model.setOrder($0) })) {
+                    Label("Newest first", systemImage: "arrow.down").tag(Order.new)
+                    Label("Oldest first", systemImage: "arrow.up").tag(Order.old)
+                    if model.hasBest {
+                        Label(model.query.isEmpty ? "Best first in each month" : "Best first", systemImage: "sparkles").tag(Order.best)
+                    }
                 }
             }
             Picker("Photo size", selection: Binding(get: { Estate.densities.min { abs($0 - model.rowHeight) < abs($1 - model.rowHeight) } ?? 128 },
@@ -291,11 +306,20 @@ struct ViewMenu: View {
                 Label("Large", systemImage: "square.grid.2x2.fill").tag(Estate.densities[3])
                 Label("Largest", systemImage: "rectangle.grid.1x2.fill").tag(Estate.densities[4])
             }
-            Toggle("Hide near-identical shots", systemImage: "square.on.square.dashed", isOn: $model.hideDups)
+            Toggle("Stack near-identical shots", systemImage: "square.stack", isOn: $model.hideDups)
             Toggle("Hide screenshots", systemImage: "rectangle.portrait.slash", isOn: $model.hideShots)
             Toggle("Show photos not yet on the server", systemImage: "iphone", isOn: $local.show)
-        } label: { Image(systemName: "line.3.horizontal.decrease").foregroundStyle(Color.primary) }
+        } label: {
+            // The whole box is the button, not just the glyph in it. A dot says the order is not the usual one.
+            Image(systemName: "line.3.horizontal.decrease").foregroundStyle(Color.primary)
+                .overlay(alignment: .topTrailing) {
+                    if model.orderNote != nil { Circle().fill(Color.sun).frame(width: 7, height: 7).offset(x: 5, y: -4) }
+                }
+                .frame(width: width, height: 44)
+                .contentShape(Rectangle())
+        }
         .accessibilityLabel("View options")
+        .accessibilityValue(model.orderNote ?? "")
     }
 }
 
