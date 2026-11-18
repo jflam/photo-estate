@@ -63,6 +63,32 @@ Laptop (M2 Max, NVMe), direct to `127.0.0.1`:
 Unchanged: an uncached HEIC preview takes 0.1–0.5 s to decode (pillow-heif); cached ones now come
 from the SSD.
 
+## Opening a month in the web app (2026-11-18)
+
+Measured from a laptop whose Tailscale connection to the Mac mini was relayed (DERP, no direct
+connection), on the 108k-photo library. `/api/search` answers in 7 ms on the server.
+
+| | Time |
+|---|---|
+| Click a month card → its photos' data in the page | 0.13–0.30 s (the page showed a heading and nothing else) |
+| A month's 150 thumbnails (3.6 MB), all asked for at once, not yet in memory on the server | half done at 5.0 s, all at 6.3 s |
+| The same 150, warm | 2.5–2.7 s |
+| 30 thumbnails (a screenful) asked for alone | 0.6–0.95 s |
+
+What changed:
+
+- `/api/layout` gives every Library photo's aspect ratio, a byte each, in the order `/api/search` pages
+  through (84 KB for the whole library before gzip). The page fetches it with `/api/periods`, so a month
+  is laid out the moment its card is clicked: every tile the shape its photo will be, and the photos
+  then arrive in their places with nothing moving.
+- Grid thumbnails are asked for by the page (`Thumbs` in `search.html`), rows on screen first, rows ahead
+  of the screen only while fewer than 6 pictures are on their way. With `loading="lazy"` the browser
+  started every thumbnail within ~1250–2500 px of the screen together, and `tailscale serve` shares the
+  link between them equally, so the screenful finished with the rest.
+
+Not done: the thumbnails are 360 px JPEGs at quality 82, 24 KB each; a format half that size would halve
+what is left. Month and year cards load a 1600 px preview each on top of the thumbnail.
+
 ## Reproducing
 
 Work on a local copy, not the live disk (on macOS, a new process reading `/Volumes/...` can trigger

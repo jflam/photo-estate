@@ -79,7 +79,7 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .row { display: flex; gap: var(--gap); margin-bottom: var(--gap); content-visibility: auto; }
 .t { position: relative; flex: none; height: 100%; overflow: hidden; background: var(--tile); cursor: pointer;
   -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
-.t img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .35s, filter .25s; }
+.t img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .18s, filter .25s; }
 .t img.in { opacity: 1; }
 .t:hover img { filter: brightness(1.06); }
 .t .fv { position: absolute; top: 6px; right: 6px; color: var(--sun-lit); filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
@@ -90,6 +90,11 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
   background: linear-gradient(transparent, rgba(0,0,0,.55)); opacity: 0; transition: opacity .2s; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .t:hover .cap { opacity: 1; }
+/* ghosts: a list laid out before its photos are known, every tile the shape its photo will be */
+.grid.ghost .t { cursor: default; }
+.grid.ghost .rows { animation: breathe .9s .25s ease-in-out infinite alternate; }
+@keyframes breathe { to { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .grid.ghost .rows { animation: none; } }
 .sentinel { height: 1px; }
 :root { --gpad: var(--pad); }
 @media (max-width: 760px) { :root { --gpad: 0px; } }       /* phones: the photos run to the edges, as on the iPhone */
@@ -274,8 +279,6 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .v-btn:hover { background: rgba(110,106,100,.6); }
 .v-btn:active { transform: scale(.94); }
 #vClose { top: calc(12px + env(safe-area-inset-top)); left: calc(14px + env(safe-area-inset-left)); }
-#vFav { top: calc(12px + env(safe-area-inset-top)); right: calc(14px + env(safe-area-inset-right)); color: #ffb061; pointer-events: none; transition: right .3s var(--ease); }
-#vFav svg { width: 17px; height: 17px; }
 .v-title { position: absolute; top: calc(17px + env(safe-area-inset-top)); left: 74px; right: 74px; text-align: center; pointer-events: none; transition: opacity .2s, right .3s var(--ease); }
 .v-title b, .v-title span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
 .v-title b { font-size: 17px; line-height: 22px; font-weight: 600; color: #fff; }
@@ -286,6 +289,7 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .v-bar button:hover { background: rgba(255,255,255,.1); }
 .v-bar svg { width: 21px; height: 21px; }
 .v-bar button.on { color: #ffb061; }
+#vFavBtn.on svg { fill: currentColor; }
 #vShare.busy svg { animation: pulse 1s ease-in-out infinite; }
 #vShare.ready { color: #ffb061; }
 @keyframes pulse { 50% { opacity: .35; } }
@@ -302,8 +306,7 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
   scrollbar-width: thin; scrollbar-color: #3a3936 transparent; overscroll-behavior: contain; }
 .v.info .v-info { transform: none; }
 .v.info #vNext { right: 378px; }
-.v.info .v-title, .v.info #vFav { right: 434px; }
-.v.info #vFav { right: 374px; }
+.v.info .v-title { right: 434px; }
 .v.info .v-bar, .v.info .v-note { left: calc(50% - 180px); }
 .v-info h3 { font-size: 26px; line-height: 1.15; font-weight: 700; letter-spacing: -.022em; color: #fff; }
 .v-info .sub { margin-top: 4px; color: var(--vmuted); font-size: 15px; }
@@ -345,8 +348,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
   .v-info { width: 100%; top: 45%; padding: 10px 20px calc(40px + env(safe-area-inset-bottom)); border-radius: 28px 28px 0 0; background: #1c1c1d;
     transform: translateY(100%); }
   .v-info::before { content: ""; display: block; width: 36px; height: 5px; margin: 0 auto 18px; border-radius: 3px; background: rgba(255,255,255,.25); }
-  .v.info .v-title, .v.info #vFav { right: 74px; }
-  .v.info #vFav { right: calc(14px + env(safe-area-inset-right)); }
+  .v.info .v-title { right: 74px; }
   .v.info .v-bar, .v.info .v-note { opacity: 0; pointer-events: none; }
   .head h1 { font-size: 28px; }
 }
@@ -409,12 +411,12 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
   <div class="v-ui" id="vUi">
     <button class="v-btn vglass" id="vClose" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m3.5 3.5 9 9m0-9-9 9"/></svg></button>
     <div class="v-title" id="vTitle"></div>
-    <span class="v-btn" id="vFav" aria-label="Favourite"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.9-5.6 7.3-5.6 7.3Z"/></svg></span>
     <button class="v-btn vglass" id="vPrev" aria-label="Previous"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
     <button class="v-btn vglass" id="vNext" aria-label="Next"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 5 5-5 5"/></svg></button>
     <div class="v-note" id="vNote"></div>
     <div class="v-bar vglass" id="vBar">
       <button id="vShare" aria-label="Share"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 12.5V2.5M6.5 5.8 10 2.500l3.500 3.300M7 8.500H5.500a1.300 1.300 0 0 0-1.300 1.300v6.400a1.300 1.300 0 0 0 1.300 1.300h9a1.300 1.300 0 0 0 1.300-1.300V9.800A1.300 1.300 0 0 0 14.500 8.500H13"/></svg></button>
+      <button id="vFavBtn" aria-label="Favourite" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 16.800S3.200 12.600 3.200 7.800A3.700 3.700 0 0 1 10 6a3.700 3.700 0 0 1 6.800 1.800c0 4.800-6.800 9-6.800 9Z"/></svg></button>
       <button id="vInfoBtn" aria-label="Details"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7.6"/><path d="M10 9v4.800"/><circle cx="10" cy="6.300" r=".5" fill="currentColor"/></svg></button>
       <button id="vLike" aria-label="More like this"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M8 2.500c.5 3.900 2.600 6 6.500 6.500-3.900.5-6 2.600-6.500 6.500-.5-3.900-2.600-6-6.500-6.500 3.900-.5 6-2.600 6.500-6.500ZM15 1.800c.2 1.400.9 2.100 2.300 2.300-1.400.2-2.100.9-2.300 2.300-.2-1.400-.9-2.100-2.300-2.300 1.400-.2 2.100-.9 2.300-2.300Z"/></svg></button>
     </div>
@@ -535,60 +537,146 @@ const tripTitle = t => (t?.title || "Trip").replace(/^Trip to /, "");
 const tripById = id => INFO.trips.find(t => String(t.id) === String(id));
 const firstPart = v => String(v).split(",")[0].trim();
 
-const getJSON = async u => { const r = await fetch(u); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; };
+const getJSON = async (u, o) => { const r = await fetch(u, o); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; };
+const postJSON = (u, body) => getJSON(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+/* ── machines. Whatever in the page is in one of several states (a list loading, the photo viewer, a finger on
+      the screen) says so in one place: its name, the state it is in, and every step it may take. A step that
+      is not in its table is refused and reported, so a mistake shows as a line in the console naming the two
+      states, not as a page that is subtly wrong some time later. ── */
+function machine(name, steps, state) {
+  return {
+    get state() { return state; },
+    is: (...names) => names.includes(state),
+    to(next) {
+      if (!steps[state].includes(next)) { console.warn(`${name}: no step from ${state} to ${next}`); return false; }
+      state = next; return true;
+    },
+  };
+}
+// The photo viewer. closed; open (an open photo is a history entry, so Back closes it); or leaving: put away on
+// screen, its history entry still to be taken back, which the browser reports a moment later (popstate).
+const VW = machine("viewer", { closed: ["open"], open: ["leaving", "closed"], leaving: ["closed"] }, "closed");
+const viewing = () => VW.is("open");
 const narrow = matchMedia("(max-width: 760px)"), coarse = matchMedia("(pointer: coarse)"), standalone = matchMedia("(display-mode: standalone)");
 let INFO = null;                                    // the library's facts (/api/info)
 
 /* ── the justified grid: rows as wide as the screen, every photo at its own shape (chapter 13). One per tab.
       `items` is indexed by position in the whole list, so a grid can start part way down (the Library, opened
       at a month) and fill in above as well as below. ── */
+// A grid's thumbnails are asked for in the order they will be looked at: the rows on screen at once, the rows
+// about to be only while nothing on screen is waiting. Left to the browser (loading="lazy"), a month's 150 all
+// start together and share the link, so the ones on screen finish with the rest: ~5 s where ~0.7 s would do.
+class Thumbs {
+  constructor() { this.epoch = 0; this.reset(); }
+  reset() {                                          // the rows are gone: nothing of theirs is waited for
+    this.seen?.disconnect(); this.near?.disconnect();
+    this.epoch++; this.wait = []; this.flying = 0;
+    this.seen = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting) this.start(e.target); });
+    this.near = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting && !e.target.dataset.asked) this.wait.push(e.target); this.pump(); },
+      { rootMargin: "1200px 0px" });
+  }
+  watch(row) { this.seen.observe(row); this.near.observe(row); }
+  start(row) {
+    if (row.dataset.asked) return;
+    row.dataset.asked = 1; this.seen.unobserve(row); this.near.unobserve(row);
+    const epoch = this.epoch, done = () => { if (epoch === this.epoch) { this.flying--; this.pump(); } };
+    for (const im of row.querySelectorAll("img[data-src]")) {
+      this.flying++; im.addEventListener("load", done, { once: true }); im.addEventListener("error", done, { once: true });
+      im.src = im.dataset.src;
+    }
+  }
+  pump() {                                           // a row ahead of the screen, when the link is nearly free
+    while (this.flying < 6 && this.wait.length) { const row = this.wait.shift(); if (row.isConnected) this.start(row); }
+  }
+}
 class Grid {
   constructor(o) {
     Object.assign(this, o);
-    this.el = $(o.grid); this.items = []; this.sections = []; this.lo = 0; this.next = null; this.gen = 0; this.data = null;
+    this.el = $(o.grid); this.items = []; this.sections = []; this.lo = 0; this.next = null; this.data = null;
+    // The list as a whole. empty: nothing asked for. loading: its first page is on its way (ghosts, or the list
+    // before it dimmed, show meanwhile). ready: showing, and either end may grow. failed: the first page did not come.
+    this.phase = machine(o.grid, { empty: ["loading", "empty"], loading: ["loading", "ready", "failed", "empty"],
+      ready: ["loading", "empty"], failed: ["loading", "empty"] }, "empty");
+    this.ends = { down: "idle", up: "idle" };        // each end of a ready list: idle | asking (a page is on its way) | retrying (it did not come)
+    this.gen = 0;                                    // which list this is: only ask() compares it
+    this.thumbs = new Thumbs();
     this.first = 150; this.step = 200;               // photos in the first page, and in each one after
     new IntersectionObserver(es => { if (es[0].isIntersecting) this.more(); }, { rootMargin: "1400px" }).observe($(o.down));
     if (o.up) new IntersectionObserver(es => { if (es[0].isIntersecting) this.less(); }, { rootMargin: "900px" }).observe($(o.up));
   }
   live() { return this.el.offsetParent !== null; }
-  async load(start = 0) {
-    const g = ++this.gen;
-    this.el.classList.add("stale");
-    this.data = this.next = null; this.busy = this.busyUp = false;   // the old list's place is gone now: nothing may be added from it (#42)
+  // The list from `start`. With `ghosts` (the first page as far as it is already known: each photo's month and
+  // shape, no picture), the page is laid out before the answer comes, and the photos then arrive in their
+  // places with nothing moving. Without, what is showing dims until the answer replaces it.
+  async load(start = 0, ghosts = null) {
+    this.reset("loading");                           // the old list's place is gone now: nothing may be added from it (#42)
+    if (ghosts) this.put(start, ghosts, "ghost"); else this.el.classList.add("stale");
     let data;
-    try { data = await this.fetch(start, this.first); }
-    catch (e) { if (g === this.gen) { this.el.classList.remove("stale"); this.onError?.(e); } return null; }
-    if (g !== this.gen) return null;
-    this.data = data; this.items = new Array(start); this.lo = start; this.next = data.next; this.sections = []; this.busy = this.busyUp = false;
+    try { data = await this.ask(start, this.first); }
+    catch (e) { this.phase.to("failed"); this.el.classList.remove("stale"); this.onError?.(e); return null; }
+    if (!data) return null;                          // another list was asked for since: its answer is the one to show
+    this.phase.to("ready"); this.data = data; this.next = data.next;
     this.onData?.(data);
-    const el = this.el;
-    el.innerHTML = ""; el.classList.remove("stale", "fresh"); void el.offsetWidth; el.classList.add("fresh");
-    this.add(data.results);
+    this.put(start, data.results, ghosts ? "" : "fresh");
     this.onGrow?.();
     setTimeout(() => this.poke(), 30);
     return data;
   }
-  clear() {                                          // nothing showing, and nothing more to come from the old list (its thumbnails stop loading too)
-    this.gen++; this.data = this.next = null; this.items = []; this.sections = []; this.lo = 0; this.el.innerHTML = "";
+  put(start, list, how) {                            // these photos, from `start`, in place of whatever is showing
+    const el = this.el, W = this.width(), y = scrollY;
+    dropPending(el); this.thumbs.reset();
+    this.items = new Array(start); this.lo = start; this.sections = [];
+    el.innerHTML = ""; el.classList.remove("stale", "fresh", "ghost");
+    if (how === "fresh") void el.offsetWidth;        // so the rise plays again
+    if (how) el.classList.add(how);
+    this.add(list, null, W);
+    if (how !== "fresh" && scrollY !== y) scrollTo(0, y);   // ghosts and the photos that take their places: the page stays where it is
   }
+  reset(phase) {                                     // a new list from here on: whatever was asked of the old one is no longer wanted
+    this.gen++; this.phase.to(phase); this.ends.down = this.ends.up = "idle"; this.data = this.next = null;
+  }
+  // A page of the list now showing. Null if the list was replaced while the page was on its way (whoever asked
+  // has nothing left to do); throws only when this list's own page did not come.
+  async ask(at, n) {
+    const g = this.gen;
+    try { const d = await this.fetch(at, n); return g === this.gen ? d : null; }
+    catch (e) { if (g === this.gen) throw e; return null; }
+  }
+  clear() {                                          // nothing showing, and nothing more to come from the old list (its thumbnails stop loading too)
+    this.reset("empty"); this.items = []; this.sections = []; this.lo = 0;
+    dropPending(this.el); this.thumbs.reset(); this.el.innerHTML = ""; this.el.classList.remove("stale", "fresh", "ghost");
+  }
+  width() { return this.el.clientWidth - 2 * this.gpad(); }
   poke() {                                           // fill in either end that is on screen (the observers only say when that changes)
     if (this.up && $(this.up).getBoundingClientRect().bottom > -900) this.less();
     if ($(this.down).getBoundingClientRect().top < innerHeight + 1400) this.more();
   }
   async more() {
-    if (this.busy || this.next == null || !this.data || !this.live()) return;
-    this.busy = true; const g = this.gen, at = this.next;
-    try { const d = await this.fetch(at, this.step); if (g === this.gen && at === this.next) { this.next = d.next; this.add(d.results); this.onGrow?.(); } } catch (e) {}
-    if (g === this.gen) this.busy = false;
-    if (g === this.gen && this.next != null && $(this.down).getBoundingClientRect().top < innerHeight + 1200) this.more();
+    if (!this.phase.is("ready") || this.ends.down !== "idle" || this.next == null || !this.live()) return;
+    this.ends.down = "asking";
+    let d;
+    try { d = await this.ask(this.next, this.step); } catch (e) { return this.retry("down"); }
+    if (!d) return;
+    this.next = d.next; this.add(d.results); this.onGrow?.(); this.ends.down = "idle";
+    if (this.next != null && $(this.down).getBoundingClientRect().top < innerHeight + 1200) this.more();
   }
   async less() {
-    if (this.busyUp || this.lo <= 0 || !this.data || !this.live()) return;
-    this.busyUp = true; const g = this.gen, n = Math.min(this.step, this.lo), at = this.lo - n;
-    let ok = false;
-    try { const d = await this.fetch(at, n); ok = d.results.length === n && at + n === this.lo; if (g === this.gen && ok) this.add(d.results, at); } catch (e) {}   // a short page, or one that no longer meets the list, would leave a gap
-    if (g === this.gen) this.busyUp = false;
-    if (g === this.gen && ok && this.lo > 0 && $(this.up).getBoundingClientRect().bottom > -900) this.less();
+    if (!this.phase.is("ready") || this.ends.up !== "idle" || this.lo <= 0 || !this.live()) return;
+    this.ends.up = "asking";
+    const n = Math.min(this.step, this.lo), at = this.lo - n;
+    let d;
+    try { d = await this.ask(at, n); } catch (e) { return this.retry("up"); }
+    if (!d) return;
+    const ok = d.results.length === n && at + n === this.lo;   // a short page, or one that no longer meets the list, would leave a gap
+    if (ok) this.add(d.results, at);
+    this.ends.up = "idle";
+    if (ok && this.lo > 0 && $(this.up).getBoundingClientRect().bottom > -900) this.less();
+  }
+  retry(end) {                                       // the server didn't answer: ask again shortly, if that end is still in sight
+    this.ends[end] = "retrying";
+    const g = this.gen;
+    setTimeout(() => { if (g === this.gen) { this.ends[end] = "idle"; this.poke(); } }, 2000);
   }
   section(key, base) {
     const el = document.createElement("section");
@@ -597,8 +685,8 @@ class Grid {
     const box = document.createElement("div"); box.className = "rows"; el.append(box);
     return { key, base, items: [], rows: [], el, box };
   }
-  add(list, at = null) {                             // at null: below what is there; else the photos just above it
-    const g = this.grain(), W = this.el.clientWidth - 2 * this.gpad();
+  add(list, at = null, W = this.width()) {           // at null: below what is there; else the photos just above it
+    const g = this.grain();
     if (at == null) {
       const touched = new Set();
       for (const r of list) {
@@ -643,30 +731,33 @@ class Grid {
     if (last && !last.full) { sec.rows.pop(); sec.box.lastElementChild.remove(); from = last.start; }
     else if (last) from = last.start + last.n;
     const H = rowH(W + 2 * this.gpad()), G = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gap")) || 3;
-    const ar = r => Math.min(2.6, Math.max(.5, r.ar || 1.5));
+    const ar = (r, k) => Math.min(2.6, Math.max(.5, this.shape?.(sec.base + k) || r.ar || 1.5));   // k: its place in the section
     let html = "";
     for (let i = from; i < sec.items.length;) {
       let sum = 0, j = i, full = false;
-      while (j < sec.items.length) { sum += ar(sec.items[j++]); if (sum * H + G * (j - i - 1) >= W) { full = true; break; } }
+      while (j < sec.items.length) { sum += ar(sec.items[j], j++); if (sum * H + G * (j - i - 1) >= W) { full = true; break; } }
       const n = j - i, room = W - G * (n - 1);
       if (!full && sum * H >= room * .9) full = true;
       const h = Math.round(full ? room / sum : H);
-      const ws = sec.items.slice(i, j).map(r => Math.round(ar(r) * h));
+      const ws = sec.items.slice(i, j).map((r, k) => Math.round(ar(r, i + k) * h));
       if (full) { let d = room - ws.reduce((a, b) => a + b, 0); for (let k = 0; d !== 0; k = (k + 1) % n) { ws[k] += Math.sign(d); d -= Math.sign(d); } }
       html += `<div class="row" style="height:${h}px;contain-intrinsic-size:auto ${h}px">`;
       for (let k = 0; k < n; k++) {
         const r = sec.items[i + k];
-        html += `<div class="t" tabindex="0" data-i="${sec.base + i + k}" style="width:${ws[k]}px"><img loading="lazy" decoding="async" alt="" src="/thumb/${r.sha}" onload="this.classList.add('in')">`
-          + (r.fav ? I.heartFill : "") + (r.stack && V.dedupe && !(this === sgrid && S.stack) ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
+        if (r.ghost) { html += `<div class="t" data-i="${sec.base + i + k}" style="width:${ws[k]}px"></div>`; continue; }
+        html += `<div class="t" tabindex="0" data-i="${sec.base + i + k}" style="width:${ws[k]}px"><img decoding="async" alt="" data-src="/thumb/${r.sha}" onload="this.classList.add('in')">`
+          + (r.fav ? I.heartFill : "") + (r.stack && this.stacks() ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
       }
       html += "</div>";
       sec.rows.push({ start: i, n, full });
       i = j;
     }
+    const had = sec.box.childElementCount;
     sec.box.insertAdjacentHTML("beforeend", html);
+    for (let k = had; k < sec.box.children.length; k++) this.thumbs.watch(sec.box.children[k]);
   }
   relayout() {
-    const W = this.el.clientWidth - 2 * this.gpad();
+    const W = this.width();
     for (const sec of this.sections) { sec.rows = []; sec.box.innerHTML = ""; this.draw(sec, W); }
   }
   counts() { for (const sec of this.sections) { const n = $(".n", sec.el); if (n) n.textContent = photos(this.count?.(sec) || sec.items.length); } }
@@ -683,15 +774,42 @@ const barH = () => TAB === "library" ? $("#lbar").offsetHeight : $("#sbar").offs
 /* ── where the app is. Every step is a history entry, so Back (or a swipe from the screen's edge) goes back the
       way you came: a card you opened, a search you made, the other tab. The entry holds the whole state. ── */
 let TAB = "library";
-const L = { scale: ["years", "months", "all"].includes(V.scale) ? V.scale : "all", trail: [], anchor: null, sort: "", P: null, y: {} };
-const snap = () => ({ tab: TAB, s: String(toParams(S)), lib: { scale: L.scale, anchor: L.anchor, trail: L.trail } });
+// The Library. Where it is, is three things, kept together and changed only by libSet: the scale showing, the
+// card it was last entered or left by (`anchor`, a year or a month), and the cards opened to get here (`trail`).
+// A history entry holds exactly that. What it knows of the photos is separate, and is `known`: the months and
+// years (P), how many in each month, and every photo's shape, all for one order and one set of view options.
+const L = { scale: ["years", "months", "all"].includes(V.scale) ? V.scale : "all", trail: [], anchor: null, sort: "", y: {},
+  P: null, months: null, shapes: null,
+  // unknown: never asked. asking. known. failed: asked, and nothing to show for it (a failure with the months
+  // already known leaves it known: the old ones stay up).
+  known: machine("library", { unknown: ["asking"], asking: ["asking", "known", "failed"], known: ["asking"], failed: ["asking"] }, "unknown"),
+  asked: 0, loading: null, retry: null };            // asked: which asking this is; loading: done when it is answered; retry: what "Try again" does
+const libPlace = () => ({ scale: L.scale, anchor: L.anchor, trail: L.trail });
+function libSet(place) { L.scale = place.scale || L.scale; L.anchor = place.anchor ?? null; L.trail = place.trail || []; }
+// Go to a place in the Library. how: "push" (a step to come back through) or "replace". arrive: show the
+// anchor (a card was opened, or Back came to it); otherwise the scale opens where it was last left.
+function libGo(place, how, arrive) {
+  L.y["library" + L.scale] = scrollY;
+  libSet(place);
+  nav(how); libShow(arrive);
+}
+const snap = () => ({ tab: TAB, s: String(toParams(S)), lib: libPlace() });
 const url = () => TAB === "library" ? location.pathname : "?" + (toParams(S).size ? toParams(S) : "search");
-function nav(mode = "push") {                         // push: a step to go back through; replace: the same step, refined
+// A step in history. push: one to go back through; replace: the same step, refined. The entry is what the app
+// shows at the moment of asking. While the viewer is leaving, its own entry is still being taken back, and a
+// step written now would be the one taken back instead: it waits for that (navFlush).
+const navWaiting = [];
+function nav(mode = "push") {
+  const entry = snap(), to = url();
+  if (VW.is("leaving")) navWaiting.push([mode, entry, to]); else navWrite(mode, entry, to);
+}
+function navWrite(mode, entry, to) {
   const prev = mode === "push" ? { tab: history.state?.tab, scale: history.state?.lib?.scale } : history.state?.prev;
   const d = (history.state?.d || 0) + (mode === "push" ? 1 : 0);
-  history[mode === "push" ? "pushState" : "replaceState"]({ ...snap(), prev, d }, "", url());
+  history[mode === "push" ? "pushState" : "replaceState"]({ ...entry, prev, d }, "", to);
 }
-function setTab(t, how = "push") {                 // how: push, replace, or "init" (the state is already in history)
+function navFlush() { for (const step of navWaiting.splice(0)) navWrite(...step); }
+function setTab(t, how = "push", arrive = false) {    // how: push, replace, or "init" (the state is already in history). arrive: see libGo
   if (t === TAB && how !== "init") return;
   closeMenus();
   if (t !== TAB) L.y[TAB + (TAB === "library" ? L.scale : "")] = scrollY;
@@ -699,8 +817,8 @@ function setTab(t, how = "push") {                 // how: push, replace, or "in
   $("#libTab").hidden = t !== "library"; $("#searchTab").hidden = t !== "search";
   for (const b of $$(".tabbar .tb")) b.classList.toggle("on", b.dataset.tab === t);
   if (how !== "init") nav(how);
-  if (t === "library") libShow();
-  else if (sShown !== sKey()) refreshSearch();
+  if (t === "library") libShow(arrive);
+  else if (Q?.key !== sKey()) refreshSearch();
   else { searchShow(); scrollTo(0, L.y.search || 0); }
   titleDoc();
 }
@@ -721,35 +839,71 @@ const lgrid = new Grid({
   fetch: (c, n) => getJSON("/api/search?" + libParams() + `&limit=${n}&cursor=${c}`),
   grain: () => 7,
   count: sec => L.months?.get(sec.key),
-  onGrow: () => { $("#libHead").hidden = lgrid.lo > 0; if (VL === lgrid && vCur >= 0) { arrange(); vChrome(); } },
-  onError: e => { $("#libHead p").textContent = "Couldn’t load the library: " + e.message; },
+  shape: i => L.shapes && i < L.shapes.length ? .5 + L.shapes[i] * 2.1 / 255 : 0,   // from /api/layout: known before the photo is
+  stacks: () => V.dedupe,
+  onGrow: () => { $("#libHead").hidden = lgrid.lo > 0; if (VL === lgrid && viewing()) { arrange(); vChrome(); } },
+  onError: e => {                                    // said where the photos would have been, with a way to ask again
+    lgrid.clear();
+    lgrid.el.innerHTML = libSorry("Couldn’t load these photos", e);
+  },
 });
+const libSorry = (what, e) => `<div class="blank">${MARK}<h3>${what}</h3><p>${esc(e?.message || "")}</p><button class="btn" id="libRetry">Try again</button></div>`;
 const libParams = () => { const p = viewParams(new URLSearchParams()); if (L.sort) p.set("sort", L.sort); return p; };
-async function libLoad(keep) {                       // keep: the month to stay at (a view option changed)
-  const P = await getJSON("/api/periods?" + libParams()).catch(() => null);
-  if (!P) return;
+function libLoad(keep) { L.retry = () => libLoad(keep); return L.loading = libLoad_(keep); }   // L.loading: done when the library's months are known
+async function libLoad_(keep) {                      // keep: the month to stay at (a view option changed)
+  const g = ++L.asked, q = libParams();
+  L.known.to("asking");
+  let failed = null;
+  const [P, shapes] = await Promise.all([getJSON("/api/periods?" + q).catch(e => { failed = e; return null; }),
+    fetch("/api/layout?" + q).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null)]);
+  if (g !== L.asked) return;                         // asked again since (another order, another view option): that answer is the one to show
+  if (!P) {
+    L.known.to(L.P ? "known" : "failed");
+    if (!L.P) { lgrid.onError(failed); $("#libPeriods").innerHTML = libSorry("Couldn’t load the library", failed); }
+    return;
+  }
+  L.known.to("known");
   L.P = P; L.months = new Map(P.months.map(m => [m.key, m.n]));
+  L.shapes = shapes && shapes.byteLength === P.matching ? new Uint8Array(shapes) : null;   // every photo's shape, in the library's order
   const hidden = P.total - P.matching;               // what the view options hide, so the count adds up to the whole library
   $("#libHead p").textContent = hidden > 0 ? `${about(P.matching)} of ${about(P.total)} photos  ·  ${about(hidden)} hidden` : `${about(P.matching)} photos`;
   if (L.scale !== "all") renderPeriods();
-  const m = keep && P.months.find(x => x.key === keep);
-  await lgrid.load(m ? m.at : 0);
+  const m = keep && P.months.find(x => x.key === keep), ghosts = libGhosts(m ? m.at : 0);
+  const loading = lgrid.load(m ? m.at : 0, ghosts);
+  if (!ghosts) await loading;
   if (m && L.scale === "all" && TAB === "library") toSection(keep);
+  await loading;
 }
-function libShow() {
-  const all = L.scale === "all", jump = L.jump; L.jump = false;   // jump: arrived here by a card, or by Back / Forward
+async function libCovers() {                          // a favourite changed: the same months and years, perhaps with other covers
+  const g = L.asked, P = await getJSON("/api/periods?" + libParams()).catch(() => null);
+  if (!P || g !== L.asked || !L.known.is("known") || P.matching !== L.P.matching) return;
+  L.P = P;
+  if (L.scale !== "all" && TAB === "library") renderPeriods();
+}
+function libGhosts(at) {                              // the page of photos from `at`, as far as it is known without asking: each one's month and shape
+  if (!L.shapes) return null;
+  const out = [], ms = L.P.months, end = Math.min(at + lgrid.first, L.shapes.length);
+  for (let i = at, k = 0; i < end; i++) {
+    while (ms[k] && ms[k].at + ms[k].n <= i) k++;
+    out.push({ ghost: true, local: ms[k] && ms[k].at <= i ? ms[k].key : "" });
+  }
+  return out;
+}
+function libShow(arrive = false) {                    // arrive: at the anchor (see libGo)
+  const all = L.scale === "all";
   for (const b of $$("#scale button")) { b.classList.toggle("on", b.dataset.s === L.scale); b.setAttribute("aria-selected", b.dataset.s === L.scale); }
   $("#libBack").hidden = !L.trail.length || coarse.matches;   // on touch, a swipe in from the left edge goes back
   $("#libAll").hidden = !all; $("#libPeriods").hidden = all;
   $("#scrub").classList.remove("on");
   if (!all) {
-    renderPeriods();
-    const key = L.anchor && (L.scale === "years" ? L.P?.years : L.P?.months)?.find(p => p.key.startsWith(L.anchor))?.key;
+    if (L.known.is("known")) renderPeriods();
+    else if (arrive) { const at = L.anchor; L.loading?.then(() => { if (TAB === "library" && L.scale !== "all" && L.anchor === at) libShow(true); }); }   // the card to show is not known yet: when it is
+    const key = arrive && L.anchor && (L.scale === "years" ? L.P?.years : L.P?.months)?.find(p => p.key.startsWith(L.anchor))?.key;
     const card = key && (L.scale === "months" && L.anchor.length === 4 && $(`.yr[data-year="${L.anchor}"]`) || $(`.card[data-key="${key}"]`));   // a year opens at its heading
     if (card) card.scrollIntoView({ block: "start" }); else scrollTo(0, L.y["library" + L.scale] || 0);
   } else {
     clearPeriods();                                  // every photo now: the cards are drawn again when they are next shown
-    if (jump && L.anchor && L.anchor.length > 4) libJump(L.anchor);
+    if (arrive && L.anchor && L.anchor.length > 4) libJump(L.anchor);
     else { scrollTo(0, L.y.libraryall || 0); setTimeout(() => lgrid.poke(), 30); }
   }
 }
@@ -770,27 +924,22 @@ function renderPeriods() {
     }).join("")}</div>`;
 }
 $("#libPeriods").onclick = e => {
+  if (e.target.closest("#libRetry")) return L.retry?.();
   const c = e.target.closest(".card"); if (!c) return;
   const key = c.dataset.key;
-  L.y["library" + L.scale] = scrollY;
-  L.anchor = key; nav("replace");                   // Back comes to this card
-  L.trail = [...L.trail, { key, back: L.scale }];
-  L.scale = key.length > 4 ? "all" : "months"; L.jump = true;
-  nav(); libShow();
+  libSet({ ...libPlace(), anchor: key }); nav("replace");   // this step now says which card was opened: Back comes to it
+  libGo({ scale: key.length > 4 ? "all" : "months", anchor: key, trail: [...L.trail, { key, back: L.scale }] }, "push", true);
 };
 $("#scale").onclick = e => {                          // Years, Months or All from the bar: a fresh start, nothing to go back to
   const b = e.target.closest("[data-s]"); if (!b || b.dataset.s === L.scale) return;
-  L.y["library" + L.scale] = scrollY;
-  L.scale = V.scale = b.dataset.s; saveView();
-  L.trail = []; L.anchor = null;
-  nav("replace"); libShow();
+  V.scale = b.dataset.s; saveView();
+  libGo({ scale: b.dataset.s, anchor: null, trail: [] }, "replace", false);
 };
 function libBack() {                                  // one step back, like a browser: to the card you came in by
   if (!L.trail.length) return;
   if (history.state?.prev?.tab === "library") return history.back();
   const p = L.trail[L.trail.length - 1];
-  L.trail = L.trail.slice(0, -1); L.anchor = p.key; L.scale = p.back; L.jump = true;
-  nav("replace"); libShow();
+  libGo({ scale: p.back, anchor: p.key, trail: L.trail.slice(0, -1) }, "replace", true);
 }
 $("#libBack").onclick = libBack;
 function toSection(key) {
@@ -799,15 +948,22 @@ function toSection(key) {
   return !!sec;
 }
 async function libJump(key) {                         // the whole library, at this month
-  if (!L.P) return;
+  if (!L.P) await L.loading;                          // Back to a month before the library's months are known: when they are
+  if (!L.P || TAB !== "library" || L.scale !== "all") return;
   if (toSection(key)) return;
   const m = L.P.months.find(x => x.key === key);
   if (!m) return;
-  lgrid.clear(); scrollTo(0, 0);                      // not the photos of wherever the grid was, while this month's are on their way
-  lgrid.el.innerHTML = `<section><div class="sh"><h2>${esc(heading(key))}</h2><p><span class="n num">${photos(m.n)}</span></p></div></section>`;   // the month, said at once
+  L.retry = () => libJump(key);
+  const ghosts = libGhosts(m.at);                     // the month laid out at once, each tile the shape its photo will be
+  scrollTo(0, 0);
+  if (!ghosts) {                                      // shapes not known: at least not the photos of wherever the grid was, and the month, said at once
+    lgrid.clear();
+    lgrid.el.innerHTML = `<section><div class="sh"><h2>${esc(heading(key))}</h2><p><span class="n num">${photos(m.n)}</span></p></div></section>`;
+  }
   $("#libHead").hidden = true;
-  await lgrid.load(m.at);
-  if (L.scale === "all") { scrollTo(0, 0); toSection(key); setTimeout(() => lgrid.poke(), 30); }
+  const loading = lgrid.load(m.at, ghosts);
+  if (ghosts) return toSection(key);                  // the photos arrive in their places; the page is not moved again under a reader
+  if (await loading && TAB === "library" && L.scale === "all") { scrollTo(0, 0); toSection(key); setTimeout(() => lgrid.poke(), 30); }
 }
 
 /* the handle at the right edge: shows the month at the top; drag it to go anywhere in the library */
@@ -939,69 +1095,83 @@ document.addEventListener("touchend", e => { if (e.touches.length < 2) pinch = n
 
 /* ── Search: the field, always at the top. With nothing asked, the page under it lays out the threads to pull;
       while typing, what the words could be; with a question, the answer. ── */
-let D = null, F = null, typing = false, sug = [], sugCur = -1, sShown = null;   // sShown: the question the page shows the answer to
+// Three things are kept apart here. S is the question as it now stands (the field and the chips change it). Q is
+// the question the page is answering: S as it was when asked, with the view options (`key`, what the server is
+// sent); everything drawn from an answer goes by Q, so a question changed while its answer is on its way, or
+// while Search is not showing, never mixes with the old one. How far along the answer is, is the grid's own
+// state (sgrid.phase: empty for no question, loading, ready, failed); D is the answer and F the counts beside it.
+let Q = null, D = null, F = null, sug = [], sugCur = -1;
+// The field is resting or being typed in. Typing starts with a tap in it and ends in stopTyping, however it ends.
+const FIELD = machine("field", { resting: ["typing"], typing: ["resting"] }, "resting");
+const typing = () => FIELD.is("typing");
+function stopTyping(text = S.q) { if (typing()) FIELD.to("resting"); $("#q").blur(); $("#q").value = text; }
+// What shows under the field follows from those: what the typed words could be, the ways in, or the answer.
+const pane = () => { const typed = $("#q").value.trim(); return typing() && typed && typed !== S.q ? "suggest" : isEmpty() ? "browse" : "results"; };
 const sgrid = new Grid({
   grid: "#sGrid", down: "#sDown",
-  fetch: (c, n) => getJSON((S.sha ? "/api/similar?" : "/api/search?") + sParams() + `&limit=${n}&cursor=${c}`),
-  grain: () => sgrid.ranked ? 0 : D?.scope || S.event ? 10 : S.from && S.to && ymOf(S.to) - ymOf(S.from) <= 1 ? 10 : 7,
+  fetch: (c, n) => getJSON((Q.s.sha ? "/api/similar?" : "/api/search?") + Q.key + `&limit=${n}&cursor=${c}`),
+  grain: () => sgrid.ranked ? 0 : D?.scope || Q.s.event ? 10 : Q.s.from && Q.s.to && ymOf(Q.s.to) - ymOf(Q.s.from) <= 1 ? 10 : 7,
+  stacks: () => V.dedupe && !Q.s.stack,
   count: sec => sec.key.length === 7 && F ? F.months[ymOf(sec.key)] : null,
-  onData: d => { D = d; sgrid.ranked = !!(S.sha || d.text) || d.sort === "best"; },   // best first is not by time: no months to head
-  onGrow: () => { if (VL === sgrid && vCur >= 0) { arrange(); vChrome(); } },
+  onData: d => { D = d; sgrid.ranked = !!(Q.s.sha || d.text) || d.sort === "best"; },   // best first is not by time: no months to head
+  onGrow: () => { if (VL === sgrid && viewing()) { arrange(); vChrome(); } },
   onError: e => { $("#sHead h1").textContent = "Couldn’t search"; $("#sHead p").textContent = e.message; },
 });
 const sParams = () => viewParams(toParams(S));
 const sKey = () => String(sParams());
 function go(s) { S = s; nav(); refreshSearch(); }           // a new question: a step to go back through
 function refine() { nav("replace"); refreshSearch(); }      // the same question, narrowed or widened
-function loadF() {
-  const g = sgrid.gen;
-  return getJSON("/api/facets?" + sParams()).then(f => { if (g === sgrid.gen) { F = f; sgrid.counts(); drawSheet(); } }).catch(() => {});
+function loadF() {                                    // the counts beside the question now being answered
+  const key = Q.key;
+  return getJSON("/api/facets?" + key).then(f => { if (Q.key === key) { F = f; sgrid.counts(); drawSheet(); } }).catch(() => {});
 }
-async function refreshSearch() {
-  if (TAB !== "search") return;                     // answered when Search shows again
-  sShown = sKey();
-  if (isEmpty()) { sgrid.gen++; D = null; loadF(); searchShow(); return; }
-  const loading = sgrid.load(0), g = sgrid.gen;
-  loadF(); searchShow(); scrollTo(0, 0);
+async function refreshSearch() {                      // S is asked: it becomes Q
+  if (TAB !== "search") return;                     // asked when Search shows again (setTab sees that Q is not what S now says)
+  Q = { s: copy(S), key: sKey() };
+  loadF();
+  if (isEmpty()) { sgrid.clear(); D = null; searchShow(); return; }
+  const loading = sgrid.load(0);
+  searchShow(); scrollTo(0, 0);
   const data = await loading;
-  if (!data || g !== sgrid.gen) return;
+  if (!data) return;                                // another question was asked since, or this one failed (the grid said so)
   searchHead(); searchShow();
   if (!data.results.length) $("#sGrid").innerHTML = `<div class="blank">${MARK}<h3>Nothing found</h3><p>${
     data.text && !S.sha ? `No photo looks like “${esc(data.text)}”${filtered() ? " with these filters" : ""}.` : "No photo matches these filters."}</p><button class="btn" id="again">Start again</button></div>`;
 }
 function searchShow(quiet) {                          // which of the three shows, and the bar to match
-  const typed = $("#q").value.trim(), suggesting = typing && typed && typed !== S.q, empty = isEmpty();
+  const show = pane(), suggesting = show === "suggest", empty = isEmpty();
   if (!quiet) {
-    $("#sugs").hidden = !suggesting; $("#browse").hidden = suggesting || !empty; $("#results").hidden = suggesting || empty;
+    $("#sugs").hidden = show !== "suggest"; $("#browse").hidden = show !== "browse"; $("#results").hidden = show !== "results";
     if (suggesting) drawSug();
     if (!$("#browse").hidden && !$("#browse").childElementCount) drawBrowse();
   }
   $("#sBack").hidden = empty;
-  $("#sCancel").hidden = !typing;
-  $("#sView").hidden = typing || empty;
+  $("#sCancel").hidden = !typing();
+  $("#sView").hidden = typing() || empty;
   $("#qClear").hidden = !$("#q").value;
   $("#chips").hidden = empty || suggesting;
   if (!$("#chips").hidden) drawChips();
   drawNotice(suggesting);
-  if ($("#q").value !== S.q && !typing) $("#q").value = S.q;
+  if ($("#q").value !== S.q && !typing()) $("#q").value = S.q;
   titleDoc();
 }
-function searchHead() {                               // what the answer is, in words
+function searchHead() {                               // what the answer is, in words (of the question it answers)
+  const s = Q.s;
   const n = photos(D.matching), both = (xs, w) => xs.length > 1 ? `${xs.slice(0, -1).join(", ")} ${w} ${xs[xs.length - 1]}` : xs[0] || "";
-  const read = !S.sha && !S.plain, who = read ? both(D.people || [], "&") : "", where = read ? both(D.places || [], "or") : "";
+  const read = !s.sha && !s.plain, who = read ? both(D.people || [], "&") : "", where = read ? both(D.places || [], "or") : "";
   const reading = [who, where && (who ? "in " : "") + where].filter(Boolean).join(" ");
   let title, parts = [];
   if (reading && !D.text) { title = reading; parts = [n]; }
-  else if (S.sha) { title = "More like this"; parts = ["Closest in look and subject"]; }
+  else if (s.sha) { title = "More like this"; parts = ["Closest in look and subject"]; }
   else if (D.text) {
     title = `“${D.text}”`; parts = [D.matching ? `${n}, ${D.sort === "best" ? "the closest matches, your best first" : "best match first"}` : "No matches"];
     if (reading) parts.unshift([who && `with ${who}`, where && `in ${where}`].filter(Boolean).join(", "));
-  } else if (S.stack) { title = `Stack of ${D.matching}`; parts = ["Near-identical shots taken together", D.sort === "best" ? "best first" : ""]; }
+  } else if (s.stack) { title = `Stack of ${D.matching}`; parts = ["Near-identical shots taken together", D.sort === "best" ? "best first" : ""]; }
   else if (D.scope) { title = tripTitle(D.scope); parts = [span(D.scope.start, D.scope.end), n]; }
   else {
-    const bits = [S.f.person.join(" & "), [...S.f.city, ...S.f.region, ...S.f.country].map(firstPart).join(", "), S.f.album.join(", "),
-      [...S.f.camera, ...S.f.lens].join(", "), S.f.trip.map(id => tripTitle(tripById(id))).join(", "), rangeLabel()].filter(Boolean);
-    title = bits.join(" · ") || (S.fav ? "Favourites" : "Photos"); parts = [n, S.fav && bits.length ? "favourites" : ""];
+    const bits = [s.f.person.join(" & "), [...s.f.city, ...s.f.region, ...s.f.country].map(firstPart).join(", "), s.f.album.join(", "),
+      [...s.f.camera, ...s.f.lens].join(", "), s.f.trip.map(id => tripTitle(tripById(id))).join(", "), rangeLabel(s)].filter(Boolean);
+    title = bits.join(" · ") || (s.fav ? "Favourites" : "Photos"); parts = [n, s.fav && bits.length ? "favourites" : ""];
   }
   parts.push(...(D.filters || []));
   if (DEBUG) parts.push(`${D.ms} ms`);
@@ -1214,22 +1384,22 @@ function drawSug() {
 }
 function submit() {
   const typed = $("#q").value.trim();
-  typing = false; $("#q").blur();
+  stopTyping(typed);
   const s = copy(S); s.q = typed; s.plain = false; s.sha = "";
   if (String(toParams(s)) === String(toParams(S))) return searchShow();
   go(s);
 }
 function pickSug(x) {
   if (x.type === "text") return submit();
-  typing = false; $("#q").blur(); $("#q").value = "";
+  stopTyping("");
   const s = copy(S); s.q = ""; s.sha = "";               // the typed words became a filter, not a description
   if (x.type === "year") { s.from = `${x.y}-01`; s.to = `${x.y}-12`; }
   else if (!s.f[x.k].includes(x.v)) { s.f[x.k].push(x.v); if (x.k === "trip") s.event = ""; }
   go(s);
 }
 const q = $("#q");
-q.addEventListener("focus", () => { typing = true; sugCur = -1; searchShow(); });
-q.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== q && typing) { typing = false; if (!q.value.trim() || q.value.trim() === S.q) q.value = S.q; searchShow(); } }, 0));
+q.addEventListener("focus", () => { if (!typing()) FIELD.to("typing"); sugCur = -1; searchShow(); });
+q.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== q && typing()) { FIELD.to("resting"); if (!q.value.trim() || q.value.trim() === S.q) q.value = S.q; searchShow(); } }, 0));
 q.addEventListener("input", () => { sugCur = -1; searchShow(); });
 q.addEventListener("keydown", e => {
   const open = !$("#sugs").hidden;
@@ -1240,15 +1410,15 @@ q.addEventListener("keydown", e => {
 });
 $("#sugs").addEventListener("pointerdown", e => e.preventDefault());   // keep the field focused until the pick is made
 $("#sugs").onclick = e => { const r = e.target.closest(".srw"); if (r) pickSug(sug[+r.dataset.i]); };
-$("#sCancel").onclick = () => { typing = false; q.value = S.q; q.blur(); searchShow(); };
+$("#sCancel").onclick = () => { stopTyping(); searchShow(); };
 $("#qClear").addEventListener("pointerdown", e => e.preventDefault());
 $("#qClear").onclick = e => {
   e.preventDefault(); q.value = "";
   if (S.q) { const s = copy(S); s.q = ""; s.plain = false; go(s); } else searchShow();
-  if (typing) q.focus();
+  if (typing()) q.focus();
 };
 function sBack() {                                    // the question before this one, or none
-  typing = false; q.blur(); q.value = "";
+  stopTyping("");
   if (history.state?.prev?.tab === "search") return history.back();
   go(blank());
 }
@@ -1266,8 +1436,7 @@ const mkSlide = () => { const el = document.createElement("div"); el.className =
 const slides = [mkSlide(), mkSlide(), mkSlide()];
 let cur = slides[0], vPic = cur.el;
 let VL = null, items = [];                           // the grid the photo was opened from, and its photos
-let vCur = -1, sheetUp = false, vNote = "";          // sheetUp: details showing on a phone (never to begin with)
-let vHist = false, vBack = false;                    // an open photo is a history entry, so Back closes it
+let vCur = -1, sheetUp = false, vNote = "";          // vCur: the photo showing while the viewer is open (VW). sheetUp: details showing on a phone (never to begin with)
 let settle = null;                                   // finishes a swipe that is still sliding into place
 const phone = () => narrow.matches || coarse.matches;   // full-screen photo, details only when asked for
 const vw = () => v.clientWidth, vh = () => v.clientHeight;
@@ -1296,7 +1465,7 @@ function preview(s) {                                // 1600 px first because it
   const im = new Image();
   im.onload = () => { if (s.r !== r) return; s.hi.src = im.src;
     (s.hi.decode?.() || Promise.resolve()).catch(() => {}).finally(() => { if (s.r === r) { s.hi.classList.add("in"); if (s === cur) sharpen(); } }); };
-  im.onerror = () => { if (s.r === r) { s.failed = true; if (s === cur && vCur >= 0) vChrome(); } };
+  im.onerror = () => { if (s.r === r) { s.failed = true; if (s === cur && viewing()) vChrome(); } };
   im.src = "/preview/" + r.sha;
 }
 function sharpen(force = Z.s > 1.6) {                // then the 4096 px one, when the screen or the zoom can show more
@@ -1332,21 +1501,23 @@ function vChrome() {                                 // what and when, as a capt
   const r = items[vCur], d = dParts(when(r)), note = vNote || (cur.failed ? "The full-size image didn’t load" : "");
   $("#vPrev").disabled = !items[vCur - 1]; $("#vNext").disabled = !items[vCur + 1];
   $("#vTitle").innerHTML = `<b>${d ? fLong.format(d) : "Undated"}</b><span class="num">${esc([d && when(r).length > 10 && fTime.format(d), firstPart(r.city || "")].filter(Boolean).join("  ·  ")) || "&nbsp;"}</span>`;
-  $("#vFav").style.visibility = r.fav ? "" : "hidden";
+  $("#vFavBtn").classList.toggle("on", !!r.fav); $("#vFavBtn").setAttribute("aria-pressed", !!r.fav);
   $("#vInfoBtn").classList.toggle("on", infoOn());
   $("#vNote").textContent = note;
 }
 // Opening or sharing a photo says a search found something; the server keeps these with the searches.
 const logEvent = (ev, i) => { const r = items[i]; if (!r) return;
-  const p = VL === sgrid ? sParams() : libParams(); p.set("ev", ev); p.set("sha", r.sha); p.set("pos", i);
+  const p = VL === sgrid ? new URLSearchParams(Q.key) : libParams(); p.set("ev", ev); p.set("sha", r.sha); p.set("pos", i);
   fetch("/api/log?" + p, { keepalive: true }).catch(() => {}); };
 function openViewer(grid, i) {
+  if (!grid.items[i] || grid.items[i].ghost) return;   // a tile whose photo is not known yet
+  if (!VW.to("open")) return;                         // already open, or the last one still leaving
+  history.pushState({ ...history.state, v: 1 }, "");
   VL = grid; items = grid.items;
   logEvent("open", i);
   sheetUp = false; closeMenus();
   v.classList.add("on"); v.classList.remove("bare"); v.classList.toggle("info", infoOn());
   document.documentElement.style.overflow = "hidden";
-  if (!vHist) { history.pushState({ ...history.state, v: 1 }, ""); vHist = true; }
   show(i);
   const t = VL.tile(i)?.getBoundingClientRect(), f = fit(items[i]);
   if (t) vPic.animate([{ transform: `translate(${t.x - f.x}px,${t.y - f.y}px) scale(${t.width / f.w},${t.height / f.h})` }, { transform: "none" }], { duration: 380, easing: EASE });
@@ -1354,8 +1525,10 @@ function openViewer(grid, i) {
   $("#vBg").animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: "ease-out" });
   $("#vUi").animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, delay: 80, fill: "backwards" });
 }
-function closeViewer(instant) {
-  if (vCur < 0) return;
+// entry: what becomes of the viewer's history entry. "back": it is taken back (the viewer is leaving until the
+// browser says it has gone). "gone": Back was pressed, so it already has. "taken": a search is about to take its place.
+function closeViewer(entry = "back", instant = false) {
+  if (!viewing()) return;
   const i = vCur, bg = $("#vBg"), ui = $("#vUi");
   const dim = bg.style.opacity || 1, hidden = ui.style.opacity === "0";   // where a drag left things
   settle = null; stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
@@ -1364,8 +1537,11 @@ function closeViewer(instant) {
   for (const s of slides) { s.el.style.transform = ""; if (s !== cur) s.el.style.display = "none"; }
   Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0; place(vPic, f); bg.style.opacity = ui.style.opacity = "";
   v.classList.remove("bare"); vCur = -1;
-  if (vHist) { vHist = false; vBack = true; history.back(); }
-  const done = () => { if (vCur < 0) { v.classList.remove("on"); document.documentElement.style.overflow = ""; } };
+  if (entry === "back") {
+    VW.to("leaving"); history.back();
+    setTimeout(() => { if (VW.is("leaving")) { VW.to("closed"); navFlush(); } }, 1000);   // (a browser that never says so)
+  } else VW.to("closed");
+  const done = () => { if (!viewing()) { v.classList.remove("on"); document.documentElement.style.overflow = ""; } };
   if (instant) return done();
   const el = VL.tile(i);
   el?.scrollIntoView({ block: "nearest" });
@@ -1386,9 +1562,9 @@ function toggleInfo() {
 }
 // Anything that names a set of photos is a way into that set: it shows them in Search.
 function find(s) {
-  const over = vHist; vHist = false;                 // the new search takes the open photo's place in history
-  closeViewer(true);
-  S = s; typing = false; q.value = S.q;
+  const over = viewing();                            // the new search takes the open photo's place in history
+  closeViewer("taken", true);
+  S = s; stopTyping();
   if (TAB !== "search") setTab("search", over ? "replace" : "push");
   else { nav(over ? "replace" : "push"); refreshSearch(); }
 }
@@ -1436,6 +1612,34 @@ $("#vInfo").addEventListener("click", e => {
   if (k === "event") s.event = val; else if (k === "stack") s.stack = val; else s.f[k] = [val];
   find(s);
 });
+// A favourite: said on the page at once, then to the server; if the server will not have it, taken back.
+// A month's cover is a favourite of that month if it has one, so the cards are asked for again.
+async function favour() {
+  const r = items[vCur];
+  if (!r || r.saving) return;
+  const on = !r.fav;
+  r.saving = true; vNote = ""; favShow(r, on);
+  try {
+    const got = await postJSON("/api/favorite", { sha: r.sha, fav: on });
+    INFO.fav = got.favourites; $("#browse").innerHTML = "";   // the count on Search's first page: drawn again when next shown
+    libCovers();
+  } catch (e) {
+    favShow(r, !on);
+    if (items[vCur] === r) { vNote = e.message === "not allowed" ? "Favourites can’t be changed from this account" : "Couldn’t save the favourite"; vChrome(); }
+  } finally { r.saving = false; }
+}
+function favShow(r, on) {                             // in the viewer, and on the photo's tile wherever it is showing
+  for (const g of [lgrid, sgrid]) {
+    const i = g.items.findIndex(x => x && x.sha === r.sha);
+    if (i < 0) continue;
+    g.items[i].fav = on;
+    const t = g.tile(i);
+    if (t) { $(".fv", t)?.remove(); if (on) t.insertAdjacentHTML("beforeend", I.heartFill); }
+  }
+  r.fav = on;
+  if (viewing() && items[vCur] === r) vChrome();
+}
+$("#vFavBtn").onclick = favour;
 $("#vLike").onclick = () => { const r = items[vCur]; if (r) { const s = blank(); s.sha = r.sha; find(s); } };
 $("#vClose").onclick = () => closeViewer();
 let lastPointer = "mouse";
@@ -1444,7 +1648,7 @@ $("#vBg").onclick = () => { if (lastPointer === "mouse") closeViewer(); };   // 
 $("#vPrev").onclick = () => step(-1);
 $("#vNext").onclick = () => step(1);
 $("#vInfoBtn").onclick = toggleInfo;
-function vResize() { if (vCur < 0) return; v.classList.toggle("info", infoOn()); resetZoom(); arrange(); vChrome(); }
+function vResize() { if (!viewing()) return; v.classList.toggle("info", infoOn()); resetZoom(); arrange(); vChrome(); }
 addEventListener("resize", vResize);
 narrow.addEventListener("change", vResize);
 
@@ -1455,6 +1659,11 @@ narrow.addEventListener("change", vResize);
 // browser draws it again from the full-size image and it is as sharp as the file allows.
 const Z = { s: 1, x: 0, y: 0 }, Zb = { s: 1, x: 0, y: 0 };   // Zb: the zoom the photo is laid out at
 const pts = new Map();
+// A touch on the open photo. none; press (one finger down, not yet moved: a tap if it lifts); then what the
+// movement turned out to be: pan (of a zoomed photo), swipe (to a neighbour), down (to close), up (for the
+// details); or pinch (two fingers), which becomes a pan when one of them lifts. `g` is that gesture's numbers.
+const GS = machine("gesture", { none: ["press"], press: ["pan", "swipe", "down", "up", "pinch", "none"], pan: ["pinch", "none"],
+  swipe: ["pinch", "none"], down: ["pinch", "none"], up: ["pinch", "none"], pinch: ["pan", "none"] }, "none");
 let g = null, lastTap = 0, tapTimer = 0;
 const applyZoom = () => { const k = Z.s / Zb.s, x = Z.x - Zb.x, y = Z.y - Zb.y;
   vPic.style.transform = k === 1 && !x && !y ? "" : `translate(${x}px,${y}px) scale(${k})`; };
@@ -1486,22 +1695,24 @@ function slideTo(d, x = 0) {                         // the neighbour slides in,
 }
 const inViewerChrome = t => t.closest(".v-info, .v-btn, .v-bar");
 v.addEventListener("pointerdown", e => {
-  if (e.pointerType === "mouse" || inViewerChrome(e.target) || vCur < 0) return;
+  if (e.pointerType === "mouse" || inViewerChrome(e.target) || !viewing()) return;
   if (settle) settle();
+  if (!pts.size && !GS.is("none")) GS.to("none");    // a finger that left without saying so
   pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
   vPic.getAnimations().forEach(a => a.finish());
-  if (pts.size === 1) g = { mode: "", x0: e.clientX, y0: e.clientY, t0: performance.now(), zx: Z.x, zy: Z.y };
-  else if (pts.size === 2) {
+  if (pts.size === 1) { if (GS.to("press")) g = { x0: e.clientX, y0: e.clientY, t0: performance.now(), zx: Z.x, zy: Z.y }; }
+  else if (pts.size === 2 && GS.to("pinch")) {
     stage.style.transform = ""; vPic.style.transform = ""; $("#vBg").style.opacity = $("#vUi").style.opacity = ""; applyZoom();
     if (phone() && sheetUp) toggleInfo();            // the photo has the whole screen again before it zooms
     const [a, b] = [...pts.values()];
-    g = { mode: "pinch", d0: Math.hypot(a.x - b.x, a.y - b.y), s0: Z.s, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, zx: Z.x, zy: Z.y };
+    g = { d0: Math.hypot(a.x - b.x, a.y - b.y), s0: Z.s, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, zx: Z.x, zy: Z.y };
   }
 });
 v.addEventListener("pointermove", e => {
-  if (!pts.has(e.pointerId) || !g) return;
+  if (!pts.has(e.pointerId) || GS.is("none")) return;
   pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (g.mode === "pinch" && pts.size >= 2) {
+  if (GS.is("pinch")) {
+    if (pts.size < 2) return;
     const [a, b] = [...pts.values()];
     const s = g.s0 * Math.hypot(a.x - b.x, a.y - b.y) / g.d0, cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
     Z.s = g.s0; Z.x = g.zx + (cx - g.cx); Z.y = g.zy + (cy - g.cy);
@@ -1509,40 +1720,40 @@ v.addEventListener("pointermove", e => {
     return applyZoom();
   }
   const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
-  if (!g.mode && Math.hypot(dx, dy) > 8) g.mode = Z.s > 1 ? "pan" : Math.abs(dx) > Math.abs(dy) ? "swipe" : dy > 0 ? "down" : "up";
-  if (g.mode === "pan") { Z.x = g.zx + dx; Z.y = g.zy + dy; applyZoom(); }
-  else if (g.mode === "swipe") {                     // the neighbours come along; past either end it only stretches
+  if (GS.is("press") && Math.hypot(dx, dy) > 8) GS.to(Z.s > 1 ? "pan" : Math.abs(dx) > Math.abs(dy) ? "swipe" : dy > 0 ? "down" : "up");
+  if (GS.is("pan")) { Z.x = g.zx + dx; Z.y = g.zy + dy; applyZoom(); }
+  else if (GS.is("swipe")) {                     // the neighbours come along; past either end it only stretches
     const end = dx > 0 ? !items[vCur - 1] : !items[vCur + 1];
     stage.style.transform = `translateX(${end ? dx * .3 : dx}px)`;
-  } else if (g.mode === "down" && !(phone() && sheetUp)) {   // the photo follows the finger and shrinks about its centre
+  } else if (GS.is("down") && !(phone() && sheetUp)) {   // the photo follows the finger and shrinks about its centre
     const k = Math.max(.6, 1 - dy / vh()), b = fit(items[vCur]);
     vPic.style.transform = `translate(${dx + b.w * (1 - k) / 2}px,${dy + b.h * (1 - k) / 2}px) scale(${k})`;
     $("#vBg").style.opacity = Math.max(0, 1 - dy / (vh() * .6));
     $("#vUi").style.opacity = dy > 20 ? 0 : 1;
-  } else if (g.mode === "up" && !(phone() && sheetUp)) {   // a flick up for details: the photo gives a little
+  } else if (GS.is("up") && !(phone() && sheetUp)) {   // a flick up for details: the photo gives a little
     vPic.style.transform = `translateY(${Math.min(0, dy) * .35}px)`;
   }
 });
 function endGesture(e) {
   if (!pts.has(e.pointerId)) return;
   pts.delete(e.pointerId);
-  if (!g) return;
-  if (g.mode === "pinch") {
-    if (pts.size === 0) { g = null; if (Z.s < 1.05) return resetZoomAnimated(); clampZoom(); animateTo(); }
-    else { const [a] = [...pts.values()]; g = { mode: "pan", x0: a.x, y0: a.y, zx: Z.x, zy: Z.y }; }
+  if (GS.is("none")) return;
+  if (GS.is("pinch")) {
+    if (pts.size === 0) { GS.to("none"); g = null; if (Z.s < 1.05) return resetZoomAnimated(); clampZoom(); animateTo(); }
+    else if (pts.size === 1) { const [a] = [...pts.values()]; GS.to("pan"); g = { x0: a.x, y0: a.y, zx: Z.x, zy: Z.y }; }
     return;
   }
   if (pts.size) return;
-  const dx = e.clientX - g.x0, dy = e.clientY - g.y0, dt = performance.now() - (g.t0 || 0), mode = g.mode;
-  g = null;
-  if (!mode) {                                       // a tap: double tap zooms, single tap shows/hides the buttons
+  const dx = e.clientX - g.x0, dy = e.clientY - g.y0, dt = performance.now() - (g.t0 || 0), mode = GS.state;
+  GS.to("none"); g = null;
+  if (mode === "press") {                                       // a tap: double tap zooms, single tap shows/hides the buttons
     const now = performance.now();
     if (now - lastTap < 300) { lastTap = 0; clearTimeout(tapTimer);
       if (Z.s > 1) return resetZoomAnimated();
       if (phone() && sheetUp) return toggleInfo();
       zoomAt(e.clientX, e.clientY, 2.5); clampZoom(); animateTo(); return; }
     lastTap = now;
-    tapTimer = setTimeout(() => { if (vCur < 0) return; if (phone() && sheetUp) toggleInfo(); else v.classList.toggle("bare"); }, 280);
+    tapTimer = setTimeout(() => { if (!viewing()) return; if (phone() && sheetUp) toggleInfo(); else v.classList.toggle("bare"); }, 280);
     return;
   }
   if (mode === "pan") { clampZoom(); animateTo(); return; }
@@ -1617,7 +1828,7 @@ $("#vShare").onclick = share;
 
 /* ── page events ───────────────────────────────────────────────────── */
 const openStack = e => { const b = e.target.closest(".stk"); if (b) { const s = blank(); s.stack = b.dataset.stack; find(s); } return !!b; };   // the count on a tile: the whole stack
-$("#libGrid").addEventListener("click", e => { if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(lgrid, +t.dataset.i); });
+$("#libGrid").addEventListener("click", e => { if (e.target.closest("#libRetry")) return L.retry?.(); if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(lgrid, +t.dataset.i); });
 $("#sGrid").addEventListener("click", e => {
   if (openStack(e)) return;
   const t = e.target.closest(".t"); if (t) return openViewer(sgrid, +t.dataset.i);
@@ -1625,11 +1836,12 @@ $("#sGrid").addEventListener("click", e => {
 });
 document.addEventListener("keydown", e => {
   const inField = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
-  if (vCur >= 0) {
+  if (viewing()) {
     if (e.key === "Escape") closeViewer();
     else if (e.key === "ArrowLeft") step(-1);
     else if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); step(1); }
     else if (e.key === "i") toggleInfo();
+    else if (e.key === "f") favour();
     return;
   }
   if (e.key === "Escape" && (menu || sheet)) { closeMenus(); return; }
@@ -1641,7 +1853,7 @@ document.addEventListener("keydown", e => {
 // A home-screen app has no browser to swipe back in, so a swipe in from the left edge goes back here, as on the iPhone.
 let edge = null;
 document.addEventListener("touchstart", e => {
-  edge = standalone.matches && vCur < 0 && e.touches.length === 1 && e.touches[0].clientX < 20 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+  edge = standalone.matches && !viewing() && e.touches.length === 1 && e.touches[0].clientX < 20 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
 }, { passive: true });
 document.addEventListener("touchend", e => {
   if (!edge) return;
@@ -1650,15 +1862,15 @@ document.addEventListener("touchend", e => {
 }, { passive: true });
 function restore(st) {                               // a history entry: the whole state it holds
   if (!st) st = { tab: location.search ? "search" : "library", s: location.search.slice(1) };
-  if (st.lib) { L.trail = st.lib.trail || []; L.anchor = st.lib.anchor; L.scale = st.lib.scale || L.scale; L.jump = true; }
-  S = fromParams(new URLSearchParams(st.s ?? location.search)); typing = false; q.value = S.q;
-  setTab(st.tab || "library", "init");
+  if (st.lib) libSet(st.lib);
+  S = fromParams(new URLSearchParams(st.s ?? location.search)); stopTyping();
+  setTab(st.tab || "library", "init", !!st.lib);       // an entry that says where the Library was: there, at its card or month
 }
 addEventListener("popstate", () => {
-  if (vBack) { vBack = false; return; }             // the viewer closed itself and took its entry back
-  if (vHist) { vHist = false; return closeViewer(); }   // Back, or a swipe from the screen edge, closes the photo
+  if (VW.is("leaving")) { VW.to("closed"); return navFlush(); }   // the viewer closed itself; its entry has now been taken back
+  if (viewing()) return closeViewer("gone");        // Back, or a swipe from the screen edge, closes the photo
   if (history.state?.v) return history.back();      // the entry left by a photo that is no longer open: step over it
-  closeViewer(true); closeMenus();
+  closeMenus();
   restore(history.state);
 });
 let lastW = 0;

@@ -61,13 +61,18 @@ class Feed:
         """)
         return con
 
-    def update(self, rows: dict[str, dict]) -> int:
+    def touch(self, rows: dict[str, dict]) -> int:
+        """These rows may have changed (a favourite set in the app); the rest of the catalog has not been
+        looked at. Those that differ get the next version; nothing is taken as gone."""
+        return self.update(rows, whole=False)
+
+    def update(self, rows: dict[str, dict], whole: bool = True) -> int:
         """Compare the catalog as now loaded (sha -> row) with the feed; whatever is new, different or
         gone gets the next version. Returns how many rows that was."""
         fresh = {sha: digest(row) for sha, row in rows.items()}
         with self.lock:
             changed = [sha for sha, dg in fresh.items() if (self.rows.get(sha) or (None,))[0] != dg]
-            removed = [sha for sha in self.rows if sha not in fresh]
+            removed = [sha for sha in self.rows if sha not in fresh] if whole else []
             if changed or removed:
                 ver = self.version + 1
                 con = self._open()
@@ -83,7 +88,7 @@ class Feed:
                     del self.rows[s]
                     self.gone[s] = ver
                 self.version = ver
-            self.ready = True
+            self.ready = self.ready or whole
             return len(changed) + len(removed)
 
     def page(self, epoch: str, since: int, after: str, limit: int):
