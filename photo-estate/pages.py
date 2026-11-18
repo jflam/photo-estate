@@ -3,9 +3,15 @@ pages.py: the web pages as they are sent. Every page (search.html, people.html, 
 shares one stylesheet, app/estate.css; it is put into the page here, where the page says /*@estate.css*/,
 so a page stays a single request and the three servers that send pages (embed.py, faces.py, estate.py)
 cannot drift apart in how they look.
+
+The icons a page names (/icon-192.png, /icon-180.png) are given an address that changes when the icon does
+(/icon-192.png?v=1a2b3c4d): browsers keep a site's icon by its address for a long time, whatever the server
+says about caching, and would go on showing the old one.
 """
 from __future__ import annotations
 
+import hashlib
+import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -14,7 +20,15 @@ MARK = b"/*@estate.css*/"
 
 def page(name: str) -> bytes:
     """The page's bytes with the shared stylesheet in place. Read each time, so edits show up on reload."""
-    return (HERE / name).read_bytes().replace(MARK, (HERE / "app" / "estate.css").read_bytes(), 1)
+    body = (HERE / name).read_bytes().replace(MARK, (HERE / "app" / "estate.css").read_bytes(), 1)
+    return re.sub(rb'href="/(icon-\d+\.png)"', _versioned, body)
+
+
+def _versioned(m: re.Match) -> bytes:
+    """An icon's link, with a few characters of the file's hash as its version."""
+    icon = HERE / "app" / m[1].decode()
+    v = hashlib.sha256(icon.read_bytes()).hexdigest()[:8] if icon.exists() else "0"
+    return b'href="/%s?v=%s"' % (m[1], v.encode())
 
 
 def waiting(title: str, why: str) -> bytes:
