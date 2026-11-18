@@ -100,7 +100,7 @@ photos that share it.
 **Filters with live counts.** Where, People, Albums, Trips, When, Camera and Favourites narrow
 whatever is showing, and combine with a description. The web app is laid out as the iPhone app is:
 a Library tab (every photo, or a card a year or a month) and a Search tab, with the same view
-options (order, five photo sizes, hide near-identical shots, hide screenshots).
+options (order, five photo sizes, stack near-identical shots, hide screenshots).
 
 ![The Where filter over the library, grouped by month](docs/screenshots/library-filters.jpg)
 
