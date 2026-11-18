@@ -337,6 +337,9 @@ photo-estate/
   demo/                104 CC0 photos as a ready-made library (`embed.py serve --demo`)
   tests/test_poc.py    end to end on a synthetic Takeout + iCloud + Flickr export
   tests/test_sync.py   the change feed: full fetch, deltas, deletions, resuming, restart
+  tests/test_changes.py  change sets: propose 50 photos, mark the ones to keep, apply, undo; hidden photos are in no view
+  tests/test_mcp.py    the MCP endpoint: handshake, finding photos, proposing a change set; an agent cannot apply one
+  tests/test_tasks.py  tasks: a request handed to the agent on this computer, with a stand-in for Claude Code
   tools/               demo builder, screenshots, icon maker, speed benchmarks
   deploy/              running the app as an always-on service (launchd agents, Mac mini guide)
   PLAN.md              the overall plan and phases

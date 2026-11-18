@@ -1,0 +1,307 @@
+"""Tasks: a request in words ("hide the photos from Carolyn's school"), worked on by an agent that runs
+on the computer that holds the library, ending in a change set for a person to review (changes.py).
+
+The agent is Claude Code run headless, once per task, with every built-in tool switched off: it can
+do nothing on this computer (no shell, no files, so it cannot open a photo) except call the library's
+own MCP tools (estate_mcp.py), which answer with ids, scores and facts. The model itself runs in the
+cloud; what reaches it is the request, and what those tools return. It can propose a change set and
+cannot apply one. A task outlives the chat or page that started it, and what the agent did is kept as
+a list of events, so the work can be watched while it runs and read afterwards. Tasks run one at a time.
+
+  GET  /api/tasks                 whether an agent can run here, and every task, newest first
+  GET  /api/tasks/<id>?after=N    one task, with its events after event N, and the change set it made
+  POST /api/tasks      {prompt}   start one
+  POST /api/tasks/<id>/cancel
+
+The same over MCP for a chat client: submit_task, get_task, cancel_task.
+
+The agent signs in with a long-lived token from `claude setup-token`, kept in a file only this user
+can read (--agent-env, by default ~/.config/photo-estate/agent.env: a line CLAUDE_CODE_OAUTH_TOKEN=...).
+It is put in the agent's environment and nowhere else: not in the catalog, not in a log. Without the
+file the agent runs as whoever is signed in to Claude Code here, which is how it is tried on a laptop.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import tempfile
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS agent_tasks(
+  id INTEGER PRIMARY KEY, prompt TEXT,
+  status TEXT DEFAULT 'queued',      -- queued | running | done | failed | cancelled
+  created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT,
+  result TEXT, error TEXT, turns INT, cost REAL);
+CREATE TABLE IF NOT EXISTS agent_events(
+  id INTEGER PRIMARY KEY, task_id INT, at TEXT,
+  kind TEXT,                         -- say (the agent's words) | tool (a call it made) | error | note
+  text TEXT);
+CREATE INDEX IF NOT EXISTS agent_events_task ON agent_events(task_id, id);
+"""
+DEFAULT_ENV = Path.home() / ".config" / "photo-estate" / "agent.env"
+SERVER = "photo-estate"
+ROUTE = re.compile(r"^/api/tasks(?:/(\d+)(?:/(cancel))?)?$")
+
+BRIEF = """You work inside Photo Estate, one family's photo library, on the computer that holds it. A person has asked for a change to the library, in their own words. Find the photos they mean and propose them as one change set for that person to review. Your only tools are the library's; you cannot see a photo, only ids, scores, dates, places, the names of people in it, albums and file paths.
+
+How to work:
+1. Start with library_overview: who is named, which years, places, albums.
+2. Work out what the photos have in common: what they show, and the facts around them (who is or is not in them, where, when, which album or folder they came from).
+3. Search with several plain descriptions of what such a photo shows. Read each summary. Page down the ranking with `offset` to where the matches thin out, and judge from dates, places, people, albums and file paths where they stop being the thing asked for. Choose a min_score for each description from that. Use filters (named_people, dates, place, album) to cut out what clearly does not belong.
+4. The person will look over every photo you propose and can drop a wrong one with a click, but a photo you leave out they will never see. So at the margin, include. The exception is a photo with a named person in it: the family's own photos must not be swept up, so leave those out unless the request plainly covers them, and say how many you left out.
+5. Create one change set. Give it a short title and, as its prompt, what was asked and how you chose. Add photos with amend_change_set, one add_search per description, each with a reason of a few words that a person can read at a glance ("children in a forest, nobody named"). Take out with remove_search what does not belong.
+6. End with a short report in plain words: how many photos you proposed, the descriptions and thresholds you used, what you left out and why, what you are least sure of, and the review link.
+
+Nothing you do hides a photo: the person applies the change set after looking. Nobody is there to answer a question, so do not ask one: make the reasonable choice and say what you assumed. If the request is not about choosing photos to hide, or cannot be done with these tools, say so and create nothing."""
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def read_env(path: Path) -> dict:
+    """KEY=VALUE lines of a file such as agent.env; {} if there is none."""
+    out = {}
+    try:
+        for line in path.read_text().splitlines():
+            k, sep, v = line.strip().partition("=")
+            if sep and k and not k.startswith("#"):
+                out[k.removeprefix("export ").strip()] = v.strip().strip("'\"")
+    except OSError:
+        pass
+    return out
+
+
+def find_command(given: str | None) -> str | None:
+    for c in (given, shutil.which("claude"), str(Path.home() / ".local" / "bin" / "claude")):
+        if c and (shutil.which(c) or Path(c).is_file()):
+            return c
+    return None
+
+
+class Tasks:
+    def __init__(self, db: str, mcp_url: str, command: str | None = None, env_file: str | None = None,
+                 model: str | None = None, timeout: float = 3600, max_turns: int = 80, log=print):
+        self.db, self.mcp_url, self.model, self.timeout, self.max_turns, self.log = db, mcp_url, model, timeout, max_turns, log
+        self.command, self.env_file = find_command(command), Path(env_file) if env_file else DEFAULT_ENV
+        self.lock, self.wake, self.procs = threading.Lock(), threading.Event(), {}
+        con = self.con()
+        con.executescript(SCHEMA)
+        # whatever was running when the app last stopped did not finish
+        con.execute("UPDATE agent_tasks SET status='failed', error='the app restarted while this was running', finished_at=?"
+                    " WHERE status='running'", (now(),))
+        con.commit()
+        con.close()
+        threading.Thread(target=self.worker, daemon=True).start()
+
+    def con(self) -> sqlite3.Connection:
+        con = sqlite3.connect(self.db, timeout=60)
+        con.execute("PRAGMA journal_mode=WAL")
+        return con
+
+    def available(self) -> tuple[bool, str]:
+        if not self.command:
+            return False, "Claude Code is not installed on this computer, so no agent can run here"
+        return True, ""
+
+    # -- reading ---------------------------------------------------------------------------------
+
+    COLS = ("id", "prompt", "status", "created_by", "created_at", "started_at", "finished_at", "result", "error", "turns", "cost")
+
+    def task(self, con, tid: int, after: int | None = None) -> dict | None:
+        row = con.execute(f"SELECT {', '.join(self.COLS)} FROM agent_tasks WHERE id=?", (tid,)).fetchone()
+        if not row:
+            return None
+        t = dict(zip(self.COLS, row))
+        try:   # the change set(s) the agent made, by the name it was given while it worked
+            t["change_sets"] = [{"id": i, "title": title, "photos": n, "review": f"/changes/{i}"} for i, title, n in con.execute(
+                "SELECT s.id, s.title, (SELECT count(*) FROM change_items WHERE set_id=s.id) FROM change_sets s"
+                " WHERE s.created_by=? ORDER BY s.id", (f"task:{tid}",))]
+        except sqlite3.OperationalError:
+            t["change_sets"] = []
+        last = con.execute("SELECT id, kind, text FROM agent_events WHERE task_id=? ORDER BY id DESC LIMIT 1", (tid,)).fetchone()
+        t["last"] = {"id": last[0], "kind": last[1], "text": last[2]} if last else None
+        if after is not None:
+            t["events"] = [{"id": i, "at": at, "kind": kind, "text": text} for i, at, kind, text in con.execute(
+                "SELECT id, at, kind, text FROM agent_events WHERE task_id=? AND id>? ORDER BY id", (tid, after))]
+        return t
+
+    def get(self, tid: int, after: int | None = 0) -> dict | None:
+        con = self.con()
+        try:
+            return self.task(con, tid, after)
+        finally:
+            con.close()
+
+    def listing(self) -> dict:
+        con = self.con()
+        try:
+            ok, why = self.available()
+            ids = [r[0] for r in con.execute("SELECT id FROM agent_tasks ORDER BY id DESC LIMIT 50")]
+            return {"available": ok, "why": why, "tasks": [self.task(con, i) for i in ids]}
+        finally:
+            con.close()
+
+    # -- writing ---------------------------------------------------------------------------------
+
+    def event(self, tid: int, kind: str, text: str) -> None:
+        con = self.con()
+        try:
+            con.execute("INSERT INTO agent_events(task_id, at, kind, text) VALUES (?,?,?,?)", (tid, now(), kind, text[:4000]))
+            con.commit()
+        finally:
+            con.close()
+
+    def update(self, tid: int, **fields) -> None:
+        con = self.con()
+        try:
+            con.execute(f"UPDATE agent_tasks SET {', '.join(k + '=?' for k in fields)} WHERE id=?", (*fields.values(), tid))
+            con.commit()
+        finally:
+            con.close()
+
+    def submit(self, prompt, who: str = "") -> tuple[dict, int]:
+        prompt = str(prompt or "").strip()
+        if not prompt:
+            return {"error": "say what you want done"}, 400
+        ok, why = self.available()
+        if not ok:
+            return {"error": why}, 409
+        con = self.con()
+        try:
+            tid = con.execute("INSERT INTO agent_tasks(prompt, created_by, created_at) VALUES (?,?,?)",
+                              (prompt[:8000], who or None, now())).lastrowid
+            con.commit()
+            out = self.task(con, tid)
+        finally:
+            con.close()
+        self.wake.set()
+        return out, 201
+
+    def cancel(self, tid: int) -> tuple[dict, int]:
+        t = self.get(tid, None)
+        if not t:
+            return {"error": "no such task"}, 404
+        if t["status"] in ("queued", "running"):
+            self.update(tid, status="cancelled", finished_at=now())
+            with self.lock:
+                proc = self.procs.get(tid)
+            if proc:
+                proc.terminate()
+        return self.get(tid, None), 200
+
+    # -- running ---------------------------------------------------------------------------------
+
+    def worker(self) -> None:
+        while True:
+            con = self.con()
+            row = con.execute("SELECT id, prompt FROM agent_tasks WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
+            con.close()
+            if not row:
+                self.wake.wait(30)
+                self.wake.clear()
+                continue
+            try:
+                self.run(*row)
+            except Exception as e:   # the next task still gets its turn
+                self.update(row[0], status="failed", error=f"{type(e).__name__}: {e}", finished_at=now())
+                self.log(f"task {row[0]} failed: {type(e).__name__}: {e}")
+
+    def run(self, tid: int, prompt: str) -> None:
+        self.update(tid, status="running", started_at=now())
+        config = {"mcpServers": {SERVER: {"type": "http", "url": self.mcp_url, "headers": {"X-Estate-Task": str(tid)}}}}
+        cmd = [self.command, "-p", prompt, "--system-prompt", BRIEF, "--mcp-config", json.dumps(config), "--strict-mcp-config",
+               "--tools", "", "--allowedTools", f"mcp__{SERVER}", "--output-format", "stream-json", "--verbose",
+               "--no-session-persistence", "--max-turns", str(self.max_turns)] + (["--model", self.model] if self.model else [])
+        env = {**os.environ, **read_env(self.env_file)}
+        env["PATH"] = os.pathsep.join(dict.fromkeys([str(Path(self.command).parent), *env.get("PATH", "").split(os.pathsep)]))
+        work = tempfile.mkdtemp(prefix="photo-estate-task-")   # an empty folder: nothing of ours to read
+        self.log(f"task {tid}: started")
+        try:
+            proc = subprocess.Popen(cmd, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True)
+            with self.lock:
+                self.procs[tid] = proc
+            timer = threading.Timer(self.timeout, proc.terminate)
+            timer.start()
+            errs = []
+            threading.Thread(target=lambda: errs.extend(proc.stderr), daemon=True).start()
+            final = None
+            for line in proc.stdout:
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    continue
+                final = self.record(tid, msg) or final
+            code = proc.wait()
+            timer.cancel()
+        finally:
+            with self.lock:
+                self.procs.pop(tid, None)
+            shutil.rmtree(work, ignore_errors=True)
+        if (self.get(tid, None) or {}).get("status") == "cancelled":
+            return self.log(f"task {tid}: cancelled")
+        if final and not final.get("is_error"):
+            self.update(tid, status="done", result=final.get("result"), turns=final.get("num_turns"),
+                        cost=final.get("total_cost_usd"), finished_at=now())
+        else:
+            why = (final or {}).get("result") or "".join(errs)[-600:].strip() or f"the agent stopped (exit {code})"
+            if final and final.get("subtype") == "error_max_turns":
+                why = f"the agent did not finish in {self.max_turns} steps"
+            self.update(tid, status="failed", error=why, turns=(final or {}).get("num_turns"),
+                        cost=(final or {}).get("total_cost_usd"), finished_at=now())
+        self.log(f"task {tid}: {(self.get(tid, None) or {}).get('status')}")
+
+    def record(self, tid: int, msg: dict) -> dict | None:
+        """Keep what a line of the agent's output says it did. Returns the final result message, when this is it."""
+        kind = msg.get("type")
+        if kind == "system" and msg.get("subtype") == "init":
+            down = [s.get("name") for s in msg.get("mcp_servers") or [] if s.get("status") != "connected"]
+            if down:
+                self.event(tid, "error", "The agent could not reach the library's tools")
+        elif kind == "assistant":
+            for block in (msg.get("message") or {}).get("content") or []:
+                if block.get("type") == "text" and block.get("text", "").strip():
+                    self.event(tid, "say", block["text"].strip())
+                elif block.get("type") == "tool_use":
+                    args = json.dumps(block.get("input") or {}, separators=(",", ":"))
+                    self.event(tid, "tool", f"{str(block.get('name')).removeprefix(f'mcp__{SERVER}__')} {args[:600]}")
+        elif kind == "user":
+            for block in (msg.get("message") or {}).get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
+                    content = block.get("content")
+                    text = content if isinstance(content, str) else " ".join(
+                        c.get("text", "") for c in content or [] if isinstance(c, dict))
+                    self.event(tid, "error", text[:600])
+        elif kind == "result":
+            return msg
+        return None
+
+    # -- http ------------------------------------------------------------------------------------
+
+    def handle(self, method: str, path: str, qs: dict, body: dict | None, who: str = ""):
+        """One request -> (status, body bytes, content type, Cache-Control), or None if it isn't ours."""
+        js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":")).encode(), "application/json", "no-store")
+        m = ROUTE.match(path)
+        if not m:
+            return None
+        tid, what = int(m[1]) if m[1] else None, m[2]
+        if method == "GET" and not what:
+            if tid is None:
+                return js(self.listing())
+            after = (qs.get("after") or ["0"])[0]
+            got = self.get(tid, int(after) if after.isdigit() else 0)
+            return js(got) if got else js({"error": "no such task"}, 404)
+        if method == "POST" and isinstance(body, dict):
+            if tid is None:
+                return js(*self.submit(body.get("prompt"), who))
+            if what == "cancel":
+                return js(*self.cancel(tid))
+        return js({"error": "not found"}, 404)

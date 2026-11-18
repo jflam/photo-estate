@@ -331,9 +331,12 @@ class People:
         self.journal = Path(db).resolve().parent / "face-labels.jsonl"
         t0 = time.time()
         con = connect(db)
+        # Faces in photos a change set hides (changes.py) are left out: nobody is asked who they are.
+        shown = (" AND f.sha256 NOT IN (SELECT sha256 FROM hidden)"
+                 if con.execute("SELECT 1 FROM sqlite_master WHERE name='hidden'").fetchone() else "")
         rows = con.execute(
             "SELECT f.id, f.sha256, f.idx, f.x, f.y, f.w, f.h, f.score, f.px, f.vec, f.person_id, f.source,"
-            " a.taken_at, a.people, a.ext FROM faces f JOIN assets a USING(sha256) WHERE f.model=? ORDER BY f.id",
+            f" a.taken_at, a.people, a.ext FROM faces f JOIN assets a USING(sha256) WHERE f.model=?{shown} ORDER BY f.id",
             (MODEL,)).fetchall()
         self.n = n = len(rows)
         self.ids = np.array([r[0] for r in rows], np.int64)

@@ -304,11 +304,13 @@ def cmd_serve(a) -> None:
     import json
     import re
     import threading
-    from collections import OrderedDict
+    from collections import Counter, OrderedDict
     from concurrent.futures import ThreadPoolExecutor
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, quote, unquote, urlparse
 
+    from changes import Changes, hidden_shas
+    from estate_mcp import Server as MCPServer
     from estate import facts_of as estate_facts
     from sync import Feed
     from upload import IngestJob, save_upload, staging_dir
@@ -494,6 +496,7 @@ def cmd_serve(a) -> None:
             if sha in fresh or face_names.get(sha) != old_names.get(sha):
                 own(sha)["people"] = list(dict.fromkeys(tagged[sha] + face_names.get(sha, [])))
         has_faces = bool(optional("SELECT 1 FROM faces LIMIT 1"))
+        hidden = hidden_shas(con)   # photos a change set hides (changes.py): in the catalog, in no view
         con.close()
         _raw = {"shas": shas, "index": index, "M": M, "meta": meta, "tagged": tagged, "orphans": orphans,
                 "marks": marks, "place_key": place_key, "face_names": face_names}
@@ -554,6 +557,7 @@ def cmd_serve(a) -> None:
         trip_of = col(lambda m: m.get("trip"))
         fav = np.array([meta[s]["fav"] for s in shas])
         shot = np.array([is_screenshot(meta[s]) for s in shas], bool)
+        visible = np.array([s not in hidden for s in shas], bool)
         ars = np.array([meta[s]["ar"] for s in shas], np.float32)
         oldest = np.argsort(when, kind="stable")
         oldest = np.concatenate([oldest[when[oldest] != ""], oldest[when[oldest] == ""]])   # undated last, either way
@@ -578,7 +582,7 @@ def cmd_serve(a) -> None:
 
         trip_list = []
         for tid, t in sorted(trips.items(), key=lambda kv: kv[1]["start"] or "", reverse=True):
-            ids = np.flatnonzero(trip_of == tid)
+            ids = np.flatnonzero((trip_of == tid) & visible)
             if len(ids):
                 ids = ids[np.argsort(when[ids], kind="stable")]
                 favs = ids[fav[ids]]
@@ -614,7 +618,8 @@ def cmd_serve(a) -> None:
         return {k: v for k, v in locals().items() if k in STATE or k == "_raw"}
 
     def combine(masks: dict, skip: str | None = None):
-        out = np.ones(N, bool)
+        # Hidden photos are in no view, unless the hidden ones are what was asked for (`hidden=1`).
+        out = np.ones(N, bool) if "hidden" in masks else visible.copy()
         for k, m in masks.items():
             if k != skip:
                 out &= m
@@ -638,16 +643,16 @@ def cmd_serve(a) -> None:
 
     # The names load_state() produces. Handlers read them as plain variables; install() rebinds them all
     # at once while no request is being served, so a search never sees half of an old and half of a new catalog.
-    STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'shot', 'ars', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re')
-    shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info = (None,) * 31
+    STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths', 'cols', 'event_of', 'trip_of', 'fav', 'shot', 'ars', 'oldest', 'newest', 'single', 'multi', 'trip_list', 'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re', 'visible')
+    shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, info = (None,) * 32
 
     loaded = {}   # what the installed state was read from: the next reload starts from it
 
     def install(st: dict) -> None:
         loaded["raw"] = st["_raw"]
-        nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, info
-        shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re = (st[k] for k in STATE)
-        info = {"total": N, "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
+        nonlocal shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible, info
+        shas, N, index, M, meta, events, trips, has_faces, when, year, ym, m0, nmonths, cols, event_of, trip_of, fav, shot, ars, oldest, newest, single, multi, trip_list, people_ix, who, where, cities, common_place, word_re, visible = (st[k] for k in STATE)
+        info = {"total": int(visible.sum()), "model": a.model, "m0": m0, "months": nmonths, "trips": trip_list,
                 "demo": bool(a.demo), "faces": has_faces, **facet_counts({})}
 
     class Gate:
@@ -729,14 +734,16 @@ def cmd_serve(a) -> None:
         shot the library view hides as near-identical to the one before it (take(), newest first), which a
         device cannot work out without the vectors."""
         nonlocal feed_dups
-        t, S, V, mt, kept, dups = time.time(), shas, M, meta, [], set()
+        t, S, V, mt, vis, kept, dups = time.time(), shas, M, meta, visible, [], set()
         for i in newest:
             i = int(i)
+            if not vis[i]:   # a hidden photo is not in the feed, and no shot is a copy of it
+                continue
             if kept and float(np.max(V[kept[-8:]] @ V[i])) > 0.97:
                 dups.add(S[i])
             else:
                 kept.append(i)
-        n = feed.update({s: dict(mt[s], dup=True) if s in dups else mt[s] for s in S})
+        n = feed.update({s: dict(mt[s], dup=True) if s in dups else mt[s] for s, v in zip(S, vis) if v})
         feed_dups = dups
         print(f"sync feed: version {feed.version}, {n} rows changed ({time.time() - t:.1f}s)", flush=True)
 
@@ -883,6 +890,8 @@ def cmd_serve(a) -> None:
             masks["date"] = (ym >= (lo if lo is not None else 0)) & (ym <= (hi if hi is not None else nmonths))
         if (qs.get("fav") or ["0"])[0] == "1":
             masks["fav"] = fav
+        if (qs.get("hidden") or ["0"])[0] == "1":
+            masks["hidden"] = ~visible
         scope = None
         ev = (qs.get("event") or [""])[0]
         if ev.lstrip("-").isdigit():
@@ -915,6 +924,89 @@ def cmd_serve(a) -> None:
             dups, S = feed_dups, shas
             masks["dup"] = remember(("dups", id(dups), id(S)), lambda: ~np.fromiter((x in dups for x in S), bool, len(S)))
         return True
+
+    # What an agent's tools are made of (estate_mcp.py). An agent says exactly what it wants, so nothing
+    # is read out of its words (no names or places taken from the description) and no view option
+    # applies: it finds near-identical shots and screenshots too, and every match, not a screenful.
+    def agent_find(args: dict):
+        """Photos matching the filters, best first: ([ids], [scores]), or ([ids], None) newest first
+        when there is nothing to rank by. Ranks by `query` (words) or `like` (a photo's id)."""
+        mask = ~visible if args.get("hidden_only") else visible.copy()
+        for key in ("place", "album", "camera"):
+            if args.get(key):
+                v = str(args[key]).lower()
+                mask &= np.fromiter((v in x for x in cols[key]), bool, N)
+        for name in args.get("people") or []:
+            if name not in people_ix:
+                raise ValueError(f"nobody in the library is named {name!r}; library_overview lists the names")
+            mask &= person_mask(name)
+        if args.get("named_people") in ("none", "some"):
+            has = np.fromiter((bool(x) for x in cols["person"]), bool, N)
+            mask &= has if args["named_people"] == "some" else ~has
+        lo, hi = month_index(str(args.get("date_from") or "")), month_index(str(args.get("date_to") or ""), end=True)
+        if lo is not None or hi is not None:
+            mask &= (ym >= max(lo or 0, 0)) & (ym <= (hi if hi is not None else nmonths))
+        if args.get("event") is not None:
+            mask &= event_of == int(args["event"])
+        if args.get("trip") is not None:
+            mask &= trip_of == int(args["trip"])
+        if args.get("favorite"):
+            mask &= fav
+        if args.get("screenshots") is False:
+            mask &= ~shot
+        like, text = args.get("like"), str(args.get("query") or "").strip()
+        if like:
+            if like not in index:
+                raise ValueError("no photo has that id")
+            sims = M @ M[index[like]]
+            mask[index[like]] = False
+        elif text:
+            sims = M @ remember(("text", text), lambda: text_vec(text))
+        else:
+            return [shas[i] for i in newest[mask[newest]]], None
+        sims = np.where(mask, sims, -np.inf)
+        if args.get("min_score") is not None:
+            sims[sims < float(args["min_score"])] = -np.inf
+        elif not like and mask.any():   # as a typed search in the app: near the best match, above the floor
+            sims[sims < max(a.match_floor, sims.max() - a.match_window)] = -np.inf
+        order = np.argsort(-sims)[: int(np.isfinite(sims).sum())]
+        return [shas[i] for i in order], [round(float(sims[i]), 4) for i in order]
+
+    def agent_row(sha: str):
+        m = meta.get(sha)
+        if m is None:
+            return None
+        row = {"id": sha, "date": m.get("local") or m["taken"], "place": m.get("place"), "people": m["people"],
+               "albums": m["albums"], "event": m.get("event_title"), "event_id": m.get("event"), "trip": m.get("trip_title"),
+               "camera": m.get("camera"), "favorite": m["fav"] or None, "screenshot": is_screenshot(m) or None,
+               "source_path": m["path"], "hidden": (not visible[index[sha]]) or None}
+        return {k: v for k, v in row.items() if v not in (None, [], "")}
+
+    def agent_faces(ids) -> dict:
+        """{id: (faces found, faces named)} for the photos in which faces were looked for and found."""
+        if not has_faces or not ids:
+            return {}
+        con = sqlite3.connect(a.db, timeout=30)
+        try:
+            return {sha: (n, named or 0) for c in chunks(ids) for sha, n, named in con.execute(
+                "SELECT sha256, count(*), sum(person_id > 0) FROM faces WHERE sha256 IN (%s) GROUP BY 1" % ",".join("?" * len(c)), c)}
+        except sqlite3.OperationalError:
+            return {}
+        finally:
+            con.close()
+
+    def agent_overview() -> dict:
+        top = lambda pairs, n=40: [{"name": k, "photos": v} for k, v in pairs[:n]]
+        f = info["facets"]
+        month = lambda i: f"{(m0 + i) // 12}-{(m0 + i) % 12 + 1:02d}"
+        dated = [i for i, n in enumerate(info["months"]) if n]
+        return {"photos": info["total"], "hidden": int(N - visible.sum()),
+                "first_month": month(dated[0]) if dated else None, "last_month": month(dated[-1]) if dated else None,
+                "by_year": dict(sorted(Counter(str(y) if y else "undated" for y in year[visible].tolist()).items())),
+                "people": top(f["person"], 200), "countries": top(f["country"]), "cities": top(f["city"]),
+                "albums": top(f["album"]), "cameras": top(f["camera"]), "trips": len(trip_list),
+                "faces_found": has_faces,
+                "search": {"model": a.model, "match_floor": a.match_floor, "match_window": a.match_window}}
 
     def periods(order) -> dict:
         """The photos in `order` (by time), as a card a year and a card a month, as the iPhone's Library
@@ -1189,6 +1281,27 @@ def cmd_serve(a) -> None:
             self.send(*(got or (404, b"not found", "text/plain", "no-store")))
             return True
 
+        def changes_route(self, method: str, u, qs: dict, body) -> bool:
+            """Change sets (changes.py): the review page and its API. Proposing, deciding and applying
+            change what everyone sees, so they take the same permission as uploading (--upload-user), or
+            come from this computer itself (not through `tailscale serve`): that is where the agent runs."""
+            if not u.path.startswith(("/changes", "/api/changes", "/api/tasks")):
+                return False
+            from intake.server import is_local
+            if method == "POST" and not (self.allowed() or is_local(self)):
+                self.send(403, b'{"error":"not allowed"}', "application/json")
+                return True
+            got = (tasks if u.path.startswith("/api/tasks") else changes).handle(method, u.path, qs, body, self.who())
+            self.send(*(got or (404, b"not found", "text/plain", "no-store")))
+            return True
+
+        def mcp_route(self, method: str, body):
+            """The library as tools for an agent (estate_mcp.py). Anyone who can open the app can search
+            with it; proposing a change set takes what the Changes page takes."""
+            from intake.server import is_local
+            local = is_local(self)
+            self.send(*mcp.handle(method, self.headers, body, self.allowed() or local, self.who(), local))
+
         def do_POST(self):
             u = urlparse(self.path)
             if u.path in ("/api/ingest", "/api/restart"):
@@ -1200,8 +1313,12 @@ def cmd_serve(a) -> None:
             except ValueError:
                 body = None
             try:
+                if u.path == "/mcp":
+                    return self.mcp_route("POST", body)
                 if intake and u.path.startswith("/api/intake"):
                     return self.intake_route("POST", u, parse_qs(u.query), body)
+                if self.changes_route("POST", u, parse_qs(u.query), body):
+                    return
                 if not self.people_page("POST", u, parse_qs(u.query), body):
                     self.send(404, b"not found", "text/plain")
             except (BrokenPipeError, ConnectionResetError):
@@ -1288,8 +1405,10 @@ def cmd_serve(a) -> None:
             try:
                 if intake and u.path.startswith(("/setup", "/api/intake")):
                     return self.intake_route("GET", u, qs, None)
-                if self.people_page("GET", u, qs, None):
+                if self.people_page("GET", u, qs, None) or self.changes_route("GET", u, qs, None):
                     return
+                if u.path == "/mcp":
+                    return self.mcp_route("GET", None)
                 if u.path in ("/", "/index.html"):  # revalidated each load, so edits show up at once
                     body = pages.page("search.html")
                     return self.send(200, body, "text/html; charset=utf-8", "no-cache",
@@ -1329,7 +1448,7 @@ def cmd_serve(a) -> None:
                            filters=applied, people=names, places=places, cursor=start, matching=int(len(order)),
                            ms=round((time.time() - t) * 1000),
                            top=[r["sha"] for r in results[:20]] if start == 0 else None)
-                    return self.json({"results": results, "next": nxt, "hidden": hidden, "total": N,
+                    return self.json({"results": results, "next": nxt, "hidden": hidden, "total": info["total"],
                                       "matching": int(len(order)), "text": text, "filters": applied, "people": names, "places": places,
                                       "scope": scope, "sort": sort, "ms": round((time.time() - t) * 1000)})
                 if u.path == "/api/log":  # the page reports photos opened or shared from a result list
@@ -1349,7 +1468,7 @@ def cmd_serve(a) -> None:
 
                     def make():
                         by_time = oldest if sort == "old" else newest
-                        return {**periods(by_time[mask[by_time]]), "matching": int(mask.sum()), "total": N}
+                        return {**periods(by_time[mask[by_time]]), "matching": int(mask.sum()), "total": info["total"]}
                     return self.json(remember(key, make))
                 if u.path in ("/stats", "/stats.html"):
                     body = pages.page("stats.html")
@@ -1370,7 +1489,7 @@ def cmd_serve(a) -> None:
                                                                  one("after"), max(1, min(int(one("limit", "2000")), 10000)))
                     rows = [dict(sha=s, **meta[s], **({"dup": True} if feed_dups and s in feed_dups else {})) for s in ids if s in meta]
                     return self.json({"epoch": feed.epoch, "photos": rows, "deleted": deleted, "since": ver, "after": after,
-                                      "more": more, "total": N, "trips": [] if more else trip_list})
+                                      "more": more, "total": info["total"], "trips": [] if more else trip_list})
                 if u.path in app_files:
                     body = app_files[u.path].read_bytes()
                     return self.send(200, body, app_types[app_files[u.path].suffix], "no-cache",
@@ -1465,6 +1584,36 @@ def cmd_serve(a) -> None:
                 reload_state["running"] = False
         if ingest and not reload_state["error"]:
             ingest.fresh = False
+
+    # Change sets (changes.py). When one hides or shows photos, the catalog is re-read as after an ingest:
+    # every view, count and cover is rebuilt without them, phones are told through the feed, and the
+    # People page loads again without their faces. `settling` covers the moment before the reload starts.
+    settling = {"n": 0}
+
+    def hidden_changed():
+        try:
+            reload_catalog()
+            if has_faces:
+                load_people()
+        finally:
+            settling["n"] -= 1
+
+    def on_hidden_change():
+        settling["n"] += 1
+        threading.Thread(target=hidden_changed, daemon=True).start()
+
+    changes = Changes(a.db, facts=lambda sha: meta.get(sha),
+                      shown=lambda sha: {"library": sha in index and bool(visible[index[sha]]), "sync": sha in feed.rows},
+                      busy=lambda: settling["n"] > 0 or reload_state["running"], on_change=on_hidden_change)
+
+    # Tasks (tasks.py): a request in words, worked on by an agent on this computer that uses the MCP
+    # endpoint below like any other client, and ends in a change set.
+    from types import SimpleNamespace
+    from tasks import Tasks
+    tasks = Tasks(a.db, f"http://127.0.0.1:{a.port or (8767 if a.demo else 8768 if a.sandbox else 8766)}/mcp",
+                  command=a.agent_cmd, env_file=a.agent_env, model=a.agent_model, log=lambda msg: print(msg, flush=True))
+    mcp = MCPServer(SimpleNamespace(find=agent_find, row=agent_row, faces=agent_faces, overview=agent_overview,
+                                    changes=changes, tasks=tasks))
 
     if ingest:
         ingest.on_added = reload_catalog
@@ -1628,6 +1777,10 @@ def main() -> None:
     s.add_argument("--cache", help="thumbnail cache dir (default: <db dir>/review, shared with estate.py review)")
     s.add_argument("--fast-cache", help="cache dir on a faster disk (e.g. the internal SSD), filled from --cache")
     s.add_argument("--no-pregenerate", action="store_true", help="don't build missing thumbnails in the background")
+    s.add_argument("--agent-cmd", help="the Claude Code program that works on tasks (tasks.py); default: `claude` on PATH or in ~/.local/bin")
+    s.add_argument("--agent-env", help="a file of KEY=VALUE lines put in the agent's environment, for its sign-in token; "
+                                       "default ~/.config/photo-estate/agent.env")
+    s.add_argument("--agent-model", help="the model the agent uses; default: Claude Code's own")
     s.add_argument("--match-floor", type=float, default=MATCH_FLOOR,
                    help="typed searches show no photo below this similarity (-1 = no floor)")
     s.add_argument("--match-window", type=float, default=MATCH_WINDOW,

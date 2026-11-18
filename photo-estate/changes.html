@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Changes — Photo Estate</title>
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="theme-color" content="#f8f6f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)">
+<style>
+/*@estate.css*/
+main { padding: 12px calc(var(--pad) + env(safe-area-inset-right)) 150px calc(var(--pad) + env(safe-area-inset-left)); max-width: 1500px; margin: 0 auto; }
+main.review { max-width: none; padding: 0 calc(10px + env(safe-area-inset-right)) 110px calc(10px + env(safe-area-inset-left)); }
+h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032em; }
+.sub { margin: 8px 0 0; max-width: 72ch; }
+.pill { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: var(--well-2); color: var(--ink-2); vertical-align: 3px; margin-left: 8px; letter-spacing: 0; }
+.pill.review, .pill.applied { background: var(--sun-wash); color: var(--sun); }
+.pill.done { background: var(--yes); color: #fff; }
+
+/* ── every change set ───────────────────────────────────────────────── */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; margin-top: 26px; }
+.card { display: block; padding: 20px; border-radius: var(--r); background: var(--well); transition: background .15s; }
+.card:hover { background: var(--well-2); }
+.card h3 { font-size: 20px; font-weight: 700; letter-spacing: -.018em; }
+.card p { margin-top: 3px; color: var(--muted); font-size: 14px; }
+.card .strip { display: flex; gap: 3px; margin-top: 14px; height: 64px; overflow: hidden; border-radius: 10px; }
+.card .strip img { height: 64px; flex: 1 1 0; min-width: 0; object-fit: cover; background: var(--tile); }
+
+.ask { display: flex; gap: 10px; align-items: flex-end; margin-top: 22px; max-width: 900px; }
+.ask textarea { flex: 1; min-height: 60px; padding: 12px 16px; border-radius: 18px; border: 0; outline: 0; background: var(--well); font: inherit; color: inherit; resize: vertical; }
+.ask textarea:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 4px var(--sun-wash); }
+.task { margin-top: 10px; padding: 16px 20px; border-radius: var(--r); background: var(--well); max-width: 900px; }
+.task .row { display: flex; gap: 12px; align-items: flex-start; }
+.task h3 { font-size: 16px; font-weight: 600; margin-right: auto; }
+.task p { margin-top: 6px; font-size: 14px; color: var(--muted); }
+.task p.now::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--sun); margin-right: 8px; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.task p.err { color: var(--no); }
+.task details { margin-top: 8px; font-size: 14px; }
+.task summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.task .report { margin-top: 8px; white-space: pre-wrap; color: var(--ink-2); max-width: 80ch; }
+.task .btn.ask { margin-top: 12px; }
+.task .row .btn { height: 30px; padding: 0 12px; font-size: 13px; }
+
+/* ── one change set: a wall of photos; the only thing to do is mark the ones to keep ───────── */
+.tools { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 2px 4px 10px; font-size: 13.5px; color: var(--muted); }
+.tools .seg button span { opacity: .6; font-weight: 500; margin-left: 5px; }
+.tools .size { display: inline-flex; align-items: center; gap: 2px; }
+.tools .size .round { width: 30px; height: 30px; font-weight: 700; font-size: 16px; }
+.tools .keys { margin-left: auto; display: flex; gap: 14px; flex-wrap: wrap; }
+.tools .keys b { color: var(--ink-2); font-weight: 600; }
+.why { padding: 0 4px 10px; color: var(--ink-2); font-size: 13.5px; max-width: 110ch; }
+.why .ok { color: var(--yes); font-weight: 700; }
+.why .bad { color: var(--no); font-weight: 700; }
+.fin { margin: 0 4px 12px; padding: 14px 18px; border-radius: var(--r); background: var(--well); font-size: 15px; color: var(--ink-2); max-width: 110ch; }
+.fin b { color: var(--ink); }
+.fin.done b:first-child { color: var(--yes); }
+.locked .t { cursor: zoom-in; }
+.grid { --h: 120px; display: flex; flex-wrap: wrap; gap: 2px; }
+.grid::after { content: ""; flex: 100 1 0; }
+.m { height: var(--h); flex: 0 0 auto; padding: 0 10px 6px 6px; display: flex; align-items: flex-end; font-size: 12px; font-weight: 700;
+  color: var(--muted); line-height: 1.15; }
+.t { position: relative; height: var(--h); flex: 1 1 calc(var(--h) * var(--ar)); max-width: calc(var(--h) * var(--ar) * 1.6); background: var(--tile);
+  overflow: hidden; cursor: pointer; }
+.t img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.t .b { position: absolute; left: 4px; bottom: 4px; height: 20px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  display: none; align-items: center; background: var(--yes); color: #fff; }
+.t.keep .b { display: inline-flex; }
+.t.keep::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 4px var(--yes); pointer-events: none; }
+.t.gone:not(.keep) img { opacity: .45; }
+.t.on { outline: 3px solid var(--sun); outline-offset: -1px; z-index: 1; }
+@media (max-width: 760px) { .tools .keys { display: none; } }
+
+/* what applying will do */
+.dock { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 20;
+  display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 20px; border-radius: 999px; background: var(--raised);
+  box-shadow: var(--shadow); max-width: calc(100vw - 24px); }
+.dock .say { font-size: 14px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dock .say b { color: var(--ink); }
+.toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+
+/* one photo, as big as the window */
+.lb { position: fixed; inset: 0; z-index: 40; background: #000; color: #fff; cursor: zoom-out; }
+.lb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.lb.keep::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 8px var(--yes); pointer-events: none; }
+.lb .bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: flex-end; gap: 14px;
+  padding: 40px 18px calc(14px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.75)); font-size: 13.5px; }
+.lb .t2 { margin-right: auto; color: rgba(255,255,255,.78); max-width: 90ch; }
+.lb .t2 b { color: #fff; }
+.lb .state { font-weight: 700; padding: 0 12px; height: 30px; border-radius: 999px; display: inline-flex; align-items: center; background: rgba(255,255,255,.16); white-space: nowrap; }
+.lb.keep .state { background: var(--yes); }
+.lb kbd { box-shadow: inset 0 0 0 1px rgba(255,255,255,.5); color: #fff; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="round" id="back" href="/" aria-label="Back"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></a>
+  <div class="crumb" id="crumb"></div>
+  <div class="end num" id="sum"></div>
+</header>
+<main id="main"></main>
+<div class="dock" id="dock" hidden></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt = n => Number(n).toLocaleString("en-US");
+const plural = (n, one, many = one + "s") => `${fmt(n)} ${n === 1 ? one : many}`;
+const api = async (path, body) => {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `${path}: ${r.status}`);
+  return r.json();
+};
+const store = {   // what this browser remembers: the size of the photos, and where you were in each set
+  get(k, d) { try { return localStorage.getItem("changes." + k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("changes." + k, v); } catch {} },
+};
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("on");
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2600);
+}
+const MARK = '<svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>';
+const STATES = { empty: "Nothing in it", review: "To review", applied: "To commit", done: "Done", reverted: "Reverted" };
+const day = when => {
+  const d = new Date(when.slice(0, 10) + "T12:00:00");
+  return isNaN(d) ? "No date" : d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "long", year: "numeric" });
+};
+
+// ── every change set, and the requests an agent is working on ───────────────────────────────
+const TASK = { queued: "Waiting", running: "Working", done: "Done", failed: "Failed", cancelled: "Stopped" };
+const said = e => !e ? "" : e.kind === "tool" ? "Looking: " + e.text.replace(/^(\w+) (.*)$/s, (_, n, a) => {
+  try { const o = JSON.parse(a), q = o.query || o.add_search?.query || o.remove_search?.query || o.title; return n.replace(/_/g, " ") + (q ? ` “${q}”` : ""); }
+  catch { return n.replace(/_/g, " "); } }) : e.text;
+function taskCard(t) {
+  const live = t.status === "queued" || t.status === "running";
+  return `<div class="task ${t.status}"><div class="row"><h3>${esc(t.prompt.length > 140 ? t.prompt.slice(0, 140) + "…" : t.prompt)}<span class="pill ${live ? "review" : ""}">${TASK[t.status]}</span></h3>
+      ${live ? `<button class="btn" data-cancel="${t.id}">Stop</button>` : ""}</div>
+    ${live ? `<p class="now">${esc(said(t.last) || "Starting…").slice(0, 220)}</p>` : ""}
+    ${t.error ? `<p class="err">${esc(t.error)}</p>` : ""}
+    ${t.result ? `<details><summary>What the agent did</summary><div class="report">${esc(t.result)}</div></details>` : ""}
+    ${t.change_sets.map(c => `<a class="btn ask" href="${c.review}">Review ${plural(c.photos, "photo")}: ${esc(c.title)}</a>`).join(" ")}</div>`;
+}
+async function home() {
+  const [d, k] = await Promise.all([api("/api/changes"), api("/api/tasks")]);
+  $("#crumb").innerHTML = "Changes";
+  $("#sum").textContent = d.hidden ? `${plural(d.hidden, "photo")} hidden` : "";
+  const counts = s => [s.applied && `${fmt(s.applied)} hidden`, s.n - s.reject - s.applied > 0 && `${fmt(s.n - s.reject - s.applied)} to hide`,
+    s.reject && `${fmt(s.reject)} kept`].filter(Boolean).join(" · ");
+  const draft = $("#ask")?.value ?? "", typing = document.activeElement?.id === "ask";
+  $("#main").innerHTML = `<h1>Changes</h1>
+    <p class="sub">Say what should go, and an agent on this computer works out which photos you mean. It proposes them as a change set; nothing happens to the library until you have looked and applied it. An applied set is then committed, or reverted to show every photo again.</p>
+    <form class="ask" id="askForm"><textarea id="ask" rows="2" placeholder="Hide the photos from the school: young children nobody has named, outdoors or in a classroom" ${k.available ? "" : "disabled"}></textarea>
+      <button class="btn pri" ${k.available ? "" : "disabled"}>Ask</button></form>
+    ${k.available ? "" : `<p class="sub">${esc(k.why)}.</p>`}
+    <div id="tasks">${k.tasks.map(taskCard).join("")}</div>
+    ${d.sets.length ? `<div class="cards">${d.sets.map(s => `<a class="card" href="/changes/${s.id}">
+      <h3>${esc(s.title)}<span class="pill ${s.state}">${STATES[s.state]}</span></h3>
+      <p class="num">${plural(s.n, "photo")}${counts(s) ? " · " + counts(s) : ""}</p>
+      <div class="strip">${s.cover.map(sha => `<img loading="lazy" src="/thumb/${sha}" alt="">`).join("")}</div></a>`).join("")}</div>`
+    : k.tasks.length ? "" : `<div class="blank">${MARK}<h3>No changes yet</h3><p>Photos proposed for hiding wait here for you to look at before anything happens.</p></div>`}`;
+  $("#ask").value = draft;
+  if (typing) $("#ask").focus();
+  $("#askForm").onsubmit = async e => {
+    e.preventDefault();
+    const prompt = $("#ask").value.trim();
+    if (!prompt) return;
+    try { await api("/api/tasks", { prompt }); $("#ask").value = ""; home(); } catch (err) { toast(err.message); }
+  };
+  $("#ask").onkeydown = e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("#askForm").requestSubmit(); };
+  $("#tasks").onclick = async e => {
+    const b = e.target.closest("[data-cancel]");
+    if (b) { await api(`/api/tasks/${b.dataset.cancel}/cancel`, {}).catch(err => toast(err.message)); home(); }
+  };
+  clearTimeout(home.t);
+  if (k.tasks.some(t => t.status === "queued" || t.status === "running")) home.t = setTimeout(() => {
+    if (!$("#tasks details[open]") ) home().catch(() => {});
+    else home.t = setTimeout(() => home().catch(() => {}), 2000);
+  }, 2000);
+}
+
+// ── one change set ──────────────────────────────────────────────────────────────────────────
+// Every photo here will be hidden unless it is marked Keep, so looking it over is one pass: move
+// through the wall, zoom where unsure, mark the exceptions. Each mark is saved as it is made.
+const SIZES = [64, 88, 120, 170, 240, 340];
+let S = null, shown = [], filter = "all", cur = null, anchor = null, lb = null, moved = 0;
+let size = Math.max(0, Math.min(SIZES.length - 1, +store.get("size", 2) || 0));
+const kept = it => it.decision === "reject";
+const item = sha => S.items.find(it => it.sha === sha);
+const tile = sha => sha && document.getElementById("t" + sha);
+
+function paintTile(it) {
+  const el = tile(it.sha);
+  if (el) el.className = `t${kept(it) ? " keep" : ""}${it.applied ? " gone" : ""}${cur === it.sha ? " on" : ""}`;
+}
+function tally() {
+  let keep = 0, hide = 0, show = 0, applied = 0;
+  for (const it of S.items) {
+    keep += kept(it); applied += it.applied;
+    hide += !kept(it) && !it.applied; show += kept(it) && it.applied;
+  }
+  return { keep, hide, show, applied, all: S.items.length };
+}
+function paintBars() {
+  const n = tally();
+  $("#sum").innerHTML = `${n.hide || !n.applied ? `${fmt(n.all - n.keep)} to hide` : `${fmt(n.applied)} hidden`} · <b>${fmt(n.keep)}</b> kept`;
+  for (const b of document.querySelectorAll("#seg button")) {
+    b.classList.toggle("on", b.dataset.f === filter);
+    $("span", b).textContent = fmt(b.dataset.f === "all" ? n.all : n.keep);
+  }
+  const todo = [n.hide && `Hide ${plural(n.hide, "photo")}`, n.show && `${n.hide ? "show" : "Show"} ${plural(n.show, "photo")} again`].filter(Boolean);
+  const done = S.state === "done", ready = !todo.length && n.all > 0;
+  const stands = `<b>${plural(n.applied, "photo")}</b> hidden · ${fmt(n.keep)} kept`;
+  // How the set stands, in words above the photos: what is in effect, and what is left to decide.
+  const fin = $("#fin");
+  fin.hidden = !(done || (ready && S.state !== "reverted") || (n.applied && !ready));
+  fin.className = `fin${done ? " done" : ""}`;
+  fin.innerHTML = done ? `<b>Done.</b> ${stands}. Committed ${day(S.done_at || "")}. To change or revert it, reopen it first.`
+    : ready ? `<b>Applied, not yet committed.</b> ${stands}. Look at the library; then <b>Commit</b> to finish, or <b>Revert</b> to show every photo again.`
+    : `<b>Partly applied.</b> ${stands} so far; ${todo.join(", ").toLowerCase()} still to apply.`;
+  $("#main").classList.toggle("locked", done);
+  $("#hint").textContent = done ? "This set is done. Nothing here can be changed until it is reopened."
+    : "Everything here will be hidden, except what you mark to keep.";
+  const dock = $("#dock");
+  dock.hidden = false;
+  dock.innerHTML = `<span class="say num">${done ? `<b>Done</b> · ${fmt(n.applied)} hidden · ${fmt(n.keep)} kept`
+      : todo.length ? `<b>${todo.join(", ")}</b>${n.keep && n.hide ? ` · keeping ${fmt(n.keep)}` : ""}`
+      : n.applied ? stands : n.all ? "Every photo is kept: nothing to hide" : "Nothing in this set"}</span>
+    ${done ? '<button class="btn" id="reopen">Reopen</button>' : `
+    ${n.applied ? '<button class="btn" id="undo">Revert</button>' : ""}
+    ${todo.length ? `<button class="btn" id="upto" ${cur ? "" : "disabled"} title="Apply only as far as the photo you are on; the rest waits">Apply up to here <kbd>U</kbd></button>
+    <button class="btn pri" id="apply">Apply all <kbd>A</kbd></button>` : ""}
+    ${ready ? '<button class="btn pri" id="commit">Commit</button>' : ""}`}`;
+  const on = (id, fn) => { if ($(id)) $(id).onclick = fn; };
+  on("#apply", () => apply()); on("#upto", () => apply(cur)); on("#undo", undo);
+  on("#commit", () => finish("commit")); on("#reopen", () => finish("reopen"));
+}
+
+// A mark shows at once and is saved behind it; if saving fails it is put back.
+async function setKeep(items, keep) {
+  items = items.filter(it => kept(it) !== keep);
+  if (!items.length) return;
+  if (S.state === "done") return toast("This set is done. Reopen it to change it");
+  const was = items.map(it => it.decision), decision = keep ? "reject" : "accept";
+  items.forEach(it => { it.decision = decision; paintTile(it); });
+  if (S.state === "applied") S.state = "review";   // a new mark is something left to apply
+  paintBars(); paintZoom();
+  try {
+    await api(`/api/changes/${S.id}/decide`, { shas: items.map(it => it.sha), decision });
+  } catch (e) {
+    items.forEach((it, i) => { it.decision = was[i]; paintTile(it); });
+    paintBars(); paintZoom();
+    toast("Could not save that. Try again");
+  }
+}
+
+function render() {
+  shown = S.items.filter(it => filter === "all" || kept(it));
+  let month = null;
+  const html = shown.map(it => {
+    const m = it.when.slice(0, 7), label = m !== month && new Date(m + "-15T12:00:00");
+    month = m;
+    return (label ? `<div class="m">${isNaN(label) ? "No<br>date" : label.toLocaleDateString("en-US", { month: "short" }) + "<br>" + label.getFullYear()}</div>` : "")
+      + `<div class="t${kept(it) ? " keep" : ""}${it.applied ? " gone" : ""}" id="t${it.sha}" data-sha="${it.sha}" style="--ar:${it.ar}"><img loading="lazy" src="/thumb/${it.sha}" alt=""><span class="b">Keep</span></div>`;
+  }).join("");
+  $("#grid").innerHTML = html || `<div class="blank" style="flex:1">${MARK}<h3>None kept</h3><p>Photos you mark to keep are listed here.</p></div>`;
+  if (!shown.some(it => it.sha === cur)) cur = shown[0]?.sha ?? null;
+  tile(cur)?.classList.add("on");
+  paintBars();
+}
+function setSize(i) {
+  size = Math.max(0, Math.min(SIZES.length - 1, i));
+  store.set("size", size);
+  $("#grid").style.setProperty("--h", SIZES[size] + "px");
+  tile(cur)?.scrollIntoView({ block: "center" });
+}
+function setCursor(sha, scroll = true) {
+  if (!sha || sha === cur) return;
+  tile(cur)?.classList.remove("on");
+  cur = sha;
+  store.set("at." + S.id, sha);
+  const el = tile(sha);
+  el?.classList.add("on");
+  if (scroll) el?.scrollIntoView({ block: "nearest" });
+  if (lb) zoom();
+}
+// The photo to the left or right is the one before or after; up and down find the nearest in the next row.
+function neighbour(dx, dy) {
+  const i = shown.findIndex(it => it.sha === cur);
+  if (i < 0) return shown[0]?.sha;
+  if (dx || lb) return shown[Math.max(0, Math.min(shown.length - 1, i + (dx || dy)))].sha;
+  const r = tile(cur).getBoundingClientRect(), x = r.left + r.width / 2;
+  let row = null, best = null, near = Infinity;
+  for (let j = i + dy; j >= 0 && j < shown.length; j += dy) {
+    const q = tile(shown[j].sha).getBoundingClientRect();
+    if (Math.abs(q.top - r.top) < 4) continue;
+    if (row === null) row = q.top;
+    if (Math.abs(q.top - row) > 4) break;
+    const d = Math.abs(q.left + q.width / 2 - x);
+    if (d < near) { near = d; best = shown[j].sha; }
+  }
+  return best ?? cur;
+}
+
+async function openSet(id) {
+  S = await api(`/api/changes/${id}`);
+  document.title = `${S.title} — Changes — Photo Estate`;
+  $("#back").href = "/changes";
+  $("#crumb").innerHTML = `<a href="/changes">Changes</a><i>›</i><span>${esc(S.title)}</span>`;
+  $("#main").className = "review";
+  $("#main").innerHTML = `<div class="tools">
+      <div class="seg" id="seg"><button data-f="all">All<span></span></button><button data-f="keep">Kept<span></span></button></div>
+      <span class="size"><button class="round" data-size="-1" aria-label="Smaller photos">−</button><button class="round" data-size="1" aria-label="Bigger photos">+</button></span>
+      <span id="hint"></span>
+      <span class="keys"><span><b>Click</b> or <kbd>K</kbd> keep</span><span><kbd>Space</kbd> zoom</span><span><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move</span><span><kbd>−</kbd><kbd>+</kbd> size</span><span><kbd>U</kbd> apply up to here</span></span></div>
+    <div class="fin" id="fin" hidden></div>
+    <div class="why" id="why">${esc(S.prompt || "")}</div>
+    <div class="grid" id="grid" style="--h:${SIZES[size]}px"></div>`;
+  $("#seg").onclick = e => { const b = e.target.closest("button"); if (b) { filter = b.dataset.f; render(); scrollTo(0, 0); } };
+  $(".size").onclick = e => { const b = e.target.closest("button"); if (b) setSize(size + +b.dataset.size); };
+  const grid = $("#grid");
+  grid.onclick = e => {
+    const t = e.target.closest(".t");
+    if (!t) return;
+    const it = item(t.dataset.sha);
+    if (e.shiftKey && anchor) {          // from the last photo clicked to this one: all kept
+      const a = shown.findIndex(x => x.sha === anchor), b = shown.indexOf(it);
+      setKeep(shown.slice(Math.min(a, b), Math.max(a, b) + 1), true);
+    } else setKeep([it], !kept(it));
+    anchor = it.sha;
+    setCursor(it.sha, false);
+  };
+  grid.onmousemove = () => { moved = Date.now(); };
+  grid.onmouseover = e => {              // the photo under the pointer is the one the keys act on
+    const t = e.target.closest(".t");
+    if (t && Date.now() - moved < 200) setCursor(t.dataset.sha, false);
+  };
+  cur = store.get("at." + id, null);
+  render();
+  tile(cur)?.scrollIntoView({ block: "center" });
+  if (S.busy) settle(); else if (S.applied) check();
+}
+
+// ── one photo, as big as the window ─────────────────────────────────────────────────────────
+function zoom() {
+  const it = item(cur);
+  if (!it) return;
+  if (!lb) {
+    lb = document.createElement("div");
+    lb.innerHTML = `<img alt=""><div class="bar"><span class="t2"></span><span class="state"></span></div>`;
+    lb.onclick = e => e.target.closest(".state") ? setKeep([item(cur)], !kept(item(cur))) : unzoom();
+    document.body.append(lb);
+  }
+  const img = $("img", lb);
+  if (img.dataset.sha !== it.sha) {      // the thumbnail at once, the big one when it arrives
+    img.dataset.sha = it.sha;
+    img.src = `/thumb/${it.sha}`;
+    const big = new Image();
+    big.onload = () => { if (img.dataset.sha === it.sha) img.src = big.src; };
+    big.src = `/preview/${it.sha}`;
+  }
+  paintZoom();
+}
+function paintZoom() {
+  const it = lb && item(cur);
+  if (!it) return;
+  lb.className = `lb${kept(it) ? " keep" : ""}`;
+  const facts = [it.when ? day(it.when) : "No date", it.place, it.people.length && it.people.join(", ")].filter(Boolean).map(esc).join(" · ");
+  $(".t2", lb).innerHTML = `<b>${fmt(shown.indexOf(it) + 1)} of ${fmt(shown.length)} · ${facts}</b>${it.reason ? `<br>${esc(it.reason)}` : ""}`;
+  $(".state", lb).innerHTML = `${kept(it) ? "Keeping" : it.applied ? "Hidden" : "Will be hidden"} &nbsp;<kbd>K</kbd>`;
+}
+function unzoom() { lb?.remove(); lb = null; tile(cur)?.scrollIntoView({ block: "nearest" }); }
+
+addEventListener("keydown", e => {
+  if (!S || e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, textarea")) return;
+  const k = e.key.toLowerCase(), move = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] }[k];
+  if (move) setCursor(neighbour(...move));
+  else if (k === "k" || k === "x") { const it = item(cur); if (it) setKeep([it], !kept(it)); }
+  else if (k === " " || k === "enter") lb ? unzoom() : zoom();
+  else if (k === "escape") unzoom();
+  else if (k === "-" || k === "_") setSize(size - 1);
+  else if (k === "=" || k === "+") setSize(size + 1);
+  else if (k === "a" && $("#apply") && !$("#apply").disabled) apply();
+  else if (k === "u" && $("#upto") && !$("#upto").disabled) apply(cur);
+  else return;
+  e.preventDefault();
+});
+
+// ── applying, undoing, checking ─────────────────────────────────────────────────────────────
+// All of the set, or only as far as one photo (in the order of the set, whatever is listed now): the
+// rest waits, so a long set can be looked over and applied a stretch at a time.
+async function apply(through) {
+  $("#apply").disabled = $("#upto").disabled = true;
+  try {
+    const r = await api(`/api/changes/${S.id}/apply`, through ? { through } : {});
+    S.state = r.state;
+    const end = through ? S.items.findIndex(it => it.sha === through) + 1 : S.items.length;
+    S.items.slice(0, end).forEach(it => { it.applied = !kept(it); paintTile(it); });
+    paintBars(); paintZoom();
+    const did = [r.hid && `${plural(r.hid, "photo")} hidden`, r.showed && `${plural(r.showed, "photo")} shown again`].filter(Boolean).join(", ");
+    const left = tally().hide;
+    toast((did || (through ? "Nothing to apply up to here" : "Nothing to apply")) + (did && left ? ` · ${fmt(left)} still to look at` : ""));
+    if (r.hid || r.showed) settle();
+  } catch (e) { toast(e.message); paintBars(); }
+}
+async function undo() {
+  const n = tally().applied;
+  if (!confirm(`Revert: show all ${plural(n, "photo")} this set hides again? What you marked to keep is remembered, so you can apply it again later.`)) return;
+  try {
+    S.state = (await api(`/api/changes/${S.id}/revert`, {})).state;
+    S.items.forEach(it => { it.applied = false; paintTile(it); });
+    paintBars(); paintZoom();
+    toast(`${plural(n, "photo")} shown again`);
+    settle();
+  } catch (e) { toast(e.message); }
+}
+// Commit: the set is done and can no longer be changed. Reopen: it can be again. Neither moves a photo.
+async function finish(what) {
+  try {
+    const r = await api(`/api/changes/${S.id}/${what}`, {});
+    S.state = r.state; S.done_at = r.done_at;
+    paintBars(); paintZoom();
+    toast(what === "commit" ? "Done" : "Reopened");
+  } catch (e) { toast(e.message); }
+}
+// After a change the app re-reads the library; when it has, say whether every photo is where it should be.
+async function settle() {
+  $("#why").textContent = "Updating the library…";
+  for (;;) {
+    await new Promise(r => setTimeout(r, 700));
+    if (await check()) return;
+  }
+}
+async function check() {
+  let c;
+  try { c = await api(`/api/changes/${S.id}/check`); } catch (e) { toast(e.message); return true; }
+  if (c.busy) return false;
+  const parts = [c.hidden && `${plural(c.hidden, "hidden photo")} ${c.hidden === 1 ? "is" : "are"} in no view and not on phones`,
+    c.visible && `${plural(c.visible, "other photo")} of this set ${c.visible === 1 ? "is" : "are"} in the library`].filter(Boolean);
+  $("#why").innerHTML = c.wrong.length
+    ? `<span class="bad">${plural(c.wrong.length, "photo")} not where ${c.wrong.length === 1 ? "it" : "they"} should be.</span> ${c.wrong.slice(0, 5).map(w => `${w.sha.slice(0, 10)} should be ${w.should_be}`).join("; ")}`
+    : `<span class="ok">Checked.</span> ${parts.join("; ") || "This set has no photos"}.`;
+  return true;
+}
+
+const id = location.pathname.match(/^\/changes\/(\d+)/)?.[1];
+(id ? openSet(id) : home()).catch(e => {
+  $("#main").innerHTML = `<div class="blank">${MARK}<h3>Could not open this</h3><p>${esc(e.message)}</p><a class="btn" href="/changes">All changes</a></div>`;
+});
+</script>
+</body>
+</html>
