@@ -56,7 +56,7 @@ body { min-height: 100dvh; }
 .scale button { height: 34px; padding: 0 14px; border-radius: 999px; font-size: 14.5px; font-weight: 500; color: var(--ink);
   transition: background .2s var(--ease), color .2s; }
 .scale button.on { background: var(--sun-lit); color: var(--on-sun); }
-.lbar .back { width: 40px; height: 40px; border-radius: 50%; color: var(--ink); }
+.lbar .back { width: 40px; height: 40px; border-radius: 50%; color: var(--ink); display: grid; place-items: center; }
 
 /* ── page heading and the grid ──────────────────────────────────────── */
 main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
@@ -357,7 +357,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
 
 <div id="libTab" class="tab">
   <div class="lbar" id="lbar">
-    <button class="back glass" id="libBack" hidden aria-label="Back"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
+    <button class="back glass" id="libBack" hidden aria-label="Back"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 3 5.5 8l5 5"/></svg></button>
     <div class="scale glass" id="scale" role="tablist">
       <button data-s="years" role="tab">Years</button><button data-s="months" role="tab">Months</button><button data-s="all" role="tab" aria-label="All photos">All</button>
     </div>
