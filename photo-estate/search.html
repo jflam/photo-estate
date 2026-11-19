@@ -235,7 +235,7 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .mi .sw.on::after { transform: translateX(14px); }
 .mi.ln > svg:first-child { visibility: visible; color: var(--ink-2); }
 .menu .mk { padding: 0 6px 6px; display: grid; gap: 10px; }
-.menu .mk h5 { margin: 8px 6px 0; }
+.menu .mk h5 { margin: 8px 6px -4px; }
 .menu .mk input { width: 100%; }
 .menu .mk .err { margin: 0 6px; font-size: 13.5px; color: var(--no); }
 .menu .mk .err:empty { display: none; }
@@ -386,8 +386,8 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
     </div>
     <div class="sp"></div>
     <div class="caps glass">
-      <button class="round" id="libView" aria-label="View options"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.5 9h7M8 13h2"/></svg></button>
-      <button class="round" id="libMore" aria-label="Your library"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="14" cy="9" r="1.5"/></svg></button>
+      <button class="round" id="libView" aria-label="View options: photo size, and what is left out"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.5 9h7M8 13h2"/></svg></button>
+      <button class="round" id="libMore" aria-label="More of your library"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="14" cy="9" r="1.5"/></svg></button>
     </div>
   </div>
   <main id="libAll">
@@ -408,11 +408,11 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
 
 <div id="albTab" class="tab" hidden>
   <div class="lbar" id="abar">
-    <button class="back glass" id="albBack" hidden aria-label="All albums"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 3 5.5 8l5 5"/></svg></button>
+    <button class="back glass" id="albBack" hidden aria-label="Back to all albums"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 3 5.5 8l5 5"/></svg></button>
     <div class="sp"></div>
     <div class="caps glass" id="albCaps" hidden>
-      <button class="round" id="albView" aria-label="View options"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.5 9h7M8 13h2"/></svg></button>
-      <button class="round" id="albMore" aria-label="This album"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="14" cy="9" r="1.5"/></svg></button>
+      <button class="round" id="albView" aria-label="View options: photo size, and what is left out"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.5 9h7M8 13h2"/></svg></button>
+      <button class="round" id="albMore" aria-label="More: rename, favourite, download, hide or delete this album"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="14" cy="9" r="1.5"/></svg></button>
     </div>
   </div>
   <div class="periods" id="albList"></div>
@@ -434,8 +434,8 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
         <kbd>/</kbd>
       </label>
       <button class="txt" id="sCancel" hidden>Cancel</button>
-      <button class="round" id="sAlbum" hidden aria-label="New album from this search" title="New album from this search"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5.500" width="13" height="10" rx="2.300"/><path d="M5 2.800h8M9 8v5M6.500 10.500h5"/></svg></button>
-      <button class="round" id="sView" hidden aria-label="View options"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.500 9h7M8 13h2"/></svg></button>
+      <button class="round" id="sAlbum" hidden aria-label="Make an album of these photos"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5.500" width="13" height="10" rx="2.300"/><path d="M5 2.800h8M9 8v5M6.500 10.500h5"/></svg></button>
+      <button class="round" id="sView" hidden aria-label="View options: photo size, and what is left out"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.500 9h7M8 13h2"/></svg></button>
     </div>
     <div class="chips" id="chips" hidden></div>
     <div class="notice" id="notice"></div>
@@ -453,16 +453,16 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
   <div class="v-bg" id="vBg"></div>
   <div class="v-stage" id="vStage"></div>
   <div class="v-ui" id="vUi">
-    <button class="v-btn vglass" id="vClose" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m3.5 3.5 9 9m0-9-9 9"/></svg></button>
+    <button class="v-btn vglass" id="vClose" aria-label="Close (Esc)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="m3.5 3.5 9 9m0-9-9 9"/></svg></button>
     <div class="v-title" id="vTitle"></div>
-    <button class="v-btn vglass" id="vPrev" aria-label="Previous"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
-    <button class="v-btn vglass" id="vNext" aria-label="Next"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 5 5-5 5"/></svg></button>
+    <button class="v-btn vglass" id="vPrev" aria-label="Previous photo (←)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
+    <button class="v-btn vglass" id="vNext" aria-label="Next photo (→)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 5 5-5 5"/></svg></button>
     <div class="v-note" id="vNote"></div>
     <div class="v-bar vglass" id="vBar">
-      <button id="vShare" aria-label="Share"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 12.5V2.5M6.5 5.8 10 2.500l3.500 3.300M7 8.500H5.500a1.300 1.300 0 0 0-1.300 1.300v6.400a1.300 1.300 0 0 0 1.300 1.300h9a1.300 1.300 0 0 0 1.300-1.300V9.800A1.300 1.300 0 0 0 14.500 8.500H13"/></svg></button>
-      <button id="vFavBtn" aria-label="Favourite" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 16.800S3.200 12.600 3.200 7.800A3.700 3.700 0 0 1 10 6a3.700 3.700 0 0 1 6.800 1.800c0 4.800-6.800 9-6.800 9Z"/></svg></button>
-      <button id="vInfoBtn" aria-label="Details"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7.6"/><path d="M10 9v4.800"/><circle cx="10" cy="6.300" r=".5" fill="currentColor"/></svg></button>
-      <button id="vLike" aria-label="More like this"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M8 2.500c.5 3.900 2.600 6 6.500 6.500-3.900.5-6 2.600-6.500 6.500-.5-3.900-2.600-6-6.500-6.500 3.900-.5 6-2.600 6.500-6.500ZM15 1.800c.2 1.400.9 2.100 2.300 2.300-1.400.2-2.100.9-2.300 2.300-.2-1.400-.9-2.100-2.300-2.300 1.400-.2 2.100-.9 2.300-2.300Z"/></svg></button>
+      <button id="vShare" aria-label="Share this photo"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 12.5V2.5M6.5 5.8 10 2.500l3.500 3.300M7 8.500H5.500a1.300 1.300 0 0 0-1.300 1.300v6.400a1.300 1.300 0 0 0 1.300 1.300h9a1.300 1.300 0 0 0 1.300-1.300V9.800A1.300 1.300 0 0 0 14.500 8.500H13"/></svg></button>
+      <button id="vFavBtn" aria-label="Favourite (F)" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 16.800S3.200 12.600 3.200 7.800A3.700 3.700 0 0 1 10 6a3.700 3.700 0 0 1 6.800 1.800c0 4.800-6.800 9-6.800 9Z"/></svg></button>
+      <button id="vInfoBtn" aria-label="Details of this photo (I)"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7.6"/><path d="M10 9v4.800"/><circle cx="10" cy="6.300" r=".5" fill="currentColor"/></svg></button>
+      <button id="vLike" aria-label="Find more photos like this"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M8 2.500c.5 3.900 2.600 6 6.500 6.500-3.900.5-6 2.600-6.500 6.500-.5-3.900-2.600-6-6.500-6.500 3.900-.5 6-2.600 6.500-6.500ZM15 1.800c.2 1.400.9 2.100 2.300 2.300-1.400.2-2.100.9-2.300 2.300-.2-1.400-.9-2.100-2.300-2.300 1.400-.2 2.100-.9 2.300-2.300Z"/></svg></button>
     </div>
     <aside class="v-info" id="vInfo"></aside>
   </div>
@@ -470,7 +470,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
 
 <nav class="tabbar" id="tabbar">
   <div class="lib glass"><button class="tb on" data-tab="library" aria-label="Library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3.300 20.300 9.800v10.400H3.700V9.800Z"/><path d="m3.700 16.800 4.600-3.500 2.900 2.800 2.100-1.500 7 4.200" stroke-linecap="round"/><circle cx="14.700" cy="10.500" r="1.450" fill="currentColor" stroke="none"/></svg>Library</button><button class="tb" data-tab="albums" aria-label="Albums"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><rect x="3.700" y="7.500" width="16.600" height="12.700" rx="2.600"/><path d="M6.800 4.300h10.400"/><path d="m3.700 17 4.300-3.300 2.800 2.600 2.200-1.600 7.300 4.300"/></svg>Albums</button></div>
-  <button class="tb ts glass" data-tab="search" aria-label="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.500" cy="10.500" r="6.300"/><path d="m15.300 15.300 5 5"/></svg></button>
+  <button class="tb ts glass" data-tab="search" aria-label="Search your photos (/)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.500" cy="10.500" r="6.300"/><path d="m15.300 15.300 5 5"/></svg></button>
 </nav>
 
 <script>
@@ -1197,12 +1197,22 @@ $("#albMore").onclick = e => openMenu(e.currentTarget, el => {
   const row = (attr, icon, label, tag = "button") => `<${tag} class="mi ln" ${attr}>${icon}<span>${label}</span></${tag}>`;
   const heart = svg('<path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.900-5.600 7.300-5.600 7.300Z"/>', 18);
   const down = svg('<path d="M8 2.500v8M4.800 7.500 8 10.700l3.200-3.200M3 13.500h10"/>', 18), eye = svg('<path d="M2 8s2.200-4 6-4 6 4 6 4-2.200 4-6 4-6-4-6-4Z"/><path d="m3 13 10-10"/>', 18), bin = svg('<path d="M3.500 4.500h9M6.500 4.500V3h3v1.500M4.800 4.500l.5 8.500h5.400l.5-8.500"/>', 18);
-  el.innerHTML = row('data-fav="1"', heart, "Make all favourites") + row('data-fav="0"', heart, "Take all out of favourites")
+  const pen = svg('<path d="M3 13l.6-2.900 7-7 2.300 2.300-7 7ZM9.300 4.400l2.300 2.300"/>', 18);
+  el.innerHTML = row("data-edit", pen, "Edit the title and note…") + "<hr>" + row('data-fav="1"', heart, "Make all favourites") + row('data-fav="0"', heart, "Take all out of favourites")
     + row(`href="/api/albums/${a.id}/download" download`, down, "Download the originals", "a") + "<hr>"
     + (a.op === "hide" ? row(`href="/changes/${a.id}"`, eye, "Review what it hides", "a") : row("data-hide", eye, "Hide these photos…"))
     + (a.applied ? "" : row("data-drop", bin, "Delete this album"));
   el.onclick = async e => {
     const b = e.target.closest("button.mi"); if (!b) return;
+    if (b.hasAttribute("data-edit")) {                 // the menu becomes the two fields: the words under the title can be changed, or taken away
+      const mine = menu, field = (label, v, hint = "") => `<h5>${label}</h5><input type="text" aria-label="${label}" autocomplete="off" placeholder="${hint}" value="${esc(v || "")}">`;
+      return menuForm(el, field("Title", a.title).replace("<input", '<input maxlength="200"') + field("Note", a.prompt, "What this album is, if you like"),
+        "Save", "Saving…", "Couldn’t save", async (title, prompt) => {
+          const got = await postJSON(`/api/albums/${a.id}/rename`, { title, prompt });
+          if (menu === mine) closeMenus();
+          if (AL.album?.id === a.id) { AL.album = { ...AL.album, title: got.title, prompt: got.prompt }; albHead(agrid.data?.matching ?? a.n); }
+        });
+    }
     closeMenus();
     try {
       if (b.dataset.fav) {
@@ -1221,6 +1231,14 @@ $("#albMore").onclick = e => openMenu(e.currentTarget, el => {
   };
 });
 
+/* ── what a control does, on hovering over it: a control that is only a picture says so in its label, for a
+      screen reader; the same words are its tooltip. (One with words on it, or its own title, needs none.) ── */
+document.addEventListener("mouseover", e => {
+  const c = e.target.closest?.("[aria-label]");
+  if (!c || c.matches("input, [role=dialog]") || (c.title && !c.dataset.tip) || c.textContent.trim()) return;
+  c.title = c.getAttribute("aria-label"); c.dataset.tip = 1;
+});
+
 /* ── menus: the view options, and the rest of your library ─────────── */
 let menu = null;
 function closeMenus() { if (menu) { menu.anchor.classList.remove("open"); menu.el.remove(); menu = null; } closeSheet(); }
@@ -1232,6 +1250,24 @@ function openMenu(anchor, draw) {
   const r = anchor.getBoundingClientRect();
   el.style.top = r.bottom + 8 + "px";
   el.style.left = Math.max(8, Math.min(r.right - el.offsetWidth, innerWidth - el.offsetWidth - 8)) + "px";
+}
+// A menu that asks for some words: its fields (the first must be filled in), and a button that does `run` with
+// what they hold. While it runs the button says so; if it fails the menu stays, and says why.
+function menuForm(el, fields, label, busy, sorry, run) {
+  el.innerHTML = `<form class="mk">${fields}<p class="err" role="alert"></p><button class="btn pri">${label}</button></form>`;
+  const ins = [...el.querySelectorAll("input")], btn = $("button", el), err = $(".err", el);
+  ins[0].oninput = () => { btn.disabled = !ins[0].value.trim(); };
+  $("form", el).onsubmit = async e => {
+    e.preventDefault();
+    if (btn.disabled || !ins[0].value.trim()) return;
+    btn.disabled = true; btn.textContent = busy; err.textContent = "";
+    try { await run(...ins.map(i => i.value.trim())); }
+    catch (e2) {
+      err.textContent = e2.message === "not allowed" ? "Albums can’t be changed from this account." : `${sorry}: ${e2.message}`;
+      btn.disabled = false; btn.textContent = label;
+    }
+  };
+  setTimeout(() => { ins[0].focus(); ins[0].select(); });
 }
 document.addEventListener("pointerdown", e => {
   if (menu && !menu.el.contains(e.target) && !menu.anchor.contains(e.target)) closeMenus();
@@ -1404,24 +1440,13 @@ async function albumFromSearch(title) {
 }
 $("#sAlbum").onclick = e => openMenu(e.currentTarget, el => {
   if (!albumable()) return closeMenus();
-  el.innerHTML = `<form class="mk"><h5>New album from ${photos(D.matching)}</h5><input type="text" aria-label="Album title" maxlength="200" autocomplete="off" value="${esc(albumTitle())}">`
-    + `<p class="err" role="alert"></p><button class="btn pri">Create album</button></form>`;
-  const form = $("form", el), input = $("input", el), btn = $("button", el), err = $(".err", el), mine = menu;
-  input.oninput = () => { btn.disabled = !input.value.trim(); };
-  form.onsubmit = async ev => {
-    ev.preventDefault();
-    const title = input.value.trim(); if (!title || btn.disabled) return;
-    btn.disabled = input.disabled = true; btn.textContent = "Creating…"; err.textContent = "";
-    try {
+  const mine = menu;
+  menuForm(el, `<h5>New album from ${photos(D.matching)}</h5><input type="text" aria-label="Album title" maxlength="200" autocomplete="off" value="${esc(albumTitle())}">`,
+    "Create album", "Creating…", "Couldn’t make the album", async title => {   // if it fails the search stays as it was; the menu says why, and can be tried again
       const a = await albumFromSearch(title);
       if (menu === mine) closeMenus();
       AL.id = a.id; AL.album = null; setTab("albums");
-    } catch (e2) {                                    // the search stays as it was; the menu says why, and can be tried again
-      err.textContent = e2.message === "not allowed" ? "Albums can’t be made from this account." : `Couldn’t make the album: ${e2.message}`;
-      btn.disabled = input.disabled = false; btn.textContent = "Create album";
-    }
-  };
-  setTimeout(() => { input.focus(); input.select(); });
+    });
 });
 function drawNotice(suggesting) {
   const could = D && !suggesting && !isEmpty() && !S.sha && (D.people?.length || D.places?.length);

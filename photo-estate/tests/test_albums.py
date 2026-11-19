@@ -92,6 +92,10 @@ try:
         http("/api/favorite", {"sha": sha, "fav": True})
     http(f"/api/albums/{aid}/apply", {}, expect=409)       # not up for hiding
     assert http(f"/api/albums/{aid}/rename", {"title": "Two good years"})["title"] == "Two good years"
+    got = http(f"/api/albums/{aid}/rename", {"prompt": "the best of each"})       # its note alone; the title stays
+    assert (got["title"], got["prompt"]) == ("Two good years", "the best of each")
+    assert http(f"/api/albums/{aid}/rename", {"title": " ", "prompt": ""})["title"] == "Two good years", "an album keeps a title"
+    assert http(f"/api/albums/{aid}/photos?limit=1")["album"]["prompt"] == "", "a note can be taken away"
 
     # every photo in it a favourite, and back
     fav0 = http("/api/info")["fav"]
