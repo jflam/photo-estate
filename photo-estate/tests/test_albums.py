@@ -75,7 +75,21 @@ try:
     assert {"ar", "local", "fav", "section"} <= set(p["results"][0]), "a photo as /api/search gives it"
     assert [r["sha"] for r in http(f"/api/albums/{aid}/photos?cursor=4")["results"]] == by_year[y1][:3]
     assert http("/api/changes")["sets"] == [], "an album to look at is not a change set"
-    assert [s["id"] for s in http("/api/albums")["sets"]] == [aid] and http("/api/albums")["sets"][0]["cover"][:1] == by_year[y2][:1]
+    assert [s["id"] for s in http("/api/albums")["sets"]] == [aid]
+    # its front is a favourite of it if it has one (as a month's is), whichever photo that is
+    front = lambda: http("/api/albums")["sets"][-1]["cover"][0]
+    mine = by_year[y2][:4] + by_year[y1][:3]
+    was, favs0 = front(), [r["sha"] for r in http(f"/api/albums/{aid}/photos")["results"] if r["fav"]]
+    assert was in mine and (was in favs0 if favs0 else True)
+    for sha in favs0:
+        http("/api/favorite", {"sha": sha, "fav": False})
+    pick = next(s for s in reversed(mine) if s != front())
+    http("/api/favorite", {"sha": pick, "fav": True})
+    assert front() == pick, "the one favourite in the album is on its front"
+    http("/api/favorite", {"sha": pick, "fav": False})
+    assert front() != pick
+    for sha in favs0:
+        http("/api/favorite", {"sha": sha, "fav": True})
     http(f"/api/albums/{aid}/apply", {}, expect=409)       # not up for hiding
     assert http(f"/api/albums/{aid}/rename", {"title": "Two good years"})["title"] == "Two good years"
 

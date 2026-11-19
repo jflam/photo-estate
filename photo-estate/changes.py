@@ -116,11 +116,13 @@ class Changes:
     where the running app is showing it now ({"library": bool, "sync": bool}); `busy()` is true while
     the app is still taking in the last change; `on_change()` is called when the hidden photos change.
     `find(query)` is an agent's search, ([ids best first], scores), for live albums; `favorite(shas, on,
-    who)` makes photos favourites or not and returns how many changed."""
+    who)` makes photos favourites or not and returns how many changed; `cover(shas)` picks the photo
+    for an album's front as the app picks a month's (a favourite if there is one)."""
 
-    def __init__(self, db: str, facts, shown, busy=lambda: False, on_change=lambda: None, find=None, favorite=None):
+    def __init__(self, db: str, facts, shown, busy=lambda: False, on_change=lambda: None, find=None, favorite=None,
+                 cover=None):
         self.db, self.facts, self.shown, self.busy, self.on_change = db, facts, shown, busy, on_change
-        self.find, self.favorite = find, favorite
+        self.find, self.favorite, self.cover = find, favorite, cover
         self.lock = threading.Lock()   # one writer at a time; reads take no lock (WAL)
         con = self.con()
         con.executescript(SCHEMA)
@@ -196,8 +198,10 @@ class Changes:
             ids = [r[0] for r in con.execute("SELECT id FROM change_sets" + ("" if albums else " WHERE op != 'view'") + " ORDER BY id DESC")]
             sets = [self.summary(con, i) for i in ids]
             for s in sets:   # a few photos to show on the set's card
-                if s["op"] == "view":
-                    s["cover"] = [it["sha"] for it in self.members(con, s)[:6]]
+                if s["op"] == "view":            # its front: a favourite of it if it has one, as a month's is
+                    mem = [it["sha"] for it in self.members(con, s)]
+                    front = self.cover(mem) if self.cover and mem else None
+                    s["cover"] = ([front] if front else []) + [x for x in mem[:6] if x != front][:5 if front else 6]
                 else:
                     s["cover"] = [r[0] for r in con.execute(
                         "SELECT sha256 FROM change_items WHERE set_id=? ORDER BY score DESC, sha256 LIMIT 6", (s["id"],))]
