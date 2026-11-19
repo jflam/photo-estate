@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The Search tab: finding photos. The field is always at the top. With nothing asked, the page under it
 /// lays out the threads to pull (trips, years, places, people); with a question, it shows the answer as a
-/// grid, with the filters under the field. The field is the app's own, not the system's search bar: that
+/// grid, with the filters under the field, and a button that makes an album of it. The field is the app's own, not the system's search bar: that
 /// one moves between the navigation bar and the tab bar from one iOS version to the next, and went missing.
 struct SearchView: View {
     @ObservedObject var model: LibraryModel
@@ -12,6 +12,10 @@ struct SearchView: View {
     @State private var sheet: Pill?
     @State private var barHeight: CGFloat = 0
     @FocusState private var typing: Bool
+    @State private var naming = false          // asking what to call an album of the answer showing
+    @State private var albumTitle = ""
+    @State private var making = false
+    @State private var problem: String?        // why the album could not be made
 
     /// Typing something that is not yet the question: offer filters for it instead of the page behind.
     private var suggesting: Bool {
@@ -37,6 +41,14 @@ struct SearchView: View {
         .sheet(item: $sheet) { pill in
             FilterSheet(pill: pill, model: model).presentationDetents([.medium, .large]).presentationCornerRadius(28)
         }
+        .alert("New album", isPresented: $naming) {
+            TextField("Title", text: $albumTitle)
+            Button("Cancel", role: .cancel) {}
+            Button("Create") { makeAlbum() }
+        } message: { Text("All the photos this search finds, as they are now.") }
+        .alert("Couldn’t make the album", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(problem ?? "") }
         .onAppear { model.reload(reset: false) }
         .onChange(of: sync.revision) { _, _ in model.catalogChanged() }
         .onChange(of: LocalPhotos.shared.revision) { _, _ in model.catalogChanged() }
@@ -45,6 +57,27 @@ struct SearchView: View {
     private func submit() {
         typing = false
         model.search(draft)
+    }
+
+    /// An album of the answer showing: every photo the search finds (not only those loaded so far), fixed as
+    /// they are now and in this order. If it fails the search stays as it was, and says why.
+    private func makeAlbum() {
+        guard !making else { return }
+        let typed = albumTitle.trimmingCharacters(in: .whitespaces)
+        let title = String((typed.isEmpty ? model.albumTitle : typed).prefix(200)), asked = model.title
+        making = true
+        Task {
+            defer { making = false }
+            do {
+                let shas = try await model.everySha()
+                guard !shas.isEmpty else { problem = "This search finds no photos now."; return }
+                try await router.albums.create(title: title, prompt: "From the search \(asked)", shas: shas)
+                router.tab = .albums
+            } catch is CancellationError {
+            } catch {
+                problem = (error as? APIError)?.notAllowed == true ? "Albums can’t be changed from this account." : AlbumsModel.words(error)
+            }
+        }
     }
 
     // MARK: the bar: the field, always; under it, the filters of whatever is showing
@@ -83,6 +116,16 @@ struct SearchView: View {
                 if typing {
                     Button("Cancel") { typing = false; draft = model.query.text }.foregroundStyle(Color.sun)
                 } else if !model.query.isEmpty {
+                    if model.albumable || making {
+                        Button { albumTitle = model.albumTitle; naming = true } label: {
+                            Group {
+                                if making { ProgressView() } else { Image(systemName: "rectangle.stack.badge.plus").foregroundStyle(Color.primary) }
+                            }
+                            .frame(width: 40, height: 44).contentShape(Rectangle())
+                        }
+                        .disabled(making)
+                        .accessibilityLabel("Make an album of these photos")
+                    }
                     ViewMenu(model: model, width: 40)
                 }
             }
