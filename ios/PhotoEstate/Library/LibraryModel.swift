@@ -8,16 +8,25 @@ struct GridData: Equatable {
     var grain = 7             // 0: one flat list (ranked); 7: by month; 10: by day
     var id = 0                // changes with every new list
     var reset = 0             // changes when the question changed, not just the answer
+    var runs: [Run]? = nil    // the list's own sections, in order (an album's): these head it, not months or days
+
+    /// A stretch of the list under one caption.
+    struct Run: Equatable {
+        let title: String
+        let count: Int
+    }
 
     static func == (a: GridData, b: GridData) -> Bool { a.id == b.id }
 }
 
-/// How far out the Library is zoomed, as in Photos: a card a year, a card a month, or every photo.
-enum Scale: String, CaseIterable, Identifiable {
-    case years, months, all
+/// How far out the Library is zoomed, as in Photos: a card a year, a card a month, or every photo. A month's
+/// card opens that month alone (`month`), which is a place of its own and not one of the bar's three.
+enum Scale: String, Identifiable {
+    case years, months, all, month
+    static let bar: [Scale] = [.years, .months, .all]
     var id: String { rawValue }
-    var title: String { switch self { case .years: "Years"; case .months: "Months"; case .all: "All" } }
-    var grain: Int { switch self { case .years: 4; case .months: 7; case .all: 0 } }
+    var title: String { switch self { case .years: "Years"; case .months: "Months"; case .all: "All"; case .month: "Month" } }
+    var isCards: Bool { self == .years || self == .months }
 }
 
 /// One year's or one month's photos, as a card: its key ("2019", "2019-07"), the photo on the
@@ -51,6 +60,9 @@ final class LibraryModel: ObservableObject {
     @Published private(set) var title = "Library"
     @Published private(set) var subtitle = ""
     @Published private(set) var notice: String?
+    /// How much the list shows, what the view options hide and the order it is in, as rows for the settings
+    /// page: the Library says none of this under its own title, where it was noise above the photos.
+    @Published private(set) var facts: [(label: String, value: String)] = []
     @Published private(set) var ranked = false
     @Published private(set) var loading = true
     @Published private(set) var order = Order.new
@@ -69,9 +81,17 @@ final class LibraryModel: ObservableObject {
     @Published var hideShots = UserDefaults.standard.object(forKey: "view.hideShots") as? Bool ?? true {
         didSet { UserDefaults.standard.set(hideShots, forKey: "view.hideShots"); reload(reset: false) }
     }
-    @Published var scale = Scale(rawValue: UserDefaults.standard.string(forKey: "view.scale") ?? "") ?? .all {
-        didSet { UserDefaults.standard.set(scale.rawValue, forKey: "view.scale") }
+    @Published var scale = Scale.bar.first { $0.rawValue == UserDefaults.standard.string(forKey: "view.scale") } ?? .all {
+        didSet { if Scale.bar.contains(scale) { UserDefaults.standard.set(scale.rawValue, forKey: "view.scale") } }
     }
+    /// The month showing when `scale` is `month` ("2019-07"), and its photos: the library's own list from
+    /// where the month starts to where it ends, so its order is the Library's order (best first is this
+    /// month's best first).
+    @Published private(set) var monthKey: String?
+    @Published private(set) var monthGrid = GridData()
+    @Published private(set) var monthTitle = ""
+    @Published private(set) var monthSubtitle = ""
+    @Published private(set) var monthFooter: GridFooter?
     @Published private(set) var years: [Period] = []
     @Published private(set) var months: [Period] = []
     @Published private(set) var jump = Jump()
@@ -143,14 +163,45 @@ final class LibraryModel: ObservableObject {
 
     func clear() { go(Query()) }
 
-    /// A year's card opens its months; a month's card opens its photos.
+    /// A year's card opens its months; a month's card opens that month, alone.
     func open(_ p: Period) {
         Haptics.tap()
-        jump = Jump(key: p.key, id: jump.id + 1)
         trail.append(p)
         anchor = p.key
-        withAnimation(.snappy(duration: 0.25)) { scale = p.key.count > 4 ? .all : .months }
+        let month = p.key.count > 4
+        if month {
+            monthKey = p.key
+            remonth(reset: true)
+        }
+        withAnimation(.snappy(duration: 0.25)) { scale = month ? .month : .months }
     }
+
+    /// The month before or after, in this one's place: Back is still the Months, at the month now showing.
+    func goMonth(_ key: String) {
+        guard scale == .month, key != monthKey else { return }
+        monthKey = key
+        anchor = key
+        if let last = trail.last, last.key.count > 4, let p = months.first(where: { $0.key == key }) { trail[trail.count - 1] = p }
+        remonth(reset: true)
+    }
+
+    /// The month showing, cut again from the library's list: it changed, or another month was asked for.
+    private func remonth(reset: Bool) {
+        guard let key = monthKey else { return }
+        let tiles = grid.tiles.filter { $0.when.hasPrefix(key) }
+        monthSeq += 1
+        monthGrid = GridData(tiles: tiles, grain: 0, id: monthSeq, reset: monthGrid.reset + (reset ? 1 : 0))
+        let card = months.first { $0.key == key }
+        monthTitle = Dates.heading(key)
+        let n = tiles.isEmpty ? "No photos" : "\(tiles.count.formatted()) \(tiles.count == 1 ? "photo" : "photos")"
+        monthSubtitle = [card?.places ?? "", n, order == .best ? "best first" : order == .old ? "oldest first" : ""]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+        let keys = months.map(\.key).sorted()
+        let i = keys.firstIndex(of: key) ?? keys.firstIndex { $0 > key } ?? keys.count
+        let here = i < keys.count && keys[i] == key
+        monthFooter = GridFooter(before: i > 0 ? keys[i - 1] : nil, after: i + (here ? 1 : 0) < keys.count ? keys[i + (here ? 1 : 0)] : nil)
+    }
+    private var monthSeq = 0
 
     func search(_ text: String) {
         var q = query
@@ -264,6 +315,7 @@ final class LibraryModel: ObservableObject {
                 years = LibraryModel.periods(tiles, 4)
                 months = LibraryModel.periods(tiles, 7)
             }
+            remonth(reset: false)
             describe(q, plan, scope)
             loading = false
         }
@@ -386,6 +438,9 @@ final class LibraryModel: ObservableObject {
             parts = hidden > 0 ? ["\(LibraryModel.about(matching)) of \(LibraryModel.about(total)) photos", "\(LibraryModel.about(hidden)) hidden"]
                                : ["\(LibraryModel.about(matching)) photos"]
         }
+        facts = [("Showing", hidden > 0 ? "\(matching.formatted()) of \(total.formatted()) photos" : "\(matching.formatted()) \(noun(matching))")]
+            + (hidden > 0 ? [("Hidden by the view options", hidden.formatted())] : [])
+            + [("Order", order == .best ? (q.isEmpty ? "Best first in each month" : "Best first") : order == .old ? "Oldest first" : "Newest first")]
         parts += plan.applied
         if let orderNote, !ranked { parts.append(orderNote) }      // a ranked list has said its order already
         if pending > 0 { parts.append("\(pending.formatted()) not uploaded") }
@@ -393,14 +448,15 @@ final class LibraryModel: ObservableObject {
     }
 }
 
-/// Where the app is, and the two lists it shows: the whole library in time order, and whatever was
-/// asked for. Anything that names a set of photos (a place in a photo's details, "More like this")
+/// Where the app is, and the lists it shows: the whole library in time order, the albums, and whatever
+/// was asked for. Anything that names a set of photos (a place in a photo's details, "More like this")
 /// goes through `find`, which shows that set in Search.
 @MainActor
 final class Router: ObservableObject {
-    enum Tab: Hashable { case library, search }
+    enum Tab: Hashable { case library, albums, search }
     @Published var tab = Tab.library
     let library = LibraryModel(remembersOrder: true)
+    let albums = AlbumsModel()
     let search = LibraryModel()
 
     func find(_ q: Query) {

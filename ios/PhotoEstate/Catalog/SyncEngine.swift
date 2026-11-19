@@ -80,6 +80,9 @@ final class SyncEngine: ObservableObject {
 
     func markOnline(_ on: Bool) { if online != on { online = on } }
 
+    /// The phone's copy was changed here to match something the server has just agreed to (a favourite).
+    func catalogEdited() { revision += 1 }
+
     private func run() async {
         state = .syncing
         do {

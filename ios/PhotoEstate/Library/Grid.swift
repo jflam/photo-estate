@@ -31,6 +31,8 @@ struct GridView: UIViewControllerRepresentable {
     var onRefresh: () async -> Void = {}
     var onRowHeight: (Double) -> Void = { _ in }
     var onTop: (String) -> Void = { _ in }       // the heading of the section now at the top, "" above the first
+    var footer: GridFooter? = nil       // under the last photo: the months either side of the one showing
+    var onFooter: (String) -> Void = { _ in }
     var viewer: (ViewerSession) -> AnyView
 
     func makeUIViewController(context: Context) -> GridController { GridController() }
@@ -41,10 +43,18 @@ struct GridView: UIViewControllerRepresentable {
         c.onRowHeight = onRowHeight
         c.onTop = onTop
         c.viewer = viewer
+        c.onFooter = onFooter
         c.setHeading(title, subtitle, topInset: topInset)
+        c.setFooter(footer)
         c.show(data, rowHeight: rowHeight)
         c.go(jump)
     }
+}
+
+/// What sits under a month's photos: the month before it and the month after, as keys ("2019-06").
+struct GridFooter: Equatable {
+    var before: String?
+    var after: String?
 }
 
 private struct RowLayout {
@@ -66,6 +76,7 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
     var onRefresh: () async -> Void = {}
     var onRowHeight: (Double) -> Void = { _ in }
     var onTop: (String) -> Void = { _ in }
+    var onFooter: (String) -> Void = { _ in }
     var viewer: (ViewerSession) -> AnyView = { _ in AnyView(EmptyView()) }
 
     private var data = GridData()
@@ -76,6 +87,11 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
     private var topKey: String? = nil
     private var jump = Jump()
     private let heading = HeadingView()
+    private let foot = MonthNav()
+    private var footer: GridFooter?
+    /// Sections have captions: months or days of a list in time order, or an album's own sections.
+    private var headed: Bool { data.grain > 0 || data.runs != nil }
+    private func caption(_ key: String) -> String { data.runs != nil ? key : Dates.heading(key) }
     private let scrubber = Scrubber()
     private let scrim = UIView()                 // paper fading out below the status bar, so captions don't run into the clock
     private let scrimMask = CAGradientLayer()
@@ -111,6 +127,9 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
         view.addSubview(collection)
         setContentScrollView(collection)
         collection.addSubview(heading)
+        foot.isHidden = true
+        foot.go = { [weak self] key in self?.onFooter(key) }
+        collection.addSubview(foot)
         scrim.backgroundColor = Estate.paper
         scrim.isUserInteractionEnabled = false
         scrimMask.colors = [UIColor.black.cgColor, UIColor.black.withAlphaComponent(0.85).cgColor, UIColor.clear.cgColor]
@@ -133,6 +152,7 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
         scrim.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: bar + 26)
         scrimMask.frame = scrim.bounds
         scrimMask.locations = [0, NSNumber(value: Double(bar * 0.7 / max(bar + 26, 1))), 1]
+        placeFooter()
         placeScrubber()
     }
 
@@ -151,6 +171,22 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
         heading.frame = CGRect(x: 0, y: -h, width: width, height: h)
         collection.contentInset.top = topInset + h
         if atTop { collection.setContentOffset(CGPoint(x: 0, y: -collection.adjustedContentInset.top), animated: false) }
+    }
+
+    func setFooter(_ f: GridFooter?) {
+        guard f != footer else { return }
+        footer = f
+        foot.show(f)
+        if width > 0 { placeFooter() }
+    }
+
+    /// The footer sits in the scroll view under the last photo, as the heading sits above the first.
+    private func placeFooter() {
+        let h: CGFloat = foot.isHidden ? 0 : 76
+        if abs(collection.contentInset.bottom - h) > 0.5 { collection.contentInset.bottom = h }
+        guard !foot.isHidden else { return }
+        collection.layoutIfNeeded()
+        foot.frame = CGRect(x: 0, y: collection.collectionViewLayout.collectionViewContentSize.height, width: width, height: h)
     }
 
     func show(_ new: GridData, rowHeight h: CGFloat) {
@@ -177,6 +213,7 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
                 collection.setContentOffset(CGPoint(x: 0, y: max(-collection.adjustedContentInset.top, attr.frame.minY - anchor.offset)), animated: false)
             }
         }
+        placeFooter()
         reportTop()
     }
 
@@ -241,15 +278,22 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
         var out: [SectionLayout] = []
         let tiles = data.tiles
         let shape = { (i: Int) in CGFloat(min(max(tiles[i].ar, 0.5), 2.6)) }
-        var i = 0
+        var i = 0, run = 0
         while i < tiles.count {
-            // one section: photos sharing the first `grain` characters of their time
-            let key = data.grain == 0 ? "" : String(tiles[i].when.prefix(data.grain))
+            // one section: the next of the list's own runs (an album's sections), or the photos sharing the
+            // first `grain` characters of their time
+            var key = data.grain == 0 ? "" : String(tiles[i].when.prefix(data.grain))
             var j = i
             var cities: [Substring: Int] = [:]
-            while j < tiles.count, data.grain == 0 || tiles[j].when.prefix(data.grain) == key {
-                if data.grain > 0, let c = tiles[j].city?.split(separator: ",").first { cities[c, default: 0] += 1 }
-                j += 1
+            if let runs = data.runs {
+                key = run < runs.count ? runs[run].title : ""
+                j = run + 1 < runs.count ? min(i + max(runs[run].count, 1), tiles.count) : tiles.count   // the last takes what is left
+                run += 1
+            } else {
+                while j < tiles.count, data.grain == 0 || tiles[j].when.prefix(data.grain) == key {
+                    if data.grain > 0, let c = tiles[j].city?.split(separator: ",").first { cities[c, default: 0] += 1 }
+                    j += 1
+                }
             }
             var rows: [RowLayout] = []
             var start = i, sum: CGFloat = 0
@@ -317,7 +361,7 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
         // the section of the first row that reaches below the bar
         let edge = collection.contentOffset.y + view.safeAreaInsets.top + topInset + 8
         var key = ""
-        if collection.contentOffset.y + collection.adjustedContentInset.top > 8, data.grain > 0 {
+        if collection.contentOffset.y + collection.adjustedContentInset.top > 8, headed {
             for path in collection.indexPathsForVisibleItems.sorted() {
                 guard let frame = collection.layoutAttributesForItem(at: path)?.frame, frame.maxY > edge else { continue }
                 if path.section < sections.count { key = sections[path.section].key }
@@ -326,8 +370,8 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
         }
         guard key != topKey else { return }
         topKey = key
-        onTop(key.isEmpty ? "" : Dates.heading(key))
-        scrubber.label = key.isEmpty ? "" : Dates.short(key)
+        onTop(key.isEmpty ? "" : caption(key))
+        scrubber.label = key.isEmpty ? "" : data.runs != nil ? String(key.prefix(18)) : Dates.short(key)
         if scrubber.dragging { Haptics.tick() }
     }
 
@@ -348,7 +392,7 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
     }
 
     private func showScrubber() {
-        guard scrollable > view.bounds.height * 2, data.grain > 0 else { return }      // short lists don't need one
+        guard scrollable > view.bounds.height * 2, headed else { return }      // short lists don't need one
         scrubHide?.cancel()
         if scrubber.alpha < 1 { UIView.animate(withDuration: 0.15) { self.scrubber.alpha = 1 } }
         let hide = DispatchWorkItem { [weak self] in
@@ -413,17 +457,17 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
     }
 
     func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout, referenceSizeForHeaderInSection section: Int) -> CGSize {
-        data.grain == 0 ? .zero : CGSize(width: width, height: 62)
+        !headed || (data.runs != nil && sections[section].key.isEmpty) ? .zero : CGSize(width: width, height: 62)
     }
 
     func collectionView(_ collectionView: UICollectionView, layout: UICollectionViewLayout, insetForSectionAt section: Int) -> UIEdgeInsets {
-        UIEdgeInsets(top: 0, left: 0, bottom: data.grain == 0 ? 0 : 22, right: 0)
+        UIEdgeInsets(top: 0, left: 0, bottom: headed ? 22 : 0, right: 0)
     }
 
     func collectionView(_ collectionView: UICollectionView, viewForSupplementaryElementOfKind kind: String, at indexPath: IndexPath) -> UICollectionReusableView {
         let head = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "head", for: indexPath) as! HeaderView
         let sec = sections[indexPath.section]
-        head.show(title: Dates.heading(sec.key), places: sec.places, count: sec.count)
+        head.show(title: caption(sec.key), places: sec.places, count: sec.count)
         return head
     }
 }
@@ -442,7 +486,7 @@ private final class HeadingView: UIView {
         title.lineBreakMode = .byTruncatingTail
         detail.font = .preferredFont(forTextStyle: .subheadline)
         detail.textColor = .secondaryLabel
-        detail.numberOfLines = 2
+        detail.numberOfLines = 5          // an album says what was asked for under its count
         addSubview(title)
         addSubview(detail)
         isHidden = true
@@ -476,6 +520,53 @@ private final class HeadingView: UIView {
         let (t, d) = sizes(bounds.width)
         title.frame = CGRect(x: inset, y: top, width: bounds.width - inset * 2, height: t)
         detail.frame = CGRect(x: inset + 1, y: top + t + gap, width: bounds.width - inset * 2 - 2, height: d)
+    }
+}
+
+/// Under a month's photos: the month before on the left, the month after on the right. Each takes this
+/// month's place, so Back is still the Months.
+private final class MonthNav: UIView {
+    var go: (String) -> Void = { _ in }
+    private let before = UIButton(type: .system), after = UIButton(type: .system)
+    private var keys: (String?, String?) = (nil, nil)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        for (b, back) in [(before, true), (after, false)] {
+            var c = UIButton.Configuration.gray()
+            c.cornerStyle = .capsule
+            c.image = UIImage(systemName: back ? "chevron.backward" : "chevron.forward",
+                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .bold))
+            c.imagePlacement = back ? .leading : .trailing
+            c.imagePadding = 7
+            c.baseForegroundColor = .label
+            c.contentInsets = NSDirectionalEdgeInsets(top: 11, leading: 16, bottom: 11, trailing: 16)
+            b.configuration = c
+            b.addAction(UIAction { [weak self] _ in
+                guard let self, let key = back ? self.keys.0 : self.keys.1 else { return }
+                Haptics.tap()
+                self.go(key)
+            }, for: .touchUpInside)
+            addSubview(b)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(_ f: GridFooter?) {
+        keys = (f?.before, f?.after)
+        isHidden = f == nil || (f?.before == nil && f?.after == nil)
+        for (b, key) in [(before, keys.0), (after, keys.1)] {
+            b.isHidden = key == nil
+            b.configuration?.attributedTitle = key.map { AttributedString(Dates.heading($0), attributes: AttributeContainer([.font: Estate.title(15)])) }
+        }
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        let a = before.sizeThatFits(bounds.size), b = after.sizeThatFits(bounds.size)
+        before.frame = CGRect(x: 14, y: 18, width: a.width, height: a.height)
+        after.frame = CGRect(x: bounds.width - 14 - b.width, y: 18, width: b.width, height: b.height)
     }
 }
 
