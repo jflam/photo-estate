@@ -11,6 +11,21 @@ only):
 
 ## The photo app
 
+`embed.py serve`'s handler sends each request to the module that answers it ([chapter 11](11-server.md)):
+
+| Routes | Answered by |
+|---|---|
+| `/`, the app files, `/api/info`, `/api/sync`, `/api/favorite`, `/api/albums/<id>/download` | `cmd_serve` in [embed.py](../../photo-estate/embed.py) |
+| `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log` | `Browse` in [browse.py](../../photo-estate/browse.py) |
+| `/thumb/`, `/preview/`, `/large/`, `/original/` | `Images` in [images.py](../../photo-estate/images.py) |
+| `/api/upload/...`, `/api/ingest`, `/api/restart`, `/stats`, `/api/stats` | `Admin` in [admin.py](../../photo-estate/admin.py) |
+| `/people`, `/face/`, `/api/people*` | `People` in [faces.py](../../photo-estate/faces.py) |
+| `/changes`, `/api/changes*`, `/api/albums*`, `/api/tasks*` | `Changes` in [changes.py](../../photo-estate/changes.py), `Tasks` in [tasks.py](../../photo-estate/tasks.py) |
+| `/mcp` | `Server` in [estate_mcp.py](../../photo-estate/estate_mcp.py) |
+| `/setup`, `/api/intake*` (not with `--demo`) | `IntakeAPI` in [intake/api.py](../../photo-estate/intake/api.py) |
+
+All of them answer from the same in-memory catalog (`catalog.Live`, in [catalog.py](../../photo-estate/catalog.py)).
+
 ### Pages and files
 
 | Path | Returns |
@@ -92,6 +107,7 @@ Response:
 |---|---|
 | `GET /api/facets?...` (same filter parameters) | `{"facets": {country, region, city, camera, lens, trip, album, person: [[label, count], ...]}, "months": [counts], "fav": N, "matching": N}` (each facet's counts ignore its own selection; `person` counts include it) |
 | `GET /api/periods?...` (same filter parameters, plus `dedupe`, `shots`, `sort`) | The Library's Years and Months: `{"years": [...], "months": [...], "matching": N, "total": N}`, each card `{"key": "2019" or "2019-07", "n", "at", "cover", "ar", "places": [...]}`; `at` is where the card's photos start in `/api/search` with the same parameters (a `cursor`) |
+| `GET /api/layout?...` (same filter parameters, plus `sort`) | One byte per photo, in `/api/search`'s order with the same parameters: its aspect ratio between 0.5 and 2.6 in 255 steps, so the page can lay a month out before fetching it. `application/octet-stream` with an `ETag` |
 | `GET /api/info` | `{"total", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
 | `GET /stats` | The library info page ([stats.html](../../photo-estate/stats.html)) |
 | `GET /api/stats[?refresh=1]` | `{state: working|ready|error, library, disk, app}`: library figures from memory, disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |

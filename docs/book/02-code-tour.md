@@ -63,6 +63,11 @@ The repository's Python as a whole is now 5,267 lines of code in 17 files (`embe
 photo-estate/
   estate.py           933  ingest, link, exif, dupes, review, tag, search, stats
   embed.py            801  image embeddings: run, search, serve (the photo server)
+  catalog.py               the server's in-memory library (added 2026-11-19, split out of embed.py; see below)
+  browse.py                search, similar, facets, Years/Months, layout; an agent's searches
+  images.py                thumbnails, previews, large images, originals
+  admin.py                 phone uploads, the ingest, restart, /stats, backups
+  encoder.py               SigLIP's text (and image) side for the server
   faces.py            890  faces: run, serve, and the People class (who is who)
   places.py           314  place names, local time, events, trips
   search.html       1,362  the photo app (HTML + CSS + JS in one file)
@@ -111,19 +116,34 @@ tools stay light.
 ### embed.py: embeddings and the photo server
 
 The file's name is historical. It began as "compute image embeddings" and grew into the server
-that is the main product. Its parts:
+that is the main product. Its parts, as of 2026-11-19 (792 lines):
 
-| Part | Lines (approx.) | What it does |
+| Part | What it does |
+|---|---|
+| Constants | Model name, the match floor and windows, `SKIP_EXT` |
+| `_decode`, `load_model`, `cmd_run` | Compute and store an embedding for every image |
+| `cmd_search` | Command-line semantic search |
+| `_library_or_setup` | No library yet: serve the setup page instead (intake/) |
+| `cmd_serve` | **The photo server**: sets it up, wires its modules together, and sends each request to the one that answers it |
+
+`cmd_serve` began as about 660 lines holding the whole app as closures over the NumPy arrays loaded
+at startup (the embedding matrix, the metadata columns, the facet codes). Closures were simpler than
+classes that pass the arrays around, but the function grew to about 1,640 lines that way, 14% of all
+application code. On 2026-11-19 it was split the way the newer features were already built: a module
+per area, each with an object whose `handle(method, path, qs, body, ...)` answers its own routes, all
+reading one shared state object instead of closing over variables.
+
+| Module | Lines | What it holds |
 |---|---:|---|
-| Constants | 33-57 | Model name, the match floor and window, word lists for name and place reading |
-| `_decode`, `_thumb`, `load_model`, `cmd_run` | 68-171 | Compute and store an embedding for every image |
-| `cmd_search` | 178-198 | Command-line semantic search |
-| `cmd_serve` | 219-877 | **The photo server**: one function containing the whole app, as a set of closures over in-memory arrays |
+| `catalog.py` | 598 | `load()`: the catalog read into a `Catalog` (vectors, per-photo dicts, columns, facets, stacks, the name and place vocabulary), its shared questions (`combine`, `facet_counts`, `take`, `periods`, ...), and `Live`, the catalog being served, swapped under a gate after an ingest |
+| `browse.py` | 421 | `Browse`: the search language and `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log`, plus the same searches for an agent (`/mcp`) |
+| `images.py` | 149 | `Images`: `/thumb/`, `/preview/`, `/large/`, `/original/`, and pre-generating thumbnails |
+| `admin.py` | 310 | `Admin`: phone uploads, the ingest, restart, the `/stats` page, preparing arrivals; catalog backups |
+| `encoder.py` | 71 | `Encoder`: the model's text side for typed searches, and its image side for uploads |
 
-`cmd_serve` is about 660 lines because everything in it shares one set of NumPy arrays loaded at
-startup (the embedding matrix, the metadata columns, the facet codes). Closures over those arrays
-are simpler than classes that pass them around, and the server is a single process, so there is no
-cost to keeping them together. Chapter 11 breaks it into its logical pieces.
+What stays in `cmd_serve` (about 500 lines) is the wiring: options and demo mode, the request
+handler, the page and app files, `/api/info`, `/api/sync`, favourites, album downloads and reloads.
+Chapter 11 goes through it all.
 
 ### faces.py: faces, and who they are
 
@@ -172,9 +192,10 @@ flowchart TD
     EST & PLC & EMB & FAC --> DB
 ```
 
-There are only two imports between modules in the whole codebase: `places.py` imports `estate.py`,
-and `embed.py serve` imports `faces.People` lazily in a background thread. Everything else is
-connected through the SQLite file. This is why each script can be run, tested, understood and
+The scripts barely import each other: `places.py` imports `estate.py`, and `embed.py serve` imports
+`faces.People` lazily in a background thread. (The server's own modules, `catalog.py`, `browse.py`,
+`images.py`, `admin.py` and `encoder.py`, are parts of `embed.py serve`, not scripts; they import each
+other but never `embed.py`.) Everything else is connected through the SQLite file. This is why each script can be run, tested, understood and
 re-run independently.
 
 ### Why `uv run` and inline dependencies?
@@ -214,7 +235,7 @@ running any script creates what it needs, and adding a table is adding a stateme
 batches, so an interruption loses at most one batch.
 
 **3. Never raise from a worker.** Image decoding runs in worker processes (`Pool`). Every worker
-function (`_decode`, `_thumb`, `image_facts`) catches everything and returns an error string or
+function (`_decode`, `images._thumb`, `image_facts`) catches everything and returns an error string or
 `None`. One corrupt file must never stop an overnight run; it is recorded (`error` columns) and
 skipped.
 

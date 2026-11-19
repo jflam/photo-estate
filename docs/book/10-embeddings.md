@@ -134,7 +134,7 @@ pixels and needed an explicit bound (chapter 14).
 
 ## Turning a query into a vector
 
-The server's `text_vec` function:
+The server's query encoder (`Encoder.text` in encoder.py; shown here as a function):
 
 ```python
 def text_vec(q):
@@ -266,6 +266,6 @@ All in [embed.py](../../photo-estate/embed.py):
 | Model loading | `load_model`, `_features` |
 | The batch job | `cmd_run` |
 | Command-line search | `cmd_search` |
-| Query encoding | `text_vec` inside `cmd_serve` |
-| Cut, similar, dedupe | `ranked()` and `take()` inside `cmd_serve` |
+| Query encoding | `Encoder.text` in [encoder.py](../../photo-estate/encoder.py) |
+| Cut, similar, dedupe | `ranked()` in `Browse.search` ([browse.py](../../photo-estate/browse.py)) and `Catalog.take` |
 | Benchmarks | [tools/sigbench.py](../../photo-estate/tools/sigbench.py), [TAGGING-RESEARCH.md](../../photo-estate/TAGGING-RESEARCH.md) |

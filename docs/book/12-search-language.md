@@ -225,9 +225,9 @@ as a facet (the Trips list).
 
 | Piece | Code |
 |---|---|
-| Typed filters | `filter_re`, `parse` inside `cmd_serve` of [embed.py](../../photo-estate/embed.py) |
+| Typed filters | `filter_re`, `parse` in [browse.py](../../photo-estate/browse.py) |
 | Vocabulary | the block after `people_ix = multi["person"]["ix"]` |
-| Everyday-word lists | `COMMON_WORDS`, `COMMON_PLACES` at the top of embed.py |
+| Everyday-word lists | `COMMON_WORDS`, `COMMON_PLACES` at the top of catalog.py |
 | The reader | `word_re`, `joiners`, `filler`, `read_words` |
 | Masks | `person_mask`, `place_mask`, `select` |
 | How the page explains it | `renderHead` in [search.html](../../photo-estate/search.html) (`namesBtn`) |

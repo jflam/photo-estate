@@ -207,5 +207,5 @@ All in [estate.py](../../photo-estate/estate.py) unless noted:
 | CLI report | `cmd_dupes` |
 | Review server | `cmd_review`, `_render_jpeg` |
 | Review page | [review.html](../../photo-estate/review.html) |
-| View-time hiding | `take()` in `cmd_serve` of [embed.py](../../photo-estate/embed.py) |
+| View-time hiding | `Catalog.take` in [catalog.py](../../photo-estate/catalog.py) |
 | Test | the `dupes` assertions in [tests/test_poc.py](../../photo-estate/tests/test_poc.py) |
