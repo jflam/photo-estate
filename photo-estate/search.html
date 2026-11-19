@@ -234,6 +234,12 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .mi .sw::after { width: 18px; height: 18px; }
 .mi .sw.on::after { transform: translateX(14px); }
 .mi.ln > svg:first-child { visibility: visible; color: var(--ink-2); }
+.menu .mk { padding: 0 6px 6px; display: grid; gap: 10px; }
+.menu .mk h5 { margin: 8px 6px 0; }
+.menu .mk input { width: 100%; }
+.menu .mk .err { margin: 0 6px; font-size: 13.5px; color: var(--no); }
+.menu .mk .err:empty { display: none; }
+.menu .mk .btn { justify-self: end; }
 
 .scrim { position: fixed; inset: 0; z-index: 39; background: rgba(0,0,0,.28); animation: fade .2s; }
 @keyframes fade { from { opacity: 0; } }
@@ -428,6 +434,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
         <kbd>/</kbd>
       </label>
       <button class="txt" id="sCancel" hidden>Cancel</button>
+      <button class="round" id="sAlbum" hidden aria-label="New album from this search" title="New album from this search"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5.500" width="13" height="10" rx="2.300"/><path d="M5 2.800h8M9 8v5M6.500 10.500h5"/></svg></button>
       <button class="round" id="sView" hidden aria-label="View options"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.500 9h7M8 13h2"/></svg></button>
     </div>
     <div class="chips" id="chips" hidden></div>
@@ -1142,7 +1149,7 @@ function albShow() {
   $("#albHead h1").innerHTML = "&nbsp;"; $("#albHead p").innerHTML = "&nbsp;"; $(".why", $("#albHead")).textContent = "";
   agrid.clear(); scrollTo(0, 0);
   agrid.load(0).then(d => { if (d && !d.results.length) agrid.el.innerHTML = `<div class="blank">${MARK}<h3>Nothing in it yet</h3><p>${
-    d.album.kind === "live" ? "Its search finds no photos now." : "Photos are added to an album by asking for them in a chat connected to this library."}</p></div>`; });
+    d.album.kind === "live" ? "Its search finds no photos now." : "Photos are added to an album by asking for them in a chat connected to this library, or from a search."}</p></div>`; });
 }
 function albHead(n) {
   const a = AL.album;
@@ -1166,7 +1173,7 @@ async function albList() {
     <span class="ct"><b>${esc(s.title)}</b><small>${photos(s.n)}</small></span>${badge(s) ? `<span class="badge">${badge(s)}</span>` : ""}</button>`;
   el.innerHTML = `<div class="head"><h1>Albums</h1><p class="num">${d.sets.length ? `${fmt(d.sets.length)} made here` : "None made here yet"}${from.length ? `  ·  ${fmt(from.length)} from your sources` : ""}</p></div>`
     + (d.sets.length ? `<div class="cards months">${d.sets.map(card).join("")}</div>`
-      : `<div class="blank">${MARK}<h3>No albums yet</h3><p>Ask for one in a chat connected to this library: “the best five pictures of Ben for every year”, “our trips to the coast”. It appears here when it is made.</p></div>`)
+      : `<div class="blank">${MARK}<h3>No albums yet</h3><p>Search for some photos and make an album of what it finds, or ask for one in a chat connected to this library: “the best five pictures of Ben for every year”, “our trips to the coast”. It appears here when it is made.</p></div>`)
     + (from.length ? `<div class="bt"><h2>From your sources</h2></div><div class="srcs">${from.map(([v, n]) =>
         `<button class="th" data-src="${esc(v)}">${esc(v)}<small>${fmt(n)}</small></button>`).join("")}</div>` : "");
   scrollTo(0, L.y.albums || 0);
@@ -1348,6 +1355,7 @@ function searchShow(quiet) {                          // which of the three show
   $("#sBack").hidden = empty;
   $("#sCancel").hidden = !typing();
   $("#sView").hidden = typing() || empty;
+  $("#sAlbum").hidden = typing() || !albumable();
   $("#qClear").hidden = !$("#q").value;
   $("#chips").hidden = empty || suggesting;
   if (!$("#chips").hidden) drawChips();
@@ -1355,6 +1363,8 @@ function searchShow(quiet) {                          // which of the three show
   if ($("#q").value !== S.q && !typing()) $("#q").value = S.q;
   titleDoc();
 }
+const filterBits = s => [s.f.person.join(" & "), [...s.f.city, ...s.f.region, ...s.f.country].map(firstPart).join(", "), s.f.album.join(", "),
+  [...s.f.camera, ...s.f.lens].join(", "), s.f.trip.map(id => tripTitle(tripById(id))).join(", "), rangeLabel(s)].filter(Boolean);   // the filters, in words
 function searchHead() {                               // what the answer is, in words (of the question it answers)
   const s = Q.s;
   const n = photos(D.matching), both = (xs, w) => xs.length > 1 ? `${xs.slice(0, -1).join(", ")} ${w} ${xs[xs.length - 1]}` : xs[0] || "";
@@ -1369,8 +1379,7 @@ function searchHead() {                               // what the answer is, in 
   } else if (s.stack) { title = `Stack of ${D.matching}`; parts = ["Near-identical shots taken together", D.sort === "best" ? "best first" : ""]; }
   else if (D.scope) { title = tripTitle(D.scope); parts = [span(D.scope.start, D.scope.end), n]; }
   else {
-    const bits = [s.f.person.join(" & "), [...s.f.city, ...s.f.region, ...s.f.country].map(firstPart).join(", "), s.f.album.join(", "),
-      [...s.f.camera, ...s.f.lens].join(", "), s.f.trip.map(id => tripTitle(tripById(id))).join(", "), rangeLabel(s)].filter(Boolean);
+    const bits = filterBits(s);
     title = bits.join(" · ") || (s.fav ? "Favourites" : "Photos"); parts = [n, s.fav && bits.length ? "favourites" : ""];
   }
   parts.push(...(D.filters || []));
@@ -1378,6 +1387,42 @@ function searchHead() {                               // what the answer is, in 
   $("#sHead h1").textContent = title; $("#sHead p").textContent = parts.filter(Boolean).join("  ·  ");
   titleDoc();
 }
+// An album from the answer showing: every photo the search finds (not only those loaded so far), fixed as they
+// are now and in this order. Asked for from the bar, when there is an answer with photos in it ("More like this"
+// has no end: it is every photo, by likeness). The title offered is the question, in words.
+const albumable = () => !!D && Q?.key === sKey() && sgrid.phase.is("ready") && !Q.s.sha && D.matching > 0;
+const albumTitle = () => [Q.s.q, ...filterBits(Q.s), D.scope ? tripTitle(D.scope) : "", Q.s.fav ? "Favourites" : ""].filter(Boolean).join(" · ") || $("#sHead h1").textContent;
+async function albumFromSearch(title) {
+  const q = Q, items = [];
+  for (let c = 0; c != null;) {                       // the whole answer, a page at a time, as the grid asks for it
+    const d = await getJSON(`/api/search?${q.key}&limit=500&cursor=${c}`);
+    for (const r of d.results) items.push({ sha: r.sha });
+    c = d.next;
+  }
+  if (!items.length) throw new Error("This search finds no photos now.");
+  return postJSON("/api/albums", { title, prompt: `From the search ${$("#sHead h1").textContent}`, items });
+}
+$("#sAlbum").onclick = e => openMenu(e.currentTarget, el => {
+  if (!albumable()) return closeMenus();
+  el.innerHTML = `<form class="mk"><h5>New album from ${photos(D.matching)}</h5><input type="text" aria-label="Album title" maxlength="200" autocomplete="off" value="${esc(albumTitle())}">`
+    + `<p class="err" role="alert"></p><button class="btn pri">Create album</button></form>`;
+  const form = $("form", el), input = $("input", el), btn = $("button", el), err = $(".err", el), mine = menu;
+  input.oninput = () => { btn.disabled = !input.value.trim(); };
+  form.onsubmit = async ev => {
+    ev.preventDefault();
+    const title = input.value.trim(); if (!title || btn.disabled) return;
+    btn.disabled = input.disabled = true; btn.textContent = "Creating…"; err.textContent = "";
+    try {
+      const a = await albumFromSearch(title);
+      if (menu === mine) closeMenus();
+      AL.id = a.id; AL.album = null; setTab("albums");
+    } catch (e2) {                                    // the search stays as it was; the menu says why, and can be tried again
+      err.textContent = e2.message === "not allowed" ? "Albums can’t be made from this account." : `Couldn’t make the album: ${e2.message}`;
+      btn.disabled = input.disabled = false; btn.textContent = "Create album";
+    }
+  };
+  setTimeout(() => { input.focus(); input.select(); });
+});
 function drawNotice(suggesting) {
   const could = D && !suggesting && !isEmpty() && !S.sha && (D.people?.length || D.places?.length);
   $("#notice").innerHTML = could ? `<button id="namesBtn">${S.plain ? "Read the names and places in it instead" : "Search for the words instead"}</button>` : "";
