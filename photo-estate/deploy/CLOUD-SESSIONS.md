@@ -12,7 +12,8 @@ phone: the Claude app  -->  cloud session: a container with a clone of this repo
                               GitHub
                                  |  git fetch, every 30 s
                                  v
-phone: the browser  --tailnet-->  Mac mini :8768, the demo app of the branch with the newest commit
+phone: the browser  --tailnet-->  Mac mini :8768, the demo app of the branch with the newest commit,
+                                  run by a user of its own (photopreview)
 ```
 
 ## The three apps on the mini
@@ -21,9 +22,13 @@ phone: the browser  --tailnet-->  Mac mini :8768, the demo app of the branch wit
 |---|---|---|---|
 | 8766 | the real library | `~/src/photo-estate` | someone pulls and restarts it by hand (below) |
 | 8767 | the demo library | `~/src/photo-estate-demo`, a worktree | someone moves the worktree by hand |
-| 8768 | the demo library, as a preview | a clone the preview keeps for itself | a newer commit is pushed to any branch |
+| 8768 | the demo library, as a preview | a clone the preview keeps for itself, in `/Users/photopreview` | a newer commit is pushed to any branch |
 
-Only 8768 follows GitHub by itself. Nothing a cloud session does can reach 8766 or the photos.
+Only 8768 follows GitHub by itself, which means the mini runs whatever a session pushes. So the
+preview runs as `photopreview`, a user that cannot read my home folder or `/Volumes/estate`, and not
+as me: 8766 and 8767 still run under my account. A firewall rule for that user stops it making
+requests to the other two apps, to anything else on the mini, and to the home network and the tailnet.
+[MAC-MINI.md](MAC-MINI.md#its-own-user) says what is checked and what is still open.
 
 ## The cloud environment
 
@@ -52,7 +57,7 @@ because it is public, and nothing more.
    `PREVIEW PUSHED: <branch> at <commit>`.
 4. Within about a minute the mini is showing that commit at
    `https://johns-mac-mini.<tailnet>.ts.net:8768`. Open it on the phone, which must be on the tailnet.
-   `~/Library/Logs/photo-preview.log` on the mini names the branch and commit being shown.
+   `/var/log/photo-preview/preview.log` on the mini names the branch and commit being shown.
 5. Ask for changes; each further commit that is pushed replaces the one shown.
 6. The session opens a pull request. Merge it from the GitHub app, or ask the session to. The preview
    then shows `main`, because the merge is the newest commit.
@@ -64,7 +69,7 @@ between turns.
 
 - **Reach the mini, the tailnet or the real library.** It is not on the tailnet and has no SSH. It
   cannot restart an agent, read a log on the mini or see `/Volumes/estate`. It works on the demo
-  library only.
+  library only. What it pushes does run on the mini, as the preview: see the note under the table above.
 - **Be reached.** Its machine takes no connections from outside, and its network carries no tunnel
   out: the proxy passes HTTPS and WebSocket only, and no UDP, which is why a tailcat pipe from the
   session to the mini was tried and given up.

@@ -135,17 +135,20 @@ app of the branch with the newest commit, and shows it on the tailnet.
 
 ```
 cloud session: tools/cloud-preview.sh  --git push-->  GitHub
-mini: preview-branch.sh  --git fetch, every 30 s-->  its own clone  -->  embed.py serve --demo on 127.0.0.1:8768
+mini, as the user photopreview: preview-branch.sh  --git fetch, every 30 s-->  its own clone
+                                 -->  embed.py serve --demo on 127.0.0.1:8768
 phone  --tailnet-->  mini :8768 (tailscale serve)
 ```
 
 | | |
 |---|---|
 | Cloud side | [`tools/cloud-preview.sh`](../tools/cloud-preview.sh): pushes the session's branch, and says what will be shown |
-| Mini side | `~/.config/photo-estate/preview-branch.sh` ([copy](preview-branch.sh)): fetches, and restarts the app when the newest commit changes |
-| Code | `~/Library/Caches/photo-estate-preview`, a clone the script makes for itself |
-| launchd agent | `~/Library/LaunchAgents/com.jflam.photo-preview.plist` ([copy](com.jflam.photo-preview.plist)) |
-| Log | `~/Library/Logs/photo-preview.log` (a line for each branch and commit it shows) |
+| Mini side | `/usr/local/photo-preview/preview-branch.sh` ([copy](preview-branch.sh)), owned by root: fetches, and restarts the app when the newest commit changes |
+| Runs as | `photopreview` (uid 600): a hidden, standard user with no password and a group of its own |
+| Code | `/Users/photopreview/preview`, a clone the script makes for itself |
+| Search model | `/Users/photopreview/.cache/huggingface`, a copy of mine |
+| LaunchDaemon | `/Library/LaunchDaemons/com.jflam.photo-preview.plist` ([copy](com.jflam.photo-preview.plist)) |
+| Log | `/var/log/photo-preview/preview.log` (a line for each branch and commit it shows; anyone on the mini can read it) |
 | Local port | `127.0.0.1:8768` |
 | Tailnet | `tailscale serve --bg --https=8768 http://127.0.0.1:8768` |
 | Open it | `https://johns-mac-mini.<tailnet>.ts.net:8768` |
@@ -154,18 +157,84 @@ phone  --tailnet-->  mini :8768 (tailscale serve)
 session's branch from its first push until something newer is pushed, and `main` again once the branch
 is merged. Two sessions at work at once take turns; `PREVIEW_BRANCH=<name>` in the plist's environment
 holds it to one branch. The preview does not depend on the session's machine, which stops between
-turns, and it runs whatever is pushed to a branch of the repository, so it is as trusted as push access
-to the repository is. Only the demo library is ever served: the real app and `/Volumes/estate` are not
-involved.
+turns.
+
+### Its own user
+
+The preview runs whatever is pushed to any branch of the repository, so it does not run as me. It is a
+LaunchDaemon that runs as `photopreview`, which [`preview-user-setup.sh`](preview-user-setup.sh)
+creates (it needs root, is safe to run again, and replaces the per-user agent this used to be):
 
 ```bash
-# on the mini, once
-mkdir -p ~/.config/photo-estate
-cp ~/src/photo-estate/photo-estate/deploy/preview-branch.sh ~/.config/photo-estate/
-cp ~/src/photo-estate/photo-estate/deploy/com.jflam.photo-preview.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jflam.photo-preview.plist
+# on the mini, once, and again after preview-branch.sh or the plist changes
+sudo bash ~/src/photo-estate/photo-estate/deploy/preview-user-setup.sh
 tailscale serve --bg --https=8768 http://127.0.0.1:8768
 ```
+
+What keeps that user out, as checked on 2026-11-18:
+
+- **My home folder** is `drwxr-x--- jflam:staff`, so anyone in `staff` can enter it, and macOS puts a
+  standard user in `staff`. `photopreview` has a group of its own instead, and the script stops if it
+  ever finds it in `staff` or `admin`.
+- **`/Volumes/estate`** ignores ownership (`noowners`), so file permissions do not protect it from
+  anyone. What does is the removable-volume permission ([above](#macos-permission-for-the-external-disk)):
+  it was given to `uv` for my account, and `photopreview` running the same `/opt/homebrew/bin/uv` is
+  refused with "Operation not permitted". Never click Allow on a removable-volume dialog for this user,
+  and never give `bash`, `uv` or Python Full Disk Access: either would open the library to the preview.
+- **The scripts it runs** are root's, in `/usr/local/photo-preview`: it can read them, not change them.
+- **No way in:** its password is `*`, its shell is `/usr/bin/false`, and it is not in the group that
+  may use SSH.
+
+The script ends by having launchd run [`preview-isolation-check.sh`](preview-isolation-check.sh) once
+as `photopreview` (not `sudo -u` from a terminal, which would lend the test the terminal's own disk
+permissions). It tries to list `/Volumes/estate`, with `ls` and with `uv`'s Python, and to read my
+home, `~/.ssh`, `~/Documents` and `~/.config/photo-estate`; every line must say `DENIED`. The result
+stays in `/var/log/photo-preview/isolation-check.log`. Run the setup script again to repeat the check
+after a macOS upgrade or a change to the disk.
+
+### Its firewall
+
+A separate user keeps the preview out of files, not off the network: on its own it could still make
+requests to the real app on `127.0.0.1:8766`, which asks for no login there.
+[`preview-firewall-setup.sh`](preview-firewall-setup.sh) closes that with rules in the macOS packet
+filter (pf) that match `photopreview` only:
+
+```bash
+# on the mini, once, after preview-user-setup.sh
+sudo bash ~/src/photo-estate/photo-estate/deploy/preview-firewall-setup.sh
+```
+
+| | |
+|---|---|
+| Rules | `/etc/pf.anchors/com.jflam.photo-preview` |
+| Main ruleset | two lines at the end of `/etc/pf.conf` (as it was: `/etc/pf.conf.before-photo-preview`) |
+| Loader | `/usr/local/photo-preview/firewall-load.sh`, run at boot by `/Library/LaunchDaemons/com.jflam.photo-preview-firewall.plist` |
+| Log | `/var/log/photo-preview/firewall.log` |
+
+The user may not open a connection to the loopback (except its own port 8768), to any of the mini's
+own addresses (its tailnet address is routed through the tunnel, not the loopback, so the loopback rule
+alone would miss it), or to a private network: the home network and the tailnet. It can still reach
+the internet, which it needs for GitHub and the package index. The rules match the first packet of a
+connection, so what its own server answers to Tailscale's proxy is not touched.
+
+This turned pf on for the whole mini; macOS ships it off. The main ruleset holds only Apple's empty
+anchors and this one, and no rule in it matches another user, so the real app, the demo, Tailscale and
+SSH are not filtered. A macOS upgrade can put back the stock `/etc/pf.conf`: the loader adds the two
+lines again at boot.
+
+The isolation check covers this too: connections to 8766 and 8767, to port 22 on each of the mini's
+addresses and to the router must be refused, and GitHub and the package index must answer.
+
+**It fails open.** If pf is turned off (`pfctl -d`, or by other software that manages it), the block
+is gone without a word, and there are a few seconds at boot before the rules load. Run the setup
+script again to repeat the check; `sudo pfctl -s info` shows whether pf is on.
+
+**What is still open.** Code in the preview can still:
+
+- reach anything on the internet, and send there whatever it can read;
+- read what every user of the mini can: `/Users/Shared`, `/opt/homebrew`, and the command lines of
+  running programs (so keep secrets out of arguments);
+- use the mini's CPU, memory and internal disk without limit.
 
 The cloud environment needs no settings for this: no keys, no variables, and no hosts beyond GitHub.
 With a default-deny tailnet policy, port 8768 needs its own grant, like 8766 and 8767.
