@@ -141,7 +141,7 @@ and the biggest groups with each member's distance from the centre, dimensions, 
 uv run estate.py --db estate.db review --store STORE     # http://127.0.0.1:8765/
 ```
 
-A small local web app ([review.html](../../photo-estate/review.html), 277 lines, served by a
+A small local web app ([review.html](../../photo-estate/review.html), 273 lines, served by a
 `ThreadingHTTPServer` inside `cmd_review`) for going through the groups:
 
 ```mermaid

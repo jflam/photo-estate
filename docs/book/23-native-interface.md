@@ -3,7 +3,7 @@
 The web page's interface took a whole chapter (13) and most of its lines. The phone's is the same
 product drawn with native parts: a grid you can scroll through 100,000 photos without it noticing, a
 viewer that grows out of the tile you touched, and a search page that starts from the library rather
-than from a text field. This chapter walks through the two tabs and the choices behind them.
+than from a text field. This chapter walks through the Library and Search tabs and the choices behind them; the Albums tab is in [chapter 26](26-albums-and-agents.md).
 
 <table>
 <tr>

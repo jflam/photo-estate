@@ -4,7 +4,7 @@ A face vector says *what a face looks like*, never *whose face it is*. Turning v
 takes ground truth, and the only ground truth available is Google's people tags and **you**. This
 chapter is about the system built to get the most out of both while asking you for as little as
 possible: [faces.py](../../photo-estate/faces.py)'s `People` class (about 560 lines) and the page
-[people.html](../../photo-estate/people.html) (784 lines).
+[people.html](../../photo-estate/people.html) (774 lines).
 
 The README's three-sentence version: *start from Google's people tags, find the same faces everywhere
 else, follow children from baby to adult a couple of years at a time, and let you confirm in bulk and

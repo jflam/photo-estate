@@ -44,7 +44,7 @@ Two observations explain a lot of the code that follows:
 The Google Photos Library API no longer works for this purpose. Since 31 March 2025 it only
 returns media that *your own app uploaded*, and the Picker API requires you to hand-select items.
 Neither can export a whole library. **Google Takeout is the only complete export**, so the entire
-Google path is built around Takeout's quirks (see [PLAN.md](../../photo-estate/PLAN.md)).
+Google path is built around Takeout's quirks (see [PLAN.md](../notes/PLAN.md)).
 
 ### Asking for the export
 
@@ -165,10 +165,10 @@ Design points worth knowing:
   is safe to take while it is in WAL mode.
 - **Portability note.** The script uses bash 4's `mapfile` and GNU `df --output=avail -B1`. On
   macOS, install Homebrew's bash and GNU coreutils (or adapt the free-space line). The macOS recipe
-  in [DISK-SETUP.md](../../photo-estate/DISK-SETUP.md) runs it under `caffeinate -i` so the machine
+  in [DISK-SETUP.md](../guides/DISK-SETUP.md) runs it under `caffeinate -i` so the machine
   stays awake.
 
-rclone's shared Google API key is rate-limited, and [DISK-SETUP.md](../../photo-estate/DISK-SETUP.md)
+rclone's shared Google API key is rate-limited, and [DISK-SETUP.md](../guides/DISK-SETUP.md)
 has a ten-minute recipe for creating your own OAuth client ID so a long pull is not cut off.
 
 ### Time to pull
@@ -301,7 +301,7 @@ edited, then the camera's own record, then the least precise.
 ## Be careful before deleting anything in the cloud
 
 The store gives you one copy. Until there is a second, **the services are still your backup**.
-[DISK-SETUP.md](../../photo-estate/DISK-SETUP.md) closes with exactly that advice and with how to
+[DISK-SETUP.md](../guides/DISK-SETUP.md) closes with exactly that advice and with how to
 make the second copy (`rsync`, or `restic` to object storage), plus a script that re-hashes every
 file in the store to find silent corruption.
 

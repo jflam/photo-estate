@@ -14,6 +14,13 @@ dependencies, a plain HTTP server and SQLite), and an iPhone app in `ios/` (need
 - For a change to the page, drive the real page with Playwright and look at screenshots in light and
   dark mode.
 
+## Docs
+
+- `docs/README.md` is the map of every document. The book is `docs/book/` (chapter 2 is the code map,
+  appendix B the HTTP API); plans and measurements are in `docs/notes/`.
+- A change that adds a file, an endpoint or a feature updates the chapter that describes it, appendix B
+  for an endpoint, and chapter 2's file list.
+
 ## In a cloud session (Claude Code on the web)
 
 - `photo-estate/deploy/CLOUD-SESSIONS.md` says what a cloud session can and cannot do: it cannot reach

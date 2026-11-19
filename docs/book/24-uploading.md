@@ -85,7 +85,7 @@ X-Batch: 5f1c0a9d2b3e/3
 
 ## Receiving: the inbox
 
-[upload.py](../../photo-estate/upload.py) (280 lines of code, standard library only) takes the bytes. The
+[upload.py](../../photo-estate/upload.py) (312 lines of code, standard library only) takes the bytes. The
 server does *not* write to the catalog: it drops files into an **inbox** that has the same shape as the
 iCloud mirror (chapter 3), `<db dir>/iphone/YYYY/MM/DD/...`, and `estate.py ingest --force` picks it up like
 any other folder source. The reasons, in the file's own words: it keeps `ingest` the single writer of what
@@ -205,4 +205,4 @@ with. Everything in chapters 20-23 works in it; the background upload cannot be 
 | The inbox: validation, staging, sidecars | [upload.py](../../photo-estate/upload.py) `save_upload`, `xmp_for` |
 | Running the ingest by itself, batches | `IngestJob` in [upload.py](../../photo-estate/upload.py); [ingest-iphone.sh](../../photo-estate/ingest-iphone.sh) |
 | The endpoints and status codes | [Appendix B](appendix-b-http-api.md) |
-| The timings | [PERFORMANCE.md](../../photo-estate/PERFORMANCE.md) |
+| The timings | [PERFORMANCE.md](../notes/PERFORMANCE.md) |

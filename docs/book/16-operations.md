@@ -67,7 +67,7 @@ names them all, and marks the one after which photos are searchable; a step that
 long it has been running. Its `link` covers only what the job brought in (`--source`, [chapter 6](06-linking.md)).
 Jobs are kept in `intake.db` beside the catalog and resume from their stage after a restart; the
 setup page stays at `/setup` (the **+** in the library's header) for adding sources later. The code
-is in `intake/`, and [INTAKE-PLAN.md](../../photo-estate/INTAKE-PLAN.md) explains how sources plug in.
+is in `intake/`, and [INTAKE-PLAN.md](../notes/INTAKE-PLAN.md) explains how sources plug in.
 
 By hand, run from `photo-estate/`, with `DB` and `STORE` set:
 
@@ -173,7 +173,7 @@ library. It copies its catalog to a temp directory, needs no disk permission, an
 
 ## How it was made fast
 
-[PERFORMANCE.md](../../photo-estate/PERFORMANCE.md) records the investigation and results, measured on
+[PERFORMANCE.md](../notes/PERFORMANCE.md) records the investigation and results, measured on
 the Mac mini (M1, 16 GB, catalog on a USB hard disk) from a laptop over Tailscale.
 
 ### Where the time went
@@ -228,7 +228,7 @@ disk and memory pressure only show up there.
 ## Keeping the archive safe
 
 > Until there is a second copy, **the cloud services are still your backup: do not delete anything
-> there yet.** ([DISK-SETUP.md](../../photo-estate/DISK-SETUP.md))
+> there yet.** ([DISK-SETUP.md](../guides/DISK-SETUP.md))
 
 Because the store is append-only and content-addressed, backing it up is unusually simple:
 
@@ -272,6 +272,6 @@ the **inbox** `iphone/` until it has been ingested and the store copied; the **c
 |---|---|
 | Service guide | [deploy/MAC-MINI.md](../../photo-estate/deploy/MAC-MINI.md) |
 | launchd plists | [deploy/](../../photo-estate/deploy/) |
-| Disks, filesystems, the overnight pull, integrity check, backups | [DISK-SETUP.md](../../photo-estate/DISK-SETUP.md) |
-| Measurements and open tasks | [PERFORMANCE.md](../../photo-estate/PERFORMANCE.md) |
-| Library statistics and the benchmark album | [BENCHMARK.md](../../photo-estate/BENCHMARK.md) |
+| Disks, filesystems, the overnight pull, integrity check, backups | [DISK-SETUP.md](../guides/DISK-SETUP.md) |
+| Measurements and open tasks | [PERFORMANCE.md](../notes/PERFORMANCE.md) |
+| Library statistics and the benchmark album | [BENCHMARK.md](../notes/BENCHMARK.md) |

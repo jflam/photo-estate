@@ -258,7 +258,7 @@ Reading the picture: **`link` is the only stage that rewrites columns of `assets
 | Reads in table order, sorted in memory | server startup | On a spinning disk, walking an index turns each row into a seek |
 | A *covering index* `exif_app` | server startup | Holds just the 8 EXIF columns the app reads (19 MB) so startup does not scan the 700 MB table |
 
-The last two come straight from measurement ([PERFORMANCE.md](../../photo-estate/PERFORMANCE.md)): on a
+The last two come straight from measurement ([PERFORMANCE.md](../notes/PERFORMANCE.md)): on a
 USB hard disk, reading the `exif` table was 8.7 s of startup, a correlated subquery into
 `occurrences` 5.8 s, and reading embeddings `ORDER BY sha256` via the primary key 2.7 s (against
 0.15 s unordered).

@@ -256,7 +256,7 @@ since `link` can be run any number of times, the order in which zips arrive does
 
 ## Checking the store
 
-Because the filename is the hash, the store can verify itself. [DISK-SETUP.md](../../photo-estate/DISK-SETUP.md)
+Because the filename is the hash, the store can verify itself. [DISK-SETUP.md](../guides/DISK-SETUP.md)
 includes a 12-line Python snippet that walks `??/??/*`, re-hashes every file, and prints any whose
 digest does not match its name. It takes about as long as copying the store (roughly an hour per
 500 GB on a USB hard disk). This is how a store on a filesystem with no checksums (APFS, ext4) can

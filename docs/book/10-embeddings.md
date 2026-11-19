@@ -76,7 +76,7 @@ candidates were:
 | `siglip2-so400m-patch16-256` | 1.7 | about 18 hours |
 | `siglip2-so400m-patch14-384` | 0.6 | about 46 hours |
 
-(Measured in [TAGGING-RESEARCH.md](../../photo-estate/TAGGING-RESEARCH.md): PyTorch on CPU, 96
+(Measured in [TAGGING-RESEARCH.md](../notes/TAGGING-RESEARCH.md): PyTorch on CPU, 96
 benchmark photos.) Two further findings from that measurement are encoded in the code: **8 threads
 was fastest** (12 was no faster) and **bfloat16 was slower than float32** on that CPU, which is why
 `load_model` uses `dtype=torch.float32` and `--threads` defaults to 8. A bigger model is item 3 on
@@ -268,4 +268,4 @@ All in [embed.py](../../photo-estate/embed.py):
 | Command-line search | `cmd_search` |
 | Query encoding | `text_vec` inside `cmd_serve` |
 | Cut, similar, dedupe | `ranked()` and `take()` inside `cmd_serve` |
-| Benchmarks | [tools/sigbench.py](../../photo-estate/tools/sigbench.py), [TAGGING-RESEARCH.md](../../photo-estate/TAGGING-RESEARCH.md) |
+| Benchmarks | [tools/sigbench.py](../../photo-estate/tools/sigbench.py), [TAGGING-RESEARCH.md](../notes/TAGGING-RESEARCH.md) |

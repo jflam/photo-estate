@@ -11,6 +11,19 @@ tools in `tools/`.
 |---|---|
 | `tests/test_poc.py` | The whole catalog pipeline on a synthetic Takeout, iCloud and Flickr export (below) |
 | `tests/test_sync.py` | The change feed ([chapter 20](20-sync.md)): a device that pages through ends with the catalog's rows; deltas; deletions; resuming mid-way; restart; a lost feed file |
+| `tests/test_upload.py` | Phone uploads ([chapter 24](24-uploading.md)): the inbox rules, then a photo and its sidecar through the real ingest and link; a second run adds nothing |
+| `tests/test_intake.py` | The setup page's engine ([chapter 16](16-operations.md)): every practice source through the real pipeline, each way of signing in, wrong passwords and codes, cancel and retry |
+| `tests/test_layout.py` | `/api/layout`: every photo's shape, in the order `/api/search` pages through them, for every order and view option |
+| `tests/test_favorite.py` | Favourites set in the app: the row, the month's cover, the counts, the phone's feed, a reload, and taking it back |
+| `tests/test_scores.py`, `tests/test_stacks.py` | Best first and stacks ([chapter 25](25-best-photos.md)) |
+| `tests/test_aesthetics_judge.py`, `tests/test_aesthetics_taste.py` | The tools that made the scorers: the pairwise judge's queue and log, and the taste scorer's fit |
+| `tests/test_albums.py`, `tests/test_changes.py` | Albums and change sets ([chapter 26](26-albums-and-agents.md)): sections, live albums, review, apply, revert; a hidden photo is in no view |
+| `tests/test_mcp.py` | The MCP endpoint as an agent uses it: an agent can propose but not apply, and no answer carries a photo |
+| `tests/test_tasks.py` | The agent on the library's computer, with a stand-in for Claude Code: it is started with every built-in tool off |
+
+Every test is a script that runs on its own (`uv run tests/<file>` from `photo-estate/`), needs no
+network, account or model download, and works on a scratch copy, so the checked-in demo library never
+changes. All fourteen take about a minute together.
 
 The iPhone app has no unit tests of its own. It was checked in the iOS Simulator against the demo
 library (104 photos), with the server up and then stopped; `ios/project-sim.yml` builds it for a
@@ -25,7 +38,7 @@ cd photo-estate
 uv run tests/test_poc.py          # no accounts, no models; about 23 seconds when last run for this book
 ```
 
-It is a single script (290 lines) that builds an imaginary photo library with *every real-world
+It is a single script (304 lines) that builds an imaginary photo library with *every real-world
 quirk from chapters 3-8*, runs the actual command-line tools against it as subprocesses, and asserts
 on the resulting database. It ends with `ALL CHECKS PASSED`. No network, no model downloads: the
 catalog stages need only Pillow, and `places` and `exif` run if their tools are present (`exiftool` is
