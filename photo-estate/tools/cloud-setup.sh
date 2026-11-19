@@ -36,13 +36,23 @@ if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ]; then
         fi
         ok "CPU-only PyTorch index ($TORCH_CPU)"
     else
-        miss "CPU-only PyTorch index: download.pytorch.org is not reachable, so torch comes from PyPI with CUDA (works, several GB larger)"
+        miss "CPU-only PyTorch index: download.pytorch.org is not reachable (allow download.pytorch.org and download-r2.pytorch.org), so torch comes from PyPI with CUDA (works, 4 GB larger)"
     fi
 fi
 
 # 3. the app's dependencies, downloaded now so the first `uv run` in a session does not wait for them
 if command -v uv >/dev/null; then
-    if uv run --quiet "$HERE/embed.py" --help >/dev/null; then ok "embed.py dependencies (torch, transformers, pillow)"
+    # The torch that embed.py's environment really has. An environment built before the CPU index was
+    # set (or while it was blocked) keeps its CUDA torch, so that one is thrown away and built again.
+    torch_build() { ls -d "$(uv cache dir)"/environments-v2/embed-*/lib/python*/site-packages/torch-*.dist-info 2>/dev/null \
+        | sed 's/.*torch-\(.*\)\.dist-info/\1/' | sort -u | paste -sd, -; }
+    uv run --quiet "$HERE/embed.py" --help >/dev/null; embed_ok=$?
+    if grep -qs "$TORCH_CPU" "$HOME/.config/uv/uv.toml" && [ -n "$(torch_build | tr ',' '\n' | grep -v '+cpu$')" ]; then
+        echo "embed.py has a CUDA torch ($(torch_build)): clearing uv's cache and installing the CPU build"
+        uv cache clean --quiet
+        uv run --quiet "$HERE/embed.py" --help >/dev/null; embed_ok=$?
+    fi
+    if [ $embed_ok -eq 0 ]; then ok "embed.py dependencies (torch $(torch_build), transformers, pillow)"
     else miss "embed.py dependencies: \`uv run embed.py --help\` failed"; fi
     if uv run --quiet "$HERE/estate.py" --help >/dev/null; then ok "estate.py dependencies"
     else miss "estate.py dependencies: \`uv run estate.py --help\` failed"; fi
@@ -50,11 +60,14 @@ fi
 
 # 4. the search model (1.4 GB), into the Hugging Face cache where embed.py looks for it. With it there,
 #    HF_HUB_OFFLINE=1 can be set for sessions; without it, browsing works and typed search does not.
-if command -v uv >/dev/null && uv run --quiet --with huggingface_hub python -c \
-    "from huggingface_hub import snapshot_download; snapshot_download('$MODEL')" >/dev/null; then
+#    HF_HUB_DISABLE_XET: plain HTTPS from huggingface.co and its CDN (us.aws.cdn.hf.co when this was
+#    written) instead of the Xet client, which needs further hosts a cloud network policy rarely allows.
+if command -v uv >/dev/null && model_err="$(HF_HUB_DISABLE_XET=1 HF_HUB_DISABLE_PROGRESS_BARS=1 \
+    uv run --quiet --with huggingface_hub python -c \
+    "from huggingface_hub import snapshot_download; snapshot_download('$MODEL')" 2>&1 >/dev/null)"; then
     ok "search model $MODEL"
 else
-    miss "search model $MODEL: huggingface.co is not reachable (typed search will not work)"
+    miss "search model $MODEL: download failed, so typed search will not work (allow huggingface.co and us.aws.cdn.hf.co): $(printf '%s' "${model_err:-uv is missing}" | tail -n 1)"
 fi
 
 # 5. exiftool, used only by `estate.py exif` when a real library is ingested
