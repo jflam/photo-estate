@@ -8,31 +8,31 @@ leaving out the checked-in demo library and every Markdown file:
 
 | | Files | Code lines |
 |---|---:|---:|
-| **Server** (Python: `photo-estate/*.py` and `intake/`) | 22 | 7,099 |
+| **Server** (Python: `photo-estate/*.py` and `intake/`) | 27 | 7,362 |
 | **Web pages** (six pages, the shared stylesheet, the service worker) | 8 | 4,260 |
 | **iPhone app** (Swift, plus `deploy.sh`) | 29 | 5,317 |
 | Shell scripts the pipeline runs (`pull-drive.sh`, `pull-icloud.sh`, `ingest-iphone.sh`) | 3 | 126 |
-| Tests (`tests/`, each a self-running script) | 14 | 2,021 |
-| Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts) | 23 | 2,912 |
+| Tests (`tests/`, each a self-running script) | 15 | 2,098 |
+| Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts) | 23 | 2,913 |
 | The cloud preview on the Mac mini (`deploy/*.sh`) | 4 | 330 |
-| **Total** | **103** | **22,065** |
+| **Total** | **109** | **22,406** |
 
 The web pages' 4,260 lines are 2,886 of JavaScript, 865 of CSS and 509 of HTML markup. What you run
-(the server, its pages, the iPhone app and the three pipeline scripts) is **16,802 lines of code**:
+(the server, its pages, the iPhone app and the three pipeline scripts) is **17,065 lines of code**:
 
 ```mermaid
-pie showData title "What you run, by part (16,802 lines)"
-    "Server: Python (7,099)" : 7099
+pie showData title "What you run, by part (17,065 lines)"
+    "Server: Python (7,362)" : 7362
     "Web pages (4,260)" : 4260
     "iPhone app: Swift (5,300)" : 5300
     "Shell (143)" : 143
 ```
 
 When this book was first written, on 2026-11-13, the server and its pages were 5,483 lines and there
-was no iPhone app. Six days later the server and pages are 11,485 lines and the iPhone app is 5,300.
+was no iPhone app. Six days later the server and pages are 11,748 lines and the iPhone app is 5,300.
 A few things stand out:
 
-- **Most of the code is interface.** The web pages and the iPhone app are 9,560 lines, 57% of what
+- **Most of the code is interface.** The web pages and the iPhone app are 9,560 lines, 56% of what
   you run. A justified grid, a viewer that grows out of its tile, pinch zoom and a filter sheet with
   live counts take more code than any model.
 - **The AI models are a small fraction of the code.** The embedding job is under 100 lines in
@@ -43,10 +43,11 @@ A few things stand out:
 - **The server has grown by adding modules, not by growing modules.** Each feature since the first
   week is a file of its own with a `handle(method, path, body)` method that `embed.py serve` mounts:
   `faces.People`, `changes.Changes` (albums and change sets), `intake.api` (the setup page),
-  `estate_mcp` (the MCP endpoint) and `tasks.Tasks` (the agent). The exception is `cmd_serve`
-  itself, which has grown from 660 lines to about 1,640: the next thing to split
-  ([chapter 11](11-server.md)).
-- **The tests are about a ninth of the code.** Fourteen scripts, 2,021 lines, each run with
+  `estate_mcp` (the MCP endpoint) and `tasks.Tasks` (the agent). The exception was `cmd_serve`
+  itself, which grew from 660 lines to about 1,640; on 2026-11-19 it was split the same way, into
+  `catalog.py`, `browse.py`, `images.py`, `admin.py` and `encoder.py` ([chapter 11](11-server.md)).
+  (The counts in this chapter are from just after that split.)
+- **The tests are about a ninth of the code.** Fifteen scripts, 2,098 lines, each run with
   `uv run tests/<file>`, none needing a network, an account or a model download
   ([chapter 17](17-testing-and-demo.md)).
 - **The documentation is half as large as the code.** The Markdown in the repository is about 8,800
@@ -58,7 +59,12 @@ Code lines, measured as above.
 
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
-  embed.py           1,736  image embeddings: run, search, and serve (the photo app; cmd_serve is ~1,640)
+  embed.py             663  image embeddings: run, search, and serve (cmd_serve: setting the app up and wiring it)
+  catalog.py           519  the photo app's library in memory: load(), Catalog, Live (chapter 11)
+  browse.py            366  search, similar, facets, Years and Months, layout; an agent's searches
+  images.py            135  thumbnails, previews, large images and originals
+  admin.py             256  phone uploads, the ingest, restart, /stats, backups
+  encoder.py            60  SigLIP's text (and image) side, for the photo app
   estate.py          1,005  ingest, link, exif, dupes, review, tag, search, stats
   faces.py             897  faces: run, serve, and the People class (who is who)
   changes.py           455  albums and change sets: proposed, reviewed, applied, reverted (chapter 26)
@@ -85,8 +91,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      45  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             2,021  14 self-running test scripts (chapter 17)
-  tools/             2,912  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh
+  tests/             2,098  15 self-running test scripts (chapter 17)
+  tools/             2,913  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh
   deploy/              330  launchd plists, the cloud preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
   demo/                     104 CC0 photos, their catalog, and credits
 
@@ -129,16 +135,31 @@ that is the main product. Its parts:
 
 | Part | What it does |
 |---|---|
-| Constants | Model name, the match floor and window, word lists for name and place reading |
-| `_decode`, `_thumb`, `load_model`, `cmd_run` | Compute and store an embedding for every image |
+| Constants | Model name, the match floor and windows, `SKIP_EXT` |
+| `_decode`, `load_model`, `cmd_run` | Compute and store an embedding for every image |
 | `cmd_search` | Command-line semantic search |
-| `cmd_serve` | **The photo server**: one function containing the whole app, as a set of closures over in-memory arrays |
+| `_library_or_setup` | No library yet: serve the setup page instead (intake/) |
+| `cmd_serve` | **The photo server**: sets it up, wires its modules together, and sends each request to the one that answers it |
 | `main` | The command line, including `serve --demo` and `serve --sandbox` |
 
-`cmd_serve` is about 1,640 lines (it was 660 when this book was first written) because everything in it shares one set of NumPy arrays loaded at
-startup (the embedding matrix, the metadata columns, the facet codes). Closures over those arrays
-are simpler than classes that pass them around, and the server is a single process, so there is no
-cost to keeping them together. Chapter 11 breaks it into its logical pieces.
+`cmd_serve` began as about 660 lines holding the whole app as closures over the NumPy arrays loaded
+at startup (the embedding matrix, the metadata columns, the facet codes). Closures were simpler than
+classes that pass the arrays around, but the function grew to about 1,640 lines that way, 14% of all
+application code. On 2026-11-19 it was split the way the newer features were already built: a module
+per area, each with an object whose `handle(method, path, qs, body, ...)` answers its own routes, all
+reading one shared state object instead of closing over variables.
+
+| Module | What it holds |
+|---|---|
+| `catalog.py` | `load()`: the catalog read into a `Catalog` (vectors, per-photo dicts, columns, facets, stacks, the name and place vocabulary), its shared questions (`combine`, `facet_counts`, `take`, `periods`, ...), and `Live`, the catalog being served, swapped under a gate after an ingest |
+| `browse.py` | `Browse`: the search language and `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log`, plus the same searches for an agent (`/mcp`) |
+| `images.py` | `Images`: `/thumb/`, `/preview/`, `/large/`, `/original/`, and pre-generating thumbnails |
+| `admin.py` | `Admin`: phone uploads, the ingest, restart, the `/stats` page, preparing arrivals; catalog backups |
+| `encoder.py` | `Encoder`: the model's text side for typed searches, and its image side for uploads |
+
+What stays in `cmd_serve` (about 500 lines) is the wiring: options and demo mode, the request
+handler, the page and app files, `/api/info`, `/api/sync`, favourites, album downloads and reloads.
+Chapter 11 goes through it all.
 
 ### faces.py: faces, and who they are
 
@@ -190,7 +211,8 @@ flowchart TD
 The batch jobs never import one another, except that `places.py` uses `estate.py`'s schema and
 `reindex`; they are connected only through the SQLite file, which is why each can be run, tested,
 understood and re-run on its own. The server is the one place modules come together: `embed.py serve`
-imports each feature's module and hands it requests, and every page goes out through `pages.py` so
+imports each feature's module (and its own parts: `catalog.py`, `browse.py`, `images.py`, `admin.py`,
+`encoder.py`, which never import `embed.py`) and hands it requests, and every page goes out through `pages.py` so
 that the three programs that send pages (`embed.py`, `faces.py`, `estate.py`) cannot drift apart in how
 they look.
 
@@ -231,7 +253,7 @@ running any script creates what it needs, and adding a table is adding a stateme
 batches, so an interruption loses at most one batch.
 
 **3. Never raise from a worker.** Image decoding runs in worker processes (`Pool`). Every worker
-function (`_decode`, `_thumb`, `image_facts`) catches everything and returns an error string or
+function (`_decode`, `images._thumb`, `image_facts`) catches everything and returns an error string or
 `None`. One corrupt file must never stop an overnight run; it is recorded (`error` columns) and
 skipped.
 

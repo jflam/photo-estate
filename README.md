@@ -392,7 +392,7 @@ work on the app without any photos of your own.
 
 ```bash
 cd photo-estate
-for t in tests/*.py; do uv run "$t" || break; done   # all 14 test scripts; no accounts or models needed
+for t in tests/*.py; do uv run "$t" || break; done   # all 15 test scripts; no accounts or models needed
 uv run embed.py serve --demo                          # the app on the demo library
 ```
 

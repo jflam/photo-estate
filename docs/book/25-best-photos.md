@@ -417,9 +417,9 @@ agent that proposed hiding photos never saw an image; the judging pages bound to
 |---|---|
 | The two scorers in the catalog; the "best first" key | [scores.py](../../photo-estate/scores.py) `save`, `load`, `best`, `best_first` |
 | Stacks | [stacks.py](../../photo-estate/stacks.py) `group`, `tops` |
-| Scores, ranks and stacks at load; trip covers | `load_state` in [embed.py](../../photo-estate/embed.py) |
+| Scores, ranks and stacks at load; trip covers | `load` in [catalog.py](../../photo-estate/catalog.py) |
 | Year and month covers | `periods` in [embed.py](../../photo-estate/embed.py) |
-| "Best first" and "Best first in each month" | the `sort` handling in `cmd_serve` of [embed.py](../../photo-estate/embed.py); View options in [search.html](../../photo-estate/search.html) |
+| "Best first" and "Best first in each month" | the `sort` handling in `Browse.search` of [browse.py](../../photo-estate/browse.py); View options in [search.html](../../photo-estate/search.html) |
 | Sample and resize; the teacher | [sample_resize.py](../../photo-estate/tools/aesthetics/sample_resize.py), [teacher_score.py](../../photo-estate/tools/aesthetics/teacher_score.py) |
 | Student vs teacher experiments | [train_head.py](../../photo-estate/tools/aesthetics/train_head.py) |
 | The judging app and its report | [judge.py](../../photo-estate/tools/aesthetics/judge.py) |

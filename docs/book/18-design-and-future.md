@@ -87,7 +87,7 @@ Stated plainly so nobody has to discover them.
   differ slightly.
 - The README says the Check page lists faces "least certain first"; the code orders by descending
   score (most likely first).
-- `cmd_serve` is a 660-line function; clear in intent, but the first thing to split if the server grows.
+- `cmd_serve` grew to a 1,640-line function and was split on 2026-11-19 into modules with `handle()` objects over one shared catalog (catalog.py, browse.py, images.py, admin.py, encoder.py; chapter 11). What is left in it (about 500 lines) is wiring, favourites and reloads.
 - The demo is the only automated check of ranking quality, and it is a few hundred searches by eye, not a
   test.
 

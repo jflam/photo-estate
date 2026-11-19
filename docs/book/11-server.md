@@ -1,14 +1,62 @@
 # 11. The photo server
 
 `embed.py serve` is the product: a local web server that holds your whole library in memory and
-answers every search, filter and thumbnail request in milliseconds. It is one function,
-`cmd_serve`, about 1,640 lines (660 when this chapter was first written), built from closures over a handful of NumPy arrays. This chapter takes
-it apart: what it loads, how it is laid out in memory, how a request becomes a response, and the
-engineering that makes it feel instant even when the photos live on a USB hard disk.
+answers every search, filter and thumbnail request in milliseconds. `cmd_serve` in `embed.py` sets
+it up and sends each request on; the work is done by a handful of modules that all answer from one
+in-memory catalog of NumPy arrays. This chapter takes it apart: how the code is laid out, what it
+loads, how it is laid out in memory, how a request becomes a response, and the engineering that makes
+it feel instant even when the photos live on a USB hard disk.
 
 ```bash
 uv run embed.py --db estate.db serve --store STORE      # http://127.0.0.1:8766/
 uv run embed.py serve --demo                            # http://127.0.0.1:8767/
+```
+
+## How the code is laid out
+
+`cmd_serve` began as one function holding the whole app as closures over the arrays it loaded, and
+grew to about 1,640 lines that way. It is now split the way the later features (change sets, the
+People page, tasks, `/mcp`, `/setup`) were added from the start: **a module per area, each with an
+object whose `handle(method, path, qs, body, ...)` answers its own routes**, returning `(status, body,
+content type, Cache-Control[, headers])` or `None` when the path is not its own. The handler in
+`cmd_serve` tries them in turn and sends what comes back (`Handler.reply`).
+
+| Module | Object | Answers |
+|---|---|---|
+| [catalog.py](../../photo-estate/catalog.py) | `load()` → `Catalog`; `Live`, `Gate` | No routes: the library in memory (everything below), and the catalog being served |
+| [browse.py](../../photo-estate/browse.py) | `Browse` | `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log`; and an agent's searches (`find`, `row`, `faces`, `overview`) for `/mcp` |
+| [images.py](../../photo-estate/images.py) | `Images` | `/thumb/`, `/preview/`, `/large/`, `/original/`; thumbnail pre-generation |
+| [admin.py](../../photo-estate/admin.py) | `Admin` | `/api/upload/...`, `/api/ingest`, `/api/restart`, `/stats`, `/api/stats`; preparing photos that arrive from the phone; backups |
+| [encoder.py](../../photo-estate/encoder.py) | `Encoder` | No routes: SigLIP's text side (and image side, for uploads), loaded in the background |
+| [faces.py](../../photo-estate/faces.py) | `People` | `/people`, `/face/`, `/api/people*` ([chapter 14](14-faces.md)) |
+| [changes.py](../../photo-estate/changes.py), [tasks.py](../../photo-estate/tasks.py) | `Changes`, `Tasks` | `/changes`, `/api/changes*`, `/api/albums*`, `/api/tasks*` |
+| [estate_mcp.py](../../photo-estate/estate_mcp.py) | `Server` | `/mcp` |
+| [intake/api.py](../../photo-estate/intake/api.py) | `IntakeAPI` | `/setup`, `/api/intake*` |
+
+What stays in `cmd_serve` (about 500 lines) is what ties the modules together: reading the options
+and setting up the demo, the request handler, the page and the home-screen app files, `/api/info`,
+`/api/sync`, favourites, album downloads, and re-reading the catalog after an ingest or a change set.
+
+**One state object, not closures.** The modules share the in-memory catalog through one object,
+`catalog.Live`, whose `cat` is the `Catalog` being served. A `Catalog` is built once by `load()` and
+then only read (a favourite set in the app is the one exception: it is shown in place at once). A
+route reads `live.cat` once at the start and uses that catalog to the end; the handler holds `Live`'s
+`Gate` for every request except slow ones (uploads, setup, album downloads), and a reload swaps the
+new catalog in through the same gate (`Live.install`), so a search never sees half an old catalog and
+half a new one. The questions every route asks of the arrays are `Catalog` methods (`combine`,
+`facet_counts`, `take`, `periods`, `browse_order`, `cover_of`, `feed_row`, ...).
+
+```mermaid
+flowchart LR
+    H["Handler in cmd_serve"] --> BR["Browse"]
+    H --> IM["Images"]
+    H --> AD["Admin"]
+    H --> OTH["People, Changes, Tasks,<br/>MCP Server, IntakeAPI"]
+    BR & IM & AD --> LIVE["Live.cat: the Catalog"]
+    OTH -.->|"callbacks: find, cover,<br/>facts, favourite"| LIVE
+    BR --> ENC["Encoder"]
+    AD --> ENC
+    RL["reload (cmd_serve)"] -->|"catalog.load(prev) → Live.install"| LIVE
 ```
 
 ## The shape of it
@@ -106,7 +154,7 @@ Three small decisions in there:
 
 The grid needs each photo's true aspect ratio *as displayed*, but the catalog's `width`/`height` are
 not always upright (a portrait phone photo may be stored as landscape with an EXIF rotation). The
-thumbnails are always upright, so their real shape is read from the JPEG header by `_jpeg_size`,
+thumbnails are always upright, so their real shape is read from the JPEG header by `jpeg_size`,
 which scans the first 8 KB for a start-of-frame marker (`FFC0`/`C1`/`C2`) without decoding. Results
 are cached in `thumb-dims.json`, so only new photos are read next time. This is where the layout
 engine's `ar` (aspect ratio) per photo comes from.
@@ -204,7 +252,7 @@ Four things start in threads *after* the arrays are built, so the page and filte
 | Thumbnail pre-generation | Make every missing 360 px thumbnail | So scrolling never waits for HEIC decoding |
 | Sync feed | `Feed(...)`, then `feed_update()` | Compares the loaded catalog with the change feed the iPhone app syncs from (chapter 20); until it finishes, `/api/sync` answers 503 |
 
-A typed search that arrives before the encoder is ready simply blocks on `encoder_ready.wait()`.
+A typed search that arrives before the encoder is ready simply blocks on `Encoder.ready.wait()`.
 Measured on the author's Mac mini with a 100k library: first answer in 9-17 s after restart (most of
 it reading the catalog off a USB disk), typed search ready 14-22 s.
 
@@ -323,13 +371,35 @@ All from measurements in [PERFORMANCE.md](../notes/PERFORMANCE.md):
 | `request_queue_size = 256`, `daemon_threads` | The default listen backlog is 5; behind an HTTP/2 proxy a screenful of thumbnails arrives as dozens of simultaneous connections and overflowed it (502s) |
 | Listen on `127.0.0.1` only | The app has no authentication; put a proxy in front for remote access |
 
+### When a client goes away
+
+A kept-alive connection has two ways to end badly, and both used to print a `ConnectionResetError`
+traceback after some phone uploads (about one in ten):
+
+- **The server ignored `Connection: close` on an upload.** The upload handler set `close_connection`
+  from whether it had read the whole body, which overwrote what the client had asked for. A client
+  that sends `Connection: close` (urllib does, always) then closed its end while the server sat waiting
+  for a next request, and if the answer's body was still unread on the client's side, its close was a
+  reset. Now a connection stays open after an upload only if the client wants it *and* the body was read:
+  `close_connection = client_closes or unread`.
+- **A client that leaves is not an error.** A phone that sleeps, a closed tab or a proxy may reset an
+  idle connection at any moment, including while the server waits for the next request, inside
+  `http.server` where no handler can catch it. So `Server.handle_error` says nothing about a
+  `BrokenPipeError`, `ConnectionResetError`, `ConnectionAbortedError` or `TimeoutError`, and prints
+  everything else as before. That one hook replaced the `try`/`except` around each handler.
+
+[tests/test_connections.py](../../photo-estate/tests/test_connections.py) checks both with the real app,
+including a reset sent on purpose (`SO_LINGER` 0).
+
 ## Concurrency
 
 The server is multi-threaded but not multi-process. The relevant locks are small:
 
-- `model_lock` lets one thread at a time use the text encoder.
-- `lru_lock` protects the ranking cache.
-- `qlog_lock` serialises query-log appends.
+- `Encoder.lock` lets one thread at a time use the model.
+- `Browse.lru_lock` protects the ranking cache.
+- `Browse.qlog_lock` serialises query-log appends.
+- `Live.gate` lets requests share the catalog and a reload swap it alone (writers first, so a stream
+  of requests cannot starve a reload).
 - `People` has its own `RLock`.
 
 NumPy releases the GIL during large array operations, so concurrent searches overlap usefully, and
@@ -388,24 +458,26 @@ modules of their own:
 | `GET /api/ingest`, `POST /api/ingest` | The state of, and a manual start of, `ingest-iphone.sh` | [16](16-operations.md) |
 | `GET /original/<sha>` | The file as stored: what the web page and the phone share | [13](13-photo-app.md) |
 
-Two things in `cmd_serve` also exist only for phone uploads. **Hot reload**: after an ingest the server
-re-reads what changed *in the background* and swaps the new state in under a gate, clearing the
-rankings cache, so searches never wait and nothing needs a restart; it ends by calling `feed_update()`.
-**Preparing arrivals**: a photo that has just been uploaded gets its grid thumbnail and its embedding
-made in the server's own process, using the model it already holds, so the ingest that follows has
-nothing left to do for it.
+Two more things exist only for phone uploads. **Hot reload** (`reload_catalog` in `cmd_serve`):
+after an ingest the server re-reads what changed *in the background* (`catalog.load` with the last
+load's `raw`) and swaps the new catalog in under the gate, clearing the rankings cache, so searches
+never wait and nothing needs a restart; it ends by calling `feed_update()`. **Preparing arrivals**
+(`Admin.prepare_arrivals`): a photo that has just been uploaded gets its grid thumbnail and its
+embedding made in the server's own process, using the model it already holds, so the ingest that
+follows has nothing left to do for it.
 
 ## Where to look in the code
 
-All inside `cmd_serve` of [embed.py](../../photo-estate/embed.py), unless noted:
-
 | Topic | Code |
 |---|---|
-| Startup load | the block from `rows = sorted(...)` to `info = {...}` |
-| Facets and live counts | `coded`, `single`, `multi`, `combine`, `facet_counts` |
-| Mask building | `select`, `parse`, `person_mask`, `place_mask` |
-| Ranking and paging | `ranked`, `remember`, `take` |
-| Images and caches | `image`, `pregenerate`, `_thumb`, `_jpeg_size` |
-| HTTP | `Handler.send`, `do_GET`, `do_POST`, `Server` |
-| Query log | `record`, `unlogged` |
-| Benchmarks | [tools/bench_server.py](../../photo-estate/tools/bench_server.py), [tools/thumb_burst.py](../../photo-estate/tools/thumb_burst.py) |
+| Wiring, demo mode, reloads, favourites | `cmd_serve` in [embed.py](../../photo-estate/embed.py) |
+| Startup load | `load` in [catalog.py](../../photo-estate/catalog.py), from `q_emb = ...` to `return Catalog(...)` |
+| Facets and live counts | `coded`, `single`, `multi` in `load`; `Catalog.combine`, `Catalog.facet_counts` |
+| Mask building | `Browse.select`, `parse`, `read_words`, `view_masks`, `Browse.place_mask` in [browse.py](../../photo-estate/browse.py); `Catalog.person_mask` |
+| Ranking and paging | `Browse.search` (its `ranked`), `Browse.remember`, `Catalog.take`, `Catalog.browse_order` |
+| Text encoder | `Encoder` in [encoder.py](../../photo-estate/encoder.py) |
+| Images and caches | `Images.image`, `Images.pregenerate`, `_thumb` in [images.py](../../photo-estate/images.py); `jpeg_size` in catalog.py |
+| Uploads, ingest, restart, `/stats`, backups | `Admin` and `backups` in [admin.py](../../photo-estate/admin.py) |
+| HTTP | `Handler.send`, `Handler.reply`, `do_GET`, `do_POST`, `Server` in `cmd_serve` |
+| Query log | `Browse.record`, `unlogged` in browse.py |
+| Benchmarks | [tools/bench_server.py](../../photo-estate/tools/bench_server.py), [tools/thumb_burst.py](../../photo-estate/tools/thumb_burst.py), [tools/bench_ingest.py](../../photo-estate/tools/bench_ingest.py) |
