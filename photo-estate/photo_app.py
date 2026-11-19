@@ -21,7 +21,8 @@ module's docstring lists them):
   images.py      thumbnails, previews, large images and originals
   admin.py       uploads from the phone, the ingest, restarting, the Library info page, backups
   faces.py (the People page), changes.py (change sets and albums), tasks.py, estate_mcp.py (/mcp),
-  intake/api.py (/setup)
+  intake/api.py (/setup), and with --compare-vectors compare.py (/compare: an experiment, a second model's
+  ranking beside the app's own)
 What PhotoApp answers itself: the page and the home-screen app files, /api/info, /api/sync,
 favourites, album downloads (streamed by the handler), and re-reading the catalog after an ingest.
 
@@ -84,6 +85,7 @@ ROUTE_AUTH: tuple[tuple[str, tuple[str, ...], Auth], ...] = (
     ("POST", ("/api/ingest", "/api/restart"), Auth.LOCAL_OR_WRITER),
     ("POST", ("/api/upload/",), Auth.LOCAL_OR_WRITER),
     ("PUT", ("/api/upload/",), Auth.LOCAL_OR_WRITER),
+    ("POST", ("/api/compare",), Auth.LOCAL_OR_WRITER),                   # a vote: a side file, not the library
 )
 # Requests that don't hold the catalog gate: they read no catalog, or only briefly, and can be slow.
 UNGATED = ("/api/upload/", "/api/intake", "/setup")
@@ -158,6 +160,18 @@ class PhotoApp:
         self.admin = Admin(live, self.encoder, connect, now, db=a.db, model=a.model, store=store, cache=cache, seed=seed,
                            inbox=inbox, ingest=ingest, query_log=qlog, demo=a.demo,
                            faces_ready=lambda: self.people["state"] == "ready")
+        # An experiment: the same search ranked by a second model's vectors (compare.py). Without its
+        # vectors the app runs as usual: on the mini it is a launchd service, and a stop would only repeat.
+        self.compare = None
+        if a.compare_vectors:
+            from compare import Compare
+            vec_dir = Path(a.compare_vectors).expanduser()
+            try:
+                self.encoder_b = Encoder(json.loads((vec_dir / "meta.json").read_text())["model"], a.threads)
+                self.compare = Compare(live, browse, vec_dir, self.encoder_b,
+                                       Path(a.compare_votes).expanduser() if a.compare_votes else vec_dir / "votes.jsonl")
+            except (OSError, ValueError, KeyError) as e:
+                print(f"compare: no vectors in {vec_dir} ({type(e).__name__}: {e}); /compare is off", flush=True)
 
         # Favourites set in the app. The catalog's own flag (assets.favorited) is what the photo's source said,
         # and `estate.py link` writes it again on every ingest, so what a person says here is kept beside it
@@ -221,6 +235,9 @@ class PhotoApp:
         if self.live.cat.has_faces:
             threading.Thread(target=self.load_people, daemon=True).start()
         self.encoder.start()
+        if self.compare:   # after the app's own: importing transformers from two threads at once fails,
+            threading.Thread(target=lambda: (self.encoder.ready.wait(), self.encoder_b.load()),   # and typed
+                             daemon=True).start()                                                 # searches come first
         threading.Thread(target=self.feed_update, daemon=True).start()
         if self.ingest:
             threading.Thread(target=self.ingest.sweep, daemon=True).start()   # uploads left from before this start
@@ -383,6 +400,8 @@ class PhotoApp:
         body = parse_json(req.body)
         if path == "/api/favorite":
             return self.favorite(body, who)
+        if self.compare and path.startswith("/api/compare"):
+            return Response.of(self.compare.handle("POST", path, qs, body, who)) if path == "/api/compare/vote" else NOT_FOUND
         if self.intake and path.startswith("/api/intake"):
             return Response.of(self.intake.handle("POST", path, qs, body, local))
         if (got := self.changes_route("POST", path, qs, body, who)) is not None:
@@ -405,6 +424,11 @@ class PhotoApp:
             return self.mcp_route("GET", req, None)
         if path in ("/", "/index.html"):  # revalidated each load, so edits show up at once
             return _etagged(pages.page("search.html"), "text/html; charset=utf-8")
+        if self.compare and path in ("/compare", "/compare.html"):
+            return _etagged(pages.page("compare.html"), "text/html; charset=utf-8")
+        if self.compare and path.startswith("/api/compare"):
+            got = self.compare.handle("GET", path, qs, None)
+            return Response.of(got) if got else NOT_FOUND
         got = (self.browse.handle("GET", path, qs, None, req.headers)
                or self.admin.handle("GET", path, qs, None, who, self.can_write(req.headers, req.local))
                or self.images.handle("GET", path, qs, None))

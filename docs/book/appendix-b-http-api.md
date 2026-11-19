@@ -28,6 +28,7 @@ each request to the module that answers it ([chapter 11](11-server.md)):
 | `/changes`, `/api/changes*`, `/api/albums*`, `/api/tasks*` | `Changes` in [changes.py](../../photo-estate/changes.py), `Tasks` in [tasks.py](../../photo-estate/tasks.py) |
 | `/mcp` | `Server` in [estate_mcp.py](../../photo-estate/estate_mcp.py) |
 | `/setup`, `/api/intake*` (not with `--demo`) | `IntakeAPI` in [intake/api.py](../../photo-estate/intake/api.py) |
+| `/compare`, `/api/compare*` (only with `--compare-vectors`) | `Compare` in [compare.py](../../photo-estate/compare.py) |
 
 All of them answer from the same in-memory catalog (`catalog.Live`, in [catalog.py](../../photo-estate/catalog.py)).
 
@@ -220,6 +221,18 @@ protect, has no rule of its own.
 
 All four validate `<sha>` as 64 lowercase hex characters of a known photo (else 404) and are served
 `public, max-age=2592000, immutable`.
+
+### Comparing two models (an experiment, `serve --compare-vectors DIR`)
+
+`DIR` holds a second model's vectors as `tools/embed_squares.py` writes them: `shard-NNNN.npy` (float16,
+unit rows), `shard-NNNN.shas.txt` and `meta.json` (`model`). Without the option these routes are 404.
+
+| Path | Returns |
+|---|---|
+| `GET /compare` | `compare.html`: a search, the two models' results in unlabelled columns in random order, and a vote |
+| `GET /api/compare/info` | `{a: {model, photos, dim}, b: {model, photos, dim, ready, meta}, both, votes: {a, b, same}}`; `b.ready` is false while the second model's text side loads |
+| `GET /api/compare?q=&k=48` | `{q, text, applied, candidates, a, b, overlap}`. `q` is read as `/api/search` reads it: names, places and `key:value` filters choose the photos, the words left over (`text`) are ranked. Both sides rank the same photos (those with a vector from both models), and each of `a` and `b` is `{model, text_ms, rank_ms, results: [{id, score}]}`, the top `k` (at most 200) with no match floor. 400 when there are no words to rank by; 503 while the second model loads |
+| `POST /api/compare/vote {q, winner: a\|b\|same, left, k}` | Appends a line to the votes file (`--compare-votes`, default `DIR/votes.jsonl`) and returns `{ok, votes}` |
 
 ### The People API (also on `faces.py serve`)
 

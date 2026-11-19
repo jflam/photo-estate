@@ -242,6 +242,32 @@ The README's claim "no tags and nothing sent to the cloud" is literal:
   (lighthouses, coffee, kittens, snowy peaks, ...), and *nothing in the catalog says which group a
   photo is in*. Search finds them from the pixels alone.
 
+## Trying a bigger model: `/compare`
+
+Whether a bigger model finds a family's photos better is a question only that family's photos can
+answer: public benchmarks are other people's pictures, and the demo's 104 photos are too easy to tell
+two good models apart. So the app can run an experiment beside the real thing, without switching
+anything over:
+
+1. `tools/export_squares.py` writes every photo the Library shows as a 512 px square JPEG (decoded as
+   `_decode` does), in tar shards of 2,000. It runs on the library's computer, gently (nice, in
+   store order), and the shards can be copied to a faster machine.
+2. `tools/embed_squares.py` embeds the shards with the second model (by default SigLIP 2 large at
+   384 px, 1,024 numbers a photo where the app's base model has 768) and writes one `.npy` per shard.
+   On an M2 Max's GPU that is about 21 photos a second, about 65 minutes for 83,000 photos.
+3. `embed.py serve --compare-vectors DIR` loads those vectors and the second model's text side, and
+   [compare.py](../../photo-estate/compare.py) serves `/compare`: a search, read as the app reads it
+   (names, places and filters choose the photos; the words left over are ranked), ranked by each model
+   over the same photos. The two columns come in random order with no names; you vote for the better
+   one, and only then see which was which, with the scores and how long each took. Votes go to a file
+   beside the vectors, never to the catalog.
+
+The second model's scores sit on another scale, so the columns are each model's top k with no floor
+or window: those would have to be measured again before the app switched. Searching costs a little
+more (a third more numbers to multiply, a few milliseconds over a whole library); reading the words
+costs more (the large model's text side is about 2 GB, and a few times slower per query), which is
+why it loads after the app's own.
+
 ## Honest limits
 
 - **It cannot read text, dates, or names.** An image model cannot know that "2019" is a year or that
@@ -252,7 +278,7 @@ The README's claim "no tags and nothing sent to the cloud" is literal:
   from GPS data.
 - **Switching models re-embeds everything.** Vectors from different models are not comparable, so
   the app serves exactly one model at a time (`--model`), and the floor and window are
-  *per-model* constants that must be re-measured.
+  *per-model* constants that must be re-measured. `/compare` (above) puts a second model beside it, as an experiment.
 - **RAW files and videos are not embedded yet.**
 
 ## Where to look in the code
@@ -268,4 +294,5 @@ All in [embed.py](../../photo-estate/embed.py):
 | Command-line search | `cmd_search` |
 | Query encoding | `Encoder.text` in [encoder.py](../../photo-estate/encoder.py) |
 | Cut, similar, dedupe | `ranked()` in `Browse.search` ([browse.py](../../photo-estate/browse.py)) and `Catalog.take` |
+| Comparing a second model | [compare.py](../../photo-estate/compare.py), [tools/export_squares.py](../../photo-estate/tools/export_squares.py), [tools/embed_squares.py](../../photo-estate/tools/embed_squares.py) |
 | Benchmarks | [tools/sigbench.py](../../photo-estate/tools/sigbench.py), [TAGGING-RESEARCH.md](../notes/TAGGING-RESEARCH.md) |

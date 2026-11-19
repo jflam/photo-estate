@@ -34,6 +34,7 @@ content type, Cache-Control[, headers])` or `None` when the path is not its own.
 | [changes.py](../../photo-estate/changes.py), [tasks.py](../../photo-estate/tasks.py) | `Changes`, `Tasks` | `/changes`, `/api/changes*`, `/api/albums*`, `/api/tasks*` |
 | [estate_mcp.py](../../photo-estate/estate_mcp.py) | `Server` | `/mcp` |
 | [intake/api.py](../../photo-estate/intake/api.py) | `IntakeAPI` | `/setup`, `/api/intake*` |
+| [compare.py](../../photo-estate/compare.py) | `Compare` | `/compare`, `/api/compare*`, only with `--compare-vectors`: a second model's ranking beside the app's own ([chapter 10](10-embeddings.md)) |
 
 What ties the modules together is `PhotoApp` (photo_app.py, about 500 lines): setting up the demo, the
 page and the home-screen app files, `/api/info`, `/api/sync`, favourites, album downloads, who may
