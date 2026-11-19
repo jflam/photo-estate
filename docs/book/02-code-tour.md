@@ -289,6 +289,7 @@ and embedded still works in the app; each later stage adds capability.
 | [PERFORMANCE.md](../notes/PERFORMANCE.md) | Where the app's time goes and the measured before/after |
 | [BENCHMARK.md](../notes/BENCHMARK.md) | Library statistics and the benchmark album for comparing models |
 | [TAGGING-RESEARCH.md](../notes/TAGGING-RESEARCH.md) | The tiered tagging pipeline and model comparison |
+| [ELASTIC-NVIDIA-TALK.md](../notes/ELASTIC-NVIDIA-TALK.md) | GPU indexing, BBQ, Jev and open decision models, checked against primary sources |
 | [INTAKE-PLAN.md](../notes/INTAKE-PLAN.md) | The plan for bringing photos in from the app, by phases |
 | [deploy/MAC-MINI.md](../../photo-estate/deploy/MAC-MINI.md) | Running as an always-on service |
 | [deploy/CLOUD-SESSIONS.md](../../photo-estate/deploy/CLOUD-SESSIONS.md) | Working on the app from a phone: cloud sessions and the preview |

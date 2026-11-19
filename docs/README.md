@@ -43,6 +43,7 @@ Working notes, kept as they were written; the book is the current description.
 | [notes/PLAN.md](notes/PLAN.md) | The original plan: why Takeout, rolling ingest, the tagging tiers |
 | [notes/INTAKE-PLAN.md](notes/INTAKE-PLAN.md) | Bringing photos in from the app, by phases |
 | [notes/TAGGING-RESEARCH.md](notes/TAGGING-RESEARCH.md) | The tiered tagging pipeline and the model comparison |
+| [notes/ELASTIC-NVIDIA-TALK.md](notes/ELASTIC-NVIDIA-TALK.md) | Follow-up on an Elastic talk: GPU vector indexing, BBQ one-bit vectors for offline search, Jev and open decision models, video tagging |
 | [notes/PERFORMANCE.md](notes/PERFORMANCE.md) | Where the app's time goes, measured, and the open performance tasks |
 | [notes/BENCHMARK.md](notes/BENCHMARK.md) | Library statistics and the benchmark album used to compare models |
 
