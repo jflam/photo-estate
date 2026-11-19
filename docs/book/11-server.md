@@ -195,14 +195,13 @@ page's first facet state; the number of months is the histogram's length).
 
 ### 8. Background threads
 
-Three things start in threads *after* the arrays are built, so the page and filters answer first:
+Four things start in threads *after* the arrays are built, so the page and filters answer first:
 
 | Thread | Does | Why in the background |
 |---|---|---|
 | People | `from faces import People; People(...)` | Loading all faces and scoring them takes seconds; only `/people` needs it. Until it is ready, `/people` answers 503 "Faces are still loading" |
 | Text encoder | `import torch`, load SigLIP, then one `"warm-up"` encode | Importing PyTorch is **most of startup time** and only typed queries need it. The warm-up takes the ~1 s first-forward-pass penalty away from the first real query |
 | Thumbnail pre-generation | Make every missing 360 px thumbnail | So scrolling never waits for HEIC decoding |
-
 | Sync feed | `Feed(...)`, then `feed_update()` | Compares the loaded catalog with the change feed the iPhone app syncs from (chapter 20); until it finishes, `/api/sync` answers 503 |
 
 A typed search that arrives before the encoder is ready simply blocks on `encoder_ready.wait()`.

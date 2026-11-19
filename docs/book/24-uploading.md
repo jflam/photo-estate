@@ -156,7 +156,7 @@ sequenceDiagram
     S->>S: files into inbox, thumbnail and embedding prepared
     S->>J: last file of the batch: run now
     J->>S: catalog ready
-    S->>S: hot reload; feed_update (version + 1)
+    S->>S: hot reload, then feed_update (version + 1)
     D->>S: GET /api/sync?since=V
     S-->>D: the new photos
 ```
