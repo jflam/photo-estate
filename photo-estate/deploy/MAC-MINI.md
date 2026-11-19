@@ -124,6 +124,60 @@ tailscale serve --bg --https=8767 http://127.0.0.1:8767
 
 With a default-deny tailnet policy, port 8767 needs its own grant, like 8766.
 
+## A preview of a cloud session
+
+Work done in a cloud session (Claude Code on the web, started from a phone) can be looked at before it
+is merged: the session serves the demo app from its own checkout, and the mini shows it on the tailnet.
+A cloud machine takes no connections from outside and is not on the tailnet, so the app is carried out
+with [tailcat](https://github.com/tailscale/tailcat) (Tailscale's encrypted pipe, with no tailnet and
+no account), and the mini is the one client allowed to connect.
+
+```
+phone  --tailnet-->  mini :8768 (tailscale serve)  -->  127.0.0.1:8768 (tailcat forward)
+       ==tailcat, through a Tailscale relay==>  cloud session: tailcat serve 8767  -->  embed.py serve --demo
+```
+
+| | |
+|---|---|
+| Cloud side | [`tools/cloud-preview.sh`](../tools/cloud-preview.sh): starts the demo app and `tailcat serve --allow=<the mini's key> 8767` |
+| Mini side | `~/.config/photo-estate/preview-relay.sh` ([copy](preview-relay.sh)): keeps `tailcat forward` to it alive on `127.0.0.1:8768` |
+| launchd agent | `~/Library/LaunchAgents/com.jflam.photo-preview-relay.plist` ([copy](com.jflam.photo-preview-relay.plist)) |
+| Log | `~/Library/Logs/photo-preview-relay.log` (a line when a session appears, and when it goes) |
+| Tailnet | `tailscale serve --bg --https=8768 http://127.0.0.1:8768` |
+| Open it | `https://johns-mac-mini.<tailnet>.ts.net:8768` (an error page when no session is serving) |
+
+Only the demo library is ever served, the real app and `/Volumes/estate` are not involved, and nothing
+of the tailnet is given to the cloud machine: it holds one tailcat key, which lets it be found by the
+mini and nothing more.
+
+**The two keys.** The server key is made once, on any machine, and its contents go to the cloud
+environment as the secret `PHOTO_ESTATE_PREVIEW_KEY`; its address (a secret too) goes to the mini.
+The mini's client key is public and is the default `--allow` in `cloud-preview.sh`.
+
+```bash
+# anywhere, once: the server key (region fixed, so its address never changes)
+tailcat genkey --key=photo-estate-preview --region=sfo        # prints its address; the key file is the secret
+# on the mini, once
+brew install tailcat
+tailcat genkey --client --key=client-default                   # prints nodekey:...  -> ALLOW in cloud-preview.sh
+umask 077; echo 'tc...the address...' > ~/.config/photo-estate/preview.addr
+cp ~/src/photo-estate/photo-estate/deploy/preview-relay.sh ~/.config/photo-estate/
+cp ~/src/photo-estate/photo-estate/deploy/com.jflam.photo-preview-relay.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jflam.photo-preview-relay.plist
+tailscale serve --bg --https=8768 http://127.0.0.1:8768
+```
+
+The cloud environment's settings, then: under Environment variables, `PHOTO_ESTATE_PREVIEW_KEY` (the
+key file as one line of base64: `base64 < photo-estate-preview.private.json`) and
+`PHOTO_ESTATE_PREVIEW_URL` (the address above, which the script prints for the person); under Network
+access, Limited, with `tailcat.dev` and `tc302a.ipn.dev` (the relay of region `sfo`) added to the
+allowed domains. `cloud-setup.sh` downloads tailcat from GitHub, which Limited already allows. With a default-deny tailnet policy, port
+8768 needs its own grant, like 8766 and 8767.
+
+`tailcat forward` does not find a server again after the server has restarted, which is why the mini
+runs it under a script: it asks for a page through the forward every ten seconds and starts the forward
+again when two in a row get no answer. A preview is there within a minute of the session starting it.
+
 ## Tailscale access
 
 With Tailscale's default allow-all policy there's nothing to do here. My tailnet policy is
