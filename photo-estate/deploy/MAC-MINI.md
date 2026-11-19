@@ -127,56 +127,47 @@ With a default-deny tailnet policy, port 8767 needs its own grant, like 8766.
 ## A preview of a cloud session
 
 Work done in a cloud session (Claude Code on the web, started from a phone) can be looked at before it
-is merged: the session serves the demo app from its own checkout, and the mini shows it on the tailnet.
-A cloud machine takes no connections from outside and is not on the tailnet, so the app is carried out
-with [tailcat](https://github.com/tailscale/tailcat) (Tailscale's encrypted pipe, with no tailnet and
-no account), and the mini is the one client allowed to connect.
+is merged. A cloud machine takes no connections from outside, and its network carries no tunnel out
+either (its proxy passes HTTPS and WebSocket, not the relay protocol of tailcat or Tailscale, and no
+UDP), so the work leaves the session the one way it can, as a pushed branch: the mini serves the demo
+app of the branch with the newest commit, and shows it on the tailnet.
 
 ```
-phone  --tailnet-->  mini :8768 (tailscale serve)  -->  127.0.0.1:8768 (tailcat forward)
-       ==tailcat, through a Tailscale relay==>  cloud session: tailcat serve 8767  -->  embed.py serve --demo
+cloud session: tools/cloud-preview.sh  --git push-->  GitHub
+mini: preview-branch.sh  --git fetch, every 30 s-->  its own clone  -->  embed.py serve --demo on 127.0.0.1:8768
+phone  --tailnet-->  mini :8768 (tailscale serve)
 ```
 
 | | |
 |---|---|
-| Cloud side | [`tools/cloud-preview.sh`](../tools/cloud-preview.sh): starts the demo app and `tailcat serve --allow=<the mini's key> 8767` |
-| Mini side | `~/.config/photo-estate/preview-relay.sh` ([copy](preview-relay.sh)): keeps `tailcat forward` to it alive on `127.0.0.1:8768` |
-| launchd agent | `~/Library/LaunchAgents/com.jflam.photo-preview-relay.plist` ([copy](com.jflam.photo-preview-relay.plist)) |
-| Log | `~/Library/Logs/photo-preview-relay.log` (a line when a session appears, and when it goes) |
+| Cloud side | [`tools/cloud-preview.sh`](../tools/cloud-preview.sh): pushes the session's branch, and says what will be shown |
+| Mini side | `~/.config/photo-estate/preview-branch.sh` ([copy](preview-branch.sh)): fetches, and restarts the app when the newest commit changes |
+| Code | `~/Library/Caches/photo-estate-preview`, a clone the script makes for itself |
+| launchd agent | `~/Library/LaunchAgents/com.jflam.photo-preview.plist` ([copy](com.jflam.photo-preview.plist)) |
+| Log | `~/Library/Logs/photo-preview.log` (a line for each branch and commit it shows) |
+| Local port | `127.0.0.1:8768` |
 | Tailnet | `tailscale serve --bg --https=8768 http://127.0.0.1:8768` |
-| Open it | `https://johns-mac-mini.<tailnet>.ts.net:8768` (an error page when no session is serving) |
+| Open it | `https://johns-mac-mini.<tailnet>.ts.net:8768` |
 
-Only the demo library is ever served, the real app and `/Volumes/estate` are not involved, and nothing
-of the tailnet is given to the cloud machine: it holds one tailcat key, which lets it be found by the
-mini and nothing more.
-
-**The two keys.** The server key is made once, on any machine, and its contents go to the cloud
-environment as the secret `PHOTO_ESTATE_PREVIEW_KEY`; its address (a secret too) goes to the mini.
-The mini's client key is public and is the default `--allow` in `cloud-preview.sh`.
+"Newest" is by commit date, over every branch of the repository on GitHub, `main` included: so a
+session's branch from its first push until something newer is pushed, and `main` again once the branch
+is merged. Two sessions at work at once take turns; `PREVIEW_BRANCH=<name>` in the plist's environment
+holds it to one branch. The preview does not depend on the session's machine, which stops between
+turns, and it runs whatever is pushed to a branch of the repository, so it is as trusted as push access
+to the repository is. Only the demo library is ever served: the real app and `/Volumes/estate` are not
+involved.
 
 ```bash
-# anywhere, once: the server key (region fixed, so its address never changes)
-tailcat genkey --key=photo-estate-preview --region=sfo        # prints its address; the key file is the secret
 # on the mini, once
-brew install tailcat
-tailcat genkey --client --key=client-default                   # prints nodekey:...  -> ALLOW in cloud-preview.sh
-umask 077; echo 'tc...the address...' > ~/.config/photo-estate/preview.addr
-cp ~/src/photo-estate/photo-estate/deploy/preview-relay.sh ~/.config/photo-estate/
-cp ~/src/photo-estate/photo-estate/deploy/com.jflam.photo-preview-relay.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jflam.photo-preview-relay.plist
+mkdir -p ~/.config/photo-estate
+cp ~/src/photo-estate/photo-estate/deploy/preview-branch.sh ~/.config/photo-estate/
+cp ~/src/photo-estate/photo-estate/deploy/com.jflam.photo-preview.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jflam.photo-preview.plist
 tailscale serve --bg --https=8768 http://127.0.0.1:8768
 ```
 
-The cloud environment's settings, then: under Environment variables, `PHOTO_ESTATE_PREVIEW_KEY` (the
-key file as one line of base64: `base64 < photo-estate-preview.private.json`) and
-`PHOTO_ESTATE_PREVIEW_URL` (the address above, which the script prints for the person); under Network
-access, Limited, with `tailcat.dev` and `tc302a.ipn.dev` (the relay of region `sfo`) added to the
-allowed domains. `cloud-setup.sh` downloads tailcat from GitHub, which Limited already allows. With a default-deny tailnet policy, port
-8768 needs its own grant, like 8766 and 8767.
-
-`tailcat forward` does not find a server again after the server has restarted, which is why the mini
-runs it under a script: it asks for a page through the forward every ten seconds and starts the forward
-again when two in a row get no answer. A preview is there within a minute of the session starting it.
+The cloud environment needs no settings for this: no keys, no variables, and no hosts beyond GitHub.
+With a default-deny tailnet policy, port 8768 needs its own grant, like 8766 and 8767.
 
 ## Tailscale access
 

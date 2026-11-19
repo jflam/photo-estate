@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The cloud preview: the demo app of the branch with the newest commit, on 127.0.0.1:8768
+     (preview-branch.sh, from a clone of its own). Nothing of the real app or the library is involved. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.jflam.photo-preview</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/jflam/.config/photo-estate/preview-branch.sh</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/jflam/Library/Logs/photo-preview.log</string>
+  <key>StandardErrorPath</key><string>/Users/jflam/Library/Logs/photo-preview.log</string>
+</dict>
+</plist>

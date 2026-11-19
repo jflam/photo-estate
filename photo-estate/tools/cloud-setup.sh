@@ -78,11 +78,6 @@ if ! command -v exiftool >/dev/null && command -v apt-get >/dev/null; then
 fi
 if command -v exiftool >/dev/null; then ok "exiftool"; else miss "exiftool: not installed (only \`estate.py exif\` needs it)"; fi
 
-# 6. tailcat, which carries the demo app out of a cloud session to the Mac mini for a person to look at
-#    (tools/cloud-preview.sh). Only needed for that.
-if bash "$HERE/tools/cloud-preview.sh" --install >/dev/null 2>&1; then ok "tailcat (for cloud-preview.sh)"
-else miss "tailcat: not downloaded, so cloud-preview.sh cannot show the app (allow github.com and release-assets.githubusercontent.com; to run it, tailcat.dev and tc302a.ipn.dev)"; fi
-
 echo
 echo "Photo Estate cloud setup:"
 printf '  %s\n' "${report[@]}"

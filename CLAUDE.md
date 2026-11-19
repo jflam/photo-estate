@@ -18,13 +18,11 @@ dependencies, a plain HTTP server and SQLite), and an iPhone app in `ios/` (need
 
 - If `uv run photo-estate/embed.py --help` is slow or the search model is missing, run
   `bash photo-estate/tools/cloud-setup.sh` once.
-- **When the work is ready for a person to try, or they ask to see or try the app, start a preview:**
-  `bash photo-estate/tools/cloud-preview.sh`. It serves this checkout's app on the demo library to
-  the owner's Mac mini, which shows it on their tailnet. Then:
-  - Give them the `Open:` line it prints, and say the preview takes up to a minute to appear and lasts
-    only while this session's machine is running.
-  - Run it again after changing server code (it restarts the app). A change to `search.html` alone
-    shows on reload.
-  - If it prints `PREVIEW NOT STARTED`, tell them the reason it gives, and send screenshots instead.
-  - Never print or commit the tailcat address or `PHOTO_ESTATE_PREVIEW_KEY`.
+- **When the work is ready for a person to try, or they ask to see or try the app, commit it to a
+  branch and run** `bash photo-estate/tools/cloud-preview.sh`. It pushes the branch; the owner's Mac
+  mini serves the demo app of the branch with the newest commit on its tailnet. Then:
+  - Give them the `PREVIEW PUSHED` and `Open:` lines it prints, and say the preview takes about a
+    minute to appear. It stays up after this session ends.
+  - Run it again after each further commit they should see.
+  - If it prints `PREVIEW NOT PUSHED`, tell them the reason it gives, and send screenshots instead.
 - Commit to a new branch, push it, and open a pull request. Do not merge it or touch `main` unless asked.
