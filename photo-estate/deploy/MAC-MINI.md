@@ -192,15 +192,48 @@ home, `~/.ssh`, `~/Documents` and `~/.config/photo-estate`; every line must say 
 stays in `/var/log/photo-preview/isolation-check.log`. Run the setup script again to repeat the check
 after a macOS upgrade or a change to the disk.
 
-**What a separate user does not cover.** Code in the preview can still:
+### Its firewall
 
-- **talk to anything on the mini's loopback**, which includes the real app on `127.0.0.1:8766`. That
-  app asks for no login there, so the preview could read the library through its API, and could send
-  the `Tailscale-User-Login` header that uploads are checked by. Closing this takes a firewall rule
-  for the user (`pf` can match on one) or a login on the real app. Neither is in place.
-- reach the internet, the home network and, as the mini, whatever the tailnet's policy lets the mini reach;
-- read what every user of the mini can: `/Users/Shared`, `~/Public`, `/opt/homebrew`, and the command
-  lines of running programs (so keep secrets out of arguments);
+A separate user keeps the preview out of files, not off the network: on its own it could still make
+requests to the real app on `127.0.0.1:8766`, which asks for no login there.
+[`preview-firewall-setup.sh`](preview-firewall-setup.sh) closes that with rules in the macOS packet
+filter (pf) that match `photopreview` only:
+
+```bash
+# on the mini, once, after preview-user-setup.sh
+sudo bash ~/src/photo-estate/photo-estate/deploy/preview-firewall-setup.sh
+```
+
+| | |
+|---|---|
+| Rules | `/etc/pf.anchors/com.jflam.photo-preview` |
+| Main ruleset | two lines at the end of `/etc/pf.conf` (as it was: `/etc/pf.conf.before-photo-preview`) |
+| Loader | `/usr/local/photo-preview/firewall-load.sh`, run at boot by `/Library/LaunchDaemons/com.jflam.photo-preview-firewall.plist` |
+| Log | `/var/log/photo-preview/firewall.log` |
+
+The user may not open a connection to the loopback (except its own port 8768), to any of the mini's
+own addresses (its tailnet address is routed through the tunnel, not the loopback, so the loopback rule
+alone would miss it), or to a private network: the home network and the tailnet. It can still reach
+the internet, which it needs for GitHub and the package index. The rules match the first packet of a
+connection, so what its own server answers to Tailscale's proxy is not touched.
+
+This turned pf on for the whole mini; macOS ships it off. The main ruleset holds only Apple's empty
+anchors and this one, and no rule in it matches another user, so the real app, the demo, Tailscale and
+SSH are not filtered. A macOS upgrade can put back the stock `/etc/pf.conf`: the loader adds the two
+lines again at boot.
+
+The isolation check covers this too: connections to 8766 and 8767, to port 22 on each of the mini's
+addresses and to the router must be refused, and GitHub and the package index must answer.
+
+**It fails open.** If pf is turned off (`pfctl -d`, or by other software that manages it), the block
+is gone without a word, and there are a few seconds at boot before the rules load. Run the setup
+script again to repeat the check; `sudo pfctl -s info` shows whether pf is on.
+
+**What is still open.** Code in the preview can still:
+
+- reach anything on the internet, and send there whatever it can read;
+- read what every user of the mini can: `/Users/Shared`, `/opt/homebrew`, and the command lines of
+  running programs (so keep secrets out of arguments);
 - use the mini's CPU, memory and internal disk without limit.
 
 The cloud environment needs no settings for this: no keys, no variables, and no hosts beyond GitHub.

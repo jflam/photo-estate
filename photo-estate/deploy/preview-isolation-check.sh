@@ -35,9 +35,18 @@ must_fail "read $OWNER_HOME/.ssh/known_hosts"   cat "$OWNER_HOME/.ssh/known_host
 must_fail "list $OWNER_HOME/Documents"          ls "$OWNER_HOME/Documents"
 must_fail "read $OWNER_HOME/Documents/.localized" cat "$OWNER_HOME/Documents/.localized"
 must_fail "read $OWNER_HOME/.config/photo-estate/agent.env" cat "$OWNER_HOME/.config/photo-estate/agent.env"
-echo "-- not covered by a separate user (for information): services on this machine's loopback"
-for port in 8766 8767; do
-    code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$port/api/info")"
-    echo "INFO     http://127.0.0.1:$port/api/info answers $code"
+echo "-- must fail (preview-firewall-setup.sh): this machine's own services, and the networks it is on"
+must_fail "connect to the real app, 127.0.0.1:8766"   curl -s -m 5 -o /dev/null http://127.0.0.1:8766/api/info
+must_fail "connect to the demo, 127.0.0.1:8767"       curl -s -m 5 -o /dev/null http://127.0.0.1:8767/api/info
+must_fail "connect to localhost:8766 (IPv6 too)"      curl -s -m 5 -o /dev/null http://localhost:8766/api/info
+for addr in $(ifconfig | awk '$1 == "inet" && $2 != "127.0.0.1" {print $2}'); do   # LAN and tailnet addresses of this machine
+    must_fail "connect to this machine at $addr:22"   nc -z -G 3 "$addr" 22
+    must_fail "connect to the real app at $addr:8766" nc -z -G 3 "$addr" 8766
 done
+gw="$(route -n get default 2>/dev/null | awk '$1 == "gateway:" {print $2}')"
+[ -z "$gw" ] || must_fail "connect to the router, $gw:53"  nc -z -G 3 "$gw" 53
+echo "-- controls (must work): the preview's own needs"
+must_work "fetch from GitHub"                         git ls-remote https://github.com/jflam/photo-estate.git HEAD
+must_work "reach the package index"                   curl -s -m 10 -o /dev/null https://pypi.org/simple/pillow/
+echo "INFO     its own app, http://127.0.0.1:8768/api/info, answers $(curl -s -o /dev/null -m 5 -w '%{http_code}' http://127.0.0.1:8768/api/info)"
 [ $bad -eq 0 ] && echo "RESULT: every must-fail was denied" || echo "RESULT: NOT ISOLATED, see EXPOSED/BROKEN above"

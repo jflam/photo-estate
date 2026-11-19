@@ -26,9 +26,9 @@ phone: the browser  --tailnet-->  Mac mini :8768, the demo app of the branch wit
 
 Only 8768 follows GitHub by itself, which means the mini runs whatever a session pushes. So the
 preview runs as `photopreview`, a user that cannot read my home folder or `/Volumes/estate`, and not
-as me: 8766 and 8767 still run under my account. That user can still make requests to the other two
-apps on the mini's loopback, the real one included; [MAC-MINI.md](MAC-MINI.md#its-own-user) says what
-is checked and what is still open.
+as me: 8766 and 8767 still run under my account. A firewall rule for that user stops it making
+requests to the other two apps, to anything else on the mini, and to the home network and the tailnet.
+[MAC-MINI.md](MAC-MINI.md#its-own-user) says what is checked and what is still open.
 
 ## The cloud environment
 
