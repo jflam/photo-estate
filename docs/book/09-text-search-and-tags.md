@@ -87,7 +87,7 @@ anything that wants literal words.
 
 ## `estate.py tag`: captions and tags from a local vision model
 
-`tag` is Tier 5 of the tagging plan ([TAGGING-RESEARCH.md](../../photo-estate/TAGGING-RESEARCH.md)) and
+`tag` is Tier 5 of the tagging plan ([TAGGING-RESEARCH.md](../notes/TAGGING-RESEARCH.md)) and
 the only part of the pipeline that talks over HTTP to another program. It sends each image to **any
 OpenAI-compatible vision server** (llama.cpp's `llama-server` on port 8080 by default, or Ollama at
 `:11434/v1`) and stores what comes back.
@@ -126,7 +126,7 @@ Details:
   by `favorited DESC, taken_at DESC`, so the photos you care about get tagged first. `--limit`
   caps a trial run.
 - **Timing built in.** After a run it prints average seconds per image and an estimate in hours for
-  the rest, which is how the benchmark in [TAGGING-RESEARCH.md](../../photo-estate/TAGGING-RESEARCH.md)
+  the rest, which is how the benchmark in [TAGGING-RESEARCH.md](../notes/TAGGING-RESEARCH.md)
   was gathered.
 - **Failures are counted, not fatal.** If every request fails the command exits non-zero; if some
   succeed it reports the failure count and carries on.
@@ -167,4 +167,4 @@ an event can be found by the occasion. Both would feed `tags` and therefore this
 | Index build | `reindex` |
 | Command-line search | `cmd_search` |
 | VLM client | `PROMPT`, `thumbnail_b64`, `parse_json_loose`, `ask_vlm`, `cmd_tag` |
-| Tagging plan and model comparison | [TAGGING-RESEARCH.md](../../photo-estate/TAGGING-RESEARCH.md) |
+| Tagging plan and model comparison | [TAGGING-RESEARCH.md](../notes/TAGGING-RESEARCH.md) |

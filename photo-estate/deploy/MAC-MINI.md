@@ -21,7 +21,7 @@ My estate moved from a Linux laptop to the always-on Mac mini (`johns-mac-mini`,
 ## The disk
 
 The 8 TB Seagate One Touch is **APFS**, volume name `estate`, mounted at `/Volumes/estate`. It
-was btrfs (see `../DISK-SETUP.md`), which macOS can't read. It was reformatted after copying
+was btrfs (see [DISK-SETUP.md](../../docs/guides/DISK-SETUP.md)), which macOS can't read. It was reformatted after copying
 everything off and back, verified by file count, byte total and the `estate.db` SHA-256.
 
 Spotlight is turned off for the volume (`sudo mdutil -i off /Volumes/estate`). The app has its own

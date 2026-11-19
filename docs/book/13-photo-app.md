@@ -1,12 +1,13 @@
 # 13. The photo app
 
-[search.html](../../photo-estate/search.html) is the face of the system: about 1,650 lines containing the
-page, all of its CSS (about 330 lines) and all of its JavaScript (about 1,220 lines). It is served
+[search.html](../../photo-estate/search.html) is the face of the system: about 2,050 lines of code containing the
+page, all of its CSS (about 340 lines) and all of its JavaScript (about 1,600 lines). It is served
 as-is by `embed.py serve`. There is no build step, no framework and no package: it is plain
 ES2020 in one file, which is why a change shows after a browser reload.
 
-The page is laid out the way the native iPhone app is ([chapter 23](23-native-interface.md)): two places,
-the **Library** (every photo in time order, which you can zoom out to a card a year or a card a month) and
+The page is laid out the way the native iPhone app is ([chapter 23](23-native-interface.md)): three places,
+the **Library** (every photo in time order, which you can zoom out to a card a year or a card a month),
+**Albums** (sets of photos made by a person or an agent; [chapter 26](26-albums-and-agents.md)) and
 **Search** (finding some of them), a tab bar between them, and the same viewer. Where the two differ, it is
 because a browser is not iOS; where they agree, the iPhone's design came first and this page follows it.
 

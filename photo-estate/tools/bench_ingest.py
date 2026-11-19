@@ -3,7 +3,7 @@
 # requires-python = ">=3.11,<3.14"
 # dependencies = ["pillow>=10.0", "pillow-heif>=0.18"]
 # ///
-"""bench_ingest.py: how long a photo sent from the phone takes to show up in the app. See ../PERFORMANCE.md.
+"""bench_ingest.py: how long a photo sent from the phone takes to show up in the app. See docs/notes/PERFORMANCE.md.
 
   uv run tools/bench_ingest.py --work ~/bench-estate                 # 121k-photo estate, 9 photos, 60 s quiet
   uv run tools/bench_ingest.py --work ~/bench-estate --quiet 10 --runs 3

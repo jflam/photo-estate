@@ -231,7 +231,7 @@ brings them in, shows progress as it goes, and opens your library once the first
 searchable. Add more later from the **+** in the library's header. To try the whole flow first,
 with practice sources made from the demo photos and no accounts, run `uv run embed.py serve --sandbox`
 (<http://127.0.0.1:8768/>). iCloud, Google Drive, Dropbox and OneDrive are next
-([INTAKE-PLAN.md](photo-estate/INTAKE-PLAN.md)).
+([INTAKE-PLAN.md](docs/notes/INTAKE-PLAN.md)).
 
 By hand, every source goes through the same steps, and each step only does new work, so adding photos
 later is cheap: **ingest → link → exif → places → embed**. Run from `photo-estate/`, with `DB` and
@@ -269,7 +269,7 @@ The same photo in two services is stored once. Ingest is resumable, and nothing 
 or deleted: near-duplicates (resized copies, edits, bursts, RAW+JPEG pairs) are reported for you
 to review with `$E review --store $STORE`, never removed.
 
-[DISK-SETUP.md](photo-estate/DISK-SETUP.md) covers choosing storage and running a large pull
+[DISK-SETUP.md](docs/guides/DISK-SETUP.md) covers choosing storage and running a large pull
 overnight. [deploy/MAC-MINI.md](photo-estate/deploy/MAC-MINI.md) shows how to keep the app
 running all the time and reach it from your other devices, using a Mac mini as the example; on
 Linux the same thing is a systemd user service.
@@ -293,75 +293,21 @@ Linux the same thing is a systemd user service.
         embed.py serve ────────┘  the photo app at http://127.0.0.1:8766/
 ```
 
-**Ingest** streams each file out of a zip or folder while hashing it. A file whose SHA-256 is
-already in the store is recorded as another *occurrence* (source, path, album) of the same
-*asset*, and isn't written again. A zip that's already been ingested is skipped.
+Each step has a chapter of [the book](https://jflam.github.io/photo-estate/):
 
-**Link** is where each service's quirks are handled:
-- *Google Takeout* puts metadata in JSON sidecars whose names are truncated, numbered and
-  sometimes in a different zip from their photo. Live Photo clips share the still's sidecar.
-- *iCloud* (via `icloudpd --xmp-sidecar`) gives XMP files whose timestamps carry the UTC offset, so
-  an iCloud copy and a Google copy of the same photo land on the same instant.
-- *Flickr* ships originals (`<title>_<id>_o.jpg`) and metadata (`photo_<id>.json`) in separate
-  zips; they're joined by photo id.
+| Step | What it does | Read |
+|---|---|---|
+| **Ingest** | Streams each file out of a zip or folder while hashing it; a file already in the store becomes another *occurrence* of the same *asset*, and is not written again | [4](docs/book/04-store-and-ingest.md) |
+| **Link** | Matches each service's sidecars to its files (Takeout's truncated JSON names, iCloud's XMP, Flickr's split zips) and merges them; Google wins, then iCloud, then EXIF, then Flickr | [6](docs/book/06-linking.md) |
+| **EXIF** | exiftool over every asset; camera, lens and exposure become columns. Needs exiftool (`brew install exiftool`, `apt install libimage-exiftool-perl`, `pacman -S perl-image-exiftool`) | [7](docs/book/07-places-events-trips.md) |
+| **Places and events** | GPS becomes a place and a timezone offline, photos are grouped into events and trips; recomputed in seconds on each run | [7](docs/book/07-places-events-trips.md) |
+| **Search** | Full-text over names, albums, people and tags, plus SigLIP 2 embeddings for "describe the photo"; names, places and typed filters are read out of a query before anything is ranked | [9](docs/book/09-text-search-and-tags.md), [10](docs/book/10-embeddings.md), [12](docs/book/12-search-language.md) |
+| **Faces** | InsightFace on the CPU; names start from Google's tags and follow a child from baby to adult two years at a time; every decision is also kept in `face-labels.jsonl` | [14](docs/book/14-faces.md), [15](docs/book/15-human-corrections.md) |
+| **Best photos and stacks** | Two scorers kept in the catalog, applied as a dot product when it loads; near-identical shots within 10 seconds become one stack | [25](docs/book/25-best-photos.md) |
+| **Albums, change sets, agents** | Albums made by you or an agent; bulk edits proposed, reviewed and applied (or undone) by a person; the library as MCP tools | [26](docs/book/26-albums-and-agents.md) |
+| **The app** | One process holding the library in memory; also keeps `query-log.jsonl` of searches, on your machine only, for picking evaluation queries | [11](docs/book/11-server.md), [13](docs/book/13-photo-app.md) |
 
-Where sources disagree, Google's sidecar wins, then iCloud's XMP, then EXIF, then Flickr. Link can
-be re-run at any time and gives the same result.
-
-**EXIF.** `estate.py exif` runs exiftool over every asset (images, RAW and video) and keeps the
-whole tag dump as JSON, minus maker notes and binary blobs. Camera, lens, focal length, aperture,
-shutter, ISO, software, and video duration and frame rate are also promoted to columns, and camera
-names are normalised ("NIKON CORPORATION / NIKON D300" becomes "Nikon D300"). Needs exiftool
-(`brew install exiftool` on macOS, `sudo pacman -S perl-image-exiftool` on Arch,
-`sudo apt install libimage-exiftool-perl` on Debian/Ubuntu).
-
-**Places and events.** `places.py run` works out where and when from what's already in the
-catalog, with no network: GPS becomes a place name (offline GeoNames, with big cities winning over
-their suburbs: the Eiffel Tower is in Paris, not Vanves) and a timezone; UTC times from Google and
-iCloud become wall-clock time where the photo was taken; photos are grouped into events (a gap of
-3+ hours ends one) and runs of events far from that year's home into trips ("Trip to Denmark and
-Belgium"). Photos without GPS borrow their event's place and zone. Everything is recomputed on
-each run, in a few seconds.
-
-**Search** has two layers: SQLite FTS5 over filenames, albums, people, descriptions and tags
-(`estate.py search`), and SigLIP 2 embeddings for "describe the photo" search (`embed.py search`
-and the app). In the app, a search is read before it's ranked: typed filters (`place:`, `year:`
-...) come out first, then the names of people (full names, or a first name only one person has)
-and places (any city, region or country the library has photos from), and only the words left
-over go to SigLIP. A typed search keeps the photos within 0.04 cosine similarity of its best match
-and above 0.085; both numbers were measured on the demo and on a 100k-photo library, and
-`--match-window` / `--match-floor` change them.
-
-**Faces.** `faces.py run` finds and embeds every face (InsightFace `buffalo_l` on the CPU, about
-as fast as the SigLIP pass). Names start from Google's people tags, which are per photo: a photo
-with one tag and one face names that face, and the rest are matched from those. After that a face
-is only ever compared with a person's named faces from within two years of the photo, which is
-what lets a child be followed from a baby to an adult: each year you confirm at `/people` makes
-the next year recognisable, and siblings who looked alike at the same age are never compared.
-Sure matches are named automatically, likely ones wait for a yes or no, and people who turn up
-often but have no name are grouped for you to name. Everything you decide is also written to
-`face-labels.jsonl` next to the catalog. A person is in a photo at most once, so a second face
-in a photo already settled for someone is never suggested as them. The model weights are for
-non-commercial use.
-
-**Best photos and stacks.** The catalog keeps the two scorers (`scores.py`), not a score per photo:
-"best first" is the good photos (quality of 5 or more, on the aesthetic model's scale of about 1 to
-7) by taste, then the rest by quality. Stacks (`stacks.py`) join photos taken within 10 seconds
-whose embeddings are at least 0.97 alike, comparing each photo only with the eight before it. Both
-are worked out when the catalog loads, not stored. The scorers are made with the tools in
-`tools/aesthetics/` (`score_library.py`, `judge.py`, `train_taste.py`) and put in the catalog with
-`scores.py install`.
-
-**Change sets, MCP and tasks.** `changes.py` holds proposed edits and what was decided about each
-photo; `estate_mcp.py` is the `/mcp` endpoint (find photos, read what is known of one, propose a
-set); `tasks.py` hands a request in words to an agent on this computer and keeps what it did as a
-list of events.
-
-**Query log.** The app appends every search and every photo opened from a result list to
-`query-log.jsonl` next to the catalog, on your machine only (`--query-log` to move it). It's there
-to pick evaluation queries from real use: each search keeps its top 20 results and how it was
-read, and each opened photo keeps the search it came from and its position. Nothing in the app
-reads it back.
+The face model weights are for non-commercial use.
 
 ## Where it runs
 
@@ -385,79 +331,59 @@ cache, which is why those should stay local.
 services, with ~10k duplicates collapsed and ~130 trips found, served from an M1 Mac mini with
 16 GB of RAM and a USB hard disk.
 
-## Layout
+## How it's built: Claude Code, often from a phone
 
-```
-docs/book/             a technical book on how it all works, with diagrams; published as a website
-                       (photo-estate/tools/build_book.py builds it, .github/workflows/book.yml deploys it)
-docs/screenshots/      the screenshots in this README (tools/screenshots.py retakes the web ones)
-ios/                   the native iPhone app: offline catalog, search, photo cache, uploads
-photo-estate/
-  estate.py            ingest, link, exif, dupes, review, tag (any OpenAI-compatible VLM), search, stats
-  stats.py             the numbers behind the /stats page (also runs on its own)
-  stats.html           the library info page
-  embed.py             SigLIP 2 embeddings: run, search, serve (the photo app)
-  places.py            place names, local time, events, trips
-  search.html          the photo app served by embed.py
-  pages.py             puts the shared stylesheet (app/estate.css) into each page as it is sent
-  sync.py              GET /api/sync: the catalog as a change feed, for devices that keep a copy
-  upload.py            receives phone uploads into an inbox folder (PUT /api/upload)
-  ingest-iphone.sh     catalogue what the phone uploaded, touching only the new photos
-  scores.py            which photos are best: the two scorers, kept in the catalog
-  stacks.py            near-identical shots as one stack
-  changes.py           change sets: an edit is proposed, looked over, then applied (and can be undone)
-  changes.html         the page for reviewing a change set, at /changes in the photo app
-  estate_mcp.py        the library as tools for an agent, at /mcp on the running app
-  tasks.py             a request in words, worked on by an agent on the library's computer
-  faces.py             faces: run (detect and embed), serve; who is who, with your help
-  people.html          the page for naming people, at /people in the photo app
-  app/                 home-screen app files: manifest, icons, service worker
-  review.html          the near-duplicate review page served by estate.py
-  pull-drive.sh        pull Takeout zips from Google Drive one at a time and ingest them
-  pull-icloud.sh       mirror iCloud libraries with icloudpd and ingest them
-  demo/                104 CC0 photos as a ready-made library (`embed.py serve --demo`)
-  tests/test_poc.py    end to end on a synthetic Takeout + iCloud + Flickr export
-  tests/test_sync.py   the change feed: full fetch, deltas, deletions, resuming, restart
-  tests/test_changes.py  change sets: propose 50 photos, mark the ones to keep, apply, undo; hidden photos are in no view
-  tests/test_mcp.py    the MCP endpoint: handshake, finding photos, proposing a change set; an agent cannot apply one
-  tests/test_tasks.py  tasks: a request handed to the agent on this computer, with a stand-in for Claude Code
-  tools/               demo builder, screenshots, icon maker, speed benchmarks
-  tools/aesthetics/    making the scorers: score a sample, judge pairs, train the taste scorer
-  deploy/              running the app as an always-on service (launchd agents, Mac mini guide)
-  PLAN.md              the overall plan and phases
-  DISK-SETUP.md        choosing and preparing storage, the overnight pull, checking the archive
-  TAGGING-RESEARCH.md  the tiered tagging pipeline (what comes after embeddings)
-  PERFORMANCE.md       where the photo app's time goes, and open tasks
-  BENCHMARK.md         library stats and the benchmark set used to compare models
-```
+Nearly all of this code was written by [Claude Code](https://claude.com/claude-code): 133 of the first
+159 commits name a Claude model as co-author, over nine days. One person decided what to build, looked
+at the result, and merged. Much of the web app was worked on from a phone:
+
+1. In the Claude app, start a cloud session on this repository and say what you want ("the album page
+   should say how many photos it has").
+2. The session changes the code, runs the tests and the app on the demo library, and looks at its own
+   screenshots in light and dark mode.
+3. It pushes a branch with [`tools/cloud-preview.sh`](photo-estate/tools/cloud-preview.sh); a Mac mini
+   at home serves the newest pushed branch on the demo library, on the tailnet, as a user that can
+   reach nothing else. You open it in the phone's browser and try it.
+4. You say what's wrong; it pushes again. Then it opens a pull request, and you merge it from the
+   GitHub app.
+
+What makes that work is mostly ordinary good practice: a thirty-line [CLAUDE.md](CLAUDE.md), a demo
+library in the repository so no session needs your photos, no setup step (`uv run` and inline
+dependencies), tests that are self-running scripts, and one file per feature. What doesn't work from a
+phone yet: building the iPhone app (it needs Xcode on a Mac), touching the real library, and deploying.
+[Chapter 27](docs/book/27-built-with-claude.md) tells the whole story, and
+[deploy/CLOUD-SESSIONS.md](photo-estate/deploy/CLOUD-SESSIONS.md) is the setup, step by step.
+
+## Documentation
+
+- **[The book](https://jflam.github.io/photo-estate/)** ([source](docs/book/README.md)): how every piece
+  works, 27 chapters and three appendices. [Chapter 2](docs/book/02-code-tour.md) is the map of the
+  code, with line counts; [appendix A](docs/book/appendix-a-commands.md) every command;
+  [appendix B](docs/book/appendix-b-http-api.md) the HTTP API.
+- **[docs/README.md](docs/README.md)**: every other document (guides, plans, research and
+  measurements) and where it lives.
+
+In round numbers the project is 22,000 lines of code: a 7,100-line Python server, 4,300 lines of web
+pages, a 5,300-line iPhone app, and 5,000 lines of tests and tools.
 
 ## What's next
 
-Roughly in order. Each one is independent.
+The backlog is the [open issues](https://github.com/jflam/photo-estate/issues?q=is%3Aissue+is%3Aopen+label%3Abacklog).
+Roughly in order, the larger ones:
 
-1. **Dates in a search.** "ben 2019", "christmas 2019" and "summer 2022" should become date
-   filters the way names and places do. Today the year goes to the image model, which can't read
-   dates.
-2. **Score search on real queries.** A small page that shows the top results of searches from the
-   query log and lets you mark the wrong ones, giving a score that every later change to search is
-   checked against, instead of judging by eye.
-3. **A bigger image model.** Compare SigLIP 2 so400m with the base model on that score. Switching
-   means embedding every photo again (overnight or longer on a CPU), and re-measuring the match
-   floor and window.
-4. **Text in photos.** OCR (PP-OCRv5) on photos that look like documents, receipts, signs and
-   screenshots, with the text added to search.
-5. **Videos.** Most videos from a phone are Live Photo clips that duplicate their still; the rest
-   need keyframes embedded so they show up in search, and faces found in them. The catalog the
-   phone syncs holds stills only, so the iPhone app shows no videos at all: neither the ones on the
-   server nor the ones on the phone that haven't been uploaded yet (it does show those for photos).
-   Videos need to be in the sync feed, play in the viewer, and join the phone's not-yet-uploaded list.
-6. **Event captions.** A local vision-language model writing one caption per event ("Matthew's
-   10th birthday at home"), so every photo in it can be found by the occasion.
-7. **Backups of the store.** The app already copies the catalog on a schedule. The store only ever
-   grows, which makes `rsync` to a second disk or `restic` to a bucket simple; a command that sets
-   one up and checks it would make it the default rather than something to remember.
-8. **Less memory.** The app uses about 1.7 GB serving 100k photos; the open tasks in
-   [PERFORMANCE.md](photo-estate/PERFORMANCE.md) cover that and faster restarts.
+1. **Dates in a search** ([#16](https://github.com/jflam/photo-estate/issues/16)): "ben 2019" and
+   "summer 2022" should become date filters the way names and places do.
+2. **Score search on real queries** ([#17](https://github.com/jflam/photo-estate/issues/17)), so every
+   later change to search is measured rather than judged by eye; then **a bigger image model**
+   ([#18](https://github.com/jflam/photo-estate/issues/18)).
+3. **Text in photos** ([#19](https://github.com/jflam/photo-estate/issues/19)): OCR on documents,
+   receipts, signs and screenshots.
+4. **Videos** ([#20](https://github.com/jflam/photo-estate/issues/20)): in search, with faces, and in the
+   iPhone app, which shows no videos at all yet.
+5. **Event captions** ([#21](https://github.com/jflam/photo-estate/issues/21)) from a local
+   vision-language model.
+6. **Backups of the store** ([#22](https://github.com/jflam/photo-estate/issues/22)) and **less memory**
+   ([#23](https://github.com/jflam/photo-estate/issues/23); the app uses about 1.7 GB for 100k photos).
 
 ## Contributing
 
@@ -466,24 +392,27 @@ work on the app without any photos of your own.
 
 ```bash
 cd photo-estate
-uv run tests/test_poc.py          # end-to-end test; no accounts or models needed
-uv run embed.py serve --demo      # the app on the demo library
+for t in tests/*.py; do uv run "$t" || break; done   # all 14 test scripts; no accounts or models needed
+uv run embed.py serve --demo                          # the app on the demo library
 ```
 
 Good places to start:
 
-- **Anything in [What's next](#whats-next).** Dates in a search is the smallest.
-- **Open performance tasks** in [PERFORMANCE.md](photo-estate/PERFORMANCE.md), each written up
+- **Anything in [What's next](#whats-next)**, or any [open issue](https://github.com/jflam/photo-estate/issues). Dates in a search is the smallest.
+- **Open performance tasks** in [PERFORMANCE.md](docs/notes/PERFORMANCE.md), each written up
   so it can be picked up as-is.
-- **Not yet supported:** RAW files and videos aren't embedded yet, and faces in them aren't found;
-  the iPhone app doesn't show videos (item 5 of [What's next](#whats-next)).
+- **Not yet supported:** RAW files and videos aren't embedded yet, and faces in them aren't found
+  ([#34](https://github.com/jflam/photo-estate/issues/34), [#20](https://github.com/jflam/photo-estate/issues/20));
+  the iPhone app doesn't show videos.
 - **The next tagging tiers** (captions, objects, OCR) are designed in
-  [TAGGING-RESEARCH.md](photo-estate/TAGGING-RESEARCH.md).
-- **More sources:** Amazon Photos, OneDrive, Dropbox, or a phone's camera roll would each be a new
-  set of sidecar rules in `estate.py link`.
+  [TAGGING-RESEARCH.md](docs/notes/TAGGING-RESEARCH.md).
+- **More sources:** Google Drive, Dropbox, OneDrive and iCloud from the setup page are each a new
+  module in `intake/sources/` ([#35](https://github.com/jflam/photo-estate/issues/35),
+  [#36](https://github.com/jflam/photo-estate/issues/36)); `local.py` is the simplest example.
 - **Better demo photos:** `demo/photos.json` is the list; `uv run tools/make_demo.py` rebuilds it.
 
-Each script declares its own dependencies inline, so there's no environment to set up. Please keep
+Each script declares its own dependencies inline, so there's no environment to set up. If you work with
+Claude Code, [CLAUDE.md](CLAUDE.md) already tells it how to run the app and the tests. Please keep
 the archive's promise in any change: files are only added, never modified or deleted, and the
 catalog stays readable without this code.
 

@@ -2,7 +2,7 @@
 
 `embed.py serve` is the product: a local web server that holds your whole library in memory and
 answers every search, filter and thumbnail request in milliseconds. It is one function,
-`cmd_serve`, about 660 lines, built from closures over a handful of NumPy arrays. This chapter takes
+`cmd_serve`, about 1,640 lines (660 when this chapter was first written), built from closures over a handful of NumPy arrays. This chapter takes
 it apart: what it loads, how it is laid out in memory, how a request becomes a response, and the
 engineering that makes it feel instant even when the photos live on a USB hard disk.
 
@@ -313,7 +313,7 @@ flowchart TD
 
 ## HTTP engineering
 
-All from measurements in [PERFORMANCE.md](../../photo-estate/PERFORMANCE.md):
+All from measurements in [PERFORMANCE.md](../notes/PERFORMANCE.md):
 
 | Setting | Why |
 |---|---|

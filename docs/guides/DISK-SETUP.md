@@ -1,6 +1,6 @@
 # Storage: choosing it, preparing it, filling it
 
-The estate needs two places (see [Where it runs](../README.md#where-it-runs) in the README):
+The estate needs two places (see [Where it runs](../../README.md#where-it-runs) in the README):
 
 - a **store** for the photos themselves: any directory, local or on the network
 - a **local disk** for the catalog (`estate.db`) and the app's thumbnail cache
@@ -36,7 +36,7 @@ sudo mdutil -i off /Volumes/estate     # optional: stop Spotlight indexing 120k 
 ```
 
 It mounts at `/Volumes/estate`. A background service reading it will trigger a one-time macOS
-permission dialog; see [deploy/MAC-MINI.md](deploy/MAC-MINI.md).
+permission dialog; see [deploy/MAC-MINI.md](../../photo-estate/deploy/MAC-MINI.md).
 
 ### Linux, btrfs (my first setup)
 

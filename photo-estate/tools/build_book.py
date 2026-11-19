@@ -45,6 +45,7 @@ GROUPS = [
     ("The iPhone app", ["19-iphone-app", "20-sync", "21-offline-search", "22-photos-on-the-phone",
                         "23-native-interface", "24-uploading"]),
     ("Choosing the best", ["25-best-photos"]),
+    ("Agents", ["26-albums-and-agents", "27-built-with-claude"]),
     ("Appendices", ["appendix-a-commands", "appendix-b-http-api", "appendix-c-glossary"]),
 ]
 

@@ -16,7 +16,7 @@ flowchart LR
       CAT[("catalog.db<br/>a replica of the catalog")]
       TH[("thumbs.db<br/>every thumbnail")]
       FULL["full/preview, full/large<br/>kept photos, size-capped"]
-      UI["Library and Search<br/>(SwiftUI + UIKit)"]
+      UI["Library, Albums and Search<br/>(SwiftUI + UIKit)"]
       EXT["Upload extension<br/>(iOS 27 background upload)"]
       UI --> CAT & TH & FULL
     end
@@ -61,8 +61,10 @@ The cost of a copy is that it can be wrong. The design makes that cheap:
 > there are no conflicts to resolve, and the replica can always be thrown away and fetched again.
 
 This is the same stance as the archive itself (chapter 1: files are only added, never modified). The
-phone never changes a favourite, a name or an album; what you decide on the Mac, the phone learns on
-its next sync. Everything in the app's folder is marked **excluded from iCloud backup**, because the
+phone never writes its copy. When you make a photo a favourite or an album from a search on the phone,
+the phone asks the server to do it ([API.swift](../../ios/PhotoEstate/Catalog/API.swift); chapter 26),
+and learns the result on its next sync, like anything decided on the Mac. With no network those
+buttons say so and do nothing. Everything in the app's folder is marked **excluded from iCloud backup**, because the
 server has all of it.
 
 ## The pieces
@@ -74,30 +76,38 @@ ios/
   Shared/                Server.swift (the address), UploadRequest.swift, ExtensionStatus.swift
   UploadExtension/       the background upload extension: queues a job per new photo
   PhotoEstate/
-    PhotoEstateApp, ContentView        two tabs: Library and Search
+    PhotoEstateApp, ContentView        three tabs: Library, Albums and Search
     Design.swift                       ink, paper, a low sun: the look
     Catalog/   SyncEngine, Catalog, SQLite, Query     the replica, and reading a search
+               Screenshots, API                       which photos are screenshots; asking the server
     Images/    ImageStore, Downloader                 thumbnails and kept photos
-    Library/   LibraryModel, Grid, Viewer, SearchView, FilterSheet, LibraryView
+    Library/   LibraryModel, Grid, Viewer, LibraryView, SearchView, FilterSheet
+               Albums                                 the Albums tab (chapter 26)
+               LocalPhotos, OnPhone                   the phone's own photos, in the Library and the viewer
     ThisPhoneView, UploadsView, ForegroundUploader    what the phone keeps, and sending
+    WebView                                           a server page inside the app (an album's review)
 ```
 
 | Area | Files | Swift lines (code) |
 |---|---|---:|
-| Catalog (replica, SQL wrapper, query reading) | 4 | 764 |
-| Images (thumbnail store, downloader) | 2 | 285 |
-| Library (grid, viewer, search, filters) | 6 | 1,865 |
+| Catalog (replica, SQL wrapper, query reading, screenshots, server API) | 6 | 934 |
+| Images (thumbnail store, downloader) | 2 | 306 |
+| Library (grid, viewer, Library and Search tabs, albums, filters, the phone's own photos) | 9 | 3,478 |
 | Uploads (extension, request, foreground uploader, status, view) | 5 | 355 |
-| App shell, design, settings, server address | 6 | 212 |
-| **Total** | **23** | **3,481** (4,093 with comments and blanks) |
+| App shell, design, This iPhone, web view, server address | 6 | 227 |
+| **Total** | **28** | **5,300** (6,294 with comments and blanks) |
 
-Its server-side counterparts are small: [sync.py](../../photo-estate/sync.py) (92 lines of code),
-[upload.py](../../photo-estate/upload.py) (280), and a few dozen lines in `embed.py`.
+Measured on 2026-11-19. When this chapter was first written (2026-11-14) the app was 23 files and
+3,481 lines; the Albums tab, the phone's own photos in the Library, best first, stacks and
+favourites came after.
+
+Its server-side counterparts are small: [sync.py](../../photo-estate/sync.py) (96 lines of code),
+[upload.py](../../photo-estate/upload.py) (312), and a few dozen lines in `embed.py`.
 
 Two decisions about the code itself:
 
 - **No third-party packages.** SQLite is the system library (`import SQLite3`), the network is
-  `URLSession`, the JSON is `JSONSerialization`. A small wrapper, `SQLite.swift` (144 lines), gives
+  `URLSession`, the JSON is `JSONSerialization`. A small wrapper, `SQLite.swift` (146 lines), gives
   prepared statements (up to 64 kept for reuse) and a `Store` that pairs one writing and one reading
   connection, each on its own queue (WAL lets them overlap), so nothing touches the database on the
   main thread. The app has nothing to update but itself.
@@ -124,7 +134,7 @@ Because the web app has no authentication of its own (chapter 16), the app inher
 
 ## Starting up
 
-`ContentView` is two tabs. Every time the app becomes active it does three things in order:
+`ContentView` is three tabs (Library, Albums, Search). Every time the app becomes active it does three things in order:
 
 1. `ImageStore.retryNetwork()`: forget that the server was unreachable a moment ago.
 2. `SyncEngine.sync()`: ask the server what changed (chapter 20).
@@ -158,7 +168,7 @@ behaves.
 
 | Topic | File |
 |---|---|
-| The app's two tabs and what happens on launch | [ContentView.swift](../../ios/PhotoEstate/ContentView.swift) |
+| The app's three tabs and what happens on launch | [ContentView.swift](../../ios/PhotoEstate/ContentView.swift) |
 | The server address | [Shared/Server.swift](../../ios/Shared/Server.swift) |
 | The project definitions | [project.yml](../../ios/project.yml), [project-sim.yml](../../ios/project-sim.yml) |
 | The SQLite wrapper | [Catalog/SQLite.swift](../../ios/PhotoEstate/Catalog/SQLite.swift) |
