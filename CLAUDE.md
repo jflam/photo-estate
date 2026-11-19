@@ -16,6 +16,8 @@ dependencies, a plain HTTP server and SQLite), and an iPhone app in `ios/` (need
 
 ## In a cloud session (Claude Code on the web)
 
+- `photo-estate/deploy/CLOUD-SESSIONS.md` says what a cloud session can and cannot do: it cannot reach
+  the Mac mini or the real library, and merging a pull request does not deploy.
 - If `uv run photo-estate/embed.py --help` is slow or the search model is missing, run
   `bash photo-estate/tools/cloud-setup.sh` once.
 - **When the work is ready for a person to try, or they ask to see or try the app, commit it to a
