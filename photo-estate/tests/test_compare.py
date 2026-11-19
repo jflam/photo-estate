@@ -116,14 +116,15 @@ with tempfile.TemporaryDirectory() as tmp:
     finally:
         stop(app)
 
-    app, base = start()                              # without the flag: no experiment
-    try:
-        assert call(base, "/api/compare/info")[0] == 404
+    for extra in ([], ["--compare-vectors", str(Path(tmp) / "missing")]):   # no flag, or no vectors: no experiment
+        app, base = start(*extra)                    # (and the app still starts)
         try:
-            urllib.request.urlopen(base + "/compare")
-            raise AssertionError("/compare is served without --compare-vectors")
-        except urllib.error.HTTPError as e:
-            assert e.code == 404
-    finally:
-        stop(app)
+            assert call(base, "/api/compare/info")[0] == 404, extra
+            try:
+                urllib.request.urlopen(base + "/compare")
+                raise AssertionError(f"/compare is served with {extra}")
+            except urllib.error.HTTPError as e:
+                assert e.code == 404
+        finally:
+            stop(app)
 print("compare: ok")

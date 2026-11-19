@@ -251,6 +251,22 @@ default-deny, so two grants cover the Mac mini, both added 2026-11-11:
 Both have tests in the policy, so a later edit that breaks them is refused on save. Pick a port
 for the app that no other service on the machine uses.
 
+## Comparing a second model (`/compare`)
+
+The app also serves `/compare` ([chapter 10](../../docs/book/10-embeddings.md#trying-a-bigger-model-compare)):
+each search ranked by the app's model and by SigLIP 2 large (384 px) side by side, unlabelled, with a vote.
+It needs two things the app does not make itself:
+
+| | |
+|---|---|
+| The second model's vectors | `~/photo-estate-lab/siglip2-large-384/vectors` (`--compare-vectors` in the plist), made by `tools/export_squares.py` here and `tools/embed_squares.py` on a machine with a fast GPU, about 170 MB for 83,000 photos |
+| Its text side | `google/siglip2-large-patch16-384` in `~/.cache/huggingface` (3.5 GB; the agent runs with `HF_HUB_OFFLINE=1`, so download it first: `uvx --from huggingface_hub hf download google/siglip2-large-patch16-384`) |
+| Votes | `votes.jsonl` beside the vectors |
+
+The large model's text side takes about 2 GB of memory and loads after the app's own. Without the vectors
+folder the app starts as usual and logs that `/compare` is off. To stop the experiment, take the two
+`--compare-vectors` lines out of the plist and restart.
+
 ## Photos uploaded from the phone
 
 The photo app accepts `PUT /api/upload/<YYYY/MM/DD/name>` and saves files into `/Volumes/estate/iphone`

@@ -12,6 +12,7 @@
     <string>--store</string><string>/Volumes/estate/store</string>
     <string>--fast-cache</string><string>/Users/jflam/Library/Caches/photo-estate</string>
     <string>--backup-dir</string><string>/Volumes/estate/catalog-backups</string>
+    <string>--compare-vectors</string><string>/Users/jflam/photo-estate-lab/siglip2-large-384/vectors</string>
   </array>
   <key>WorkingDirectory</key><string>/Users/jflam/src/photo-estate/photo-estate</string>
   <key>EnvironmentVariables</key>
