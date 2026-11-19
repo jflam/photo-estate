@@ -129,9 +129,9 @@ try:
     as_task = {"X-Estate-Task": "7"}
     assert tool("submit_task", {"request": "again"}, headers=as_task)["code"] == -32602
     listed = http("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, headers=as_task)["result"]["tools"]
-    assert len(listed) == 8 and not [x for x in listed if "task" in x["name"]]
+    assert len(listed) == 13 and not [x for x in listed if "task" in x["name"]]
     proxied = {**as_task, "X-Forwarded-For": "100.64.0.9"}   # through `tailscale serve`: an ordinary caller
-    assert len(http("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, headers=proxied)["result"]["tools"]) == 11
+    assert len(http("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, headers=proxied)["result"]["tools"]) == 16
 
     # one at a time: the second waits; a running task can be stopped, and one waiting can be withdrawn
     slow = http("/api/tasks", {"prompt": "sleep on it"}, expect=201)["id"]

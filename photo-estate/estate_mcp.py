@@ -37,7 +37,16 @@ the score at several ranks, the years they come from, how many have a named pers
 plain descriptions find more than one clever one. similar_photos finds photos that look like one you
 have.
 
-Changing. Nothing you do changes what the library shows. To hide photos, create a change set, add
+Albums. An album is a named set of photos that the person sees in the app's Albums tab. Making one changes
+nothing else about the library, so you make and fill albums directly: create_album, then amend_album to
+add photos by id or by search, each call optionally under a `section` (a heading in the album: a year, a
+person, a place) and with a `reason`. For "the best five of X for every year", search each year with
+order "best" and distinct true, and add the top five under that year's section. With a `search`,
+create_album makes a live album instead: whatever that search finds, now and later. Give the person the
+album's `view` link when it is ready.
+
+Changing. Nothing you do changes what the library shows. A change set is an album put up for hiding (propose_hiding does that
+to one you have made). To hide photos, create a change set, add
 photos to it (by id, or everything a search finds), and give the person its review link: they look it
 over, keep the photos that should not be hidden, and apply it themselves. Each photo you add should
 carry a short reason a person can read. If a set has been reviewed, get_change_set tells you which
@@ -64,10 +73,13 @@ FILTERS = {
     "favorite": {"type": "boolean", "description": "Only favourites."},
     "screenshots": {"type": "boolean", "description": "false leaves screenshots out."},
     "hidden_only": {"type": "boolean", "description": "Only photos a change set has hidden. Without it, hidden photos are never found."},
+    "distinct": {"type": "boolean", "description": "true leaves out near-identical shots of a photo already found: of each such group, only its top photo."},
 }
 SEARCH = {
     "query": {"type": "string", "description": "What the photo shows, in plain words. Without it, photos come newest first with no score."},
     "min_score": {"type": "number", "description": "Keep photos scoring at least this. Without it, the app's own rule: near the best match and above its floor."},
+    "order": {"type": "string", "enum": ["match", "best"],
+              "description": "'best': the best photos first, by the library's own quality score (how good a photograph it is, not how well it matches); each photo's `score` is then that quality. Default 'match': by the query, or newest first without one."},
     **FILTERS,
 }
 PAGE = {
@@ -122,6 +134,36 @@ class Tools:
                                        "description": "Take out every photo of the set that this search finds."},
                      "reason": {"type": "string", "description": "Why these photos, for the person reviewing; set on the photos added by this call."}},
                     ["change_set"]), self.amend_set),
+            ("list_albums", False,
+             "Every album, newest first: its title, how many photos, whether it is a live search, and whether it is up for hiding.",
+             schema({}), self.albums),
+            ("get_album", False,
+             "One album: its sections and a page of its photos in order, each with its section and reason.",
+             schema({"album": {"type": "integer"}, **PAGE}, ["album"]), self.get_album),
+            ("create_album", True,
+             "Make an album: a named set of photos the person sees in the Albums tab. Empty until amend_album adds photos. With `search`, a live album instead: whatever that search finds, now and later.",
+             schema({"title": {"type": "string", "description": "A few words a person will recognise it by."},
+                     "prompt": {"type": "string", "description": "What was asked for, and how you chose the photos, in a sentence or two. Shown under the title."},
+                     "search": {**schema(find), "description": "Makes it a live album of what this search finds."}},
+                    ["title"]), self.create_album),
+            ("amend_album", True,
+             "Add photos to an album or take them out, by id or by search (the first `max` it finds, in its order). Photos added by one call go under `section`, if given, in the order given.",
+             schema({"album": {"type": "integer"},
+                     "add_ids": {"type": "array", "items": {"type": "string"}},
+                     "add_search": {**schema({**find, "like": {"type": "string", "description": "A photo id: rank by likeness to it instead of by `query`."},
+                                              "max": {"type": "integer", "description": "At most this many (default and limit 20000)."}}),
+                                    "description": "Add what this search finds."},
+                     "remove_ids": {"type": "array", "items": {"type": "string"}},
+                     "remove_search": {**schema({**find, "like": {"type": "string"}, "max": {"type": "integer"}}),
+                                       "description": "Take out every photo of the album that this search finds."},
+                     "section": {"type": "string", "description": "A heading within the album for the photos this call adds, e.g. a year."},
+                     "reason": {"type": "string", "description": "Why these photos, in a few words a person can read."},
+                     "title": {"type": "string", "description": "Rename the album."},
+                     "prompt": {"type": "string"}},
+                    ["album"]), self.amend_album),
+            ("propose_hiding", True,
+             "Put an album up for hiding: it becomes a change set the person reviews and applies. Nothing is hidden until they do.",
+             schema({"album": {"type": "integer"}}, ["album"]), self.hide_album),
             ("submit_task", True,
              "Hand a request to the agent that runs on the library's own computer. It works out which photos are meant and proposes a change set for the person to review. Returns at once with a task number; the work takes minutes. One task runs at a time.",
              schema({"request": {"type": "string", "description": "What the person wants, in their own words, with anything they said about which photos and which not."}},
@@ -219,6 +261,54 @@ class Tools:
     def photos(self, args):
         return {"photos": self.rows([str(s) for s in args["ids"]][:200])}
 
+    # -- albums ----------------------------------------------------------------------------------
+
+    def album_brief(self, s: dict) -> dict:
+        out = {"album": s["id"], "title": s["title"], "photos": s["n"], "live": s["kind"] == "live" or None,
+               "search": s["query"], "view": f"/?album={s['id']}"}
+        if s["op"] == "hide":
+            out.update(up_for_hiding=True, state=s["state"], hidden_now=s["applied"], review=f"/changes/{s['id']}")
+        return {k: v for k, v in out.items() if v is not None}
+
+    def albums(self, args):
+        return {"albums": [self.album_brief(s) for s in self.app.changes.listing(albums=True)["sets"]]}
+
+    def get_album(self, args):
+        limit, at = max(1, min(int(args.get("limit") or 20), 200)), max(0, int(args.get("offset") or 0))
+        got = self.app.changes.photos(int(args["album"]), at, limit)
+        if got is None:
+            raise ValueError("no such album")
+        extra = {r["sha"]: {k: r[k] for k in ("section", "reason") if r.get(k)} for r in got["results"]}
+        return {**self.album_brief(got["album"]), "prompt": got["album"]["prompt"], "sections": got["sections"],
+                "photos": [{**row, **extra.get(row["id"], {})} for row in self.rows([r["sha"] for r in got["results"]])],
+                "next_offset": got["next"]}
+
+    def create_album(self, args, who=""):
+        got, code = self.app.changes.create({"title": args.get("title"), "prompt": args.get("prompt"), "op": "view",
+                                             **({"query": args["search"]} if args.get("search") is not None else {})}, who)
+        if code >= 400:
+            raise ValueError(got["error"])
+        return {**self.album_brief(got), "next": "amend_album adds photos; then give the person the view link"
+                if got["kind"] != "live" else "it holds what the search finds; give the person the view link"}
+
+    def amend_album(self, args, who=""):
+        sid = int(args["album"])
+        if args.get("title") or "prompt" in args:
+            got, code = self.app.changes.write(sid, "rename", {k: args[k] for k in ("title", "prompt") if k in args})
+            if code >= 400:
+                raise ValueError(got["error"].replace("change set", "album"))
+            if not any(args.get(k) for k in ("add_ids", "add_search", "remove_ids", "remove_search")):
+                return self.album_brief(got)
+        out = self.amend_set({**args, "change_set": sid}, who)
+        return {**{k: v for k, v in out.items() if k not in ("change_set", "state", "hidden_now", "kept_by_person", "review")},
+                "album": sid, "view": f"/?album={sid}"}
+
+    def hide_album(self, args, who=""):
+        got, code = self.app.changes.write(int(args["album"]), "hide", {})
+        if code >= 400:
+            raise ValueError(got["error"].replace("change set", "album"))
+        return {**self.album_brief(got), "next": "give the person the review link: they look it over and apply it"}
+
     # -- change sets -----------------------------------------------------------------------------
 
     def brief(self, s: dict) -> dict:
@@ -226,7 +316,7 @@ class Tools:
                 "hidden_now": s["applied"], "kept_by_person": s["reject"], "review": f"/changes/{s['id']}"}
 
     def sets(self, args):
-        return {"change_sets": [self.brief(s) for s in self.app.changes.listing()["sets"]]}
+        return {"change_sets": [self.brief(s) for s in self.app.changes.listing()["sets"]]}   # (albums up for hiding)
 
     def get_set(self, args):
         d = self.app.changes.detail(int(args["change_set"]))
@@ -256,7 +346,7 @@ class Tools:
         return [{"sha": s, "score": scores[i] if scores else None, "reason": why} for i, s in enumerate(ids[:n])], len(ids)
 
     def amend_set(self, args, who=""):
-        sid, reason = int(args["change_set"]), args.get("reason")
+        sid, reason, section = int(args["change_set"]), args.get("reason"), args.get("section")
         items = [{"sha": str(s), "reason": reason} for s in args.get("add_ids") or []]
         out = {}
         if args.get("add_search"):
@@ -266,6 +356,8 @@ class Tools:
         if args.get("remove_search"):
             got, out["remove_search_matched"] = self.found(args["remove_search"], None)
             remove += [it["sha"] for it in got]
+        for it in items:
+            it["section"] = section
         got, code = self.app.changes.write(sid, "items", {"items": items, "remove": remove})
         if code >= 400:
             raise ValueError(got["error"])
