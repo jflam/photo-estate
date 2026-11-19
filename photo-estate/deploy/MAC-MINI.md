@@ -167,10 +167,11 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jflam.photo-preview-
 tailscale serve --bg --https=8768 http://127.0.0.1:8768
 ```
 
-The cloud environment needs, besides the secret: `PHOTO_ESTATE_PREVIEW_URL` (the address above, which
-the script prints for the person), and a network policy that allows `tailcat.dev` and `tc302a.ipn.dev`
-(the relay of region `sfo`), plus `github.com` and `release-assets.githubusercontent.com` when the
-environment is built (`cloud-setup.sh` downloads tailcat). With a default-deny tailnet policy, port
+The cloud environment's settings, then: under Environment variables, `PHOTO_ESTATE_PREVIEW_KEY` (the
+key file as one line of base64: `base64 < photo-estate-preview.private.json`) and
+`PHOTO_ESTATE_PREVIEW_URL` (the address above, which the script prints for the person); under Network
+access, Limited, with `tailcat.dev` and `tc302a.ipn.dev` (the relay of region `sfo`) added to the
+allowed domains. `cloud-setup.sh` downloads tailcat from GitHub, which Limited already allows. With a default-deny tailnet policy, port
 8768 needs its own grant, like 8766 and 8767.
 
 `tailcat forward` does not find a server again after the server has restarted, which is why the mini

@@ -10,8 +10,10 @@
 #   bash photo-estate/tools/cloud-preview.sh --stop      stop both
 #
 # The environment gives it, as secrets:
-#   PHOTO_ESTATE_PREVIEW_KEY   the contents of the saved server key (photo-estate-preview.private.json).
-#                              The mini knows this key's address, so it must be this key.
+#   PHOTO_ESTATE_PREVIEW_KEY   the saved server key (photo-estate-preview.private.json), as base64 on one
+#                              line (`base64 < the-file`), which an environment's KEY=value settings
+#                              take as it is; the file's own JSON is taken too. The mini knows this
+#                              key's address, so it must be this key.
 #   PHOTO_ESTATE_PREVIEW_URL   where a person opens the preview (the mini's tailnet address); only
 #                              printed, and not kept here because this repository is public.
 # Only the demo library is ever served, and only the mini can connect (--allow).
@@ -55,7 +57,11 @@ esac
 
 [ -n "${PHOTO_ESTATE_PREVIEW_KEY:-}" ] || { echo "PREVIEW NOT STARTED: this environment has no PHOTO_ESTATE_PREVIEW_KEY (see deploy/MAC-MINI.md, \"A preview of a cloud session\")"; exit 1; }
 install_tailcat || { echo "PREVIEW NOT STARTED: no tailcat"; exit 1; }
-mkdir -p "$STATE" && (umask 077; printf '%s' "$PHOTO_ESTATE_PREVIEW_KEY" > "$KEY_FILE")
+mkdir -p "$STATE" && (umask 077; case "$PHOTO_ESTATE_PREVIEW_KEY" in
+    "{"*) printf '%s' "$PHOTO_ESTATE_PREVIEW_KEY" ;;
+    *) printf '%s' "$PHOTO_ESTATE_PREVIEW_KEY" | base64 -d ;;
+esac > "$KEY_FILE")
+grep -q '"' "$KEY_FILE" || { echo "PREVIEW NOT STARTED: PHOTO_ESTATE_PREVIEW_KEY is not the key file's contents, or its base64"; exit 1; }
 
 # the app: started again each time, so it is this checkout as it is now (a page edit alone needs no restart)
 stop; sleep 1
