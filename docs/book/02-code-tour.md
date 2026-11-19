@@ -13,9 +13,9 @@ leaving out the checked-in demo library and every Markdown file:
 | **iPhone app** (Swift, plus `deploy.sh`) | 29 | 5,317 |
 | Shell scripts the pipeline runs (`pull-drive.sh`, `pull-icloud.sh`, `ingest-iphone.sh`) | 3 | 126 |
 | Tests (`tests/`, each a self-running script) | 15 | 2,098 |
-| Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts) | 23 | 2,913 |
+| Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts, square export) | 24 | 3,072 |
 | The cloud preview on the Mac mini (`deploy/*.sh`) | 4 | 330 |
-| **Total** | **109** | **22,406** |
+| **Total** | **110** | **22,565** |
 
 The web pages' 4,260 lines are 2,886 of JavaScript, 865 of CSS and 509 of HTML markup. What you run
 (the server, its pages, the iPhone app and the three pipeline scripts) is **17,065 lines of code**:
@@ -92,7 +92,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
   ingest-iphone.sh      45  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
   tests/             2,098  15 self-running test scripts (chapter 17)
-  tools/             2,913  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh
+  tools/             3,072  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh,
+                            export_squares.py (the Library as square JPEGs in tar shards, for embedding experiments)
   deploy/              330  launchd plists, the cloud preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
   demo/                     104 CC0 photos, their catalog, and credits
 
