@@ -12,7 +12,15 @@ REMOTE=8767
 addr="$(cat "$ADDR_FILE" 2>/dev/null)"
 [ -n "$addr" ] || { echo "no tailcat address in $ADDR_FILE"; exit 1; }
 pid=
-trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; exit 0' TERM INT
+stop_forward() {   # a forward that has lost its server does not always end when asked to: then it is made to
+    [ -n "$pid" ] || return 0
+    kill "$pid" 2>/dev/null
+    for _ in 1 2 3; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    kill -9 "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    pid=
+}
+trap 'stop_forward; exit 0' TERM INT
 
 up=0
 while true; do
@@ -31,6 +39,5 @@ while true; do
     done
     [ "$up" = 0 ] || echo "$(date '+%F %T') the cloud session has gone"
     up=0
-    kill "$pid" 2>/dev/null
-    wait "$pid" 2>/dev/null
+    stop_forward
 done
