@@ -429,19 +429,16 @@ def cmd_serve(a) -> None:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             except ValueError:
                 body = None
-            try:
-                if u.path == "/mcp":
-                    return self.mcp_route("POST", body)
-                if u.path == "/api/favorite":
-                    return self.favorite(body)
-                if intake and u.path.startswith("/api/intake"):
-                    return self.intake_route("POST", u, parse_qs(u.query), body)
-                if self.changes_route("POST", u, parse_qs(u.query), body):
-                    return
-                if not self.people_page("POST", u, parse_qs(u.query), body):
-                    self.send(404, b"not found", "text/plain")
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+            if u.path == "/mcp":
+                return self.mcp_route("POST", body)
+            if u.path == "/api/favorite":
+                return self.favorite(body)
+            if intake and u.path.startswith("/api/intake"):
+                return self.intake_route("POST", u, parse_qs(u.query), body)
+            if self.changes_route("POST", u, parse_qs(u.query), body):
+                return
+            if not self.people_page("POST", u, parse_qs(u.query), body):
+                self.send(404, b"not found", "text/plain")
 
         def favorite(self, body):
             """POST /api/favorite {sha, fav}: a photo is, or is no longer, a favourite. It changes what
@@ -476,10 +473,14 @@ def cmd_serve(a) -> None:
             self.reply(admin.handle("OPTIONS", urlparse(self.path).path, {}, None))
 
         def upload(self):
-            """PUT or POST /api/upload/...: one file from the phone (admin.py)."""
-            self.close_connection = True   # until admin says the body was read
-            got, self.close_connection = admin.upload(self.command, urlparse(self.path).path, self.headers, self.rfile,
-                                                      self.who(), self.allowed())
+            """PUT or POST /api/upload/...: one file from the phone (admin.py). The connection stays open
+            only if the client wants it to (no `Connection: close`) *and* admin read the whole body: an
+            early answer leaves the body on the wire, where it would be read as the next request."""
+            client_closes = self.close_connection   # parse_request set it from `Connection: close` or HTTP/1.0
+            self.close_connection = True            # until admin says the body was read
+            got, unread = admin.upload(self.command, urlparse(self.path).path, self.headers, self.rfile,
+                                       self.who(), self.allowed())
+            self.close_connection = client_closes or unread
             self.reply(got)
 
         def download(self, sid: int):
@@ -517,44 +518,41 @@ def cmd_serve(a) -> None:
             u = urlparse(self.path)
             qs = parse_qs(u.query)
             one = lambda k, d="": (qs.get(k) or [d])[0]
-            try:
-                if m := re.fullmatch(r"/api/albums/(\d+)/download", u.path):
-                    return self.download(int(m[1]))
-                if intake and u.path.startswith(("/setup", "/api/intake")):
-                    return self.intake_route("GET", u, qs, None)
-                if self.people_page("GET", u, qs, None) or self.changes_route("GET", u, qs, None):
-                    return
-                if u.path == "/mcp":
-                    return self.mcp_route("GET", None)
-                if u.path in ("/", "/index.html"):  # revalidated each load, so edits show up at once
-                    body = pages.page("search.html")
-                    return self.send(200, body, "text/html; charset=utf-8", "no-cache",
-                                     etag=f'"{hashlib.md5(body).hexdigest()}"')
-                got = (browse.handle("GET", u.path, qs, None, self.headers)
-                       or admin.handle("GET", u.path, qs, None, self.who(), self.allowed())
-                       or images.handle("GET", u.path, qs, None))
-                if got:
-                    return self.reply(got)
-                c = live.cat
-                if u.path == "/api/info":
-                    return self.json(c.info)
-                if u.path == "/api/sync":   # what changed since a device last asked (sync.py)
-                    if not feed.ready:
-                        self.extra_headers = {"Retry-After": "5"}
-                        return self.json({"error": "starting"}, 503)
-                    since = one("since", "0")
-                    ids, deleted, (ver, after), more = feed.page(one("epoch"), int(since) if since.isdigit() else 0,
-                                                                 one("after"), max(1, min(int(one("limit", "2000")), 10000)))
-                    rows = [dict(sha=s, **c.feed_row(s)) for s in ids if s in c.meta]
-                    return self.json({"epoch": feed.epoch, "photos": rows, "deleted": deleted, "since": ver, "after": after,
-                                      "more": more, "total": c.info["total"], "trips": [] if more else c.trip_list})
-                if u.path in app_files:
-                    body = app_files[u.path].read_bytes()
-                    return self.send(200, body, app_types[app_files[u.path].suffix], "no-cache",
-                                     etag=f'"{hashlib.md5(body).hexdigest()}"')
-                self.send(404, b"not found", "text/plain")
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+            if m := re.fullmatch(r"/api/albums/(\d+)/download", u.path):
+                return self.download(int(m[1]))
+            if intake and u.path.startswith(("/setup", "/api/intake")):
+                return self.intake_route("GET", u, qs, None)
+            if self.people_page("GET", u, qs, None) or self.changes_route("GET", u, qs, None):
+                return
+            if u.path == "/mcp":
+                return self.mcp_route("GET", None)
+            if u.path in ("/", "/index.html"):  # revalidated each load, so edits show up at once
+                body = pages.page("search.html")
+                return self.send(200, body, "text/html; charset=utf-8", "no-cache",
+                                 etag=f'"{hashlib.md5(body).hexdigest()}"')
+            got = (browse.handle("GET", u.path, qs, None, self.headers)
+                   or admin.handle("GET", u.path, qs, None, self.who(), self.allowed())
+                   or images.handle("GET", u.path, qs, None))
+            if got:
+                return self.reply(got)
+            c = live.cat
+            if u.path == "/api/info":
+                return self.json(c.info)
+            if u.path == "/api/sync":   # what changed since a device last asked (sync.py)
+                if not feed.ready:
+                    self.extra_headers = {"Retry-After": "5"}
+                    return self.json({"error": "starting"}, 503)
+                since = one("since", "0")
+                ids, deleted, (ver, after), more = feed.page(one("epoch"), int(since) if since.isdigit() else 0,
+                                                             one("after"), max(1, min(int(one("limit", "2000")), 10000)))
+                rows = [dict(sha=s, **c.feed_row(s)) for s in ids if s in c.meta]
+                return self.json({"epoch": feed.epoch, "photos": rows, "deleted": deleted, "since": ver, "after": after,
+                                  "more": more, "total": c.info["total"], "trips": [] if more else c.trip_list})
+            if u.path in app_files:
+                body = app_files[u.path].read_bytes()
+                return self.send(200, body, app_types[app_files[u.path].suffix], "no-cache",
+                                 etag=f'"{hashlib.md5(body).hexdigest()}"')
+            self.send(404, b"not found", "text/plain")
 
     def gated(fn):
         def run(self):
@@ -713,6 +711,15 @@ def cmd_serve(a) -> None:
         # connection here, so a screenful of thumbnails overflows it and the proxy answers 502.
         request_queue_size = 256
         daemon_threads = True
+
+        def handle_error(self, request, client_address):
+            # A client that goes away ends its connection: a phone that sleeps, a closed tab, a proxy that
+            # drops an idle keep-alive connection, or one that resets it while the next request is awaited.
+            # That is not an error, wherever in a request it happens, so it is not printed. Anything else is,
+            # including a refused connection, which would be this server's own call to something else failing.
+            if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)):
+                return
+            super().handle_error(request, client_address)
 
     srv = Server(("127.0.0.1", port), Handler)
     print(f"Open http://127.0.0.1:{port}/  (Ctrl-C to stop)", flush=True)

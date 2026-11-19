@@ -371,6 +371,26 @@ All from measurements in [PERFORMANCE.md](../notes/PERFORMANCE.md):
 | `request_queue_size = 256`, `daemon_threads` | The default listen backlog is 5; behind an HTTP/2 proxy a screenful of thumbnails arrives as dozens of simultaneous connections and overflowed it (502s) |
 | Listen on `127.0.0.1` only | The app has no authentication; put a proxy in front for remote access |
 
+### When a client goes away
+
+A kept-alive connection has two ways to end badly, and both used to print a `ConnectionResetError`
+traceback after some phone uploads (about one in ten):
+
+- **The server ignored `Connection: close` on an upload.** The upload handler set `close_connection`
+  from whether it had read the whole body, which overwrote what the client had asked for. A client
+  that sends `Connection: close` (urllib does, always) then closed its end while the server sat waiting
+  for a next request, and if the answer's body was still unread on the client's side, its close was a
+  reset. Now a connection stays open after an upload only if the client wants it *and* the body was read:
+  `close_connection = client_closes or unread`.
+- **A client that leaves is not an error.** A phone that sleeps, a closed tab or a proxy may reset an
+  idle connection at any moment, including while the server waits for the next request, inside
+  `http.server` where no handler can catch it. So `Server.handle_error` says nothing about a
+  `BrokenPipeError`, `ConnectionResetError`, `ConnectionAbortedError` or `TimeoutError`, and prints
+  everything else as before. That one hook replaced the `try`/`except` around each handler.
+
+[tests/test_connections.py](../../photo-estate/tests/test_connections.py) checks both with the real app,
+including a reset sent on purpose (`SO_LINGER` 0).
+
 ## Concurrency
 
 The server is multi-threaded but not multi-process. The relevant locks are small:

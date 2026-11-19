@@ -19,11 +19,12 @@ tools in `tools/`.
 | `tests/test_aesthetics_judge.py`, `tests/test_aesthetics_taste.py` | The tools that made the scorers: the pairwise judge's queue and log, and the taste scorer's fit |
 | `tests/test_albums.py`, `tests/test_changes.py` | Albums and change sets ([chapter 26](26-albums-and-agents.md)): sections, live albums, review, apply, revert; a hidden photo is in no view |
 | `tests/test_mcp.py` | The MCP endpoint as an agent uses it: an agent can propose but not apply, and no answer carries a photo |
+| `tests/test_connections.py` | Connections with the real app: `Connection: close` after an upload is honoured, a refused upload closes, a client's reset is not an error, and many uploads print no traceback |
 | `tests/test_tasks.py` | The agent on the library's computer, with a stand-in for Claude Code: it is started with every built-in tool off |
 
 Every test is a script that runs on its own (`uv run tests/<file>` from `photo-estate/`), needs no
 network, account or model download, and works on a scratch copy, so the checked-in demo library never
-changes. All fourteen take about a minute together.
+changes. All fifteen take about a minute together.
 
 The iPhone app has no unit tests of its own. It was checked in the iOS Simulator against the demo
 library (104 photos), with the server up and then stopped; `ios/project-sim.yml` builds it for a
