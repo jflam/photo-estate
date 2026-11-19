@@ -127,7 +127,8 @@ With a default-deny tailnet policy, port 8767 needs its own grant, like 8766.
 ## A preview of a cloud session
 
 Work done in a cloud session (Claude Code on the web, started from a phone) can be looked at before it
-is merged. A cloud machine takes no connections from outside, and its network carries no tunnel out
+is merged. [CLOUD-SESSIONS.md](CLOUD-SESSIONS.md) describes the whole way of working; this is
+the mini's part of it. A cloud machine takes no connections from outside, and its network carries no tunnel out
 either (its proxy passes HTTPS and WebSocket, not the relay protocol of tailcat or Tailscale, and no
 UDP), so the work leaves the session the one way it can, as a pushed branch: the mini serves the demo
 app of the branch with the newest commit, and shows it on the tailnet.
