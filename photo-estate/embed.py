@@ -1057,6 +1057,19 @@ def cmd_serve(a) -> None:
                 "faces_found": has_faces,
                 "search": {"model": a.model, "match_floor": a.match_floor, "match_window": a.match_window}}
 
+    def cover_of(run, fallback=None) -> int:
+        """The photo to put on the front of a set of photos (`run`: their places in the catalog): a
+        favourite if it has one, a landscape one if not; among those, the best photo (scores.py), or with
+        no scorers the one `fallback` ranks first (default: nearest the middle)."""
+        order = rank[run] if rank is not None else fallback if fallback is not None else np.abs(np.arange(len(run)) - len(run) // 2)
+        score = fav[run] * 4_000_000 + ((ars[run] >= 1.2) & (ars[run] <= 1.9)) * 2_000_000 - order
+        return int(run[int(np.argmax(score))])
+
+    def album_cover(ids):
+        """An album's front: chosen as a month's is, and with no scorers the earliest in the album's order."""
+        run = np.array([index[s] for s in ids if s in index], np.int64)
+        return shas[cover_of(run, np.arange(len(run)))] if len(run) else None
+
     def periods(order) -> dict:
         """The photos in `order` (by time), as a card a year and a card a month, as the iPhone's Library
         has them: each with its key ("2019", "2019-07"), how many, where it starts in `order`, the photo on
@@ -1073,9 +1086,7 @@ def cmd_serve(a) -> None:
                 if not len(order) or k[a0] < 0:   # undated photos have no year or month
                     continue
                 run = order[a0:b0]
-                score = fav[run] * 4_000_000 + ((ars[run] >= 1.2) & (ars[run] <= 1.9)) * 2_000_000 \
-                    - (rank[run] if rank is not None else np.abs(np.arange(len(run)) - len(run) // 2))
-                cover = int(run[int(np.argmax(score))])
+                cover = cover_of(run)
                 codes = city["codes"][run]
                 codes = codes[codes >= 0]
                 names = {}
@@ -1793,7 +1804,7 @@ def cmd_serve(a) -> None:
     changes = Changes(a.db, facts=lambda sha: meta.get(sha),
                       shown=lambda sha: {"library": sha in index and bool(visible[index[sha]]), "sync": sha in feed.rows},
                       busy=lambda: settling["n"] > 0 or reload_state["state"] != "idle", on_change=on_hidden_change,
-                      find=lambda query: agent_find(query), favorite=set_favorites)
+                      find=lambda query: agent_find(query), favorite=set_favorites, cover=album_cover)
 
     # Tasks (tasks.py): a request in words, worked on by an agent on this computer that uses the MCP
     # endpoint below like any other client, and ends in a change set.
