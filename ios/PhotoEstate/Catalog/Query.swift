@@ -348,6 +348,25 @@ extension Catalog {
         }) ?? []
     }
 
+    /// These photos as tiles, by id: what an album's list of ids is drawn from. Ids the catalog does not
+    /// hold (hidden photos, ones not yet fetched) are simply not in the answer.
+    func tiles(of shas: [String]) async -> [String: Tile] {
+        (try? await store.read { db in
+            var out: [String: Tile] = [:]
+            var at = 0
+            while at < shas.count {
+                let chunk = Array(shas[at..<min(at + 400, shas.count)])
+                at += chunk.count
+                let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+                for t in try db.query("SELECT sha, ar, whenk, city, fav, best FROM photos WHERE sha IN (\(marks))", chunk, {
+                    Tile(sha: $0.text(0), ar: Float($0.double(1)), when: $0.text(2), city: $0.string(3), fav: $0.bool(4),
+                         best: $0.optDouble(5).map { Float($0) } ?? -.infinity)
+                }) { out[t.sha] = t }
+            }
+            return out
+        }) ?? [:]
+    }
+
     /// How many photos the plan selects, nothing hidden: what a heading's "of N" counts.
     func count(_ plan: Plan) async -> Int {
         let (sql, args) = plan.condition()

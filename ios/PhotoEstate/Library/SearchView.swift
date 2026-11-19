@@ -130,7 +130,7 @@ struct SearchView: View {
                  onNearEnd: { model.loadMore() },
                  onRefresh: { ImageStore.shared.retryNetwork(); await sync.sync() },
                  onRowHeight: { model.rowHeight = $0 },
-                 viewer: { session in AnyView(ViewerScreen(session: session, model: model, route: router.find)) })
+                 viewer: { session in AnyView(ViewerScreen(session: session, lookup: model.photo, route: router.find)) })
             .ignoresSafeArea(edges: .bottom)
             .overlay { if model.grid.tiles.isEmpty && !model.loading { nothing } }
     }

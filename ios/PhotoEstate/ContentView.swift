@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Two places: the Library, which is every photo in time order, and Search, which is finding some of
-/// them. What the phone keeps, and what it sends to the server, sit behind the Library's bar.
+/// Three places: the Library, which is every photo in time order; Albums, which are sets of them made
+/// on the server; and Search, which is finding some of them. What the phone keeps, and what it sends to the server, sit behind the Library's bar.
 struct ContentView: View {
     @StateObject private var router = Router()
     @Environment(\.scenePhase) private var scenePhase
@@ -12,6 +12,9 @@ struct ContentView: View {
             // that takes the bar's tint, as a tab's image should; the icon itself, in colour, is not for bars.
             Tab("Library", image: "LibraryTab", value: Router.Tab.library) {
                 LibraryView(model: router.library)
+            }
+            Tab("Albums", systemImage: "rectangle.stack", value: Router.Tab.albums) {
+                AlbumsView(model: router.albums)
             }
             Tab(value: Router.Tab.search, role: .search) {
                 SearchView(model: router.search)

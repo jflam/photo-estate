@@ -9,7 +9,8 @@ import UIKit
 /// the server when it can.
 struct ViewerScreen: View {
     @ObservedObject var session: ViewerSession
-    @ObservedObject var model: LibraryModel
+    var lookup: @MainActor (String) async -> Photo?     // what the list it came from knows of a photo
+    var reason: (String) -> String? = { _ in nil }      // why a photo is in the album it was opened from
     @ObservedObject private var sync = SyncEngine.shared
     var route: (Query) -> Void              // a link out of the viewer: show these photos instead
 
@@ -19,6 +20,11 @@ struct ViewerScreen: View {
     @State private var sharing = false
     @State private var stack: [Tile] = []     // the photos of this one's stack, best first; empty for a photo on its own
     @State private var picked: Tile?          // the one of them showing, when it is not the one on top
+    @State private var favs: [String: Bool] = [:]     // favourites set here, which the list this came from has not heard of
+    @State private var saving: Set<String> = []
+    @State private var note: String?          // why a favourite could not be saved
+
+    private var isFav: Bool { favs[tile.sha] ?? tile.fav }
 
     /// The photo on screen: the list's own, or the one picked from its stack.
     private var tile: Tile { picked ?? session.tile }
@@ -39,16 +45,17 @@ struct ViewerScreen: View {
             picked = nil
             stack = []
             let top = session.tile
-            let p = await model.photo(top.sha)
+            note = nil
+            let p = await lookup(top.sha)
             photo = p
             if top.stack > 1, let id = p?.stackOf {
                 let members = await Catalog.shared.stackTiles(id)
                 if !Task.isCancelled, session.tile.sha == top.sha, members.count > 1 { stack = members }
             }
         }
-        .task(id: picked?.sha) { photo = await model.photo(tile.sha) }
+        .task(id: picked?.sha) { photo = await lookup(tile.sha) }
         .sheet(item: $info) { shown in
-            InfoView(photo: shown) { q in
+            InfoView(photo: shown, reason: reason(shown.sha)) { q in
                 info = nil
                 session.close()
                 route(q)
@@ -73,13 +80,19 @@ struct ViewerScreen: View {
                 Text([Dates.clock(tile.when), tile.city?.split(separator: ",").first.map(String.init) ?? "", tile.isLocal ? "Not yet on the server" : "", sync.online ? "" : "Offline"]
                         .filter { !$0.isEmpty }.joined(separator: "  ·  "))
                     .font(.caption).opacity(0.75)
+                if let note { Text(note).font(.caption.weight(.medium)).foregroundStyle(Color.sunLit) }
             }
             .multilineTextAlignment(.center)
             .shadow(color: .black.opacity(0.6), radius: 6)
             .padding(.top, 5)
             Spacer()
-            Image(systemName: "heart.fill").foregroundStyle(Color.sunLit).font(.system(size: 17, weight: .semibold))
-                .frame(width: 46, height: 46).opacity(tile.fav ? 1 : 0).accessibilityLabel("Favourite").accessibilityHidden(!tile.fav)
+            // A favourite is the server's to keep, so a photo it does not have yet has no heart.
+            Button { favour() } label: {
+                Image(systemName: isFav ? "heart.fill" : "heart").foregroundStyle(isFav ? Color.sunLit : Color.white)
+                    .contentTransition(.symbolEffect(.replace)).modifier(GlassCircle())
+            }
+            .accessibilityLabel("Favourite").accessibilityAddTraits(isFav ? .isSelected : [])
+            .opacity(tile.isLocal ? 0 : 1).disabled(tile.isLocal)
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 14)
@@ -139,6 +152,26 @@ struct ViewerScreen: View {
         .padding(8)
     }
 
+    /// A favourite: shown at once, then said to the server; if the server will not have it, taken back.
+    private func favour() {
+        let sha = tile.sha, on = !isFav
+        guard !saving.contains(sha) else { return }
+        saving.insert(sha)
+        note = nil
+        Haptics.tap()
+        favs[sha] = on
+        Task {
+            defer { saving.remove(sha) }
+            do { try await Favourites.set(sha, on) } catch {
+                favs[sha] = !on
+                if tile.sha == sha {
+                    note = (error as? APIError)?.notAllowed == true ? "Favourites can’t be changed from this account"
+                         : error is URLError ? "Favourites need your server, which isn’t reachable" : "Couldn’t save the favourite"
+                }
+            }
+        }
+    }
+
     private func action(_ symbol: String, _ label: String, _ run: @escaping () -> Void) -> some View {
         Button(action: run) {
             Image(systemName: symbol).font(.system(size: 19, weight: .medium)).frame(width: 62, height: 50).contentShape(Rectangle())
@@ -192,6 +225,7 @@ extension UIApplication {
 /// taken. Everything that names a set of photos is a way into that set.
 struct InfoView: View {
     let photo: Photo
+    var reason: String? = nil       // why it is in the album it was opened from
     var go: (Query) -> Void
 
     var body: some View {
@@ -202,6 +236,10 @@ struct InfoView: View {
                     Text([Dates.clock(photo.when), photo.tz ?? ""].filter { !$0.isEmpty }.joined(separator: "  ·  "))
                         .font(.subheadline).foregroundStyle(.secondary)
                     if let d = photo.desc { Text(d).font(.callout).italic().foregroundStyle(.secondary).padding(.top, 6) }
+                    if let reason {
+                        Label("In this album: \(reason)", systemImage: "rectangle.stack")
+                            .font(.footnote).foregroundStyle(.secondary).padding(.top, 6)
+                    }
                     if LocalPhotos.id(photo.sha) != nil {
                         Label("On this iPhone, not yet on your server. Places, people and the rest come once it is.", systemImage: "arrow.up.circle")
                             .font(.footnote).foregroundStyle(.secondary).padding(.top, 6)

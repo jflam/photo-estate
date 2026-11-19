@@ -25,18 +25,31 @@ struct LibraryView: View {
                         .offset(x: (swipe - width) * 0.3)
                         .overlay { Color.black.opacity(0.12 * (1 - swipe / width)).ignoresSafeArea().allowsHitTesting(false) }
                 }
-                GridView(data: model.grid, rowHeight: model.rowHeight, title: model.title, subtitle: model.subtitle, topInset: barHeight,
+                // The title alone: how many, what is hidden and the order are on the settings page.
+                GridView(data: model.grid, rowHeight: model.rowHeight, title: model.title, subtitle: "", topInset: barHeight,
                          jump: model.jump,
                          onRefresh: { ImageStore.shared.retryNetwork(); await sync.sync(); local.refresh() },
                          onRowHeight: { model.rowHeight = $0 },
-                         viewer: { session in AnyView(ViewerScreen(session: session, model: model, route: router.find)) })
+                         viewer: { session in AnyView(ViewerScreen(session: session, lookup: model.photo, route: router.find)) })
                     .ignoresSafeArea()
                     .opacity(model.scale == .all ? 1 : 0)
                     .allowsHitTesting(model.scale == .all)
                     .offset(x: model.scale == .all ? swipe : 0)
                     .shadow(color: .black.opacity(moving && model.scale == .all ? 0.25 : 0), radius: 10)
+                if model.scale == .month {               // one month, alone: its photos, then the months either side
+                    GridView(data: model.monthGrid, rowHeight: model.rowHeight, title: model.monthTitle, subtitle: model.monthSubtitle,
+                             topInset: barHeight,
+                             onRefresh: { ImageStore.shared.retryNetwork(); await sync.sync(); local.refresh() },
+                             onRowHeight: { model.rowHeight = $0 },
+                             footer: model.monthFooter, onFooter: { model.goMonth($0) },
+                             viewer: { session in AnyView(ViewerScreen(session: session, lookup: model.photo, route: router.find)) })
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                        .offset(x: swipe)
+                        .shadow(color: .black.opacity(moving ? 0.25 : 0), radius: 10)
+                }
                 if model.grid.tiles.isEmpty && !model.loading { Welcome().ignoresSafeArea() }
-                if model.scale != .all && !model.grid.tiles.isEmpty {
+                if model.scale.isCards && !model.grid.tiles.isEmpty {
                     PeriodsView(model: model, scale: model.scale, anchor: model.anchor, topInset: barHeight)
                         .id(model.scale)
                         .transition(.opacity)
@@ -65,7 +78,7 @@ struct LibraryView: View {
                 }
             }))
         }
-        .sheet(isPresented: $settings) { ThisPhoneView() }
+        .sheet(isPresented: $settings) { ThisPhoneView(library: model) }
         .onAppear { local.start(); model.reload(reset: false) }
         .onChange(of: sync.revision) { _, _ in local.refresh(); model.catalogChanged() }
         .onChange(of: local.revision) { _, _ in model.catalogChanged() }
@@ -113,7 +126,7 @@ struct ScalePicker: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(Scale.allCases) { segment($0) }
+            ForEach(Scale.bar) { segment($0) }
         }
         .padding(3)
         .glassEffect(.regular.interactive(), in: .capsule)
@@ -153,14 +166,18 @@ struct PeriodsView: View {
         ScrollViewReader { reader in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: scale == .years ? 16 : 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(model.title).font(.title(28, .bold))
-                        Text(model.subtitle).font(.subheadline).foregroundStyle(.secondary)
-                    }
+                    Text(model.title).font(.title(28, .bold))
                     .padding(.horizontal, 2)
                     .padding(.top, 12)
                     .padding(.bottom, 4)
-                    ForEach(periods) { p in
+                    ForEach(Array(periods.enumerated()), id: \.element.id) { i, p in
+                        // A year's months are under that year.
+                        if scale == .months, i == 0 || periods[i - 1].key.prefix(4) != p.key.prefix(4) {
+                            Text(String(p.key.prefix(4))).font(.title(24, .bold))
+                                .padding(.horizontal, 2).padding(.top, i == 0 ? 0 : 12)
+                                .accessibilityAddTraits(.isHeader)
+                                .id("year " + p.key.prefix(4))
+                        }
                         Button { model.open(p) } label: { PeriodCard(period: p, big: scale == .years) }
                             .buttonStyle(CardPress())
                             .id(p.key)
@@ -183,7 +200,10 @@ struct PeriodsView: View {
             }
             .onAppear {
                 // Coming in from a year, or back from a month or a year: start at that card.
-                if let anchor, let key = periods.first(where: { $0.key.hasPrefix(anchor) })?.key { reader.scrollTo(key, anchor: .top) }
+                // A year opens at its heading.
+                if let anchor, let key = periods.first(where: { $0.key.hasPrefix(anchor) })?.key {
+                    reader.scrollTo(scale == .months && anchor.count == 4 ? "year " + anchor : key, anchor: .top)
+                }
             }
         }
     }
@@ -294,7 +314,7 @@ struct ViewMenu: View {
                     Label("Newest first", systemImage: "arrow.down").tag(Order.new)
                     Label("Oldest first", systemImage: "arrow.up").tag(Order.old)
                     if model.hasBest {
-                        Label(model.query.isEmpty ? "Best first in each month" : "Best first", systemImage: "sparkles").tag(Order.best)
+                        Label(model.query.isEmpty && model.scale != .month ? "Best first in each month" : "Best first", systemImage: "sparkles").tag(Order.best)
                     }
                 }
             }

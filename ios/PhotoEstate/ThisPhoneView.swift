@@ -3,6 +3,7 @@ import SwiftUI
 /// What is on this iPhone, and what it should keep: opened from the Library's bar. The ring is the
 /// point of it: how much of the library is here, and so works with no network.
 struct ThisPhoneView: View {
+    @ObservedObject var library: LibraryModel       // for what the Library is showing: said here, not above the photos
     @ObservedObject private var sync = SyncEngine.shared
     @ObservedObject private var downloads = Downloader.shared
     @Environment(\.dismiss) private var dismiss
@@ -35,6 +36,14 @@ struct ThisPhoneView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .listRowBackground(Color.clear)
+                }
+
+                Section {
+                    ForEach(library.facts, id: \.label) { LabeledContent($0.label, value: $0.value) }
+                } header: { Text("Library") } footer: {
+                    if library.facts.contains(where: { $0.label.hasPrefix("Hidden") }) {
+                        Text("Near-identical shots are stacked and screenshots hidden. Change that, and the order, with the button beside this one.")
+                    }
                 }
 
                 Section {
