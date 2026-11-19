@@ -92,6 +92,10 @@ try:
         http("/api/favorite", {"sha": sha, "fav": True})
     http(f"/api/albums/{aid}/apply", {}, expect=409)       # not up for hiding
     assert http(f"/api/albums/{aid}/rename", {"title": "Two good years"})["title"] == "Two good years"
+    got = http(f"/api/albums/{aid}/rename", {"prompt": "the best of each"})       # its note alone; the title stays
+    assert (got["title"], got["prompt"]) == ("Two good years", "the best of each")
+    assert http(f"/api/albums/{aid}/rename", {"title": " ", "prompt": ""})["title"] == "Two good years", "an album keeps a title"
+    assert http(f"/api/albums/{aid}/photos?limit=1")["album"]["prompt"] == "", "a note can be taken away"
 
     # every photo in it a favourite, and back
     fav0 = http("/api/info")["fav"]
@@ -115,6 +119,24 @@ try:
     assert {r["sha"] for r in http(f"/api/albums/{live['id']}/photos?limit=500")["results"]} == set(by_year[y1])
     http(f"/api/albums/{live['id']}/items", {"items": [{"sha": rows[0]["sha"]}]}, expect=409)
     assert http(f"/api/albums/{live['id']}/query", {"query": {"date_from": y2, "date_to": y2}})["n"] == len(by_year[y2])
+
+    # an album of everything a search finds, as the page makes one: the whole answer of /api/search, a page at
+    # a time, becomes a fixed album of those photos in that order (not a live one, and not up for hiding)
+    found, cursor, first = [], 0, None
+    while cursor is not None:
+        d = http(f"/api/search?q=latte+art&dedupe=1&shots=0&limit=4&cursor={cursor}")
+        first = first or d
+        found += [r["sha"] for r in d["results"]]
+        cursor = d["next"]
+    assert first["next"] == 4 and len(first["results"]) == 4, "the answer comes in pages"
+    assert len(found) == first["matching"] == 6 and len(set(found)) == 6, "the pages together are the whole answer, each photo once"
+    made = http("/api/albums", {"title": "latte art", "prompt": "From the search “latte art”", "items": [{"sha": s} for s in found]}, expect=201)
+    assert (made["op"], made["kind"], made["state"], made["n"], made["added"], made["unknown"]) == ("view", "list", "album", 6, 6, 0), made
+    p = http(f"/api/albums/{made['id']}/photos?limit=500")
+    assert [r["sha"] for r in p["results"]] == found and p["matching"] == 6 and p["album"]["title"] == "latte art"
+    assert http("/api/search?q=kangaroo&limit=4")["matching"] == 0, "a search that finds nothing has nothing to make an album of"
+    assert http("/api/changes")["sets"] == []
+    http(f"/api/albums/{made['id']}/discard", {})
 
     # up for hiding: the album is a change set now, reviewed and applied as one; then a plain album again
     got = http(f"/api/albums/{aid}/hide", {})
