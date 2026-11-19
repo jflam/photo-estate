@@ -49,16 +49,16 @@ Startup does all the expensive work once, so that requests can be cheap. The ste
 
 ```mermaid
 flowchart TD
-    S0["0. --demo: copy the committed demo catalog to a temp dir<br/>so the repo is never written to"] --> S1
-    S1["1. embeddings -> sorted by sha -> shas[], index{}, M (N x 768 float32)"] --> S2
-    S2["2. assets + occurrences -> meta[sha]<br/>(first path, albums, people, favourite, size)"] --> S3
-    S3["3. optional tables: exif, places, events, trips, faces<br/>-> more meta fields"] --> S4
-    S4["4. real thumbnail shapes: thumb-dims.json,<br/>else read JPEG headers (16 threads)"] --> S5
-    S5["5. NumPy columns: when, year, month index, lowercase text, fav,<br/>time orders (oldest, newest)"] --> S6
-    S6["6. facets: integer-code every categorical field"] --> S7
-    S7["7. trips list with a cover photo; the /api/info document"] --> S8
-    S8["8. background threads: People (faces), text encoder, thumbnail pre-generation"] --> S9
-    S9["9. build the name and place vocabulary for search; start serving"]
+    S0["0\. --demo: copy the committed demo catalog to a temp dir<br/>so the repo is never written to"] --> S1
+    S1["1\. embeddings -> sorted by sha -> shas[], index{}, M (N x 768 float32)"] --> S2
+    S2["2\. assets + occurrences -> meta[sha]<br/>(first path, albums, people, favourite, size)"] --> S3
+    S3["3\. optional tables: exif, places, events, trips, faces<br/>-> more meta fields"] --> S4
+    S4["4\. real thumbnail shapes: thumb-dims.json,<br/>else read JPEG headers (16 threads)"] --> S5
+    S5["5\. NumPy columns: when, year, month index, lowercase text, fav,<br/>time orders (oldest, newest)"] --> S6
+    S6["6\. facets: integer-code every categorical field"] --> S7
+    S7["7\. trips list with a cover photo; the /api/info document"] --> S8
+    S8["8\. background threads: People (faces), text encoder, thumbnail pre-generation"] --> S9
+    S9["9\. build the name and place vocabulary for search; start serving"]
 ```
 
 ### 1. The vectors

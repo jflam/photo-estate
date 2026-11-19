@@ -23,12 +23,12 @@ flowchart LR
     FL["flickr<br/>(id, JSON)"]
     EX["assets.exif_taken_at"]
 
-    OCC --> M1["1. match each occurrence<br/>to a sidecar, album, or Flickr record"]
+    OCC --> M1["1\. match each occurrence<br/>to a sidecar, album, or Flickr record"]
     SC --> M1
     AL --> M1
     FL --> M1
-    M1 --> M2["2. Live Photo clips<br/>borrow their still's sidecar"]
-    M2 --> M3["3. merge per asset:<br/>Google, then iCloud XMP,<br/>then Flickr"]
+    M1 --> M2["2\. Live Photo clips<br/>borrow their still's sidecar"]
+    M2 --> M3["3\. merge per asset:<br/>Google, then iCloud XMP,<br/>then Flickr"]
     XM --> M3
     EX --> M3
     M3 --> OUT["assets.taken_at, lat, lon,<br/>description, people, favorited<br/>occurrences.sidecar_id, album<br/>tags (flickr)"]

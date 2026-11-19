@@ -17,9 +17,9 @@ Every modern face-recognition system does the same three things, and this one is
 
 ```mermaid
 flowchart LR
-    A["photo"] --> D["1. DETECT<br/>where are the faces?<br/>boxes + 5 landmarks each"]
-    D --> AL["2. ALIGN<br/>rotate, scale, shift each face<br/>onto a standard 112x112 template"]
-    AL --> E["3. EMBED<br/>a network maps the aligned face<br/>to 512 numbers"]
+    A["photo"] --> D["1\. DETECT<br/>where are the faces?<br/>boxes + 5 landmarks each"]
+    D --> AL["2\. ALIGN<br/>rotate, scale, shift each face<br/>onto a standard 112x112 template"]
+    AL --> E["3\. EMBED<br/>a network maps the aligned face<br/>to 512 numbers"]
     E --> S[("faces table:<br/>box, score, 512 x float16")]
     S --> CMP["Later: two faces are the same person<br/>if their vectors have high cosine similarity"]
 ```
