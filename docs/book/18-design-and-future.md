@@ -34,7 +34,7 @@ it did.
 
 ## The tagging plan versus what was built
 
-[PLAN.md](../../photo-estate/PLAN.md) and [TAGGING-RESEARCH.md](../../photo-estate/TAGGING-RESEARCH.md)
+[PLAN.md](../notes/PLAN.md) and [TAGGING-RESEARCH.md](../notes/TAGGING-RESEARCH.md)
 laid out six tiers. The result differs from the plan in instructive ways:
 
 | Tier | Planned | Built |

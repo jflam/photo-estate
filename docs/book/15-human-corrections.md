@@ -4,7 +4,7 @@ A face vector says *what a face looks like*, never *whose face it is*. Turning v
 takes ground truth, and the only ground truth available is Google's people tags and **you**. This
 chapter is about the system built to get the most out of both while asking you for as little as
 possible: [faces.py](../../photo-estate/faces.py)'s `People` class (about 560 lines) and the page
-[people.html](../../photo-estate/people.html) (784 lines).
+[people.html](../../photo-estate/people.html) (774 lines).
 
 The README's three-sentence version: *start from Google's people tags, find the same faces everywhere
 else, follow children from baby to adult a couple of years at a time, and let you confirm in bulk and
@@ -76,9 +76,9 @@ certain first:
 ```mermaid
 flowchart TD
     A["every distinct name in any photo's tags<br/>becomes a persons row (if not already there)"] --> B
-    B["1. One tag, one face:<br/>photo has exactly one tag AND exactly one face<br/>(score at least 0.6, 40+ px)<br/>-> that face is that person, source = google"] --> C
-    C["2. Sanity check on the lone faces:<br/>a face named this way whose similarity to the person's<br/>mean face is under 0.2 is un-named<br/>(they had their back turned; the face is someone else)"] --> D
-    D["3. Three rounds of greedy matching:<br/>for each tagged photo, score every unnamed face<br/>against each tagged-but-unclaimed name;<br/>repeatedly take the best (face, name) pair<br/>with similarity at least 0.4"] --> E
+    B["1\. One tag, one face:<br/>photo has exactly one tag AND exactly one face<br/>(score at least 0.6, 40+ px)<br/>-> that face is that person, source = google"] --> C
+    C["2\. Sanity check on the lone faces:<br/>a face named this way whose similarity to the person's<br/>mean face is under 0.2 is un-named<br/>(they had their back turned; the face is someone else)"] --> D
+    D["3\. Three rounds of greedy matching:<br/>for each tagged photo, score every unnamed face<br/>against each tagged-but-unclaimed name;<br/>repeatedly take the best (face, name) pair<br/>with similarity at least 0.4"] --> E
     E["write to the database<br/>(UPDATE faces SET person_id, source='google')"]
 ```
 

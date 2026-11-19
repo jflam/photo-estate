@@ -2,7 +2,7 @@
 # dependencies = ["httpx[http2]"]
 # ///
 """thumb_burst.py BASE DB: 150 random (so probably cold) thumbnails over one HTTP/2 connection, then the
-same 150 again (warm), three times. Needs HTTPS + HTTP/2 in front, e.g. tailscale serve. See ../PERFORMANCE.md.
+same 150 again (warm), three times. Needs HTTPS + HTTP/2 in front, e.g. tailscale serve. See docs/notes/PERFORMANCE.md.
 
   uv run tools/thumb_burst.py https://HOST.TAILNET.ts.net:8766 ~/estate-local/estate.db
 """

@@ -4,7 +4,7 @@ The phone's copy of the catalog has to answer one question honestly: *what chang
 I last asked?* Everything else in the offline design (chapters 21-22) leans on the answer. This chapter
 covers both ends: the **change feed** the server publishes ([sync.py](../../photo-estate/sync.py), 100
 lines) and the **sync engine** the phone runs
-([SyncEngine.swift](../../ios/PhotoEstate/Catalog/SyncEngine.swift), 104 lines), and the replica they
+([SyncEngine.swift](../../ios/PhotoEstate/Catalog/SyncEngine.swift), 142 lines), and the replica they
 fill.
 
 ## The problem

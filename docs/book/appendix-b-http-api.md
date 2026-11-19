@@ -110,9 +110,62 @@ Response:
 | `GET /api/layout?...` (same filter parameters, plus `sort`) | One byte per photo, in `/api/search`'s order with the same parameters: its aspect ratio between 0.5 and 2.6 in 255 steps, so the page can lay a month out before fetching it. `application/octet-stream` with an `ETag` |
 | `GET /api/info` | `{"total", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
 | `GET /stats` | The library info page ([stats.html](../../photo-estate/stats.html)) |
-| `GET /api/stats[?refresh=1]` | `{state: working|ready|error, library, disk, app}`: library figures from memory, disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
+| `GET /api/stats[?refresh=1]` | `{state: working\|ready\|error, library, disk, app}`: library figures from memory, disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
 | `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start |
-| `GET /api/log?ev=open|share&sha=...&pos=N` plus the search's parameters | Appends an event to the query log; `204` |
+| `GET /api/log?ev=open\|share&sha=...&pos=N` plus the search's parameters | Appends an event to the query log; `204` |
+| `GET /api/layout?...` (same filter parameters, plus `sort`) | Every matching photo's shape, one byte each, in `/api/search`'s order: the aspect ratio between 0.5 and 2.6 in 255 steps (`application/octet-stream`, with an `ETag`). The page lays a month out from it before it knows which photos are in it |
+| `POST /api/favorite {sha, fav}` | Makes a photo a favourite, or not: `{sha, fav, favourites}`. Takes the same permission as uploading (`--upload-user`, or a request from this computer); `403` otherwise |
+
+### Albums and change sets
+
+Answered by [changes.py](../../photo-estate/changes.py) (chapter 26). Every `/api/changes` address
+also answers under `/api/albums`; `/api/changes` lists only the albums that are up for hiding.
+
+| Request | Does |
+|---|---|
+| `GET /changes`, `/changes/<id>` | The review page ([changes.html](../../photo-estate/changes.html)) |
+| `GET /api/albums` | Every album, newest first |
+| `GET /api/albums/<id>/photos?cursor=&limit=` | Its photos as `/api/search` gives them, each with its `section` and `reason` |
+| `GET /api/albums/<id>/download` | The album's original files as one zip, written as it is read |
+| `POST /api/albums {title, prompt?, query?, items?}` | A new album; with `query`, a live one (whatever that search finds) |
+| `POST /api/albums/<id>/items {items?: [{sha, section?, reason?, score?}], remove?: [sha]}` | Add photos, or take them out |
+| `POST /api/albums/<id>/rename {title?, prompt?}` | Change its title or note |
+| `POST /api/albums/<id>/query {query}` | What a live album searches for |
+| `POST /api/albums/<id>/favorite {fav}` | Make every photo in it a favourite, or not |
+| `POST /api/albums/<id>/hide`, `/view` | Put it up for hiding (it becomes a change set), or take it down again |
+| `POST /api/albums/<id>/discard` | Forget it (it must hide nothing) |
+| `GET /api/changes/<id>`, `/api/changes/<id>/check` | One set and its photos; whether every photo is where the set says it should be |
+| `POST /api/changes {title, prompt?, op?, items}` | Propose a set |
+| `POST /api/changes/<id>/decide {shas, decision}` | Mark photos `accept`, `reject` (keep) or `pending` |
+| `POST /api/changes/<id>/apply {through?}` | Hide every photo not marked reject, and put back those that are; with `through`, only as far as that photo in the page's order |
+| `POST /api/changes/<id>/revert`, `/commit`, `/reopen`, `/discard` | Undo everything the set did; mark it done; make a done set changeable again; forget a set that hides nothing |
+
+### Agents: MCP and tasks
+
+| Request | Does |
+|---|---|
+| `POST /mcp` | The [MCP](https://modelcontextprotocol.io/) endpoint ([estate_mcp.py](../../photo-estate/estate_mcp.py)): streamable HTTP in its simplest form, one JSON-RPC message (or a batch) per POST, answered with JSON, no stream and no session. Tools: `library_overview`, `search_photos`, `similar_photos`, `get_photos`, `list_albums`, `get_album`, `create_album`, `amend_album`, `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set`, `submit_task`, `get_task`, `cancel_task` |
+| `GET /api/tasks` | Whether an agent can run on this computer, and every task, newest first ([tasks.py](../../photo-estate/tasks.py)) |
+| `GET /api/tasks/<id>?after=N` | One task, its events after event N, and the change set it made |
+| `POST /api/tasks {prompt}` | Start one: Claude Code, run headless with only the library's MCP tools |
+| `POST /api/tasks/<id>/cancel` | Stop a task that is queued or running |
+
+### Bringing photos in (the setup page)
+
+Answered by [intake/api.py](../../photo-estate/intake/api.py), both by the full app and by the small
+setup server that runs before there is a library. Starting a job takes the same permission as uploading.
+
+| Request | Does |
+|---|---|
+| `GET /setup` | The setup page ([setup.html](../../photo-estate/setup.html)) |
+| `GET /api/intake` | The library, every source (with its guide and checks), every job |
+| `GET /api/intake/jobs/<id>?after=N` | One job, with the lines it printed after event N |
+| `POST /api/intake/library {root}` | Where the library lives (setup only, before anything is in it) |
+| `POST /api/intake/preview {source, config}` | What that would bring in; changes nothing |
+| `POST /api/intake/jobs {source, config}` | Start bringing it in |
+| `POST /api/intake/jobs/<id>/answer {value}` | What a waiting job asked for (a password, a code, "ok") |
+| `POST /api/intake/jobs/<id>/cancel`, `/retry` | Stop a job, or run it again |
+| `POST /api/intake/choose {what: folder or file}` | The Mac's own Open dialog (only from this Mac) |
 
 ### Images
 

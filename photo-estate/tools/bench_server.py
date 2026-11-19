@@ -1,7 +1,7 @@
 # /// script
 # dependencies = ["httpx[http2]"]
 # ///
-"""bench_server.py: latency of the photo app's endpoints (embed.py serve). See ../PERFORMANCE.md.
+"""bench_server.py: latency of the photo app's endpoints (embed.py serve). See docs/notes/PERFORMANCE.md.
 
   uv run tools/bench_server.py http://127.0.0.1:8766                       # direct, HTTP/1.1
   uv run tools/bench_server.py https://HOST.TAILNET.ts.net:8766 --h2 --quick  # through tailscale serve

@@ -5,10 +5,11 @@ scattered across Google Photos, iCloud, Flickr and your phone, put them on a dis
 them searchable by what is in them, who is in them and where they were taken, on the web and in a
 native iPhone app that works offline.
 
-The server and its web pages were about **5,500 lines of code** (6,200 with tests and tools) when this book
-was first written, as a handful of single-file Python scripts and three single-file web pages. The
-iPhone app added about **3,500 lines of Swift** and a few hundred of Python. This book walks through
-all of it: why it is shaped the way it is, how each piece works, and how the pieces fit together.
+The server and its web pages are about **11,500 lines of code**, as single-file Python scripts and
+single-file web pages with no build step, and the iPhone app is about **5,300 lines of Swift**; with
+tests and tools, 22,000 ([chapter 2](02-code-tour.md)). Nearly all of it was written by Claude Code,
+some of it from a phone ([chapter 27](27-built-with-claude.md)). This book walks through all of it: why
+it is shaped the way it is, how each piece works, and how the pieces fit together.
 
 ## How to read it
 
@@ -42,6 +43,8 @@ problem it solves and ends with where to look in the code.
 | Understand the native grid, viewer and search page | [23. The native interface](23-native-interface.md) |
 | Understand background upload and how a photo reaches the catalog | [24. Uploading from the phone](24-uploading.md) |
 | See how the app learnt which photos are best, and how stacks pick their top photo | [25. Choosing the best photos](25-best-photos.md) |
+| Understand albums, change sets, and how an agent works on the library without being trusted with it | [26. Albums, change sets and agents](26-albums-and-agents.md) |
+| See how it was built with Claude Code, and how to work on it from a phone | [27. How it is built](27-built-with-claude.md) |
 | Look something up | [Appendix A: command reference](appendix-a-commands.md), [B: HTTP API](appendix-b-http-api.md), [C: glossary](appendix-c-glossary.md) |
 
 ## The system on one page
@@ -77,7 +80,8 @@ flowchart LR
     SRV --> LG
     SRV --> BR["Your browser"]
     SRV <-->|"/api/sync, images"| IOS["iPhone app<br/>(offline copy)"]
-    BR -->|"your corrections"| SRV
+    BR -->|"your corrections, reviews"| SRV
+    AGT["An agent<br/>(any MCP client)"] -->|"/mcp: find, make albums,<br/>propose change sets"| SRV
 ```
 
 Everything left of the disk is a one-time or occasional batch job. Everything right of it is one
@@ -92,9 +96,10 @@ them is the central idea of the whole design:
 
 ## About the numbers in this book
 
-Line counts for the server and web pages come from `tokei` on the repository as of 2026-11-13 (21
-commits, 2026-11-11 to 2026-11-13); the iPhone app's, from 2026-11-14 (chapter 19). Performance and scale figures come from the project's own measurements in
-[PERFORMANCE.md](../../photo-estate/PERFORMANCE.md), [BENCHMARK.md](../../photo-estate/BENCHMARK.md)
+Line counts come from `tokei` on the repository as of 2026-11-19 (159 commits, 2026-11-11 to
+2026-11-19), in [chapter 2](02-code-tour.md); where a chapter still quotes a count from when it was
+first written, it says so. Performance and scale figures come from the project's own measurements in
+[PERFORMANCE.md](../notes/PERFORMANCE.md), [BENCHMARK.md](../notes/BENCHMARK.md)
 and the README; where this book quotes one, it says so. Code references link to files and name the
 function, because line numbers drift.
 

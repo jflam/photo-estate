@@ -110,8 +110,8 @@ weights are non-commercial only, which is fine for a personal archive.
 
 **Model:** Qwen3.5-9B (Apache-2.0) locally. It gets **Tier 0–2 output in the prompt** (place,
 date, tags, people names), so it writes "Thanksgiving at Grandma's in Ohio" instead of "people at
-a table". At ~10–20k images, it's worth timing the 9B on this laptop's CPU/Vulkan first. If that's
-too slow, a 1-hour rental (~$3) of a larger model on thumbnails of *these* images only is the
+a table". At \~10–20k images, it's worth timing the 9B on this laptop's CPU/Vulkan first. If that's
+too slow, a 1-hour rental (\~$3) of a larger model on thumbnails of *these* images only is the
 fallback. Documents should stay local regardless; they're the most sensitive photos.
 
 ### Alternatives worth knowing

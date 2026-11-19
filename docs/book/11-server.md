@@ -97,16 +97,16 @@ Startup does all the expensive work once, so that requests can be cheap. The ste
 
 ```mermaid
 flowchart TD
-    S0["0. --demo: copy the committed demo catalog to a temp dir<br/>so the repo is never written to"] --> S1
-    S1["1. embeddings -> sorted by sha -> shas[], index{}, M (N x 768 float32)"] --> S2
-    S2["2. assets + occurrences -> meta[sha]<br/>(first path, albums, people, favourite, size)"] --> S3
-    S3["3. optional tables: exif, places, events, trips, faces<br/>-> more meta fields"] --> S4
-    S4["4. real thumbnail shapes: thumb-dims.json,<br/>else read JPEG headers (16 threads)"] --> S5
-    S5["5. NumPy columns: when, year, month index, lowercase text, fav,<br/>time orders (oldest, newest)"] --> S6
-    S6["6. facets: integer-code every categorical field"] --> S7
-    S7["7. trips list with a cover photo; the /api/info document"] --> S8
-    S8["8. background threads: People (faces), text encoder, thumbnail pre-generation"] --> S9
-    S9["9. build the name and place vocabulary for search; start serving"]
+    S0["0\. --demo: copy the committed demo catalog to a temp dir<br/>so the repo is never written to"] --> S1
+    S1["1\. embeddings -> sorted by sha -> shas[], index{}, M (N x 768 float32)"] --> S2
+    S2["2\. assets + occurrences -> meta[sha]<br/>(first path, albums, people, favourite, size)"] --> S3
+    S3["3\. optional tables: exif, places, events, trips, faces<br/>-> more meta fields"] --> S4
+    S4["4\. real thumbnail shapes: thumb-dims.json,<br/>else read JPEG headers (16 threads)"] --> S5
+    S5["5\. NumPy columns: when, year, month index, lowercase text, fav,<br/>time orders (oldest, newest)"] --> S6
+    S6["6\. facets: integer-code every categorical field"] --> S7
+    S7["7\. trips list with a cover photo; the /api/info document"] --> S8
+    S8["8\. background threads: People (faces), text encoder, thumbnail pre-generation"] --> S9
+    S9["9\. build the name and place vocabulary for search; start serving"]
 ```
 
 ### 1. The vectors
@@ -243,14 +243,13 @@ page's first facet state; the number of months is the histogram's length).
 
 ### 8. Background threads
 
-Three things start in threads *after* the arrays are built, so the page and filters answer first:
+Four things start in threads *after* the arrays are built, so the page and filters answer first:
 
 | Thread | Does | Why in the background |
 |---|---|---|
 | People | `from faces import People; People(...)` | Loading all faces and scoring them takes seconds; only `/people` needs it. Until it is ready, `/people` answers 503 "Faces are still loading" |
 | Text encoder | `import torch`, load SigLIP, then one `"warm-up"` encode | Importing PyTorch is **most of startup time** and only typed queries need it. The warm-up takes the ~1 s first-forward-pass penalty away from the first real query |
 | Thumbnail pre-generation | Make every missing 360 px thumbnail | So scrolling never waits for HEIC decoding |
-
 | Sync feed | `Feed(...)`, then `feed_update()` | Compares the loaded catalog with the change feed the iPhone app syncs from (chapter 20); until it finishes, `/api/sync` answers 503 |
 
 A typed search that arrives before the encoder is ready simply blocks on `Encoder.ready.wait()`.
@@ -361,7 +360,7 @@ flowchart TD
 
 ## HTTP engineering
 
-All from measurements in [PERFORMANCE.md](../../photo-estate/PERFORMANCE.md):
+All from measurements in [PERFORMANCE.md](../notes/PERFORMANCE.md):
 
 | Setting | Why |
 |---|---|

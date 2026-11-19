@@ -82,14 +82,14 @@ an event and perhaps a trip. Nothing leaves the machine: GeoNames city data ship
 
 ```mermaid
 flowchart TD
-    A["load assets with a time<br/>(+ EXIF offset tags + first album)"] --> B["1. place names and timezones for photos with GPS"]
-    B --> C["2. home, per year"]
-    C --> D["3. order everything on a UTC timeline"]
-    D --> E["4. split into events at gaps of 3 h or more"]
-    E --> F["5. fill missing timezones and places from the event, then from home;<br/>compute local time"]
-    F --> G["6. build event rows: title, centre, distance from home"]
-    G --> H["7. group away events into trips"]
-    H --> I["8. DROP and recreate places, events, trips;<br/>insert; rebuild the search index"]
+    A["load assets with a time<br/>(+ EXIF offset tags + first album)"] --> B["1\. place names and timezones for photos with GPS"]
+    B --> C["2\. home, per year"]
+    C --> D["3\. order everything on a UTC timeline"]
+    D --> E["4\. split into events at gaps of 3 h or more"]
+    E --> F["5\. fill missing timezones and places from the event, then from home;<br/>compute local time"]
+    F --> G["6\. build event rows: title, centre, distance from home"]
+    G --> H["7\. group away events into trips"]
+    H --> I["8\. DROP and recreate places, events, trips;<br/>insert; rebuild the search index"]
 ```
 
 ### 1. Place names from GPS

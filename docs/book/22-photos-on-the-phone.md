@@ -3,7 +3,7 @@
 The replica of chapter 20 holds the *words* about every photo. This chapter is about the *pictures*:
 which ones the phone keeps, where, how it decides what to fetch and what to throw away, and how a screen
 asks for an image without caring whether it is on the phone or on the server. Two files do it:
-[ImageStore.swift](../../ios/PhotoEstate/Images/ImageStore.swift) (226 lines) keeps and serves them, and
+[ImageStore.swift](../../ios/PhotoEstate/Images/ImageStore.swift) (251 lines) keeps and serves them, and
 [Downloader.swift](../../ios/PhotoEstate/Images/Downloader.swift) (128 lines) decides what to bring
 ahead of time.
 

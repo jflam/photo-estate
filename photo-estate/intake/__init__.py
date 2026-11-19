@@ -6,4 +6,4 @@
   api.py       the HTTP API the setup page (and, later, an agent over MCP) uses
   server.py    the small server that runs before there is a library to show
 
-See INTAKE-PLAN.md for the plan this is phase 1 of."""
+See docs/notes/INTAKE-PLAN.md for the plan this is phase 1 of."""
