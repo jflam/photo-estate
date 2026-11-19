@@ -61,7 +61,7 @@ body { min-height: 100dvh; }
 
 /* ── page heading and the grid ──────────────────────────────────────── */
 main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
-#libTab main, .periods { padding-top: calc(var(--bar) + env(safe-area-inset-top)); }
+#libTab main, #albTab main, .periods { padding-top: calc(var(--bar) + env(safe-area-inset-top)); }
 .head { padding: 14px var(--pad) 6px; }
 .head h1 { font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -.025em; overflow-wrap: anywhere; }
 .head p { margin-top: 3px; color: var(--muted); font-size: 15px; }
@@ -97,6 +97,14 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 @media (prefers-reduced-motion: reduce) { .grid.ghost .rows { animation: none; } }
 .sentinel { height: 1px; }
 /* a month, opened from its card: its photos and nothing else; under them, the months either side */
+/* albums: sets of photos, made here or brought in with the photos */
+.card .badge { position: absolute; z-index: 1; right: 12px; bottom: 12px; height: 26px; padding: 0 10px; border-radius: 999px; display: inline-flex; align-items: center;
+  background: rgba(0,0,0,.55); font-size: 12.5px; font-weight: 600; }
+.head .why { margin-top: 8px; max-width: 70ch; font-style: italic; color: var(--ink-2); font-size: 15px; }
+.head .why:empty { display: none; }
+.srcs { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 var(--cpad); }
+.periods .bt { margin-top: 34px; }
+.t .hid { position: absolute; left: 6px; bottom: 6px; padding: 1px 8px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; font-weight: 600; }
 .monnav { display: flex; gap: 12px; padding: 30px max(var(--gpad), 14px) 0; }
 .monnav span { flex: 1; }
 .monnav button { height: 44px; padding: 0 18px; border-radius: 999px; background: var(--well); display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
@@ -392,6 +400,23 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
   <div class="scrub glass" id="scrub" role="slider" aria-label="Scroll through the library"><span></span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 4.500 2.500-2.500 2.500 2.500M3.500 7.500 6 10l2.500-2.500"/></svg></div>
 </div>
 
+<div id="albTab" class="tab" hidden>
+  <div class="lbar" id="abar">
+    <button class="back glass" id="albBack" hidden aria-label="All albums"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 3 5.5 8l5 5"/></svg></button>
+    <div class="sp"></div>
+    <div class="caps glass" id="albCaps" hidden>
+      <button class="round" id="albView" aria-label="View options"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.5 9h7M8 13h2"/></svg></button>
+      <button class="round" id="albMore" aria-label="This album"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="14" cy="9" r="1.5"/></svg></button>
+    </div>
+  </div>
+  <div class="periods" id="albList"></div>
+  <main id="albOne" hidden>
+    <div class="head" id="albHead"><h1>&nbsp;</h1><p class="num">&nbsp;</p><p class="why"></p></div>
+    <div class="grid" id="albGrid"></div>
+    <div class="sentinel" id="albDown"></div>
+  </main>
+</div>
+
 <div id="searchTab" class="tab" hidden>
   <header class="sbar" id="sbar">
     <div class="srow">
@@ -437,7 +462,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
 </div>
 
 <nav class="tabbar" id="tabbar">
-  <div class="lib glass"><button class="tb on" data-tab="library" aria-label="Library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3.300 20.300 9.800v10.400H3.700V9.800Z"/><path d="m3.700 16.800 4.600-3.500 2.900 2.800 2.100-1.500 7 4.200" stroke-linecap="round"/><circle cx="14.700" cy="10.500" r="1.450" fill="currentColor" stroke="none"/></svg>Library</button></div>
+  <div class="lib glass"><button class="tb on" data-tab="library" aria-label="Library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3.300 20.300 9.800v10.400H3.700V9.800Z"/><path d="m3.700 16.800 4.600-3.500 2.900 2.800 2.100-1.500 7 4.200" stroke-linecap="round"/><circle cx="14.700" cy="10.500" r="1.450" fill="currentColor" stroke="none"/></svg>Library</button><button class="tb" data-tab="albums" aria-label="Albums"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><rect x="3.700" y="7.500" width="16.600" height="12.700" rx="2.600"/><path d="M6.800 4.300h10.400"/><path d="m3.700 17 4.300-3.300 2.800 2.600 2.200-1.600 7.300 4.300"/></svg>Albums</button></div>
   <button class="tb ts glass" data-tab="search" aria-label="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.500" cy="10.500" r="6.300"/><path d="m15.300 15.300 5 5"/></svg></button>
 </nav>
 
@@ -692,7 +717,7 @@ class Grid {
   }
   section(key, base) {
     const el = document.createElement("section");
-    if (key || !this.ranked) el.innerHTML = `<div class="sh"><h2>${esc(heading(key))}</h2><p><span class="where"></span><span class="n num"></span></p></div>`;
+    if (key || !this.ranked) el.innerHTML = `<div class="sh"><h2>${esc(this.titleOf ? this.titleOf(key) : heading(key))}</h2><p><span class="where"></span><span class="n num"></span></p></div>`;
     else el.className = "flat";
     const box = document.createElement("div"); box.className = "rows"; el.append(box);
     return { key, base, items: [], rows: [], el, box };
@@ -702,7 +727,7 @@ class Grid {
     if (at == null) {
       const touched = new Set();
       for (const r of list) {
-        const i = this.items.length, key = g ? when(r).slice(0, g) : "";
+        const i = this.items.length, key = this.keyOf ? this.keyOf(r) : g ? when(r).slice(0, g) : "";
         this.items.push(r);
         let sec = this.sections[this.sections.length - 1];
         if (!sec || sec.key !== key) { sec = this.section(key, i); this.sections.push(sec); this.el.append(sec.el); }
@@ -713,7 +738,7 @@ class Grid {
     }
     const h0 = document.documentElement.scrollHeight, y0 = scrollY, fresh = [];
     list.forEach((r, k) => {
-      const key = g ? when(r).slice(0, g) : "";
+      const key = this.keyOf ? this.keyOf(r) : g ? when(r).slice(0, g) : "";
       this.items[at + k] = r;
       let sec = fresh[fresh.length - 1];
       if (!sec || sec.key !== key) { sec = this.section(key, at + k); fresh.push(sec); }
@@ -758,7 +783,7 @@ class Grid {
         const r = sec.items[i + k];
         if (r.ghost) { html += `<div class="t" data-i="${sec.base + i + k}" style="width:${ws[k]}px"></div>`; continue; }
         html += `<div class="t" tabindex="0" data-i="${sec.base + i + k}" style="width:${ws[k]}px"><img decoding="async" alt="" data-src="/thumb/${r.sha}" onload="this.classList.add('in')">`
-          + (r.fav ? I.heartFill : "") + (r.stack && this.stacks() ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
+          + (r.fav ? I.heartFill : "") + (r.stack && this.stacks() ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (r.hidden ? `<span class="hid">Hidden</span>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
       }
       html += "</div>";
       sec.rows.push({ start: i, n, full });
@@ -780,10 +805,10 @@ class Grid {
   }
   tile(i) { return this.el.querySelector(`.t[data-i="${i}"]`); }
 }
-const grids = () => [lgrid, mgrid, sgrid];
+const grids = () => [lgrid, mgrid, agrid, sgrid];
 const gridOf = el => grids().find(g => g.el.contains(el));
 const caption = r => { const d = dParts(when(r)); return [d && fMed.format(d), firstPart(r.city || "")].filter(Boolean).join("  ·  "); };
-const barH = () => TAB === "library" ? $("#lbar").offsetHeight : $("#sbar").offsetHeight;
+const barH = () => $(TAB === "library" ? "#lbar" : TAB === "albums" ? "#abar" : "#sbar").offsetHeight;
 
 /* ── where the app is. Every step is a history entry, so Back (or a swipe from the screen's edge) goes back the
       way you came: a card you opened, a search you made, the other tab. The entry holds the whole state. ── */
@@ -810,8 +835,9 @@ function libGo(place, how, arrive) {
   libSet(place);
   nav(how); libShow(arrive);
 }
-const snap = () => ({ tab: TAB, s: String(toParams(S)), lib: libPlace() });
-const url = () => TAB === "library" ? location.pathname : "?" + (toParams(S).size ? toParams(S) : "search");
+const snap = () => ({ tab: TAB, s: String(toParams(S)), lib: libPlace(), alb: AL.id });
+const url = () => TAB === "library" ? location.pathname : TAB === "albums" ? (AL.id ? `?album=${AL.id}` : "?albums") : "?" + (toParams(S).size ? toParams(S) : "search");
+const yKey = () => TAB === "library" ? "library" + L.scale : TAB === "albums" ? "albums" + (AL.id || "") : "search";   // where each place was left
 // A step in history. push: one to go back through; replace: the same step, refined. The entry is what the app
 // shows at the moment of asking. While the viewer is leaving, its own entry is still being taken back, and a
 // step written now would be the one taken back instead: it waits for that (navFlush).
@@ -829,12 +855,13 @@ function navFlush() { for (const step of navWaiting.splice(0)) navWrite(...step)
 function setTab(t, how = "push", arrive = false) {    // how: push, replace, or "init" (the state is already in history). arrive: see libGo
   if (t === TAB && how !== "init") return;
   closeMenus();
-  if (t !== TAB) L.y[TAB + (TAB === "library" ? L.scale : "")] = scrollY;
+  if (t !== TAB) L.y[yKey()] = scrollY;
   TAB = t;
-  $("#libTab").hidden = t !== "library"; $("#searchTab").hidden = t !== "search";
+  $("#libTab").hidden = t !== "library"; $("#albTab").hidden = t !== "albums"; $("#searchTab").hidden = t !== "search";
   for (const b of $$(".tabbar .tb")) b.classList.toggle("on", b.dataset.tab === t);
   if (how !== "init") nav(how);
   if (t === "library") libShow(arrive);
+  else if (t === "albums") albShow();
   else if (Q?.key !== sKey()) refreshSearch();
   else { searchShow(); scrollTo(0, L.y.search || 0); }
   titleDoc();
@@ -845,7 +872,7 @@ $("#tabbar").onclick = e => {
   setTab(b.dataset.tab);
 };
 function titleDoc() {
-  const t = TAB === "library" ? "" : isEmpty() ? "Search" : $("#sHead h1").textContent;
+  const t = TAB === "library" ? "" : TAB === "albums" ? (AL.id && AL.album ? AL.album.title : "Albums") : isEmpty() ? "Search" : $("#sHead h1").textContent;
   document.title = (t ? t + " — " : "") + "Photo Estate";
 }
 
@@ -1077,6 +1104,115 @@ scrub.addEventListener("pointercancel", scrubEnd);
 addEventListener("scroll", () => {
   if (TAB === "library" && L.scale === "all") requestAnimationFrame(scrubShow);
 }, { passive: true });
+
+/* ── Albums: sets of photos. Those made here (by hand, or by an agent asked in a chat connected to the library)
+      are each a title, a note on what was asked for, and photos, in sections if they were given any; a live
+      one is a search, and holds whatever it finds. Under them, the albums that came in with the photos, which
+      are a filter in Search. An album is somewhere to look, and something to act on: its photos can be made
+      favourites, downloaded, or put up for hiding, which makes it a change set to review (/changes). ── */
+const AL = { id: null, album: null, sections: null };   // the album showing (null: the list of them), and what the server last said of it
+const agrid = new Grid({
+  grid: "#albGrid", down: "#albDown", ranked: true,  // no dates to head it by: its own sections, or one run
+  fetch: (c, n) => getJSON(`/api/albums/${AL.id}/photos?limit=${n}&cursor=${c}`),
+  grain: () => 0,
+  keyOf: r => r.section || "", titleOf: key => key,
+  count: sec => AL.sections?.get(sec.key),
+  stacks: () => false,
+  onData: d => { AL.album = d.album; AL.sections = new Map(d.sections.map(s => [s.title, s.n])); albHead(d.matching); },
+  onGrow: () => { if (VL === agrid && viewing()) { arrange(); vChrome(); } },
+  onError: e => { agrid.clear(); agrid.el.innerHTML = `<div class="blank">${MARK}<h3>Couldn’t open this album</h3><p>${esc(e.message)}</p><button class="btn" id="albRetry">Try again</button></div>`; },
+});
+function albGo(id, how = "push") {                    // an album, or (null) the list of them
+  L.y[yKey()] = scrollY;
+  AL.id = id; nav(how); albShow();
+}
+function albBack() {
+  if (AL.id == null) return;
+  if (history.state?.prev?.tab === "albums") return history.back();
+  albGo(null, "replace");
+}
+$("#albBack").onclick = albBack;
+function albShow() {
+  const one = AL.id != null;
+  $("#albList").hidden = one; $("#albOne").hidden = !one;
+  $("#albBack").hidden = !one || coarse.matches; $("#albCaps").hidden = !one;
+  if (!one) return albList();
+  if (AL.album?.id === AL.id && agrid.phase.is("loading", "ready")) return scrollTo(0, L.y[yKey()] || 0);   // still showing: where it was left
+  AL.album = AL.sections = null;
+  $("#albHead h1").innerHTML = "&nbsp;"; $("#albHead p").innerHTML = "&nbsp;"; $(".why", $("#albHead")).textContent = "";
+  agrid.clear(); scrollTo(0, 0);
+  agrid.load(0).then(d => { if (d && !d.results.length) agrid.el.innerHTML = `<div class="blank">${MARK}<h3>Nothing in it yet</h3><p>${
+    d.album.kind === "live" ? "Its search finds no photos now." : "Photos are added to an album by asking for them in a chat connected to this library."}</p></div>`; });
+}
+function albHead(n) {
+  const a = AL.album;
+  $("#albHead h1").textContent = a.title;
+  $("#albHead p").textContent = [photos(n), a.kind === "live" ? "Live: whatever its search finds" : "",
+    a.op === "hide" ? (a.applied ? `Hiding ${photos(a.applied)}` : a.state === "done" ? "Hidden" : "Up for hiding") : ""].filter(Boolean).join("  ·  ");
+  $(".why", $("#albHead")).textContent = a.prompt || "";
+  titleDoc();
+}
+async function albList() {
+  const el = $("#albList"), asked = AL.asked = (AL.asked || 0) + 1;
+  if (!el.childElementCount) el.innerHTML = `<div class="head"><h1>Albums</h1><p class="num">&nbsp;</p></div>`;
+  scrollTo(0, L.y.albums || 0);
+  let d;
+  try { d = await getJSON("/api/albums"); }
+  catch (e) { if (asked === AL.asked) el.innerHTML = `<div class="head"><h1>Albums</h1></div><div class="blank">${MARK}<h3>Couldn’t load the albums</h3><p>${esc(e.message)}</p><button class="btn" id="albRetry">Try again</button></div>`; return; }
+  if (asked !== AL.asked || TAB !== "albums" || AL.id != null) return;
+  const from = INFO?.facets.album || [];
+  const badge = s => s.op !== "hide" ? (s.kind === "live" ? "Live" : "") : s.applied ? `Hiding ${fmt(s.applied)}` : s.state === "done" ? "Hidden" : s.state === "reverted" ? "" : "Up for hiding";
+  const card = s => `<button class="card" data-album="${s.id}" aria-label="${esc(s.title)}">${s.cover[0] ? `<img alt="" loading="lazy" src="/thumb/${s.cover[0]}" onload="this.classList.add('in')"><img alt="" loading="lazy" src="/preview/${s.cover[0]}" onload="this.classList.add('in')">` : ""}
+    <span class="ct"><b>${esc(s.title)}</b><small>${photos(s.n)}</small></span>${badge(s) ? `<span class="badge">${badge(s)}</span>` : ""}</button>`;
+  el.innerHTML = `<div class="head"><h1>Albums</h1><p class="num">${d.sets.length ? `${fmt(d.sets.length)} made here` : "None made here yet"}${from.length ? `  ·  ${fmt(from.length)} from your sources` : ""}</p></div>`
+    + (d.sets.length ? `<div class="cards months">${d.sets.map(card).join("")}</div>`
+      : `<div class="blank">${MARK}<h3>No albums yet</h3><p>Ask for one in a chat connected to this library: “the best five pictures of Ben for every year”, “our trips to the coast”. It appears here when it is made.</p></div>`)
+    + (from.length ? `<div class="bt"><h2>From your sources</h2></div><div class="srcs">${from.map(([v, n]) =>
+        `<button class="th" data-src="${esc(v)}">${esc(v)}<small>${fmt(n)}</small></button>`).join("")}</div>` : "");
+  scrollTo(0, L.y.albums || 0);
+}
+$("#albList").onclick = e => {
+  if (e.target.closest("#albRetry")) return albList();
+  const c = e.target.closest("[data-album]"), s = e.target.closest("[data-src]");
+  if (c) albGo(+c.dataset.album);
+  else if (s) { const x = blank(); x.f.album = [s.dataset.src]; find(x); }   // an album that came with the photos: those photos, in Search
+};
+$("#albOne").addEventListener("click", e => { if (e.target.closest("#albRetry")) { AL.album = null; albShow(); } });
+$("#albView").onclick = e => openMenu(e.currentTarget, el => {
+  const mi = (i, on, label) => `<button class="mi${on ? " on" : ""}" data-dens="${i}">${I.check}<span>${label}</span></button>`;
+  el.innerHTML = `<h5>Photo size</h5>${DENS_NAME.map((n, i) => mi(i, V.dens === i, n)).join("")}`;
+  el.onclick = e => { const b = e.target.closest("[data-dens]"); if (b) { setDens(+b.dataset.dens); menu.draw(menu.el); } };
+});
+// What can be done with the album showing. Each is done to all its photos; hiding is only proposed here, and
+// is looked over and applied on the review page.
+$("#albMore").onclick = e => openMenu(e.currentTarget, el => {
+  const a = AL.album; if (!a) return closeMenus();
+  const row = (attr, icon, label, tag = "button") => `<${tag} class="mi ln" ${attr}>${icon}<span>${label}</span></${tag}>`;
+  const heart = svg('<path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.900-5.600 7.300-5.600 7.300Z"/>', 18);
+  const down = svg('<path d="M8 2.500v8M4.800 7.500 8 10.700l3.200-3.200M3 13.500h10"/>', 18), eye = svg('<path d="M2 8s2.200-4 6-4 6 4 6 4-2.200 4-6 4-6-4-6-4Z"/><path d="m3 13 10-10"/>', 18), bin = svg('<path d="M3.500 4.500h9M6.500 4.500V3h3v1.500M4.800 4.500l.5 8.500h5.400l.5-8.500"/>', 18);
+  el.innerHTML = row('data-fav="1"', heart, "Make all favourites") + row('data-fav="0"', heart, "Take all out of favourites")
+    + row(`href="/api/albums/${a.id}/download" download`, down, "Download the originals", "a") + "<hr>"
+    + (a.op === "hide" ? row(`href="/changes/${a.id}"`, eye, "Review what it hides", "a") : row("data-hide", eye, "Hide these photos…"))
+    + (a.applied ? "" : row("data-drop", bin, "Delete this album"));
+  el.onclick = async e => {
+    const b = e.target.closest("button.mi"); if (!b) return;
+    closeMenus();
+    try {
+      if (b.dataset.fav) {
+        const got = await postJSON(`/api/albums/${a.id}/favorite`, { fav: b.dataset.fav === "1" });
+        INFO.fav += (got.fav ? 1 : -1) * got.changed; $("#browse").innerHTML = "";
+        for (const r of agrid.items) if (r) favShow(r, got.fav);          // the ones loaded: every tile of theirs, wherever it shows
+        libCovers();
+      } else if (b.hasAttribute("data-hide")) {
+        await postJSON(`/api/albums/${a.id}/hide`, {});
+        location.href = `/changes/${a.id}`;            // looked over and applied there, as any change set
+      } else if (b.hasAttribute("data-drop") && confirm(`Delete the album “${a.title}”? Its photos stay in the library.`)) {
+        await postJSON(`/api/albums/${a.id}/discard`, {});
+        AL.album = null; albGo(null, "replace");
+      }
+    } catch (err) { alert(err.message === "not allowed" ? "Albums can’t be changed from this account." : err.message); }
+  };
+});
 
 /* ── menus: the view options, and the rest of your library ─────────── */
 let menu = null;
@@ -1639,6 +1775,7 @@ function drawInfo(r) {                               // what is known about it, 
   const sub = [d && when(r).length > 10 && fTime.format(d), r.tz && r.tz.replace(/_/g, " ")].filter(Boolean).join("  ·  ");
   if (sub) h += `<div class="sub num">${esc(sub)}</div>`;
   if (r.desc) h += `<div class="note">${esc(r.desc)}</div>`;
+  if (r.reason) h += `<div class="here">In this album: ${esc(r.reason)}</div>`;
   if (r.place || gps) {
     const map = gps ? `<a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${r.lat}&mlon=${r.lon}#map=15/${r.lat}/${r.lon}">Map</a>` : "";
     const detail = [esc(r.county || ""), r.place_inferred ? "from photos taken around then" : "", map].filter(Boolean).join("  ·  ");
@@ -1892,6 +2029,7 @@ $("#vShare").onclick = share;
 
 /* ── page events ───────────────────────────────────────────────────── */
 const openStack = e => { const b = e.target.closest(".stk"); if (b) { const s = blank(); s.stack = b.dataset.stack; find(s); } return !!b; };   // the count on a tile: the whole stack
+$("#albGrid").addEventListener("click", e => { const t = e.target.closest(".t"); if (t) openViewer(agrid, +t.dataset.i); });
 $("#monGrid").addEventListener("click", e => { if (e.target.closest("#libRetry")) return L.retry?.(); if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(mgrid, +t.dataset.i); });
 $("#libGrid").addEventListener("click", e => { if (e.target.closest("#libRetry")) return L.retry?.(); if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(lgrid, +t.dataset.i); });
 $("#sGrid").addEventListener("click", e => {
@@ -1923,11 +2061,13 @@ document.addEventListener("touchstart", e => {
 document.addEventListener("touchend", e => {
   if (!edge) return;
   const t = e.changedTouches[0], dx = t.clientX - edge.x, dy = Math.abs(t.clientY - edge.y); edge = null;
-  if (dx > innerWidth * .3 && dy < dx) { if (TAB === "library") libBack(); else if (!isEmpty()) sBack(); }
+  if (dx > innerWidth * .3 && dy < dx) { if (TAB === "library") libBack(); else if (TAB === "albums") albBack(); else if (!isEmpty()) sBack(); }
 }, { passive: true });
 function restore(st) {                               // a history entry: the whole state it holds
-  if (!st) st = { tab: location.search ? "search" : "library", s: location.search.slice(1) };
+  if (!st) { const p = new URLSearchParams(location.search), alb = p.has("album") || p.has("albums");   // an address with no entry behind it
+    st = { tab: alb ? "albums" : location.search ? "search" : "library", s: alb ? "" : location.search.slice(1), alb: +p.get("album") || null }; }
   if (st.lib) libSet(st.lib);
+  AL.id = st.alb ?? null;
   S = fromParams(new URLSearchParams(st.s ?? location.search)); stopTyping();
   setTab(st.tab || "library", "init", !!st.lib);       // an entry that says where the Library was: there, at its card or month
 }
@@ -1949,7 +2089,8 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
   buildVocab();
   const params = new URLSearchParams(location.search);
   S = fromParams(params); q.value = S.q;
-  TAB = [...params].length ? "search" : "library";
+  TAB = params.has("album") || params.has("albums") ? "albums" : [...params].length ? "search" : "library";
+  if (TAB === "albums") { AL.id = +params.get("album") || null; S = blank(); }
   history.replaceState({ ...snap(), d: 0 }, "", url());
   libLoad();
   setTab(TAB, "init");

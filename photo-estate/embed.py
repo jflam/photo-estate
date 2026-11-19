@@ -988,6 +988,12 @@ def cmd_serve(a) -> None:
             mask &= fav
         if args.get("screenshots") is False:
             mask &= ~shot
+        if args.get("distinct"):         # the top photo of each stack of near-identical shots, not the others
+            mask &= ~dup
+        by_best = args.get("order") == "best"
+        if by_best and rank is None:
+            raise ValueError("this library has no quality scores, so nothing can be ordered best first")
+        quality = lambda ids: [round(float(score[i]), 3) for i in ids]
         like, text = args.get("like"), str(args.get("query") or "").strip()
         if like:
             if like not in index:
@@ -996,6 +1002,9 @@ def cmd_serve(a) -> None:
             mask[index[like]] = False
         elif text:
             sims = M @ remember(("text", text), lambda: text_vec(text))
+        elif by_best:
+            ids = best[mask[best]]
+            return [shas[i] for i in ids], quality(ids)
         else:
             return [shas[i] for i in newest[mask[newest]]], None
         sims = np.where(mask, sims, -np.inf)
@@ -1003,6 +1012,10 @@ def cmd_serve(a) -> None:
             sims[sims < float(args["min_score"])] = -np.inf
         elif not like and mask.any():   # as a typed search in the app: near the best match, above the floor
             sims[sims < max(a.match_floor, sims.max() - a.match_window)] = -np.inf
+        if by_best:                      # what matches, the best of it first
+            found = np.flatnonzero(np.isfinite(sims))
+            ids = found[np.argsort(rank[found], kind="stable")]
+            return [shas[i] for i in ids], quality(ids)
         order = np.argsort(-sims)[: int(np.isfinite(sims).sum())]
         return [shas[i] for i in order], [round(float(sims[i]), 4) for i in order]
 
@@ -1013,7 +1026,9 @@ def cmd_serve(a) -> None:
         row = {"id": sha, "date": m.get("local") or m["taken"], "place": m.get("place"), "people": m["people"],
                "albums": m["albums"], "event": m.get("event_title"), "event_id": m.get("event"), "trip": m.get("trip_title"),
                "camera": m.get("camera"), "favorite": m["fav"] or None, "screenshot": is_screenshot(m) or None,
-               "source_path": m["path"], "hidden": (not visible[index[sha]]) or None}
+               "source_path": m["path"], "hidden": (not visible[index[sha]]) or None,
+               "quality": round(float(score[index[sha]]), 3) if score is not None else None,
+               "shots_alike": int(stack_n[index[sha]]) if stack_n[index[sha]] > 1 else None}
         return {k: v for k, v in row.items() if v not in (None, [], "")}
 
     def agent_faces(ids) -> dict:
@@ -1336,7 +1351,7 @@ def cmd_serve(a) -> None:
             """Change sets (changes.py): the review page and its API. Proposing, deciding and applying
             change what everyone sees, so they take the same permission as uploading (--upload-user), or
             come from this computer itself (not through `tailscale serve`): that is where the agent runs."""
-            if not u.path.startswith(("/changes", "/api/changes", "/api/tasks")):
+            if not u.path.startswith(("/changes", "/api/changes", "/api/albums", "/api/tasks")):
                 return False
             from intake.server import is_local
             if method == "POST" and not (self.allowed() or is_local(self)):
@@ -1462,11 +1477,44 @@ def cmd_serve(a) -> None:
                 ingest.poke(self.headers.get("X-Batch"), u.path[len(prefix):], new=code == 201)
             self.json({"status": msg}, code)
 
+        def download(self, sid: int):
+            """GET /api/albums/<id>/download: the album's original files as one zip, written as it is read
+            (nothing is held in memory or on disk). Names are the files' own, numbered when two are alike."""
+            import zipfile
+            with gate:                   # only to say which files; the copying must not hold up a reload
+                got = changes.shas(sid)
+                files = [] if not got else [(store / s[:2] / s[2:4] / f"{s}{meta[s]['ext']}",
+                                             (meta[s]["path"] or "").rsplit("/", 1)[-1] or f"{s[:12]}{meta[s]['ext']}")
+                                            for s in got[1] if s in meta]
+            if not got:
+                return self.send(404, b'{"error":"no such album"}', "application/json")
+            name = re.sub(r"[^\w .-]+", " ", got[0]).strip() or f"album-{sid}"
+            self.close_connection = True         # its length is not known beforehand: the end of the connection ends it
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(name)}.zip")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            used = Counter()
+            with zipfile.ZipFile(self.wfile, "w", zipfile.ZIP_STORED) as z:
+                for src, base in files:
+                    used[base.lower()] += 1
+                    if used[base.lower()] > 1:
+                        stem, dot, ext = base.rpartition(".")
+                        base = f"{stem} ({used[base.lower()]}).{ext}" if dot else f"{base} ({used[base.lower()]})"
+                    try:
+                        z.write(src, base)
+                    except OSError:              # a file that is not on the disk: the rest still come
+                        continue
+
         def do_GET(self):
             u = urlparse(self.path)
             qs = parse_qs(u.query)
             one = lambda k, d="": (qs.get(k) or [d])[0]
             try:
+                if m := re.fullmatch(r"/api/albums/(\d+)/download", u.path):
+                    return self.download(int(m[1]))
                 if intake and u.path.startswith(("/setup", "/api/intake")):
                     return self.intake_route("GET", u, qs, None)
                 if self.people_page("GET", u, qs, None) or self.changes_route("GET", u, qs, None):
@@ -1602,7 +1650,7 @@ def cmd_serve(a) -> None:
 
     def gated(fn):
         def run(self):
-            if self.path.startswith(("/api/upload/", "/api/intake", "/setup")):   # touch none of the above; can be slow
+            if self.path.startswith(("/api/upload/", "/api/intake", "/setup")) or self.path.endswith("/download"):   # touch none of the above (a download: only briefly, itself); can be slow
                 return fn(self)
             with gate:
                 return fn(self)
@@ -1619,33 +1667,41 @@ def cmd_serve(a) -> None:
     # read the table a moment too early can be put right as it is swapped in.
     fav_lock, fav_log = threading.Lock(), []
 
-    def show_favorite(sha: str, on: bool) -> None:
-        i = index.get(sha)
-        if i is not None and bool(fav[i]) != on:
-            meta[sha] = dict(meta[sha], fav=on)
-            fav[i] = on
-            info["fav"] = int((combine({}) & fav).sum())
+    def show_favorites(pairs) -> None:
+        for sha, on in pairs:
+            i = index.get(sha)
+            if i is not None and bool(fav[i]) != on:
+                meta[sha] = dict(meta[sha], fav=on)
+                fav[i] = on
+        info["fav"] = int((combine({}) & fav).sum())
 
-    def set_favorite(sha: str, on: bool, who: str) -> int:
-        """Record it, show it, tell the phones. Returns how many favourites there now are."""
+    def set_favorites(shas, on: bool, who: str) -> int:
+        """Record them, show them, tell the phones. Returns how many photos it changed."""
+        shas = [s for s in dict.fromkeys(shas) if s in index]
         with fav_lock:
+            changed = [s for s in shas if bool(fav[index[s]]) != on]
             con = connect(a.db)
             try:
                 con.execute("CREATE TABLE IF NOT EXISTS favorites(sha256 TEXT PRIMARY KEY, fav INT NOT NULL,"
                             " set_at TEXT, set_by TEXT)")
-                con.execute("INSERT OR REPLACE INTO favorites VALUES (?,?,?,?)", (sha, int(on), now(), who or None))
+                t = now()
+                con.executemany("INSERT OR REPLACE INTO favorites VALUES (?,?,?,?)", ((s, int(on), t, who or None) for s in shas))
                 con.commit()
             finally:
                 con.close()
-            fav_log.append((sha, on))
-            show_favorite(sha, on)
+            fav_log.extend((s, on) for s in shas)
+            show_favorites((s, on) for s in shas)
             with lru_lock:
-                lru.clear()      # covers and "favourites only" lists were worked out without it
+                lru.clear()      # covers and "favourites only" lists were worked out without them
             with st_lock:
                 st["lib"] = None
-        i = index[sha]
-        if feed.ready and visible[i]:
-            feed.touch({sha: dict(meta[sha], **feed_extra(i))})
+        if feed.ready and changed:
+            feed.touch({s: dict(meta[s], **feed_extra(index[s])) for s in changed if visible[index[s]]})
+        return len(changed)
+
+    def set_favorite(sha: str, on: bool, who: str) -> int:
+        """One photo. Returns how many favourites there now are."""
+        set_favorites([sha], on, who)
         return info["fav"]
 
     # Re-reading the catalog is in one of three states: idle, running, or rerun (asked again while
@@ -1689,8 +1745,7 @@ def cmd_serve(a) -> None:
 
                     def swap_in():
                         install(fresh)
-                        for sha, on in fav_log[mark:]:   # set while this load was reading
-                            show_favorite(sha, on)
+                        show_favorites(fav_log[mark:])   # set while this load was reading
                     gate.swap(swap_in)
                     with lru_lock:
                         lru.clear()      # cached masks and rankings are the old catalog's
@@ -1737,7 +1792,8 @@ def cmd_serve(a) -> None:
 
     changes = Changes(a.db, facts=lambda sha: meta.get(sha),
                       shown=lambda sha: {"library": sha in index and bool(visible[index[sha]]), "sync": sha in feed.rows},
-                      busy=lambda: settling["n"] > 0 or reload_state["state"] != "idle", on_change=on_hidden_change)
+                      busy=lambda: settling["n"] > 0 or reload_state["state"] != "idle", on_change=on_hidden_change,
+                      find=lambda query: agent_find(query), favorite=set_favorites)
 
     # Tasks (tasks.py): a request in words, worked on by an agent on this computer that uses the MCP
     # endpoint below like any other client, and ends in a change set.
