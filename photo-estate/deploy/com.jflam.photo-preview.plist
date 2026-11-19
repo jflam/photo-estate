@@ -1,19 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- The cloud preview: the demo app of the branch with the newest commit, on 127.0.0.1:8768
-     (preview-branch.sh, from a clone of its own). Nothing of the real app or the library is involved. -->
+     (preview-branch.sh, from a clone of its own). It runs whatever is pushed to any branch, so it is a
+     LaunchDaemon (/Library/LaunchDaemons) that runs as photopreview, a user with no login, no admin
+     rights and no place in the staff group: not as the owner of the library. Installed by
+     preview-user-setup.sh. -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.jflam.photo-preview</string>
+  <key>UserName</key><string>photopreview</string>
+  <key>GroupName</key><string>photopreview</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/jflam/.config/photo-estate/preview-branch.sh</string>
+    <string>/usr/local/photo-preview/preview-branch.sh</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>/Users/photopreview</string>
+    <key>USER</key><string>photopreview</string>
+    <key>LOGNAME</key><string>photopreview</string>
+    <key>PREVIEW_DIR</key><string>/Users/photopreview/preview</string>
+  </dict>
+  <key>WorkingDirectory</key><string>/Users/photopreview</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>30</integer>
-  <key>StandardOutPath</key><string>/Users/jflam/Library/Logs/photo-preview.log</string>
-  <key>StandardErrorPath</key><string>/Users/jflam/Library/Logs/photo-preview.log</string>
+  <key>StandardOutPath</key><string>/var/log/photo-preview/preview.log</string>
+  <key>StandardErrorPath</key><string>/var/log/photo-preview/preview.log</string>
 </dict>
 </plist>
