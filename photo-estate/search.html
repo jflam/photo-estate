@@ -96,6 +96,12 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 @keyframes breathe { to { opacity: .5; } }
 @media (prefers-reduced-motion: reduce) { .grid.ghost .rows { animation: none; } }
 .sentinel { height: 1px; }
+/* a month, opened from its card: its photos and nothing else; under them, the months either side */
+.monnav { display: flex; gap: 12px; padding: 30px max(var(--gpad), 14px) 0; }
+.monnav span { flex: 1; }
+.monnav button { height: 44px; padding: 0 18px; border-radius: 999px; background: var(--well); display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
+.monnav button:hover { background: var(--well-2); }
+.monnav svg { color: var(--muted); }
 :root { --gpad: var(--pad); }
 @media (max-width: 760px) { :root { --gpad: 0px; } }       /* phones: the photos run to the edges, as on the iPhone */
 
@@ -375,6 +381,12 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
     <div class="sentinel" id="libUp"></div>
     <div class="grid" id="libGrid"></div>
     <div class="sentinel" id="libDown"></div>
+  </main>
+  <main id="libMonth" hidden>
+    <div class="head" id="monHead"><h1>&nbsp;</h1><p class="num">&nbsp;</p></div>
+    <div class="grid" id="monGrid"></div>
+    <div class="sentinel" id="monDown"></div>
+    <nav class="monnav" id="monNav"></nav>
   </main>
   <div class="periods" id="libPeriods" hidden></div>
   <div class="scrub glass" id="scrub" role="slider" aria-label="Scroll through the library"><span></span><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 4.500 2.500-2.500 2.500 2.500M3.500 7.500 6 10l2.500-2.500"/></svg></div>
@@ -768,14 +780,18 @@ class Grid {
   }
   tile(i) { return this.el.querySelector(`.t[data-i="${i}"]`); }
 }
+const grids = () => [lgrid, mgrid, sgrid];
+const gridOf = el => grids().find(g => g.el.contains(el));
 const caption = r => { const d = dParts(when(r)); return [d && fMed.format(d), firstPart(r.city || "")].filter(Boolean).join("  ·  "); };
 const barH = () => TAB === "library" ? $("#lbar").offsetHeight : $("#sbar").offsetHeight;
 
 /* ── where the app is. Every step is a history entry, so Back (or a swipe from the screen's edge) goes back the
       way you came: a card you opened, a search you made, the other tab. The entry holds the whole state. ── */
 let TAB = "library";
-// The Library. Where it is, is three things, kept together and changed only by libSet: the scale showing, the
-// card it was last entered or left by (`anchor`, a year or a month), and the cards opened to get here (`trail`).
+// The Library. Where it is, is three things, kept together and changed only by libSet: the scale showing (a card
+// a year, a card a month, every photo, or one month: "years", "months", "all", "month"), the card it was last
+// entered or left by (`anchor`, a year or a month; in "month", the month showing), and the cards opened to get
+// here (`trail`).
 // A history entry holds exactly that. What it knows of the photos is separate, and is `known`: the months and
 // years (P), how many in each month, and every photo's shape, all for one order and one set of view options.
 const L = { scale: ["years", "months", "all"].includes(V.scale) ? V.scale : "all", trail: [], anchor: null, sort: "", y: {},
@@ -785,6 +801,7 @@ const L = { scale: ["years", "months", "all"].includes(V.scale) ? V.scale : "all
   known: machine("library", { unknown: ["asking"], asking: ["asking", "known", "failed"], known: ["asking"], failed: ["asking"] }, "unknown"),
   asked: 0, loading: null, retry: null };            // asked: which asking this is; loading: done when it is answered; retry: what "Try again" does
 const libPlace = () => ({ scale: L.scale, anchor: L.anchor, trail: L.trail });
+const libCards = () => L.scale === "years" || L.scale === "months";
 function libSet(place) { L.scale = place.scale || L.scale; L.anchor = place.anchor ?? null; L.trail = place.trail || []; }
 // Go to a place in the Library. how: "push" (a step to come back through) or "replace". arrive: show the
 // anchor (a card was opened, or Back came to it); otherwise the scale opens where it was last left.
@@ -848,8 +865,53 @@ const lgrid = new Grid({
   },
 });
 const libSorry = (what, e) => `<div class="blank">${MARK}<h3>${what}</h3><p>${esc(e?.message || "")}</p><button class="btn" id="libRetry">Try again</button></div>`;
+// One month, opened from its card: a set of its own, the month's photos and nothing above or below them. It is
+// the library's list from where the month starts (`at`) for as many photos as it has (`n`), so it is in the
+// order the Library is in, its shapes are known before its photos are, and it ends where the month does.
+const M = { key: null, m: null };                    // the month showing, and its card's facts (from L.P)
+const mgrid = new Grid({
+  grid: "#monGrid", down: "#monDown", ranked: true,  // one run of photos, no headings within it; each says its day when pointed at
+  fetch: async (c, n) => {
+    const m = M.m, take = Math.min(n, m.n - c);
+    const d = await getJSON("/api/search?" + libParams() + `&limit=${take}&cursor=${m.at + c}`);
+    d.next = c + take < m.n ? c + take : null;       // the month ends here, whatever comes after it in the library
+    return d;
+  },
+  grain: () => 0,
+  shape: i => L.shapes && M.m && M.m.at + i < L.shapes.length ? .5 + L.shapes[M.m.at + i] * 2.1 / 255 : 0,
+  stacks: () => V.dedupe,
+  onGrow: () => { if (VL === mgrid && viewing()) { arrange(); vChrome(); } },
+  onError: e => { mgrid.clear(); mgrid.el.innerHTML = libSorry("Couldn’t load these photos", e); $("#monNav").innerHTML = ""; },
+});
+async function monthShow() {
+  const key = L.anchor;
+  if (!L.known.is("known")) await L.loading;         // opened from history before the months are known: when they are
+  if (TAB !== "library" || L.scale !== "month" || L.anchor !== key || !L.known.is("known")) return;
+  const m = L.P.months.find(x => x.key === key);
+  $("#monHead h1").textContent = heading(key);
+  $("#monHead p").textContent = m ? [m.places.join(" · "), photos(m.n)].filter(Boolean).join("  ·  ") : "No photos";
+  const keys = L.P.months.map(x => x.key).sort(), i = keys.indexOf(key), arrow = d => svg(`<path d="${d}"/>`, 14, 'stroke-width="2"');
+  const to = (k, before) => k ? `<button data-month="${k}">${before ? arrow("M10 3 5 8l5 5") : ""}${esc(heading(k))}${before ? "" : arrow("m6 3 5 5-5 5")}</button>` : "";
+  $("#monNav").innerHTML = to(keys[i - 1], true) + "<span></span>" + to(keys[i + 1], false);
+  if (!m) { M.key = key; M.m = null; return mgrid.clear(); }
+  if (M.m === m && mgrid.phase.is("loading", "ready")) return scrollTo(0, L.y.librarymonth || 0);   // still showing (back from Search, or from a photo): where it was left
+  M.key = key; M.m = m; L.retry = monthShow;
+  scrollTo(0, 0);
+  const ghosts = L.shapes ? Array.from({ length: Math.min(mgrid.first, m.n) }, () => ({ ghost: true })) : null;   // laid out at once, each tile the shape its photo will be
+  if (!ghosts) mgrid.clear();
+  mgrid.load(0, ghosts);
+}
+$("#monNav").onclick = e => {                         // the month before or after: in this one's place, so Back is still the Months
+  const b = e.target.closest("[data-month]");
+  if (b) libGo({ ...libPlace(), anchor: b.dataset.month }, "replace", true);
+};
 const libParams = () => { const p = viewParams(new URLSearchParams()); if (L.sort) p.set("sort", L.sort); return p; };
-function libLoad(keep) { L.retry = () => libLoad(keep); return L.loading = libLoad_(keep); }   // L.loading: done when the library's months are known
+// The month at the top of All, if All is showing and has been moved from its start: where a reload stays.
+const libHere = () => { const sec = TAB === "library" && L.scale === "all" && (scrollY > 40 || lgrid.lo > 0) ? lgrid.top() : null; return sec?.key || null; };
+// Ask for the library again (another order, a view option, the first time). It stays at the month it is at
+// unless told another: no caller has to remember to say so. (Choosing "Best first" inside a month used to
+// forget, and went back to the top of the library.)
+function libLoad(keep = libHere()) { L.retry = () => libLoad(keep); return L.loading = libLoad_(keep); }   // L.loading: done when the library's months are known
 async function libLoad_(keep) {                      // keep: the month to stay at (a view option changed)
   const g = ++L.asked, q = libParams();
   L.known.to("asking");
@@ -867,7 +929,8 @@ async function libLoad_(keep) {                      // keep: the month to stay 
   L.shapes = shapes && shapes.byteLength === P.matching ? new Uint8Array(shapes) : null;   // every photo's shape, in the library's order
   const hidden = P.total - P.matching;               // what the view options hide, so the count adds up to the whole library
   $("#libHead p").textContent = hidden > 0 ? `${about(P.matching)} of ${about(P.total)} photos  ·  ${about(hidden)} hidden` : `${about(P.matching)} photos`;
-  if (L.scale !== "all") renderPeriods();
+  if (libCards()) renderPeriods();
+  if (L.scale === "month") monthShow();              // the same month, in the order and with the view options now asked for
   const m = keep && P.months.find(x => x.key === keep), ghosts = libGhosts(m ? m.at : 0);
   const loading = lgrid.load(m ? m.at : 0, ghosts);
   if (!ghosts) await loading;
@@ -878,7 +941,8 @@ async function libCovers() {                          // a favourite changed: th
   const g = L.asked, P = await getJSON("/api/periods?" + libParams()).catch(() => null);
   if (!P || g !== L.asked || !L.known.is("known") || P.matching !== L.P.matching) return;
   L.P = P;
-  if (L.scale !== "all" && TAB === "library") renderPeriods();
+  if (M.m) M.m = P.months.find(x => x.key === M.key) || M.m;   // (the month showing is still the month showing)
+  if (libCards() && TAB === "library") renderPeriods();
 }
 function libGhosts(at) {                              // the page of photos from `at`, as far as it is known without asking: each one's month and shape
   if (!L.shapes) return null;
@@ -890,14 +954,15 @@ function libGhosts(at) {                              // the page of photos from
   return out;
 }
 function libShow(arrive = false) {                    // arrive: at the anchor (see libGo)
-  const all = L.scale === "all";
+  const all = L.scale === "all", month = L.scale === "month";
   for (const b of $$("#scale button")) { b.classList.toggle("on", b.dataset.s === L.scale); b.setAttribute("aria-selected", b.dataset.s === L.scale); }
   $("#libBack").hidden = !L.trail.length || coarse.matches;   // on touch, a swipe in from the left edge goes back
-  $("#libAll").hidden = !all; $("#libPeriods").hidden = all;
+  $("#libAll").hidden = !all; $("#libMonth").hidden = !month; $("#libPeriods").hidden = all || month;
   $("#scrub").classList.remove("on");
-  if (!all) {
+  if (month) { clearPeriods(); monthShow(); }
+  else if (!all) {
     if (L.known.is("known")) renderPeriods();
-    else if (arrive) { const at = L.anchor; L.loading?.then(() => { if (TAB === "library" && L.scale !== "all" && L.anchor === at) libShow(true); }); }   // the card to show is not known yet: when it is
+    else if (arrive) { const at = L.anchor; L.loading?.then(() => { if (TAB === "library" && libCards() && L.anchor === at) libShow(true); }); }   // the card to show is not known yet: when it is
     const key = arrive && L.anchor && (L.scale === "years" ? L.P?.years : L.P?.months)?.find(p => p.key.startsWith(L.anchor))?.key;
     const card = key && (L.scale === "months" && L.anchor.length === 4 && $(`.yr[data-year="${L.anchor}"]`) || $(`.card[data-key="${key}"]`));   // a year opens at its heading
     if (card) card.scrollIntoView({ block: "start" }); else scrollTo(0, L.y["library" + L.scale] || 0);
@@ -928,7 +993,7 @@ $("#libPeriods").onclick = e => {
   const c = e.target.closest(".card"); if (!c) return;
   const key = c.dataset.key;
   libSet({ ...libPlace(), anchor: key }); nav("replace");   // this step now says which card was opened: Back comes to it
-  libGo({ scale: key.length > 4 ? "all" : "months", anchor: key, trail: [...L.trail, { key, back: L.scale }] }, "push", true);
+  libGo({ scale: key.length > 4 ? "month" : "months", anchor: key, trail: [...L.trail, { key, back: L.scale }] }, "push", true);
 };
 $("#scale").onclick = e => {                          // Years, Months or All from the bar: a fresh start, nothing to go back to
   const b = e.target.closest("[data-s]"); if (!b || b.dataset.s === L.scale) return;
@@ -1037,7 +1102,7 @@ function viewMenu(anchor, ctx) {
     const cur = ctx === "library" ? L.sort || "new" : words ? (S.sort === "best" && INFO?.best ? "best" : "match") : S.sort || D?.sort || "new";
     const mi = (attr, on, label) => `<button class="mi${on ? " on" : ""}" ${attr}>${I.check}<span>${label}</span></button>`;
     const sw = (attr, on, label) => `<button class="mi" ${attr} role="switch" aria-checked="${on}"><svg></svg><span>${label}</span><i class="sw${on ? " on" : ""}"></i></button>`;
-    const best = INFO?.best ? mi('data-sort="best"', cur.startsWith("best"), ctx === "library" ? "Best first in each month" : "Best first") : "";
+    const best = INFO?.best ? mi('data-sort="best"', cur.startsWith("best"), ctx === "library" && L.scale !== "month" ? "Best first in each month" : "Best first") : "";
     el.innerHTML = (like || words && !best ? "" : words ? `<h5>Order</h5>${mi('data-sort="match"', cur === "match", "Best match first")}${best}<hr>`
         : `<h5>Order</h5>${mi('data-sort="new"', cur === "new", "Newest first")}${mi('data-sort="old"', cur === "old", "Oldest first")}${best}<hr>`)
       + `<h5>Photo size</h5>${DENS_NAME.map((n, i) => mi(`data-dens="${i}"`, V.dens === i, n)).join("")}<hr>`
@@ -1057,17 +1122,16 @@ function viewMenu(anchor, ctx) {
   });
 }
 function viewChanged() {                              // hiding more or less: both lists again, staying where you are
-  const sec = TAB === "library" && L.scale === "all" && (scrollY > 40 || lgrid.lo > 0) ? lgrid.top() : null;
-  libLoad(sec?.key);
+  libLoad();
   refreshSearch();
 }
 function setDens(i) {
   i = Math.max(0, Math.min(DENS.length - 1, i));
   if (i === V.dens) return;
-  const g = TAB === "library" ? lgrid : sgrid, t = [...g.el.querySelectorAll(".t")].find(t => t.getBoundingClientRect().bottom > barH());
+  const g = grids().find(g => g.live()) || lgrid, t = [...g.el.querySelectorAll(".t")].find(t => t.getBoundingClientRect().bottom > barH());
   const idx = t?.dataset.i, off = t ? t.getBoundingClientRect().top : 0;
   V.dens = i; saveView();
-  lgrid.relayout(); sgrid.relayout();
+  for (const x of grids()) x.relayout();
   const n = idx != null && g.tile(idx);
   if (n) scrollTo(0, scrollY + n.getBoundingClientRect().top - off);
 }
@@ -1629,7 +1693,7 @@ async function favour() {
   } finally { r.saving = false; }
 }
 function favShow(r, on) {                             // in the viewer, and on the photo's tile wherever it is showing
-  for (const g of [lgrid, sgrid]) {
+  for (const g of grids()) {
     const i = g.items.findIndex(x => x && x.sha === r.sha);
     if (i < 0) continue;
     g.items[i].fav = on;
@@ -1828,6 +1892,7 @@ $("#vShare").onclick = share;
 
 /* ── page events ───────────────────────────────────────────────────── */
 const openStack = e => { const b = e.target.closest(".stk"); if (b) { const s = blank(); s.stack = b.dataset.stack; find(s); } return !!b; };   // the count on a tile: the whole stack
+$("#monGrid").addEventListener("click", e => { if (e.target.closest("#libRetry")) return L.retry?.(); if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(mgrid, +t.dataset.i); });
 $("#libGrid").addEventListener("click", e => { if (e.target.closest("#libRetry")) return L.retry?.(); if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(lgrid, +t.dataset.i); });
 $("#sGrid").addEventListener("click", e => {
   if (openStack(e)) return;
@@ -1848,7 +1913,7 @@ document.addEventListener("keydown", e => {
   if (inField) return;
   if (e.key === "/") { e.preventDefault(); if (TAB !== "search") setTab("search"); q.focus(); q.select(); }
   if (e.key === "Enter" && document.activeElement.classList.contains("t"))
-    openViewer(document.activeElement.closest("#libGrid") ? lgrid : sgrid, +document.activeElement.dataset.i);
+    openViewer(gridOf(document.activeElement), +document.activeElement.dataset.i);
 });
 // A home-screen app has no browser to swipe back in, so a swipe in from the left edge goes back here, as on the iPhone.
 let edge = null;
@@ -1874,7 +1939,7 @@ addEventListener("popstate", () => {
   restore(history.state);
 });
 let lastW = 0;
-new ResizeObserver(() => { const w = document.documentElement.clientWidth; if (w !== lastW) { lastW = w; lgrid.relayout(); sgrid.relayout(); } }).observe(document.documentElement);
+new ResizeObserver(() => { const w = document.documentElement.clientWidth; if (w !== lastW) { lastW = w; for (const g of grids()) g.relayout(); } }).observe(document.documentElement);
 
 history.scrollRestoration = "manual";               // the page puts you back where you were, card or month, itself
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});   // the "can't reach" page
