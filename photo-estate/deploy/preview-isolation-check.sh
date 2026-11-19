@@ -35,7 +35,7 @@ must_fail "read $OWNER_HOME/.ssh/known_hosts"   cat "$OWNER_HOME/.ssh/known_host
 must_fail "list $OWNER_HOME/Documents"          ls "$OWNER_HOME/Documents"
 must_fail "read $OWNER_HOME/Documents/.localized" cat "$OWNER_HOME/Documents/.localized"
 must_fail "read $OWNER_HOME/.config/photo-estate/agent.env" cat "$OWNER_HOME/.config/photo-estate/agent.env"
-echo "-- must fail (preview-firewall-setup.sh): this machine's own services, and the networks it is on"
+echo "-- must fail once preview-firewall-setup.sh has been run: this machine's own services, and the networks it is on"
 must_fail "connect to the real app, 127.0.0.1:8766"   curl -s -m 5 -o /dev/null http://127.0.0.1:8766/api/info
 must_fail "connect to the demo, 127.0.0.1:8767"       curl -s -m 5 -o /dev/null http://127.0.0.1:8767/api/info
 must_fail "connect to localhost:8766 (IPv6 too)"      curl -s -m 5 -o /dev/null http://localhost:8766/api/info
