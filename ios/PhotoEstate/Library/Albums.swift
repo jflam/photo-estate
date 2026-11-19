@@ -114,6 +114,14 @@ final class AlbumsModel: ObservableObject {
         Task { await fetch() }
     }
 
+    /// A new album of these photos, fixed as they are now and in this order (Search makes one of what it
+    /// finds). It opens as soon as the server has made it.
+    func create(title: String, prompt: String, shas: [String]) async throws {
+        let j = try await API.post("api/albums", ["title": title, "prompt": prompt, "items": shas.map { ["sha": $0] }])
+        guard let album = Album(json: j) else { throw APIError(code: 0, description: "The server made no album.") }
+        show(album)
+    }
+
     /// Back to the list, which is asked for again: an album may have been made or changed meanwhile.
     func close() {
         gen += 1
@@ -269,7 +277,7 @@ final class AlbumsModel: ObservableObject {
         }
     }
 
-    private static func words(_ error: Error) -> String {
+    static func words(_ error: Error) -> String {
         error is URLError ? "Your server isn’t reachable right now." : (error as? APIError)?.description ?? error.localizedDescription
     }
 
@@ -342,7 +350,7 @@ private struct AlbumList: View {
                 if case .failed(let why) = model.phase {
                     blank("Couldn’t load the albums", why) { Button("Try again") { Task { await model.load() } }.buttonStyle(.glassProminent) }
                 } else if model.albums.isEmpty && model.phase == .ready {
-                    blank("No albums yet", "Ask for one in a chat connected to this library: “the best five pictures of Ben for every year”, “our trips to the coast”. It appears here when it is made.") { EmptyView() }
+                    blank("No albums yet", "Search for some photos and make an album of what it finds, or ask for one in a chat connected to this library: “the best five pictures of Ben for every year”, “our trips to the coast”. It appears here when it is made.") { EmptyView() }
                 }
                 ForEach(model.albums) { album in
                     Button { model.show(album) } label: { AlbumCard(album: album) }
@@ -556,7 +564,7 @@ private struct AlbumPage: View {
                 EstateMark(progress: 0.1).frame(width: 110).opacity(0.5)
                 Text("Nothing in it yet").font(.title(22, .bold))
                 Text(model.open?.live == true ? "Its search finds no photos now."
-                     : "Photos are added to an album by asking for them in a chat connected to this library.")
+                     : "Photos are added to an album by asking for them in a chat connected to this library, or from a search.")
                     .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
         }

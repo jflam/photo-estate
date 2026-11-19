@@ -315,10 +315,21 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 @keyframes pulse { 50% { opacity: .35; } }
 .v-note { position: absolute; left: 50%; bottom: calc(74px + env(safe-area-inset-bottom)); transform: translateX(-50%); font-size: 13px; color: rgba(255,255,255,.75); white-space: nowrap; }
 .v-note:empty { display: none; }
+/* the stack the photo is on top of: its shots as a row of small prints over the bar */
+.v-strip { position: absolute; left: 50%; bottom: calc(68px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; align-items: center; gap: 5px;
+  max-width: calc(100% - 28px); height: 58px; padding: 0 3px; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; transition: left .3s var(--ease), opacity .2s; }
+.v-strip::-webkit-scrollbar { display: none; }
+.v-strip[hidden] { display: none; }
+.v-strip button { position: relative; flex: none; width: 38px; height: 52px; border-radius: 7px; overflow: hidden; background: #222; opacity: .7; transition: width .2s var(--ease), opacity .2s; }
+.v-strip button:hover { opacity: 1; }
+.v-strip button.on { width: 46px; opacity: 1; }
+.v-strip button.on::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 2px #fff; }
+.v-strip img { width: 100%; height: 100%; object-fit: cover; }
+.v.stacked .v-note { bottom: calc(132px + env(safe-area-inset-bottom)); }
 #vPrev { left: 18px; top: 50%; margin-top: -23px; }
 #vNext { right: 18px; top: 50%; margin-top: -23px; transition: right .3s var(--ease), opacity .2s; }
 .v-btn[disabled] { opacity: 0; pointer-events: none; }
-.v.bare .v-btn, .v.bare .v-title, .v.bare .v-bar, .v.bare .v-note, .v.bare .v-ui::before, .v.bare .v-ui::after { opacity: 0; pointer-events: none; }
+.v.bare .v-btn, .v.bare .v-title, .v.bare .v-bar, .v.bare .v-strip, .v.bare .v-note, .v.bare .v-ui::before, .v.bare .v-ui::after { opacity: 0; pointer-events: none; }
 
 /* details: what is known about a photo, laid out like the back of a print */
 .v-info { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; padding: 30px 20px calc(40px + env(safe-area-inset-bottom)); overflow-y: auto;
@@ -327,7 +338,8 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .v.info .v-info { transform: none; }
 .v.info #vNext { right: 378px; }
 .v.info .v-title { right: 434px; }
-.v.info .v-bar, .v.info .v-note { left: calc(50% - 180px); }
+.v.info .v-bar, .v.info .v-note, .v.info .v-strip { left: calc(50% - 180px); }
+.v.info .v-strip { max-width: calc(100% - 388px); }
 .v-info h3 { font-size: 26px; line-height: 1.15; font-weight: 700; letter-spacing: -.022em; color: #fff; }
 .v-info .sub { margin-top: 4px; color: var(--vmuted); font-size: 15px; }
 .v-info .note { margin-top: 10px; font-style: italic; color: #bab7b0; }
@@ -369,7 +381,8 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
     transform: translateY(100%); }
   .v-info::before { content: ""; display: block; width: 36px; height: 5px; margin: 0 auto 18px; border-radius: 3px; background: rgba(255,255,255,.25); }
   .v.info .v-title { right: 74px; }
-  .v.info .v-bar, .v.info .v-note { opacity: 0; pointer-events: none; }
+  .v.info .v-bar, .v.info .v-note, .v.info .v-strip { opacity: 0; pointer-events: none; }
+  .v.info .v-strip { left: 50%; max-width: calc(100% - 28px); }
   .head h1 { font-size: 28px; }
 }
 @media (max-width: 420px) { .scale button { padding: 0 12px; } }
@@ -458,6 +471,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
     <button class="v-btn vglass" id="vPrev" aria-label="Previous photo (←)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
     <button class="v-btn vglass" id="vNext" aria-label="Next photo (→)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 5 5-5 5"/></svg></button>
     <div class="v-note" id="vNote"></div>
+    <div class="v-strip" id="vStrip" role="group" aria-label="The shots in this stack" hidden></div>
     <div class="v-bar vglass" id="vBar">
       <button id="vShare" aria-label="Share this photo"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 12.5V2.5M6.5 5.8 10 2.500l3.500 3.300M7 8.500H5.500a1.300 1.300 0 0 0-1.300 1.300v6.400a1.300 1.300 0 0 0 1.300 1.300h9a1.300 1.300 0 0 0 1.300-1.300V9.800A1.300 1.300 0 0 0 14.500 8.500H13"/></svg></button>
       <button id="vFavBtn" aria-label="Favourite (F)" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 16.800S3.200 12.600 3.200 7.800A3.700 3.700 0 0 1 10 6a3.700 3.700 0 0 1 6.800 1.800c0 4.800-6.800 9-6.800 9Z"/></svg></button>
@@ -1707,6 +1721,9 @@ const slides = [mkSlide(), mkSlide(), mkSlide()];
 let cur = slides[0], vPic = cur.el;
 let VL = null, items = [];                           // the grid the photo was opened from, and its photos
 let vCur = -1, sheetUp = false, vNote = "";          // vCur: the photo showing while the viewer is open (VW). sheetUp: details showing on a phone (never to begin with)
+let vStack = null, vPick = null;                     // the shots of the stack the photo is on top of, and the one of them looked at in its place
+const shown = () => vPick || items[vCur];            // the photo on screen: the list's own, or the one picked from its stack
+const stripped = r => !!r && r.stack > 1 && VL.stacks();   // on top of a stack (in a list that stacks): its shots go in a strip under it
 let settle = null;                                   // finishes a swipe that is still sliding into place
 const phone = () => narrow.matches || coarse.matches;   // full-screen photo, details only when asked for
 const vw = () => v.clientWidth, vh = () => v.clientHeight;
@@ -1714,7 +1731,8 @@ const infoOn = () => phone() ? sheetUp : V.info;
 const infoW = () => !narrow.matches && infoOn() ? 360 : 0;   // narrow: details are a sheet from below instead
 const pageW = () => vw() - infoW() + GAP;
 function fit(r) {
-  const W = vw() - infoW(), H = narrow.matches ? vh() * (sheetUp ? .45 : 1) : vh(), px = phone() ? 0 : 72, py = phone() ? 0 : 76;
+  const W = vw() - infoW(), px = phone() ? 0 : 72, py = phone() ? 0 : 76;
+  const H = (narrow.matches ? vh() * (sheetUp ? .45 : 1) : vh()) - (!phone() && stripped(r) ? 56 : 0);   // with a frame round it, the photo stands clear of the strip
   const ar = r.ar || 1.5; let w = W - px * 2, h = w / ar;
   if (h > H - py * 2) { h = H - py * 2; w = h * ar; }
   return { x: Math.round((W - w) / 2), y: Math.round((H - h) / 2), w: Math.round(w), h: Math.round(h) };
@@ -1747,7 +1765,7 @@ function sharpen(force = Z.s > 1.6) {                // then the 4096 px one, wh
   const im = new Image(); im.onload = () => { if (s.r === r) s.hi.src = im.src; }; im.src = "/large/" + r.sha;
 }
 function arrange() {                                 // the current photo and its neighbours, each in a slide
-  const want = [items[vCur], items[vCur - 1] || null, items[vCur + 1] || null];
+  const want = [shown(), items[vCur - 1] || null, items[vCur + 1] || null];
   const free = slides.filter(s => !s.r || !want.includes(s.r));
   const use = want.map(r => (r && slides.find(s => s.r === r)) || free.pop());
   cur = use[0]; vPic = cur.el;
@@ -1755,7 +1773,7 @@ function arrange() {                                 // the current photo and it
   if (Z.s !== 1) bake();
 }
 function show(i, dir = 0) {
-  vCur = i;
+  vCur = i; vPick = vStack = null;
   settle = null; stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
   for (const s of slides) s.el.style.transform = "";
   Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0;
@@ -1763,12 +1781,47 @@ function show(i, dir = 0) {
   shareFile = null; vNote = ""; $("#vShare").classList.remove("ready", "busy");
   sharpen();
   if (dir) vPic.animate([{ opacity: 0, transform: `translateX(${dir * 28}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE });
-  vChrome(); drawInfo(items[i]);
+  vChrome(); drawInfo(items[i]); drawStrip(); loadStack(items[i]);
   if (i > items.length - 12) VL.more();
   if (VL.lo > 0 && i < VL.lo + 12) VL.less();
 }
+// The stack the photo is on top of, as a row of small prints over the bar, best first: click one to look at it
+// (or ↑ and ↓). Left and right still go from photo to photo of the list; the strip is how to look through one stack.
+async function loadStack(top) {
+  if (!stripped(top)) return;
+  let d;
+  try { d = await getJSON(`/api/search?stack=${top.sha}&shots=1&limit=500`); } catch (e) { return; }   // no strip; the details still open the stack
+  if (!viewing() || items[vCur] !== top || d.results.length < 2 || !d.results.some(r => r.sha === top.sha)) return;
+  vStack = d.results.map(r => r.sha === top.sha ? top : r);
+  drawStrip(d.sort === "best");
+}
+function drawStrip(best) {
+  const el = $("#vStrip");
+  el.hidden = !vStack; v.classList.toggle("stacked", !!vStack);
+  el.innerHTML = (vStack || []).map((r, i) => `<button data-i="${i}" aria-label="Shot ${i + 1} of ${vStack.length}${best && !i ? ", the best" : ""}"><img alt="" draggable="false" src="/thumb/${r.sha}"></button>`).join("");
+  markStrip();
+}
+function markStrip() {
+  const on = shown();
+  for (const b of $("#vStrip").children) { const is = vStack[+b.dataset.i] === on; b.classList.toggle("on", is); b.setAttribute("aria-pressed", is);
+    if (is) b.parentNode.scrollTo({ left: b.offsetLeft - (b.parentNode.clientWidth - b.offsetWidth) / 2, behavior: "smooth" }); }
+}
+function pick(i) {                                   // another shot of the stack, in the place of the one on top
+  const r = vStack?.[i];
+  if (!r || r === shown()) return;
+  vPick = r === items[vCur] ? null : r;
+  for (const s of slides) s.el.style.transform = "";
+  Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0;
+  arrange();
+  shareFile = null; vNote = ""; $("#vShare").classList.remove("ready", "busy");
+  sharpen();
+  vPic.animate([{ opacity: .4 }, { opacity: 1 }], { duration: 160, easing: "ease-out" });
+  vChrome(); drawInfo(r); markStrip();
+}
+const pickStep = d => { if (vStack) pick(vStack.indexOf(shown()) + d); };
+$("#vStrip").addEventListener("click", e => { const b = e.target.closest("button"); if (b) pick(+b.dataset.i); });
 function vChrome() {                                 // what and when, as a caption above the print
-  const r = items[vCur], d = dParts(when(r)), note = vNote || (cur.failed ? "The full-size image didn’t load" : "");
+  const r = shown(), d = dParts(when(r)), note = vNote || (cur.failed ? "The full-size image didn’t load" : "");
   $("#vPrev").disabled = !items[vCur - 1]; $("#vNext").disabled = !items[vCur + 1];
   $("#vTitle").innerHTML = `<b>${d ? fLong.format(d) : "Undated"}</b><span class="num">${esc([d && when(r).length > 10 && fTime.format(d), firstPart(r.city || "")].filter(Boolean).join("  ·  ")) || "&nbsp;"}</span>`;
   $("#vFavBtn").classList.toggle("on", !!r.fav); $("#vFavBtn").setAttribute("aria-pressed", !!r.fav);
@@ -1802,11 +1855,11 @@ function closeViewer(entry = "back", instant = false) {
   const i = vCur, bg = $("#vBg"), ui = $("#vUi");
   const dim = bg.style.opacity || 1, hidden = ui.style.opacity === "0";   // where a drag left things
   settle = null; stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
-  const at = vPic.getBoundingClientRect(), f = fit(items[i]);   // zoomed or dragged: it goes home from where it is
+  const at = vPic.getBoundingClientRect(), f = fit(shown());   // zoomed or dragged: it goes home from where it is
   const from = `translate(${at.x - f.x}px,${at.y - f.y}px) scale(${at.width / f.w},${at.height / f.h})`;
   for (const s of slides) { s.el.style.transform = ""; if (s !== cur) s.el.style.display = "none"; }
   Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0; place(vPic, f); bg.style.opacity = ui.style.opacity = "";
-  v.classList.remove("bare"); vCur = -1;
+  v.classList.remove("bare"); vCur = -1; vPick = vStack = null;
   if (entry === "back") {
     VW.to("leaving"); history.back();
     setTimeout(() => { if (VW.is("leaving")) { VW.to("closed"); navFlush(); } }, 1000);   // (a browser that never says so)
@@ -1827,7 +1880,7 @@ function toggleInfo() {
   if (phone()) sheetUp = !sheetUp; else { V.info = !V.info; saveView(); }
   v.classList.toggle("info", infoOn()); if (infoOn()) v.classList.remove("bare");
   resetZoom();
-  const a = vPic.getBoundingClientRect(); arrange(); vChrome(); const b = fit(items[vCur]);
+  const a = vPic.getBoundingClientRect(); arrange(); vChrome(); const b = fit(shown());
   vPic.animate([{ transform: `translate(${a.x - b.x}px,${a.y - b.y}px) scale(${a.width / b.w},${a.height / b.h})` }, { transform: "none" }], { duration: 300, easing: EASE });
 }
 // Anything that names a set of photos is a way into that set: it shows them in Search.
@@ -1886,7 +1939,7 @@ $("#vInfo").addEventListener("click", e => {
 // A favourite: said on the page at once, then to the server; if the server will not have it, taken back.
 // A month's cover is a favourite of that month if it has one, so the cards are asked for again.
 async function favour() {
-  const r = items[vCur];
+  const r = shown();
   if (!r || r.saving) return;
   const on = !r.fav;
   r.saving = true; vNote = ""; favShow(r, on);
@@ -1896,7 +1949,7 @@ async function favour() {
     libCovers();
   } catch (e) {
     favShow(r, !on);
-    if (items[vCur] === r) { vNote = e.message === "not allowed" ? "Favourites can’t be changed from this account" : "Couldn’t save the favourite"; vChrome(); }
+    if (shown() === r) { vNote = e.message === "not allowed" ? "Favourites can’t be changed from this account" : "Couldn’t save the favourite"; vChrome(); }
   } finally { r.saving = false; }
 }
 function favShow(r, on) {                             // in the viewer, and on the photo's tile wherever it is showing
@@ -1908,10 +1961,10 @@ function favShow(r, on) {                             // in the viewer, and on t
     if (t) { $(".fv", t)?.remove(); if (on) t.insertAdjacentHTML("beforeend", I.heartFill); }
   }
   r.fav = on;
-  if (viewing() && items[vCur] === r) vChrome();
+  if (viewing() && shown() === r) vChrome();
 }
 $("#vFavBtn").onclick = favour;
-$("#vLike").onclick = () => { const r = items[vCur]; if (r) { const s = blank(); s.sha = r.sha; find(s); } };
+$("#vLike").onclick = () => { const r = shown(); if (r) { const s = blank(); s.sha = r.sha; find(s); } };
 $("#vClose").onclick = () => closeViewer();
 let lastPointer = "mouse";
 v.addEventListener("pointerdown", e => { lastPointer = e.pointerType; }, true);
@@ -1939,18 +1992,18 @@ let g = null, lastTap = 0, tapTimer = 0;
 const applyZoom = () => { const k = Z.s / Zb.s, x = Z.x - Zb.x, y = Z.y - Zb.y;
   vPic.style.transform = k === 1 && !x && !y ? "" : `translate(${x}px,${y}px) scale(${k})`; };
 function bake() {
-  const b = fit(items[vCur]);
+  const b = fit(shown());
   place(vPic, { x: b.x + Z.x, y: b.y + Z.y, w: b.w * Z.s, h: b.h * Z.s });
   Object.assign(Zb, Z); vPic.style.transform = "";
 }
 function resetZoom() { Z.s = 1; Z.x = Z.y = 0; bake(); }
 function clampZoom() {                               // keep the photo covering the screen where it can
-  const b = fit(items[vCur]), w = b.w * Z.s, h = b.h * Z.s, W = vw(), H = vh();
+  const b = fit(shown()), w = b.w * Z.s, h = b.h * Z.s, W = vw(), H = vh();
   Z.x = w <= W ? (W - w) / 2 - b.x : Math.min(-b.x, Math.max(W - w - b.x, Z.x));
   Z.y = h <= H ? (H - h) / 2 - b.y : Math.min(-b.y, Math.max(H - h - b.y, Z.y));
 }
 function zoomAt(cx, cy, s) {                         // set scale s keeping screen point (cx, cy) still
-  const b = fit(items[vCur]);
+  const b = fit(shown());
   const px = (cx - b.x - Z.x) / Z.s, py = (cy - b.y - Z.y) / Z.s;
   Z.s = Math.min(Math.max(s, 1), 6);
   Z.x = cx - b.x - px * Z.s; Z.y = cy - b.y - py * Z.s;
@@ -1964,7 +2017,7 @@ function slideTo(d, x = 0) {                         // the neighbour slides in,
   const fin = settle = () => { if (settle !== fin) return; settle = null; a.cancel(); show(vCur + d); };
   a.onfinish = fin;
 }
-const inViewerChrome = t => t.closest(".v-info, .v-btn, .v-bar");
+const inViewerChrome = t => t.closest(".v-info, .v-btn, .v-bar, .v-strip");
 v.addEventListener("pointerdown", e => {
   if (e.pointerType === "mouse" || inViewerChrome(e.target) || !viewing()) return;
   if (settle) settle();
@@ -1997,7 +2050,7 @@ v.addEventListener("pointermove", e => {
     const end = dx > 0 ? !items[vCur - 1] : !items[vCur + 1];
     stage.style.transform = `translateX(${end ? dx * .3 : dx}px)`;
   } else if (GS.is("down") && !(phone() && sheetUp)) {   // the photo follows the finger and shrinks about its centre
-    const k = Math.max(.6, 1 - dy / vh()), b = fit(items[vCur]);
+    const k = Math.max(.6, 1 - dy / vh()), b = fit(shown());
     vPic.style.transform = `translate(${dx + b.w * (1 - k) / 2}px,${dy + b.h * (1 - k) / 2}px) scale(${k})`;
     $("#vBg").style.opacity = Math.max(0, 1 - dy / (vh() * .6));
     $("#vUi").style.opacity = dy > 20 ? 0 : 1;
@@ -2064,7 +2117,7 @@ $("#vInfo").addEventListener("touchend", e => { if (sheetY != null && e.changedT
 /* ── save / share: the original file, so Save to Photos keeps its date and place ── */
 let shareFile = null;                                // fetched for the current photo, waiting for a second tap
 async function share() {
-  const r = items[vCur], btn = $("#vShare");
+  const r = shown(), btn = $("#vShare");
   if (!r) return;
   if (shareFile?.sha !== r.sha) logEvent("share", vCur);   // once per photo, not on the second tap
   const name = (r.path || "").split("/").pop() || r.sha.slice(0, 12) + (r.ext || ".jpg");
@@ -2080,11 +2133,11 @@ async function share() {
       res = await fetch("/large/" + r.sha);
       file = new File([await res.blob()], name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
     }
-    if (items[vCur] !== r) return;
+    if (shown() !== r) return;
     shareFile = { sha: r.sha, file };
     await doShare(file);
   } catch (e) {
-    if (items[vCur] === r) { vNote = "Couldn’t load the photo"; vChrome(); }
+    if (shown() === r) { vNote = "Couldn’t load the photo"; vChrome(); }
   } finally { btn.classList.remove("busy"); }
 }
 async function doShare(file) {
@@ -2113,6 +2166,7 @@ document.addEventListener("keydown", e => {
     if (e.key === "Escape") closeViewer();
     else if (e.key === "ArrowLeft") step(-1);
     else if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); step(1); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") { if (vStack) { e.preventDefault(); pickStep(e.key === "ArrowDown" ? 1 : -1); } }
     else if (e.key === "i") toggleInfo();
     else if (e.key === "f") favour();
     return;

@@ -338,6 +338,28 @@ final class LibraryModel: ObservableObject {
         }
     }
 
+    /// Can an album be made of the answer showing: it has photos the server holds, and it has an end ("More like
+    /// this" has none: it is every photo, by likeness).
+    var albumable: Bool { !loading && !query.isEmpty && query.similar == nil && grid.tiles.contains { !$0.isLocal } }
+
+    /// What to call an album of this answer: the question, in words.
+    var albumTitle: String { title.trimmingCharacters(in: CharacterSet(charactersIn: "“”")) }
+
+    /// Every photo of the answer showing, in its order: not only those loaded so far. Photos that are on this
+    /// iPhone only are left out, as the server has not got them to put in an album.
+    func everySha() async throws -> [String] {
+        let q = query, g = gen
+        var shas = grid.tiles.filter { !$0.isLocal }.map(\.sha)
+        var cursor = ranked ? next : nil
+        while let at = cursor {
+            let page = try await Remote.search(q, cursor: at, dedupe: hideDups && q.stack == nil)
+            guard g == gen else { throw CancellationError() }      // the question changed meanwhile
+            shas += page.photos.map(\.sha)
+            cursor = page.next
+        }
+        return shas
+    }
+
     /// The best photos first (ties keep their order). `within` 7: inside each month only, for a list in time
     /// order, so the months stay where they are.
     static func bestFirst(_ tiles: [Tile], within grain: Int?) -> [Tile] {
