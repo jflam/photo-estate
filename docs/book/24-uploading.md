@@ -132,6 +132,10 @@ A photo is useful when it's *searchable*, not when it's stored. The server runs 
 - **A quiet period is the fallback**: if a batch never completes (a failed upload, an older app), a run
   starts after `--ingest-quiet` (60 s) with no new uploads, and at the latest `--ingest-max-wait` (600 s)
   after the first of a burst, so a long upload is catalogued as it goes.
+- **One state at a time.** `IngestJob` is idle, quiet (the timer is running), starting, running or in
+  backoff after a failure; a step its `MOVES` table does not allow raises (issue #86). Starting a run,
+  by hand or when the timer runs out, cancels any timer still armed, and the log the page shows is
+  written and read under the same lock.
 - **Incremental all the way down.** `ingest-iphone.sh` only touches what is new: `link` is limited to the
   inbox, `exif`, `embed` and `faces` skip finished photos, and `places` reuses names and zones it has
   already worked out. The app even prepares the arrival while it is still receiving: the grid thumbnail is
@@ -155,7 +159,7 @@ sequenceDiagram
     Ph->>S: POST /api/upload/... (X-Batch id/3) x3
     S->>S: files into inbox, thumbnail and embedding prepared
     S->>J: last file of the batch: run now
-    J->>S: catalog ready
+    J->>S: catalog_ready event
     S->>S: hot reload, then feed_update (version + 1)
     D->>S: GET /api/sync?since=V
     S-->>D: the new photos

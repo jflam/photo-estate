@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from multiprocessing import Pool
 from pathlib import Path
 
-from core import config, schema
+from core import config, events, schema
 from core.media import EMBED_SKIP_EXT as SKIP_EXT   # RAW: Pillow can't decode it
 from encoder import features as _features
 
@@ -79,8 +79,8 @@ def _decode(job: tuple[str, str, int]):
 
 
 def load_model(mid: str, threads: int):
-    import torch
-    from transformers import AutoModel, AutoProcessor
+    import torch   # pyright: ignore[reportMissingImports]  (the ml group: not in the dev environment)
+    from transformers import AutoModel, AutoProcessor   # pyright: ignore[reportMissingImports]
     torch.set_num_threads(threads)
     return torch, AutoModel.from_pretrained(mid, dtype=torch.float32).eval(), AutoProcessor.from_pretrained(mid)
 
@@ -99,6 +99,7 @@ def cmd_run(a) -> None:
     done = "" if a.after_rowid is not None else \
         f"{con.execute('SELECT count(*) FROM embeddings WHERE model=?', (a.model,)).fetchone()[0]} already embedded, "
     print(f"{a.model}: {done}{len(todo)} to do ({len(skipped)} RAW files skipped)", flush=True)
+    events.emit_progress("embed", 0, len(todo))
     if not todo:
         return
     torch, model, proc = load_model(a.model, a.threads)
@@ -130,6 +131,7 @@ def cmd_run(a) -> None:
                 errors += 1
                 rows.append((sha, a.model, None, None, err, now()))
             else:
+                assert raw is not None   # _decode gives bytes or an error
                 batch_ims.append(Image.frombytes("RGB", (side, side), raw))
                 batch_shas.append(sha)
             if len(batch_ims) >= a.batch:
@@ -139,6 +141,7 @@ def cmd_run(a) -> None:
                 eta = (len(jobs) - n) / rate / 3600
                 print(f"{datetime.now():%H:%M:%S} {n}/{len(jobs)} {rate:.1f} img/s,"
                       f" {errors} undecodable, ~{eta:.1f} h left", flush=True)
+                events.emit_progress("embed", n, len(jobs))
                 last = time.time()
         flush()
     dt = time.time() - t0

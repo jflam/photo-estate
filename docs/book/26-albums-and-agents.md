@@ -135,6 +135,15 @@ long-lived token from `claude setup-token`, kept in `~/.config/photo-estate/agen
 agent's environment and nowhere else. The model runs in the cloud; what reaches it is the request and
 what the tools return.
 
+Tasks run one at a time, and a task's status (queued, running, done, failed, cancelled) moves only as
+`TASK_MOVES` in `core/states.py` allows, each move one conditional `UPDATE ... WHERE status=?`
+(`Tasks.move`, issue #86). The worker *claims* the oldest queued task (queued to running) and runs it
+only if that claim took, so a task withdrawn just as its turn came never starts; a run's ending (running
+to done or failed) never overwrites a cancel that got there first. Cancelling, and the hour's timeout,
+stop the agent with SIGTERM and then SIGKILL ten seconds later, and a failed task's error ends with the
+last of what the agent wrote to stderr, read to the end. `Tasks.update` writes only the task's own
+columns, and never its status.
+
 ## On the phone
 
 The iPhone app's Albums tab asks the server for its albums and keeps the last answer, so it still shows

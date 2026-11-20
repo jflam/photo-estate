@@ -128,9 +128,11 @@ def main():
 
         # 6. A failure keeps its stage; a stop mid-pipeline resumes from that stage after a restart.
         jf = e.create("folder", {"path": str(root / "store")})   # the store itself: it has photos
-        e.jobs.set(jf, state="running", stage="link", paths=[str(root / "store")])
+        crash = "UPDATE jobs SET state='running' WHERE id=?"    # as a crash would leave it (not a move the engine makes)
+        e.jobs.set(jf, stage="link", paths=[str(root / "store")])
+        e.jobs.q(crash, (jf,))
         e.cancel(jf)                                             # not current: just marked
-        e.jobs.set(jf, state="running")                          # as a crash would leave it
+        e.jobs.q(crash, (jf,))
         e2 = make(root)                                          # a second engine on the same library = a restart
         v = wait(e2, jf)
         assert v["state"] == "done", v
@@ -180,16 +182,10 @@ def main():
         print("ok  previews (RAW and older video counted, same types as ingest)")
 
         # 8b. link touches only what the job brought in (#13); every step's output moves the bar (#14).
-        from intake.engine import PROGRESS
         argv = e2.command("link", ["/x/takeout-001.zip", "/y/onedrive-jlam"])
         assert argv[-4:] == ["--source", "takeout-001.zip", "--source", "onedrive-jlam"], argv
-        parse = lambda line: next((m.groupdict() for rx in PROGRESS if (m := rx.search(line))), None)
-        assert parse("progress 25") == {"done": "25", "total": None, "what": None}
-        assert parse("progress 2000 of 14327: matching each photo with its details")["what"].startswith("matching")
-        assert parse("14:16:31 400/14327 52 files/s, ~4 min left")["total"] == "14327"       # exif
-        assert parse("15:38:26 6992/11953 3.8 img/s, 5399 faces")["done"] == "6992"         # faces
-        log = " ".join(ev["text"] for ev in e2.view(j5)["events"])
-        assert "progress " not in log, "progress lines are the bar's, not the details'"
+        log = " ".join(ev["text"] for ev in e2.view(j5)["events"])   # progress: core/events.py, tests/test_events.py
+        assert "progress " not in log and "@@pe" not in log, "progress is the bar's, not the details'"
         v = e2.view(j5)
         assert [s["id"] for s in v["stages"] if s["searchable_after"]] == ["embed"]
         assert [s["id"] for s in v["stages"] if s["optional"]] == ["faces"] and v["stage_seconds"] is None

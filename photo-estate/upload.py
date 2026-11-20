@@ -21,8 +21,11 @@ import os
 import re
 import time
 from pathlib import Path, PurePosixPath
+from typing import Callable
 
+from core import events
 from core.media import UPLOAD_EXT as MEDIA_EXT   # what a phone sends: not every type ingest takes (issue #10)
+from core.states import IngestState, check_move
 
 ALLOWED_EXT = MEDIA_EXT | {".xmp"}
 MAX_BYTES = 8 << 30          # a long 4K video is a few GB
@@ -136,7 +139,9 @@ class IngestJob:
     """Runs ingest-iphone.sh from the web page, one run at a time, and keeps its output to show.
 
     The script does the work (ingest, link, exif, places, embeddings, faces); this only starts it,
-    follows its output and says what is waiting in the inbox. It is started with fixed arguments, so
+    follows its output and says what is waiting in the inbox. Its human lines go in `log`, to show; what
+    it did is read from its events (core/events.py, issue #84), never from that text: new_assets with a
+    count above 0 means the run added photos, and catalog_ready after it means they are searchable. It is started with fixed arguments, so
     nothing a client sends reaches the command line.
 
     It is in one state at a time (`state`), and `MOVES` is every step it can take:
@@ -144,11 +149,18 @@ class IngestJob:
       quiet     uploads have arrived: the timer runs out once they have been quiet long enough
       starting  the timer ran out: the app is finishing its own work on the uploads (before_run)
       running   the script is going (`again`: an upload arrived meanwhile, so run once more after it)
-      backoff   the last run failed: the timer starts another in ten minutes"""
+      backoff   the last run failed: the timer starts another in ten minutes
 
-    MOVES = {"idle": ("quiet", "running"), "quiet": ("quiet", "starting", "running"),
-             "starting": ("running", "idle"), "running": ("idle", "quiet", "backoff"),
-             "backoff": ("quiet", "starting", "running")}
+    A step that is not in MOVES raises IllegalMove (issue #86). Every step is taken under `lock`, and so
+    is every change to `log`, `timer` and `proc`. Starting a run (by hand, or when the timer runs out)
+    cancels any timer still armed, so the only timer that can fire is the current one."""
+
+    S = IngestState
+    MOVES: dict[IngestState, tuple[IngestState, ...]] = {
+        S.IDLE: (S.QUIET, S.RUNNING), S.QUIET: (S.QUIET, S.STARTING, S.RUNNING),
+        S.STARTING: (S.RUNNING, S.IDLE), S.RUNNING: (S.IDLE, S.QUIET, S.BACKOFF),
+        S.BACKOFF: (S.QUIET, S.STARTING, S.RUNNING)}
+    del S
 
     def __init__(self, script: Path, root: Path, db: str, store: Path, inbox: Path,
                  quiet: float = 60.0, max_wait: float = 600.0):
@@ -156,10 +168,10 @@ class IngestJob:
         import threading
         self.script, self.root, self.db, self.store, self.inbox = script, root, db, store, inbox
         self.quiet, self.max_wait = quiet, max_wait   # seconds; quiet = 0 turns the automatic runs off
-        self.on_added = None      # called once a run that added photos has them searchable (the app reloads its catalog)
-        self.on_faces = None      # called when that run has also finished faces (the app reloads its People page)
-        self.before_run = None    # called before an automatic run starts (the app finishes embedding the uploads)
-        self.state = "idle"
+        self.on_added: Callable[[], object] | None = None      # called once a run that added photos has them searchable (the app reloads its catalog)
+        self.on_faces: Callable[[], object] | None = None      # called when that run has also finished faces (the app reloads its People page)
+        self.before_run: Callable[[], object] | None = None    # called before an automatic run starts (the app finishes embedding the uploads)
+        self.state = IngestState.IDLE
         self.timer = None         # running in `quiet` and `backoff` (and beside a run started by hand from them)
         self.first_poke = None    # when the current burst of uploads began
         self.again = None         # an upload arrived while a run was going: seconds to wait after it ends
@@ -171,9 +183,8 @@ class IngestJob:
         self.started = self.finished = self.code = None
         self.fresh = False        # a run added photos, so the app has not loaded them yet
 
-    def _to(self, state: str) -> None:      # lock held
-        if state not in self.MOVES[self.state]:
-            print(f"ingest: unexpected step {self.state} -> {state}", flush=True)
+    def _to(self, state: IngestState) -> None:      # lock held
+        check_move(self.MOVES, self.state, state, "ingest")
         self.state = state
 
     def waiting(self) -> dict:
@@ -205,19 +216,23 @@ class IngestJob:
                     "waiting": waiting}
 
     def start(self) -> bool:
-        """Start a run; False if one is already going."""
+        """Start a run; False if one is already going (until its output has been followed to the end)."""
         import subprocess
         import threading
         with self.lock:
-            if self.proc is not None and self.proc.poll() is None:
+            if self.state == IngestState.RUNNING:
                 return False
-            env = dict(os.environ, DB=str(self.db), STORE=str(self.store), INBOX=str(self.inbox))
+            env = dict(os.environ, DB=str(self.db), STORE=str(self.store), INBOX=str(self.inbox),
+                       **{events.ENV: "1"})   # its steps tell _follow what happened (core/events.py)
             env.pop("RESTART", None)   # the page asks for a restart separately: it would kill this run's output
             self.log.clear()
             self.started, self.finished, self.code = time.time(), None, None
             self.proc = subprocess.Popen([str(self.script), str(self.root)], stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, text=True, env=env, stdin=subprocess.DEVNULL)
-            self._to("running")
+            if self.timer is not None:      # this run picks up whatever the timer was waiting for
+                self.timer.cancel()
+                self.timer, self.first_poke = None, None
+            self._to(IngestState.RUNNING)
             threading.Thread(target=self._follow, args=(self.proc,), daemon=True).start()
             return True
 
@@ -238,14 +253,14 @@ class IngestJob:
             if not new and not (done and (self.first_poke is not None or self.again is not None)):
                 return
             delay = 0.0 if done else None
-            if self.state in ("starting", "running"):   # picked up when the running one finishes
+            if self.state in (IngestState.STARTING, IngestState.RUNNING):   # picked up when the running one finishes
                 self.again = min(x for x in (self.again, delay, self.quiet) if x is not None)
                 return
             now = time.time()
             if self.first_poke is None:
                 self.first_poke = now
-            self._arm(delay if done else min(self.quiet, max(0.0, self.first_poke + self.max_wait - now)))
-            self._to("quiet")
+            self._arm(0.0 if done else min(self.quiet, max(0.0, self.first_poke + self.max_wait - now)))
+            self._to(IngestState.QUIET)
 
     def _batch_done(self, batch: str | None, path: str | None) -> bool:      # lock held
         m = re.match(r"^([A-Za-z0-9-]{1,64})/(\d{1,6})$", batch or "")
@@ -278,12 +293,15 @@ class IngestJob:
         self.timer.start()
 
     def _fire(self) -> None:
+        import threading
         with self.lock:
+            if self.timer is not threading.current_thread():   # cancelled (or replaced) as it went off
+                return
             self.timer, self.first_poke = None, None
-            if self.state == "running":     # one is already going (started by hand): look again when it ends
+            if self.state == IngestState.RUNNING:     # one is already going (started by hand): look again when it ends
                 self.again = 0.0
                 return
-            self._to("starting")
+            self._to(IngestState.STARTING)
         print("ingest: uploads have gone quiet, cataloguing", flush=True)
         try:
             if self.before_run:
@@ -292,8 +310,8 @@ class IngestJob:
         except Exception as e:              # the script could not be started: wait for the next upload
             print(f"ingest: could not start: {type(e).__name__}: {e}", flush=True)
             with self.lock:
-                if self.state == "starting":
-                    self._to("idle")
+                if self.state == IngestState.STARTING:
+                    self._to(IngestState.IDLE)
             return
         if not started:                     # started by hand in the meantime
             with self.lock:
@@ -302,11 +320,19 @@ class IngestJob:
     def _follow(self, proc) -> None:
         import threading
         added = told = False
-        for line in proc.stdout:
+        for line in proc.stdout:             # the script's stdout and stderr: human lines and events
             line = line.rstrip()
-            self.log.append(line)
-            added = added or "new assets and sidecars" in line
-            if added and not told and line.endswith(" catalog ready"):   # searchable now; faces still to come
+            if not line.startswith(events.PREFIX):
+                with self.lock:              # status() copies the log under the lock
+                    self.log.append(line)
+                continue
+            ev = events.parse(line)          # the log is for people: event lines never go in it
+            if not isinstance(ev, events.Event):
+                continue
+            if ev.name == "new_assets":
+                n = ev.fields.get("count")
+                added = added or (isinstance(n, int) and n > 0)
+            if ev.name == "catalog_ready" and added and not told:   # searchable now; faces still to come
                 told = True
                 with self.lock:
                     self.fresh = True
@@ -323,14 +349,14 @@ class IngestJob:
                 print(f"ingest failed (exit {code}), failure {self.failures}", flush=True)
             if self.quiet and code != 0 and self.failures < 3:
                 self._arm(600)                 # try again later, a few times
-                self._to("backoff")
+                self._to(IngestState.BACKOFF)
             elif self.quiet and self.again is not None:
                 self._arm(self.again)
-                self._to("quiet")
-            else:                              # (a timer left from before a run started by hand is still to fire)
-                self._to("quiet" if self.timer is not None else "idle")
+                self._to(IngestState.QUIET)
+            else:
+                self._to(IngestState.IDLE)
             self.again = None
-        if added and not told and self.on_added:     # a script without the "catalog ready" line
+        if added and not told and self.on_added:     # a script without the catalog_ready event
             self._tell(self.on_added)
         if added and code == 0 and self.on_faces:
             self._tell(self.on_faces)

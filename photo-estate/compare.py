@@ -31,8 +31,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+from numpy.typing import NDArray
 
 from browse import js
+from catalog import Catalog
+from core.lifecycle import Phase
 from http_util import int_param
 
 
@@ -68,11 +71,11 @@ class Compare:
                     self.tally[w] += 1
         except (OSError, ValueError):
             pass
-        self._aligned = (None, None)
+        self._aligned: tuple[Catalog | None, NDArray[np.int64]] = (None, np.zeros(0, np.int64))
         print(f"compare: {len(shas)} vectors of {self.model_b} ({self.MB.shape[1]} numbers each) "
               f"loaded in {time.time() - t:.1f}s", flush=True)
 
-    def aligned(self, c):
+    def aligned(self, c: Catalog) -> NDArray[np.int64]:
         """For the catalog being served: each photo's row in the second model's matrix, or -1."""
         if self._aligned[0] is not c:
             self._aligned = (c, np.array([self.row_of.get(s, -1) for s in c.shas], np.int64))
@@ -94,7 +97,7 @@ class Compare:
         covered = int((self.aligned(c) >= 0).sum())
         return {"a": {"model": self.browse.model, "photos": int(c.N), "dim": int(c.M.shape[1])},
                 "b": {"model": self.model_b, "photos": len(self.row_of), "dim": int(self.MB.shape[1]),
-                      "ready": self.encoder.ready.is_set(), "meta": self.meta},
+                      "ready": self.encoder.state.snapshot().phase is Phase.READY, "meta": self.meta},
                 "both": covered, "votes": dict(self.tally)}
 
     def search(self, qs: dict) -> tuple:
@@ -104,7 +107,10 @@ class Compare:
         masks, text, applied, *_ = self.browse.select(c, qs)
         if not text:
             return js({"error": "no words to rank by: the filters alone choose the same photos for both"}, 400)
-        if not self.encoder.ready.is_set():   # don't wait for it here: a request holds the app's gate (catalog.Gate)
+        b = self.encoder.state.snapshot()   # don't wait for it here: a request holds the app's gate (catalog.Gate)
+        if b.phase is Phase.FAILED:
+            return js({"error": f"the second model failed to load: {b.error}"}, 500)
+        if b.phase is not Phase.READY:
             return js({"error": "the second model is still loading; try again in a minute"}, 503)
         rows = self.aligned(c)
         mask = c.combine(masks) & (rows >= 0)

@@ -24,7 +24,7 @@ SIM = 0.97     # cosine similarity; what "Hide near-identical shots" has always 
 LOOK = 8
 
 
-def seconds(taken: str) -> float:
+def seconds(taken: str | None) -> float:
     """When a photo was taken, as a number (nan if it has no usable date). A time with no zone is read as UTC:
     only differences between neighbours matter."""
     try:

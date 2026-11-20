@@ -163,7 +163,9 @@ Details that make it feel right:
 
 A section header shows the title, the **top three places** of that section (`Paris · Versailles`) and
 the month's total count (from `/api/periods` in the Library, `/api/facets` in Search), not just what has
-loaded so far. Favourites show a small filled heart on the tile.
+loaded so far. Favourites show a small filled heart on the tile. A favourite set in the app (`POST /api/favorite`) shows at once in every
+view and count: the server changes the catalog it serves with no request reading it, and a reload under way
+keeps it ([chapter 11](11-server.md#concurrency)).
 
 ### Items by absolute position
 

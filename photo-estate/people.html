@@ -278,6 +278,7 @@ async function loadUnknown() {
   const u = await api("/api/people/unknown?limit=14");
   const el = $("#unknown");
   if (!el) return;
+  if (u.state === "failed") { el.innerHTML = `<p class="empty">The unnamed faces could not be grouped: ${esc(u.error || "unknown error")}. Naming everyone else still works.</p>`; return; }
   if (u.state !== "ready") { el.innerHTML = `<p class="empty">Grouping the unnamed faces…</p>`; return setTimeout(loadUnknown, 1500); }
   if (!u.groups.length) { el.innerHTML = `<p class="empty">Nobody unnamed turns up often.</p>`; return; }
   el.innerHTML = u.groups.map(g => `

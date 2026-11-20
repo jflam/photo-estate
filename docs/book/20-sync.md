@@ -75,8 +75,18 @@ Two properties make this robust:
   that loses its connection halfway through a first sync of 100,000 photos resumes at the next page,
   not from the start, and never sees a row twice that it would have to reconcile.
 - **Deletions are part of the log.** A removed photo is remembered as `gone` at the version it was
-  removed, and `deleted` lists those at or after the device's `since`. (It may repeat one the device
-  has already applied; removing a photo that is not there does nothing.)
+  removed, and takes its place in the same `(version, sha)` order as the rows. A page's `deleted` lists
+  the deletions after the cursor the device sent and up to the cursor the page returns, so the cursor
+  means "I have every row *and every deletion* up to here": each deletion arrives exactly once, on the
+  page whose window it falls in; a device that is up to date and polls again is sent none; and one that
+  is behind gets every deletion after its cursor. A device applies `deleted` from every page, as it does
+  `photos` (the iPhone app does, in the same transaction as the cursor). `limit` counts rows only.
+
+  Before issue #86 every page listed every deletion at or after `since`, so a current phone was handed
+  the latest version's deletions on every poll (and bumped its revision for nothing), and a many-page
+  sync got them on every page. The change is backward compatible: a cursor saved under the old rule
+  was always sent at least the deletions the new rule sends, and applying a deletion twice, or one the
+  device never had, does nothing.
 
 `trips` is sent only on the last page, because it is small and always whole: the phone replaces its list.
 

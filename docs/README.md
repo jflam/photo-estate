@@ -31,7 +31,7 @@ it is for.
 | [../CLAUDE.md](../CLAUDE.md) | What Claude Code is told at the start of every session: how to run the app and the tests |
 | [book/27-built-with-claude.md](book/27-built-with-claude.md) | How the project is built with Claude Code, from a laptop and from a phone |
 | [../photo-estate/deploy/CLOUD-SESSIONS.md](../photo-estate/deploy/CLOUD-SESSIONS.md) | Working on the app from a phone: cloud sessions, the preview, what they cannot do |
-| [book/17-testing-and-demo.md](book/17-testing-and-demo.md) | The tests and the demo library |
+| [book/17-testing-and-demo.md](book/17-testing-and-demo.md) | The tests, the type checks (pyright) and the demo library |
 | [GitHub issues](https://github.com/jflam/photo-estate/issues) | The backlog (`backlog`) and the bugs (`bug`) |
 
 ## Plans, research and measurements

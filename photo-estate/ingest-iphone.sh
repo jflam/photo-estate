@@ -8,7 +8,8 @@
 # touches what is new: link is limited to the inbox, exif/embed/faces skip finished photos, and places
 # reuses the place names and zones it already worked out (events and trips are rebuilt, in seconds). Nothing is deleted.
 #
-# - The photo app runs this itself and reloads its catalog at "catalog ready". Run by hand, set
+# - The photo app runs this itself, with PHOTO_ESTATE_EVENTS=1, and reloads its catalog at the
+#   catalog_ready event (core/events.py: `@@pe {json}` lines, printed only when asked). Run by hand, set
 #   RESTART=com.jflam.photo-search to restart the app at the end instead.
 # - Set SKIP_MODELS=1 to catalogue only (ingest, link, exif, places) and leave embeddings and faces
 #   for later, e.g. while the Mac is busy.
@@ -32,6 +33,8 @@ trap 'rmdir "$LOCK"' EXIT
 run() { local s=$1; shift; echo "== $(date +%T) ${s%.py} $1"; uv run --quiet --script "$HERE/$s" --db "$DB" "$@"; }
 count() { sqlite3 "$DB" "SELECT (SELECT count(*) FROM assets) + (SELECT count(*) FROM xmp)" 2>/dev/null || echo 0; }
 
+# One line of core/events.py's protocol (version 1.0): event NAME [JSON_FIELDS], e.g. event new_assets '"count":3'.
+event() { if [[ ${PHOTO_ESTATE_EVENTS:-} == 1 ]]; then printf '@@pe {"v":"1.0","type":"event","name":"%s"%s}\n' "$1" "${2:+,$2}"; fi; }
 top() { sqlite3 "$DB" "SELECT coalesce(max(rowid), 0) FROM assets" 2>/dev/null || echo 0; }
 
 before=$(count)
@@ -39,6 +42,7 @@ top_before=$(top)
 echo "== $(date +%T) ingest $INBOX"
 run estate.py ingest --store "$STORE" --force --facts "$INBOX.partial/facts" "$INBOX"   # facts: see upload.py
 after=$(count)
+event new_assets "\"count\":$((after - before))"
 if [[ $before == "$after" ]]; then
   echo "nothing new"
   exit 0
@@ -59,9 +63,10 @@ else
 fi
 run places.py run
 if [[ -z ${SKIP_MODELS:-} ]]; then run embed.py run --store "$STORE" --after-rowid "$since"; fi
-# The photo app reloads its catalog when it reads this line: the new photos are searchable now, and
-# faces (slow, and only the People page needs them) carry on while it does.
+# The photo app reloads its catalog at this event: the new photos are searchable now, and faces (slow,
+# and only the People page needs them) carry on while it does.
 echo "== $(date +%T) catalog ready"
+event catalog_ready
 if [[ -z ${SKIP_MODELS:-} ]]; then
   run faces.py run --store "$STORE" --after-rowid "$since"
   mkdir -p "$(dirname "$MARK")" && echo "$top_now" > "$MARK"   # everything up to here is catalogued

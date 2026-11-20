@@ -141,20 +141,26 @@ class Browse:
     # -- caching --------------------------------------------------------------------------------
 
     def remember(self, key, make):
-        """Small cache so paging through one search doesn't redo the text encoding and the ranking."""
+        """Small cache so paging through one search doesn't redo the text encoding and the ranking. An entry
+        is the catalog generation's it was made in (Live.generation): one made while the catalog was
+        replaced or a favourite set is not kept, and none is found again in a later generation."""
+        gen = self.live.generation
+        key = (gen, key)
         with self.lru_lock:
             if key in self.lru:
                 self.lru.move_to_end(key)
                 return self.lru[key]
         val = make()
         with self.lru_lock:
-            self.lru[key] = val
-            while len(self.lru) > 24:
-                self.lru.popitem(last=False)
+            if self.live.generation == gen:
+                self.lru[key] = val
+                while len(self.lru) > 24:
+                    self.lru.popitem(last=False)
         return val
 
     def forget(self) -> None:
-        """Drop every cached mask and ranking: the catalog, or a favourite, has changed."""
+        """Drop every cached mask and ranking: the catalog, or a favourite, has changed. (They would not be
+        used again anyway, being an earlier generation's; this only frees them.)"""
         with self.lru_lock:
             self.lru.clear()
 
@@ -304,7 +310,7 @@ class Browse:
                 if sort == "best":    # the closest matches only (see BEST_WINDOW), the best of them first
                     sims[sims < sims.max() - self.best_window] = -np.inf
                     found = np.flatnonzero(np.isfinite(sims))
-                    return found[np.argsort(c.rank[found], kind="stable")]
+                    return found[np.argsort(c.scored()[1][found], kind="stable")]
             return np.argsort(-sims)[: int(np.isfinite(sims).sum())]
 
         order = self.remember(key, ranked)
@@ -322,7 +328,7 @@ class Browse:
     # taken from the description) and no view option applies: it finds near-identical shots and
     # screenshots too, and every match, not a screenful.
 
-    def find(self, args: dict):
+    def find(self, args: dict) -> tuple[list[str], list[float] | None]:
         """Photos matching the filters, best first: ([ids], [scores]), or ([ids], None) newest first
         when there is nothing to rank by. Ranks by `query` (words) or `like` (a photo's id)."""
         c = self.live.cat
@@ -355,7 +361,7 @@ class Browse:
         by_best = args.get("order") == "best"
         if by_best and c.rank is None:
             raise ValueError("this library has no quality scores, so nothing can be ordered best first")
-        quality = lambda ids: [round(float(c.score[i]), 3) for i in ids]
+        quality = lambda ids: [round(float(x), 3) for x in c.scored()[2][ids]]
         like, text = args.get("like"), str(args.get("query") or "").strip()
         if like:
             if like not in index:
@@ -365,7 +371,8 @@ class Browse:
         elif text:
             sims = M @ self.text_vec(text)
         elif by_best:
-            ids = c.best[mask[c.best]]
+            best = c.scored()[0]
+            ids = best[mask[best]]
             return [shas[i] for i in ids], quality(ids)
         else:
             return [shas[i] for i in c.newest[mask[c.newest]]], None
@@ -376,12 +383,12 @@ class Browse:
             sims[sims < max(self.match_floor, sims.max() - self.match_window)] = -np.inf
         if by_best:                      # what matches, the best of it first
             found = np.flatnonzero(np.isfinite(sims))
-            ids = found[np.argsort(c.rank[found], kind="stable")]
+            ids = found[np.argsort(c.scored()[1][found], kind="stable")]
             return [shas[i] for i in ids], quality(ids)
         order = np.argsort(-sims)[: int(np.isfinite(sims).sum())]
         return [shas[i] for i in order], [round(float(sims[i]), 4) for i in order]
 
-    def row(self, sha: str):
+    def row(self, sha: str) -> dict | None:
         c = self.live.cat
         m = c.meta.get(sha)
         if m is None:
@@ -395,7 +402,7 @@ class Browse:
                "shots_alike": int(c.stack_n[i]) if c.stack_n[i] > 1 else None}
         return {k: v for k, v in row.items() if v not in (None, [], "")}
 
-    def faces(self, ids) -> dict:
+    def faces(self, ids: list[str]) -> dict[str, tuple[int, int]]:
         """{id: (faces found, faces named)} for the photos in which faces were looked for and found."""
         if not self.live.cat.has_faces or not ids:
             return {}

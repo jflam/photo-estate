@@ -71,22 +71,29 @@ def suggestions() -> list[dict]:
 class Library:
     """Where the catalog and store are. In setup mode it may not be chosen yet."""
 
-    def __init__(self, root: Path | None, db: str | None = None, store: Path | None = None, *,
+    def __init__(self, root: str | Path | None, db: str | None = None, store: str | Path | None = None, *,
                  fixed: bool = False, remember: bool = True):
         self.fixed, self.remember = fixed, remember   # fixed: given on the command line, not chosen on the page
         self.set(root, db, store)
 
     def set(self, root, db=None, store=None):
-        self.root = Path(root).expanduser().resolve() if root else None
-        self.db = db or (str(self.root / "estate.db") if self.root else None)
-        self.store = Path(store) if store else (self.root / "store" if self.root else None)
+        self.root: Path | None = Path(root).expanduser().resolve() if root else None
+        self.db: str | None = db or (str(self.root / "estate.db") if self.root else None)
+        self.store: Path | None = Path(store) if store else (self.root / "store" if self.root else None)
+
+    def chosen(self) -> tuple[Path, str, Path]:
+        """(root, db, store) of a library that has been chosen; ValueError before then."""
+        if self.root is None or self.db is None or self.store is None:
+            raise ValueError("no library has been chosen yet")
+        return self.root, self.db, self.store
 
     def describe(self) -> dict:
         if not self.root:
             return {"chosen": False, "suggestions": suggestions()}
-        free = free_bytes(self.store)
-        return {"chosen": True, "fixed": self.fixed, "root": str(self.root), "db": self.db, "store": str(self.store),
-                "media": media_count(self.db) if Path(self.db).exists() else 0,
+        root, db, store = self.chosen()
+        free = free_bytes(store)
+        return {"chosen": True, "fixed": self.fixed, "root": str(root), "db": db, "store": str(store),
+                "media": media_count(db) if Path(db).exists() else 0,
                 "free": free, "free_label": human_bytes(free or 0)}
 
 

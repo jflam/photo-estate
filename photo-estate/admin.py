@@ -63,7 +63,7 @@ class Admin:
         # when you press Recompute.
         self.started = time.time()
         self.st = {"lib": None, "disk": None, "at": 0.0, "running": False, "error": None}
-        self.st_lock = threading.Lock()
+        self.st_lock, self.st_gen = threading.Lock(), 0   # st_gen: forget_library()s so far
         self.st_file = Path(db).resolve().parent / "stats-cache.json"
         try:
             saved = json.loads(self.st_file.read_text())
@@ -157,16 +157,18 @@ class Admin:
     # two writes it does not matter.
 
     def prepare_arrivals(self) -> None:
-        con = None
+        assert self.inbox is not None    # these threads run only with an inbox
+        inbox, con = self.inbox, None
         while True:
             sha, path = self.arrivals.get()
             try:
                 dest = self.cache / "thumbs" / f"{sha}.jpg"
-                facts = staging_dir(self.inbox) / "facts" / f"{sha}.json"
+                facts = staging_dir(inbox) / "facts" / f"{sha}.json"
                 con = con or self.connect(self.db)
                 embedded = con.execute("SELECT 1 FROM embeddings WHERE sha256=? AND model=?", (sha, self.model)).fetchone()
                 if dest.exists() and embedded:
                     continue
+                self.encoder.wait(None)   # this worker holds no gate: wait the load out (it ends: ready or failed)
                 side = self.encoder.side
                 with Image.open(path) as raw:
                     raw.draft("RGB", (side * 2, side * 2))   # as _decode does, so the vector is the same
@@ -201,31 +203,48 @@ class Admin:
 
     def forget_library(self) -> None:
         with self.st_lock:
-            self.st["lib"] = None
+            self.st["lib"], self.st_gen = None, self.st_gen + 1
 
     def library_stats(self):
+        """The library numbers, from the catalog being served. The caller holds the catalog gate (a request
+        does; stats_job takes it just for this)."""
         import stats
         c = self.live.cat
         return stats.library_stats(c.meta, list(c.when), c.people_ix, c.trips, c.events)
 
+    def disk_stats(self):
+        import stats
+        return stats.disk_stats(self.db, str(self.store), [self.cache] if self.cache == self.seed else [self.cache, self.seed])
+
     def stats_job(self) -> None:
+        """Measure the disk again (stats_payload started it, with `running` set). `st` is only touched under
+        st_lock, and the catalog only read inside the gate; neither is held for the slow walk of the disk.
+        The gate is never taken with st_lock held (a request holds the gate, then st_lock)."""
         st = self.st
         try:
-            import stats
-            if st["lib"] is None:
-                st["lib"] = self.library_stats()
-            disk = stats.disk_stats(self.db, str(self.store), [self.cache] if self.cache == self.seed else [self.cache, self.seed])
-            st["disk"], st["at"], st["error"] = disk, time.time(), None
+            with self.st_lock:
+                need_lib, gen = st["lib"] is None, self.st_gen
+            if need_lib:
+                with self.live.gate:
+                    lib = self.library_stats()
+                with self.st_lock:
+                    if st["lib"] is None and self.st_gen == gen:   # not if the catalog changed meanwhile
+                        st["lib"] = lib
+            disk, at = self.disk_stats(), time.time()
+            with self.st_lock:
+                st["disk"], st["at"], st["error"] = disk, at, None
             try:
                 tmp = self.st_file.with_suffix(".tmp")
-                tmp.write_text(json.dumps({"at": st["at"], "disk": disk}))
+                tmp.write_text(json.dumps({"at": at, "disk": disk}))
                 os.replace(tmp, self.st_file)
             except OSError:
                 pass
         except Exception as e:  # the page says so; the rest of the app is unaffected
-            st["error"] = f"{type(e).__name__}: {e}"
+            with self.st_lock:
+                st["error"] = f"{type(e).__name__}: {e}"
         finally:
-            st["running"] = False
+            with self.st_lock:
+                st["running"] = False
 
     def assets_now(self):
         try:
@@ -238,6 +257,7 @@ class Admin:
             return None
 
     def stats_payload(self, refresh: bool):
+        """GET /api/stats, from a request (which holds the catalog gate). One reading of `st`, under st_lock."""
         st = self.st
         with self.st_lock:
             if st["lib"] is None:
@@ -245,6 +265,7 @@ class Admin:
             if not st["running"] and (refresh or st["disk"] is None):
                 st["running"] = True
                 threading.Thread(target=self.stats_job, daemon=True).start()
+            snap = dict(st)
         import stats
         qlines = qsize = None
         try:
@@ -254,8 +275,8 @@ class Admin:
                     qlines = sum(1 for _ in f)
         except OSError:
             pass
-        return {"state": "working" if st["running"] else "error" if st["error"] and not st["disk"] else "ready",
-                "error": st["error"], "computed_at": st["at"] or None, "library": st["lib"], "disk": st["disk"],
+        return {"state": "working" if snap["running"] else "error" if snap["error"] and not snap["disk"] else "ready",
+                "error": snap["error"], "computed_at": snap["at"] or None, "library": snap["lib"], "disk": snap["disk"],
                 "catalog_assets_now": self.assets_now(),
                 "app": {"uptime_s": round(time.time() - self.started), "rss_bytes": stats.rss_bytes(), "model": self.model,
                         "demo": bool(self.demo), "python": sys.version.split()[0], "faces_ready": self.faces_ready(),

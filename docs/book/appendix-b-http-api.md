@@ -72,7 +72,7 @@ The setup server (`intake/server.py`) and `faces.py serve` read bodies the same 
 |---|---|
 | `GET /` , `/index.html` | `search.html`, with an `ETag` and `Cache-Control: no-cache` |
 | `GET /manifest.webmanifest`, `/icon-180.png`, `/icon-192.png`, `/icon-512.png`, `/icon-maskable-512.png`, `/sw.js` | The files in `app/`, served from the site root |
-| `GET /people`, `/people/` | `people.html`, once faces exist and `People` has loaded (else 503) |
+| `GET /people`, `/people/` | `people.html`, once faces exist and `People` has loaded (else 503; 500 with the error if loading them failed) |
 
 ### Uploads from the phone
 
@@ -152,10 +152,10 @@ Response:
 | `GET /api/info` | `{"total", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
 | `GET /stats` | The library info page ([stats.html](../../photo-estate/stats.html)) |
 | `GET /api/stats[?refresh=1]` | `{state: working\|ready\|error, library, disk, app}`: library figures from memory, disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
-| `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start |
+| `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. `deleted` holds the deletions between the cursor sent and the one returned (each is sent once; none to a device that is up to date; apply them from every page). `limit` counts rows. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start |
 | `GET /api/log?ev=open\|share&sha=...&pos=N` plus the search's parameters | Appends an event to the query log; `204` |
 | `GET /api/layout?...` (same filter parameters, plus `sort`) | Every matching photo's shape, one byte each, in `/api/search`'s order: the aspect ratio between 0.5 and 2.6 in 255 steps (`application/octet-stream`, with an `ETag`). The page lays a month out from it before it knows which photos are in it |
-| `POST /api/favorite {sha, fav}` | Makes a photo a favourite, or not: `{sha, fav, favourites}`. Takes the write rule; `403` otherwise |
+| `POST /api/favorite {sha, fav}` | Makes a photo a favourite, or not: `{sha, fav, favourites}`. Takes the write rule; `403` otherwise. It waits for the requests in flight, since it changes the catalog they read (the gate's write side, [chapter 11](11-server.md)) |
 
 ### Albums and change sets
 
@@ -189,7 +189,7 @@ also answers under `/api/albums`; `/api/changes` lists only the albums that are 
 | `GET /api/tasks` | Whether an agent can run on this computer, and every task, newest first ([tasks.py](../../photo-estate/tasks.py)) |
 | `GET /api/tasks/<id>?after=N` | One task, its events after event N, and the change set it made |
 | `POST /api/tasks {prompt}` | Start one: Claude Code, run headless with only the library's MCP tools |
-| `POST /api/tasks/<id>/cancel` | Stop a task that is queued or running |
+| `POST /api/tasks/<id>/cancel` | Stop a task that is queued or running: a queued one never starts, a running one's agent gets SIGTERM, then SIGKILL after ten seconds, and the task stays `cancelled` however the agent ends. Answers the task (`404` if there is none); one already finished is returned unchanged |
 
 ### Bringing photos in (the setup page)
 
@@ -207,7 +207,7 @@ protect, has no rule of its own.
 | `POST /api/intake/preview {source, config}` | What that would bring in; changes nothing |
 | `POST /api/intake/jobs {source, config}` | Start bringing it in |
 | `POST /api/intake/jobs/<id>/answer {value}` | What a waiting job asked for (a password, a code, "ok") |
-| `POST /api/intake/jobs/<id>/cancel`, `/retry` | Stop a job, or run it again |
+| `POST /api/intake/jobs/<id>/cancel`, `/retry` | Stop a job, or run it again. A job cancelled while queued is never started; a running one's step gets SIGTERM, then SIGKILL after ten seconds. Retry is for a failed or cancelled job |
 | `POST /api/intake/choose {what: folder or file}` | The Mac's own Open dialog (only from this Mac) |
 
 ### Images
@@ -239,15 +239,20 @@ unit rows), `shard-NNNN.shas.txt` and `meta.json` (`model`). Without the option 
 | Request | Purpose |
 |---|---|
 | `GET /face/<id>` | The 160 px face crop (regenerated from the original if the cache lacks it); cached one day |
-| `GET /api/people` | The overview: faces, photos, named, ignored, pending, people with year counts and cover, and the state of the unknown-groups job |
+| `GET /api/people` | The overview: faces, photos, named, ignored, pending, people with year counts and cover, and the state of the unknown-groups job (`unknown`: `waiting`, `working`, `ready` or `failed`) |
 | `GET /api/people/review?person=ID[&year=Y][&limit=60][&skipped=1]` | Faces waiting for that person, most likely first |
 | `GET /api/people/person?person=ID[&year=Y][&limit=12]` | A person's named faces: a few per year, or all of one year |
 | `GET /api/people/odd?person=ID[&year=Y][&offset=0][&limit=60]` | A person's named faces, least like the rest first |
-| `GET /api/people/unknown[?limit=12]` | Groups of unnamed faces |
+| `GET /api/people/unknown[?limit=12]` | Groups of unnamed faces: `{state, groups}`, `state` as in the overview; with `failed`, also `error` (what the grouping raised) and no groups |
 | `GET /api/people/photo?face=ID` | One face's photo and every face in it |
 | `POST /api/people/label` | Name, forget, rule out, put aside, undo, name a cluster ([chapter 15](15-human-corrections.md) for the body) |
-| `POST /api/people/label-many` | `{"items": [label bodies]}`: apply in order, rescore once |
-| `POST /api/people/person` | `{"id", "name"?, "born"?}`: rename (or merge) and set birth month |
+| `POST /api/people/label-many` | `{"items": [label bodies]}`: apply in order, in one transaction (all or none), rescore once |
+| `POST /api/people/person` | `{"id", "name"?, "born"?}`: rename (or merge: a name another person has, in any case, moves this person's faces, `face_not` and `face_later` rows to them) and set birth month. Returns `{"ok": true, "id": ID}` (the kept person's id after a merge), or `{"error": "unknown person"}` |
+
+`review`, `person`, `odd` (an unknown or just-merged `person`) and `photo` (an unknown `face`) are 404.
+Each POST is one SQLite transaction; if SQLite refuses it (locked, disk full) nothing changes, and the
+request fails as any request that raises does: the server prints the error and closes the connection
+without an answer ([chapter 15](15-human-corrections.md)).
 
 The three POSTs take the write rule in the photo app (`403` for a viewer); `faces.py serve`, run by
 hand on this computer, has no rule.
@@ -292,6 +297,7 @@ Returns `{"ok": true, "pending": N}`.
 | 201 | `PUT /api/upload/...` stored a new file |
 | 400 | A malformed request (a number parameter, a body that isn't JSON, a bad `Content-Length`: above), a malformed review decision, or a refused upload |
 | 403 | A write from a caller who may not write (above) |
-| 404 | Unknown sha, unknown path, or `/api/similar` with an unknown photo |
+| 404 | Unknown sha, unknown path, `/api/similar` with an unknown photo, or `/api/people/{review,person,odd}` with an unknown person (one just merged away included) and `/api/people/photo` with an unknown face |
 | 413 | A JSON body over 8 MB |
-| 503 | `/people` before the face data has loaded |
+| 500 | A part loaded in the background failed (issue #82): a typed search after the search model failed to load (`{"error": "the search model (...) failed to load: ..."}`), or `/people`, `/face/*` and `/api/people/*` after the faces failed to load (the error as text; `/people` as a page that says so) |
+| 503 | `/people` before the face data has loaded; a typed search (`/api/search?q=`, `/api/periods` and the rest that read words) while the search model is still loading after waiting 90 s for it (`{"error": "... is still loading ..."}`, `Retry-After: 5`) |

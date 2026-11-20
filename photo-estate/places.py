@@ -96,7 +96,7 @@ def haversine_km(lat1, lon1, lat2, lon2) -> float:
 
 
 def country_name(cc: str) -> str:
-    import pycountry
+    import pycountry   # pyright: ignore[reportMissingImports]  (the places group: not in the dev environment)
     c = pycountry.countries.get(alpha_2=cc)
     return getattr(c, "common_name", None) or (c.name if c else cc)
 
@@ -164,7 +164,7 @@ def cmd_run(a) -> None:
     # lookup are the slow parts), and EXIF offsets from exiftool's JSON (a big table): both are reused
     # for photos already in `places`, so a run costs about what the new photos cost. --full redoes all.
     current = tables_current(con)
-    step = lambda k, what: estate.progress(k, 5, what, every=1)   # for the setup page: the steps, not photos
+    step = lambda k, what: estate.progress(k, 5, what, every=1, stage="places")   # for the setup page: the steps, not photos
     step(1, "reading the library")
 
     def sel(t, cols):          # what the last run wrote, as far as it can still be read
@@ -227,8 +227,8 @@ def cmd_run(a) -> None:
             gps.append(r)
     todo_geo = [r for r in gps if r["cached"] is None]
     if todo_geo:   # the geocoder and the zone shapes take a while to load: only when something needs them
-        import reverse_geocode
-        from timezonefinder import TimezoneFinder
+        import reverse_geocode   # pyright: ignore[reportMissingImports]  (the places group)
+        from timezonefinder import TimezoneFinder   # pyright: ignore[reportMissingImports]
         pts = [(r["lat"], r["lon"]) for r in todo_geo]
         near, big = reverse_geocode.search(pts), reverse_geocode.search(pts, min_population=BIG_CITY)
         tf, zones = TimezoneFinder(), {}

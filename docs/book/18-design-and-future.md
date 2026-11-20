@@ -70,8 +70,9 @@ Stated plainly so nobody has to discover them.
   or names confirmed on the People page, still appear in *search* only after a restart. (The People page
   itself updates live.)
 - **Near-duplicate decisions are recorded, not applied.** `decisions.json` has no consumer.
-- **The face journal is write-only.** `face-labels.jsonl` is a durable record but has no replay tool,
-  so surviving a rescan with a better model is a design intention, not yet a feature.
+- **The face journal is write-only.** `face-labels.jsonl` is a durable record (renames, merges and
+  birth months included since issue #87) but has no replay tool, so surviving a rescan with a better
+  model is a design intention, not yet a feature.
 - **The query log is write-only** too, by design, until a scoring page exists.
 - **`places` is all-or-nothing**: it recomputes everything and cannot be partially run. That is cheap
   (seconds), but it means events are renumbered if the rules change.

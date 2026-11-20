@@ -69,14 +69,16 @@ import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
+from typing import Any
 
 import pages
 from core import schema
+from core.states import AlbumKind, ChangeOp, ChangeStatus, Decision, SetState
 
 SCHEMA, ADDED = schema.CHANGES, schema.ADDED["changes"]   # the tables, and columns newer than a catalog may be
-OPS = ("hide", "view")
+OPS = tuple(ChangeOp)          # ("hide", "view")
 LIVE_MAX = 20000   # a live album is at most this many of what its search finds
-DECISIONS = ("pending", "accept", "reject")
+DECISIONS = tuple(Decision)    # ("pending", "accept", "reject")
 SHA = re.compile(r"^[0-9a-f]{64}$")
 ROUTE = re.compile(r"^/api/(changes|albums)(?:/(\d+)(?:/(items|decide|apply|revert|commit|reopen|discard|check|photos|rename|query|favorite|hide|view))?)?$")
 
@@ -127,14 +129,14 @@ class Changes:
                           " reverted_at, done_at, kind, query FROM change_sets WHERE id=?", (sid,)).fetchone()
         if not row:
             return None
-        s = dict(zip(("id", "title", "prompt", "op", "status", "created_by", "created_at", "updated_at",
+        s: dict[str, Any] = dict(zip(("id", "title", "prompt", "op", "status", "created_by", "created_at", "updated_at",
                       "applied_at", "reverted_at", "done_at", "kind", "query"), row))
-        s["kind"] = s["kind"] or "list"
+        s["kind"] = s["kind"] or AlbumKind.LIST
         s["query"] = json.loads(s["query"]) if s["query"] else None
-        if s["op"] == "view":            # an album to look at: it is what it holds, and nothing is pending
-            n = len(self.members(con, s)) if s["kind"] == "live" else con.execute(
+        if s["op"] == ChangeOp.VIEW:     # an album to look at: it is what it holds, and nothing is pending
+            n = len(self.members(con, s)) if s["kind"] == AlbumKind.LIVE else con.execute(
                 "SELECT count(*) FROM change_items WHERE set_id=?", (sid,)).fetchone()[0]
-            return {**s, "state": "album" if n or s["kind"] == "live" else "empty", "n": n,
+            return {**s, "state": SetState.ALBUM if n or s["kind"] == AlbumKind.LIVE else SetState.EMPTY, "n": n,
                     **{d: 0 for d in DECISIONS}, "applied": 0, "todo": 0}
         n = {d: 0 for d in DECISIONS}
         applied = todo = 0
@@ -142,20 +144,20 @@ class Changes:
                 "SELECT decision, applied, count(*) FROM change_items WHERE set_id=? GROUP BY 1, 2", (sid,)):
             n[decision] += k
             applied += k if was_applied else 0
-            todo += k if (decision != "reject") != bool(was_applied) else 0
+            todo += k if (decision != Decision.REJECT) != bool(was_applied) else 0
         total = sum(n.values())
         # what the set has come to: nothing in it, reverted, still being looked over, applied in full
         # and waiting to be committed or reverted, or done
-        s["state"] = ("empty" if not total else "done" if s["status"] == "done" and not todo
-                      else "reverted" if s["status"] == "reverted" and not applied
-                      else "review" if todo else "applied")
+        s["state"] = (SetState.EMPTY if not total else SetState.DONE if s["status"] == ChangeStatus.DONE and not todo
+                      else SetState.REVERTED if s["status"] == ChangeStatus.REVERTED and not applied
+                      else SetState.REVIEW if todo else SetState.APPLIED)
         return {**s, "n": total, **n, "applied": applied, "todo": todo}
 
     def members(self, con, s: dict) -> list[dict]:
         """An album's photos in its order: a list album's as given (a section's photos together, sections
         in the order they were first used), a live album's as its search finds them now. Photos no
         longer in the library are left out."""
-        if s["kind"] == "live":
+        if s["kind"] == AlbumKind.LIVE:
             try:
                 ids, scores = self.find(s["query"] or {}) if self.find else ([], None)
             except (ValueError, KeyError, TypeError):      # a search that no longer makes sense (a person renamed)
@@ -177,9 +179,9 @@ class Changes:
         con = self.con()
         try:
             ids = [r[0] for r in con.execute("SELECT id FROM change_sets" + ("" if albums else " WHERE op != 'view'") + " ORDER BY id DESC")]
-            sets = [self.summary(con, i) for i in ids]
+            sets = [s for i in ids if (s := self.summary(con, i)) is not None]
             for s in sets:   # a few photos to show on the set's card
-                if s["op"] == "view":            # its front: a favourite of it if it has one, as a month's is
+                if s["op"] == ChangeOp.VIEW:     # its front: a favourite of it if it has one, as a month's is
                     mem = [it["sha"] for it in self.members(con, s)]
                     front = self.cover(mem) if self.cover and mem else None
                     s["cover"] = ([front] if front else []) + [x for x in mem[:6] if x != front][:5 if front else 6]
@@ -306,14 +308,14 @@ class Changes:
 
     def create(self, body: dict, who: str = "") -> tuple[dict, int]:
         title = str(body.get("title") or "").strip()
-        op = body.get("op") or "hide"
+        op = body.get("op") or ChangeOp.HIDE
         if not title:
-            return {"error": "an album needs a title" if op == "view" else "a change set needs a title"}, 400
+            return {"error": "an album needs a title" if op == ChangeOp.VIEW else "a change set needs a title"}, 400
         if op not in OPS:
             return {"error": f"unknown operation {op!r}; known: {', '.join(OPS)}"}, 400
         query = body.get("query")
         if query is not None:            # a live album: its search must be one that can be run
-            if op != "view" or body.get("items"):
+            if op != ChangeOp.VIEW or body.get("items"):
                 return {"error": "a live album is a search and nothing else: no items, and it is not up for hiding"}, 400
             bad = self.bad_query(query)
             if bad:
@@ -324,11 +326,12 @@ class Changes:
                 t = now()
                 sid = con.execute("INSERT INTO change_sets(title, prompt, op, created_by, created_at, updated_at, kind, query)"
                                   " VALUES (?,?,?,?,?,?,?,?)",
-                                  (title[:200], body.get("prompt"), op, who or None, t, t, "live" if query is not None else "list",
+                                  (title[:200], body.get("prompt"), op, who or None, t, t, AlbumKind.LIVE if query is not None else AlbumKind.LIST,
                                    json.dumps(query) if query is not None else None)).lastrowid
+                assert sid is not None
                 got = self.add_items(con, sid, body.get("items"))
                 con.commit()
-                return {**self.summary(con, sid), **got}, 201
+                return {**(self.summary(con, sid) or {}), **got}, 201
             finally:
                 con.close()
 
@@ -356,11 +359,11 @@ class Changes:
                 was = self.summary(con, sid)
                 if not was:
                     return {"error": "no such change set"}, 404
-                if was["state"] == "done" and what in ("items", "decide", "apply", "revert", "hide", "view", "query"):
+                if was["state"] == SetState.DONE and what in ("items", "decide", "apply", "revert", "hide", "view", "query"):
                     return {"error": "this set is done; reopen it to change it"}, 409
-                if was["op"] == "view" and what in ("decide", "apply", "revert", "commit", "reopen"):
+                if was["op"] == ChangeOp.VIEW and what in ("decide", "apply", "revert", "commit", "reopen"):
                     return {"error": "this album is not up for hiding"}, 409
-                if was["kind"] == "live" and what == "items":
+                if was["kind"] == AlbumKind.LIVE and what == "items":
                     return {"error": "a live album holds what its search finds; change its search (query), not its photos"}, 409
                 extra, t = {}, now()
                 if what == "rename":
@@ -368,13 +371,13 @@ class Changes:
                     con.execute("UPDATE change_sets SET title=?, prompt=? WHERE id=?",
                                 (title[:200] or was["title"], body.get("prompt", was["prompt"]), sid))
                 elif what == "query":
-                    bad = "only a live album has a search" if was["kind"] != "live" else self.bad_query(body.get("query"))
+                    bad = "only a live album has a search" if was["kind"] != AlbumKind.LIVE else self.bad_query(body.get("query"))
                     if bad:
-                        return {"error": bad}, 409 if was["kind"] != "live" else 400
+                        return {"error": bad}, 409 if was["kind"] != AlbumKind.LIVE else 400
                     con.execute("UPDATE change_sets SET query=? WHERE id=?", (json.dumps(body["query"]), sid))
                 elif what == "hide":             # the album becomes a change set: reviewed, then applied, as any other
-                    if was["op"] != "hide":
-                        if was["kind"] == "live":    # fixed as what it finds now: a review needs photos that stay put
+                    if was["op"] != ChangeOp.HIDE:
+                        if was["kind"] == AlbumKind.LIVE:    # fixed as what it finds now: a review needs photos that stay put
                             extra = self.add_items(con, sid, self.members(con, was))
                         con.execute("UPDATE change_sets SET op='hide', kind='list', status='open' WHERE id=?", (sid,))
                 elif what == "view":             # a plain album again, once it hides nothing
@@ -405,8 +408,8 @@ class Changes:
                             return {"error": "`through` is not a photo of this set"}, 400
                         cut = place(self.when(through), through)
                         rows = [r for r in rows if place(self.when(r[0]), r[0]) <= cut]
-                    hide = [sha for sha, decision, applied in rows if decision != "reject" and not applied]
-                    show = [sha for sha, decision, applied in rows if decision == "reject" and applied]
+                    hide = [sha for sha, decision, applied in rows if decision != Decision.REJECT and not applied]
+                    show = [sha for sha, decision, applied in rows if decision == Decision.REJECT and applied]
                     con.executemany("INSERT OR IGNORE INTO hidden VALUES (?,?,?)", ((s, sid, t) for s in hide))
                     con.executemany("DELETE FROM hidden WHERE sha256=? AND set_id=?", ((s, sid) for s in show))
                     con.executemany("UPDATE change_items SET applied=1 WHERE set_id=? AND sha256=?", ((sid, s) for s in hide))
@@ -424,7 +427,7 @@ class Changes:
                                 if was["n"] else "there is nothing in this set"}, 409
                     con.execute("UPDATE change_sets SET status='done', done_at=? WHERE id=?", (t, sid))
                 elif what == "reopen":
-                    if was["state"] == "done":
+                    if was["state"] == SetState.DONE:
                         con.execute("UPDATE change_sets SET status='open', done_at=NULL WHERE id=?", (sid,))
                 elif what == "discard":
                     if con.execute("SELECT 1 FROM hidden WHERE set_id=? LIMIT 1", (sid,)).fetchone():
@@ -437,7 +440,7 @@ class Changes:
                     return {"error": "not found"}, 404
                 con.execute("UPDATE change_sets SET updated_at=? WHERE id=?", (t, sid))
                 con.commit()
-                out = {**self.summary(con, sid), **extra}
+                out = {**(self.summary(con, sid) or {}), **extra}
             finally:
                 con.close()
         if changed:
@@ -465,7 +468,7 @@ class Changes:
             if not isinstance(body, dict):
                 return js({"error": "expected a JSON object"}, 400)
             if sid is None:
-                return js(*self.create({"op": "view", **body} if albums else body, who))
+                return js(*self.create({"op": ChangeOp.VIEW, **body} if albums else body, who))
             if what and what not in ("check", "photos"):
                 return js(*self.write(sid, what, body, who))
         return js({"error": "not found"}, 404)

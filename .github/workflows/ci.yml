@@ -1,13 +1,14 @@
-# Checks every pull request and every push to main: the lockfile is current, ruff finds nothing, and the
-# fast tests pass. Everything runs from photo-estate/, against photo-estate/pyproject.toml and uv.lock.
+# Checks every pull request and every push to main: the lockfile is current, ruff finds nothing, pyright
+# finds no type errors, and the fast tests pass. Everything runs from photo-estate/, against
+# photo-estate/pyproject.toml and uv.lock.
 #
 # Left out on purpose (run them on a machine that has them: `uv run pytest` runs everything):
 #   - the slow tests (`-m slow`): they start the real app, whose environment brings torch and
 #     transformers, and two of them need the SigLIP 2 search model. CI never downloads the model and
 #     never reaches the Mac mini or a real library: it sees only the checked-in demo library.
-#   - static type checks: Catalog gets its attributes through __dict__.update and the modules pass
-#     untyped dicts and tuples between each other, so a type checker can verify almost nothing yet.
-#     Issue #90 tracks typing those contracts; add a pyright or mypy step here when it lands.
+#
+# Type checks (issue #90): pyright in basic mode, configured in pyproject.toml's [tool.pyright] (every
+# module of the app; not tests/ or tools/). The pyright package fetches its own Node.js on first run.
 name: CI
 
 on:
@@ -47,5 +48,7 @@ jobs:
         run: uv sync --locked --group dev
       - name: Lint (ruff)
         run: uv run --locked ruff check .
+      - name: Type check (pyright)
+        run: uv run --locked pyright
       - name: Fast tests
         run: uv run --locked pytest -m "not slow"

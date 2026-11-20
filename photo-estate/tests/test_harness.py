@@ -52,7 +52,7 @@ def test_scripts_run_whole_and_failures_are_reported(pytester: pytest.Pytester):
 
 LIGHT = ["admin", "browse", "catalog", "changes", "encoder", "estate_mcp", "http_util", "images", "pages",
          "photo_app", "scores", "stacks", "stats", "sync", "tasks", "upload", "intake", "intake.server",
-         "intake.engine", "intake.api", "core", "core.media", "core.schema", "core.config"]
+         "intake.engine", "intake.api", "core", "core.media", "core.schema", "core.config", "core.lifecycle", "core.events"]
 
 
 def test_lightweight_modules_do_not_import_the_ml_stack(estate_root):
