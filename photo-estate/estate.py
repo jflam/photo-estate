@@ -892,6 +892,8 @@ def cmd_review(a) -> None:
             path = self.path.split("?")[0]
             if path in ("/", "/index.html"):
                 return self.send(200, page, "text/html; charset=utf-8")
+            if (mod := pages.module(path)) is not None:        # what review.html imports
+                return self.send(200, mod, pages.MODULE_TYPE)
             if path == "/groups.json":
                 return self.send(200, payload.encode(), "application/json")
             if path == "/decisions.json":

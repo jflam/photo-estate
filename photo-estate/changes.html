@@ -104,26 +104,16 @@ h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032
 <div class="dock" id="dock" hidden></div>
 <div class="toast" id="toast"></div>
 
-<script>
-const $ = (s, el = document) => el.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const fmt = n => Number(n).toLocaleString("en-US");
-const plural = (n, one, many = one + "s") => `${fmt(n)} ${n === 1 ? one : many}`;
-const api = async (path, body) => {
-  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `${path}: ${r.status}`);
-  return r.json();
-};
+<script type="module">
+import { $, esc, MARK } from "/app/dom.js";
+import { fmt, plural } from "/app/format.js";
+import { api } from "/app/api.js";
+import { toast } from "/app/toast.js";
+
 const store = {   // what this browser remembers: the size of the photos, and where you were in each set
   get(k, d) { try { return localStorage.getItem("changes." + k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem("changes." + k, v); } catch {} },
 };
-function toast(msg) {
-  const t = $("#toast");
-  t.textContent = msg; t.classList.add("on");
-  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2600);
-}
-const MARK = '<svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>';
 const STATES = { empty: "Nothing in it", review: "To review", applied: "To commit", done: "Done", reverted: "Reverted" };
 const day = when => {
   const d = new Date(when.slice(0, 10) + "T12:00:00");

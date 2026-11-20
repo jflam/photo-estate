@@ -184,30 +184,16 @@ h2 { margin: 56px 0 4px; font-size: 24px; font-weight: 700; letter-spacing: -.02
 <datalist id="names"></datalist>
 <div class="toast" id="toast"></div>
 
-<script>
-const $ = (s, el = document) => el.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const fmt = n => Number(n).toLocaleString("en-US");
-const api = async (path, body) => {
-  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
-  if (!r.ok) throw new Error(`${path}: ${r.status}`);
-  return r.json();
-};
+<script type="module">
+import { $, esc, on, MARK } from "/app/dom.js";
+import { fmt } from "/app/format.js";
+import { api } from "/app/api.js";
+import { toast } from "/app/toast.js";
+
 const first = name => name.split(" ")[0];
 let O = null;                      // the overview: people, counts
 let view = { teardown: null };     // the current view's key handler
 
-function toast(msg, action) {
-  const t = $("#toast");
-  t.textContent = msg; t.classList.add("on");
-  if (action) {
-    const b = document.createElement("button");
-    b.textContent = action.label;
-    b.onclick = () => { t.classList.remove("on"); action.fn(); };
-    t.append(b);
-  }
-  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), action ? 8000 : 2200);
-}
 const person = id => O.people.find(p => p.id === id);
 function age(p, f) {               // "3y", "8m" when their birth month is known
   if (!p?.born || !f.date) return "";
@@ -230,7 +216,6 @@ const X = `<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="c
 const PREV = `<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg>`;
 const NEXT = `<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 5 5-5 5"/></svg>`;
 const DOTS = `<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.500" cy="8" r="1.400"/><circle cx="8" cy="8" r="1.400"/><circle cx="12.500" cy="8" r="1.400"/></svg>`;
-const MARK = `<svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>`;
 const VIEW = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9"/></svg>`;
 function tile(f, p, extra = "", o = {}) {
   const a = age(p, f);
@@ -431,13 +416,13 @@ async function review(pid, year, skipped = false) {
     ids.forEach(i => drafts.delete(i));
     delete defaults[dkey];             // each new page starts from the usual default again
     const n = to.get(pid)?.length || 0;
-    toast(`Saved ${ids.length}${n ? `: ${n} ${name}` : ""}`, { label: "Undo", fn: async () => {
+    toast(`Saved ${ids.length}${n ? `: ${n} ${name}` : ""}`, { action: { label: "Undo", fn: async () => {
       const back = [{ undo: ids, undo_person: pid }];
       if (skipped) back.push({ later: ids, later_person: pid });
       await api("/api/people/label-many", { items: back });
       toast("Undone");
       review(pid, year, skipped);
-    } });
+    } } });
     busy = false;
     if (reload) review(pid, year, skipped);
     return true;
@@ -756,7 +741,6 @@ function peek(ids, id, ctx) {
   go(id);
 }
 
-function on(type, fn) { document.addEventListener(type, fn); return () => document.removeEventListener(type, fn); }
 function route() {
   view.teardown?.(); view.teardown = null;
   $(".menu")?.remove();

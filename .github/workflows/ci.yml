@@ -1,11 +1,19 @@
 # Checks every pull request and every push to main: the lockfile is current, ruff finds nothing, pyright
-# finds no type errors, and the fast tests pass. Everything runs from photo-estate/, against
-# photo-estate/pyproject.toml and uv.lock.
+# finds no type errors, and the fast tests pass. Those run from photo-estate/, against
+# photo-estate/pyproject.toml and uv.lock. Then the web pages' script modules (photo-estate/app/*.js,
+# issue #89): TypeScript checks their JSDoc types (tsc --noEmit --allowJs --checkJs, from
+# app/tsconfig.json) and Node's own test runner runs their unit tests (app/tests/*.test.js). Those run
+# from photo-estate/app, against its package.json and package-lock.json: TypeScript, pinned, is the only
+# package, and nothing of it is shipped (the browser loads the modules as they are).
 #
 # Left out on purpose (run them on a machine that has them: `uv run pytest` runs everything):
 #   - the slow tests (`-m slow`): they start the real app, whose environment brings torch and
 #     transformers, and two of them need the SigLIP 2 search model. CI never downloads the model and
 #     never reaches the Mac mini or a real library: it sees only the checked-in demo library.
+#
+#   - the pages in a browser: the modules' logic is tested without one; tests/test_pages.py (fast tier)
+#     checks that every page imports only modules and names that exist and that the servers send them
+#     as JavaScript.
 #
 # Type checks (issue #90): pyright in basic mode, configured in pyproject.toml's [tool.pyright] (every
 # module of the app; not tests/ or tools/). The pyright package fetches its own Node.js on first run.
@@ -52,3 +60,17 @@ jobs:
         run: uv run --locked pyright
       - name: Fast tests
         run: uv run --locked pytest -m "not slow"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: photo-estate/app/package-lock.json
+      - name: Install TypeScript (from app/package-lock.json)
+        working-directory: photo-estate/app
+        run: npm ci
+      - name: Type check the script modules (tsc --noEmit --allowJs --checkJs)
+        working-directory: photo-estate/app
+        run: npm run typecheck
+      - name: Unit tests of the script modules (node --test)
+        working-directory: photo-estate/app
+        run: npm test

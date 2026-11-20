@@ -96,17 +96,16 @@ details[open] summary svg { transform: rotate(90deg); }
   </section>
   <div id="out"><div class="blank wait"><svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg><h3>Taking stock</h3><p>Reading the catalog and measuring the disk.</p></div></div>
 </main>
-<script>
-"use strict";
-const $ = s => document.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const fmt = n => Number(n).toLocaleString();
+<script type="module">
+import { $, esc, MARK } from "/app/dom.js";
+import { fmt, dateParts } from "/app/format.js";
+
 const bytes = n => { if (n == null) return "–"; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; n = +n;
   while (n >= 1000 && i < 4) { n /= 1000; i++; } return (n >= 100 || i === 0 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2)) + " " + u[i]; };
 const pct = (a, b) => b ? (100 * a / b).toFixed(a / b < .1 ? 1 : 0) + "%" : "–";
 const dur = s => { s = Math.round(s); const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`; };
-const day = s => { const m = /^(\d{4})-(\d\d)-(\d\d)/.exec(s || ""); return m ? new Date(+m[1], m[2] - 1, +m[3]).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "–"; };
+const day = s => { const d = dateParts(s); return d ? d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "–"; };
 const store = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} } };
 const card = (big, label, small) => `<div class="card well"><b>${big}</b><span>${label}</span>${small ? `<small>${small}</small>` : ""}</div>`;
 const fact = (k, v) => `<div class="fact"><span>${k}</span><span>${v}</span></div>`;
@@ -245,7 +244,6 @@ function render(d) {
     e.currentTarget.classList.toggle("on", on); e.currentTarget.setAttribute("aria-checked", on); };
 }
 
-const MARK = $(".mark").outerHTML;
 let timer = 0;
 async function load(refresh) {
   clearTimeout(timer);

@@ -62,7 +62,8 @@ S = { q: "", plain: false, sha: "", event: "", fav: false, from: "", to: "", sor
       f: { country: [], region: [], city: [], person: [], album: [], camera: [], lens: [], trip: [] } }
 ```
 
-`toParams(S)` serialises it to a query string and `fromParams` parses it back:
+`toParams(S)` serialises it to a query string and `fromParams` parses it back (both in
+[app/query.js](../../photo-estate/app/query.js), with unit tests of the round trip):
 
 | `S` field | URL parameter | Meaning |
 |---|---|---|
@@ -151,6 +152,10 @@ Details that make it feel right:
   tall screenshot does not stretch a row to the moon.
 - **Rows are stable from the left.** When more photos arrive, `draw` lays out again only the *unfinished
   last row* of the section. Finished rows never move, so there is no jumping while scrolling.
+- **The arithmetic is a pure function**, `packRows` in [app/layout.js](../../photo-estate/app/layout.js): how
+  many photos, each one's shape, the width, the row height and the gap in; rows of pixel widths out. `Grid.draw`
+  writes the tiles. Its unit tests check what the picture above promises: every full row exactly as wide as
+  the screen, a short last row left ragged, the same rows again when the list grows.
 - **On a phone the photos run to the edges** (`--gpad: 0` under 760 px), as on the iPhone.
 - **Resize** (a `ResizeObserver` on the page) calls `relayout` only if the *width* changed.
 - **Sections** group the rows by the grid's `grain`: the Library is always by **month**; Search chooses:
@@ -545,7 +550,9 @@ Phone polish found throughout the CSS:
 
 - **One stylesheet, [app/estate.css](../../photo-estate/app/estate.css), is shared by every page** (the photo
   app, People, Library info, duplicate review). [pages.py](../../photo-estate/pages.py) puts it into each page as it
-  is sent, so a page is still one request and the pages cannot drift apart.
+  is sent, so the pages cannot drift apart. What their scripts share (escaping, the API call, the toast, the
+  state machines) is shared the same way, as modules in `app/` that each page imports
+  ([chapter 2](02-code-tour.md#the-web-pages)).
 - **The look is the iPhone app's** ([chapter 23](23-native-interface.md)), and comes from the icon: ink, paper and a
   low sun. Surfaces are quiet (warm paper in the light, near-black in the dark, switched by
   `prefers-color-scheme`); one colour, the sun, marks what is chosen, alive or waiting for you: a chip that is
@@ -563,13 +570,15 @@ Phone polish found throughout the CSS:
 
 ## Where to look in the code
 
-All in [search.html](../../photo-estate/search.html), except the server side:
+All in [search.html](../../photo-estate/search.html), except the server side and what is shared or pure,
+which is in the script modules in [app/](../../photo-estate/app/) ([chapter 2](02-code-tour.md#the-web-pages)):
 
 | Topic | Code |
 |---|---|
-| State, history and URL | `blank`, `toParams`, `fromParams`, `snap`, `url`, `nav`, `restore`, the `popstate` handler, `init` |
+| Shared with the other pages | [app/dom.js](../../photo-estate/app/dom.js) (`$`, `$$`, `esc`, `MARK`), [app/api.js](../../photo-estate/app/api.js) (`api`), [app/fsm.js](../../photo-estate/app/fsm.js) (`machine`), [app/format.js](../../photo-estate/app/format.js) (`fmt`, `plural`, `dateParts`) |
+| State, history and URL | `blank`, `copy`, `toParams`, `fromParams` in [app/query.js](../../photo-estate/app/query.js); `snap`, `url`, `nav`, `restore`, the `popstate` handler, `init` |
 | Tabs | `setTab`, the `#tabbar` click handler, `titleDoc` |
-| Grid | `Grid` (`load`, `poke`, `more`, `less`, `add`, `draw`, `relayout`, `top`), `rowH` |
+| Grid | `Grid` (`load`, `poke`, `more`, `less`, `add`, `draw`, `relayout`, `top`), `rowH`; the rows themselves are `packRows` in [app/layout.js](../../photo-estate/app/layout.js) |
 | Library | `lgrid`, `libLoad`, `libShow`, `renderPeriods`, `libBack`, `libJump`, `toSection` |
 | Scrubber | `scrubShow`, `scrubPlace`, `monthAt`, `scrubEnd` |
 | View options | `V`, `DENS`, `saveView`, `viewParams`, `viewMenu`, `viewChanged`, `setDens`, the pinch handlers |

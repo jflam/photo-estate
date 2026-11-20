@@ -71,7 +71,7 @@ def main() -> None:
         page.goto(f"{a.url}/?q=hot+air+balloon"); settle(page)
         page.locator("#sGrid img").first.click(); page.wait_for_timeout(1500)
         if not page.evaluate("document.querySelector('#v').classList.contains('info')"):
-            page.evaluate("toggleInfo()")  # the details panel remembers whether it was open
+            page.locator("#vInfoBtn").click()  # the details panel remembers whether it was open
         settle(page, 1500)
         save(page, "viewer-details", 1600)
 

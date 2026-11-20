@@ -95,15 +95,15 @@ figcaption .dim { color: var(--muted); font-variant-numeric: tabular-nums; }
     Choices are saved next to the catalog as you go. Nothing is deleted or moved.</p>
 </main>
 <div id="overlay"><img alt=""><div class="cap"></div></div>
-<script>
+<script type="module">
+import { $, esc } from "./app/dom.js";
+
 const PAGE = 30;
 let groups = [], cats = {}, decisions = {}, cat = null, page = 0, focus = 0, pending = {}, saveTimer = null;
-const $ = s => document.querySelector(s);
 const fmtSize = b => b >= 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.round(b / 1e3) + " KB";
 const fmtDate = s => s ? s.replace("T", " ").slice(0, 16) + " UTC" : "no date";
 const fmtSpan = s => s < 1 ? "same second" : s < 120 ? Math.round(s) + " s apart" : s < 7200 ? Math.round(s / 60) + " min apart"
   : s < 172800 ? (s / 3600).toFixed(1) + " h apart" : Math.round(s / 86400) + " days apart";
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 function keepOf(g) { return new Set((decisions[g.id] && decisions[g.id].keep) || g.default_keep); }
 function reviewed(g) { return !!(decisions[g.id] && decisions[g.id].reviewed); }

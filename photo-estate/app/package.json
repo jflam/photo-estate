@@ -1,0 +1,15 @@
+{
+  "name": "photo-estate-web",
+  "private": true,
+  "description": "Checks for the web pages' script modules (app/*.js). Nothing here is shipped: the browser loads the modules as they are.",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "typecheck": "tsc --project tsconfig.json",
+    "test": "node --test --test-reporter=spec \"tests/*.test.js\"",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

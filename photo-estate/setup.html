@@ -141,17 +141,12 @@ details.log pre { margin: 8px 0 0; max-height: 260px; overflow: auto; padding: 1
 </div>
 <div class="toast" id="toast"></div>
 
-<script>
-const $ = s => document.querySelector(s);
-const h = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-const api = async (path, body) => {
-  const r = await fetch('/api/intake' + path, body === undefined ? {} :
-    {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-  return j;
-};
-const toast = (msg) => { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 3200); };
+<script type="module">
+import { $, esc as h } from '/app/dom.js';
+import { createApi } from '/app/api.js';
+import { toast } from '/app/toast.js';
+
+const api = createApi({base: '/api/intake'});      // api('/jobs') asks /api/intake/jobs
 const nf = new Intl.NumberFormat();
 
 // Sources the next phases add: shown so you know they are coming, not clickable yet.

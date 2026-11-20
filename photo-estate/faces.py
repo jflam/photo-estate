@@ -1000,6 +1000,8 @@ def cmd_serve(a) -> None:
                     self.send_header("Location", "/people")
                     self.send_header("Content-Length", "0")
                     return self.end_headers()
+                if (mod := pages.module(u.path)) is not None:     # what people.html imports
+                    return self.reply((200, mod, pages.MODULE_TYPE, "no-cache"))
                 if u.path.startswith("/preview/"):
                     body = preview(u.path[9:]) if len(u.path) == 73 and u.path[9:].isalnum() else None
                     return self.reply((200, body, "image/jpeg", "public, max-age=86400") if body else None)

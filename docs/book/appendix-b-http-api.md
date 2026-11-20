@@ -72,6 +72,7 @@ The setup server (`intake/server.py`) and `faces.py serve` read bodies the same 
 |---|---|
 | `GET /` , `/index.html` | `search.html`, with an `ETag` and `Cache-Control: no-cache` |
 | `GET /manifest.webmanifest`, `/icon-180.png`, `/icon-192.png`, `/icon-512.png`, `/icon-maskable-512.png`, `/sw.js` | The files in `app/`, served from the site root |
+| `GET /app/<name>.js` (`/app/dom.js`, `/app/api.js`, `/app/fsm.js`, `/app/toast.js`, `/app/format.js`, `/app/query.js`, `/app/layout.js`) | A script module the pages import (`pages.module`), as `text/javascript; charset=utf-8`, with an `ETag` and `Cache-Control: no-cache` like the page. Only the modules in `app/`: anything else under `/app/` (their tests, `package.json`, `/app/sw.js`) is a 404. The setup server, `faces.py serve` and `estate.py review` serve the same paths for their pages, without the `ETag` |
 | `GET /people`, `/people/` | `people.html`, once faces exist and `People` has loaded (else 503; 500 with the error if loading them failed) |
 
 ### Uploads from the phone

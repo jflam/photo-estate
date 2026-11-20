@@ -487,12 +487,16 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
   <button class="tb ts glass" data-tab="search" aria-label="Search your photos (/)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.500" cy="10.500" r="6.300"/><path d="m15.300 15.300 5 5"/></svg></button>
 </nav>
 
-<script>
-"use strict";
-const $ = (s, el = document) => el.querySelector(s);
-const $$ = (s, el = document) => [...el.querySelectorAll(s)];
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const fmt = n => Number(n).toLocaleString();
+<script type="module">
+// What every page shares is in app/*.js (book chapter 2): native modules, fetched as they are. The names
+// in this script are the module's own: nothing here is on `window`.
+import { $, $$, esc, MARK } from "/app/dom.js";
+import { fmt, plural, dateParts as dParts } from "/app/format.js";
+import { api } from "/app/api.js";
+import { machine } from "/app/fsm.js";
+import { KEYS, blank, copy, toParams, fromParams, filtered as filteredQ, isEmpty as isEmptyQ } from "/app/query.js";
+import { clampShape, shapeFromByte, packRows } from "/app/layout.js";
+
 const EASE = "cubic-bezier(.2,.7,.2,1)";
 const svg = (d, w = 16, extra = "") => `<svg width="${w}" height="${w}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
 const I = {
@@ -516,8 +520,6 @@ const I = {
   changes: svg('<path d="M3 4.5h10M3 8h6M3 11.5h4"/><path d="m10 11 1.6 1.6L14 9.6"/>', 18),
   stats: svg('<path d="M3 13V8M8 13V3M13 13V6"/>', 18),
 };
-// The icon's picture: hills under a low sun. Shown where there are no photos to show.
-const MARK = '<svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>';
 const DEBUG = (() => { try { return localStorage.getItem("estate.debug") === "1"; } catch (e) { return false; } })();   // set on the Library info page
 const IDEAS = ["sunset over water", "dog on the beach", "birthday cake", "snowy mountains", "city at night", "a child laughing"];
 const DEMO_IDEAS = ["latte art", "kitten", "waterfall in autumn", "dog in the snow", "city at night"];   // searches that find a group in the demo
@@ -534,36 +536,13 @@ const saveView = () => { try { localStorage.setItem("estate.view", JSON.stringif
 const rowH = W => DENS[V.dens] * (W >= 1000 ? 1.5 : W >= 700 ? 1.25 : 1);   // the iPhone's sizes, a little bigger on a big screen
 const viewParams = p => { p.set("dedupe", V.dedupe ? "1" : "0"); p.set("shots", V.shots ? "0" : "1"); return p; };
 
-/* ── the question Search asks ──────────────────────────────────────── */
-const KEYS = ["country", "region", "city", "person", "album", "camera", "lens", "trip"];
+/* ── the question Search asks (app/query.js: the question as a value, and as the address) ── */
 const KIND = { country: "Country", region: "Region", city: "Place", person: "Person", album: "Album", camera: "Camera", lens: "Lens", trip: "Trip" };
-const blank = () => ({ q: "", plain: false, sha: "", event: "", stack: "", fav: false, from: "", to: "", sort: "", f: Object.fromEntries(KEYS.map(k => [k, []])) });
-const copy = s => ({ ...s, f: Object.fromEntries(KEYS.map(k => [k, [...s.f[k]]])) });
 let S = blank();
-function toParams(s) {
-  const p = new URLSearchParams();
-  if (s.q) p.set("q", s.q);
-  if (s.q && s.plain) p.set("names", "0");        // names typed in the search are words, not people
-  if (s.sha) p.set("sha", s.sha);
-  for (const k of KEYS) for (const v of s.f[k]) p.append(k, v);
-  for (const k of ["event", "stack", "from", "to", "sort"]) if (s[k]) p.set(k, s[k]);
-  if (s.fav) p.set("fav", "1");
-  return p;
-}
-function fromParams(p) {
-  const s = blank();
-  for (const k of ["q", "sha", "event", "stack", "from", "to", "sort"]) s[k] = p.get(k) || "";
-  for (const k of KEYS) s.f[k] = p.getAll(k);
-  s.fav = p.get("fav") === "1";
-  s.plain = p.get("names") === "0";
-  return s;
-}
-const filtered = (s = S) => KEYS.some(k => s.f[k].length) || s.event || s.stack || s.fav || s.from || s.to;
-const isEmpty = (s = S) => !s.q && !s.sha && !filtered(s);
+const filtered = (s = S) => filteredQ(s);
+const isEmpty = (s = S) => isEmptyQ(s);
 
 /* ── dates ─────────────────────────────────────────────────────────── */
-const dParts = w => { const m = /^(\d{4})-(\d\d)(?:-(\d\d))?(?:T(\d\d):(\d\d))?/.exec(w || "");
-  return m && new Date(+m[1], +m[2] - 1, +(m[3] || 1), +(m[4] || 0), +(m[5] || 0)); };
 const DF = o => new Intl.DateTimeFormat(undefined, o);
 const fLong = DF({ weekday: "long", day: "numeric", month: "long", year: "numeric" });
 const fTime = DF({ hour: "numeric", minute: "2-digit" });
@@ -588,30 +567,16 @@ function rangeLabel(s = S) {
   }
   return a != null ? `Since ${M(a)}` : b != null ? `Until ${M(b)}` : "";
 }
-const photos = n => `${fmt(n)} ${n === 1 ? "photo" : "photos"}`;
+const photos = n => plural(n, "photo");
 const about = n => { const r = n >= 10000 ? Math.round(n / 1000) * 1000 : n >= 1000 ? Math.round(n / 100) * 100 : n;   // 81K, 8.1K, 950
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(r); };
 const tripTitle = t => (t?.title || "Trip").replace(/^Trip to /, "");
 const tripById = id => INFO.trips.find(t => String(t.id) === String(id));
 const firstPart = v => String(v).split(",")[0].trim();
 
-const getJSON = async (u, o) => { const r = await fetch(u, o); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; };
-const postJSON = (u, body) => getJSON(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-
-/* ── machines. Whatever in the page is in one of several states (a list loading, the photo viewer, a finger on
-      the screen) says so in one place: its name, the state it is in, and every step it may take. A step that
-      is not in its table is refused and reported, so a mistake shows as a line in the console naming the two
-      states, not as a page that is subtly wrong some time later. ── */
-function machine(name, steps, state) {
-  return {
-    get state() { return state; },
-    is: (...names) => names.includes(state),
-    to(next) {
-      if (!steps[state].includes(next)) { console.warn(`${name}: no step from ${state} to ${next}`); return false; }
-      state = next; return true;
-    },
-  };
-}
+/* ── machines (app/fsm.js). Whatever in the page is in one of several states (a list loading, the photo
+      viewer, a finger on the screen) says so in one place: its name, the state it is in, and every step it may
+      take. A step that is not in its table is refused and reported in the console. ── */
 // The photo viewer. closed; open (an open photo is a history entry, so Back closes it); or leaving: put away on
 // screen, its history entry still to be taken back, which the browser reports a moment later (popstate).
 const VW = machine("viewer", { closed: ["open"], open: ["leaving", "closed"], leaving: ["closed"] }, "closed");
@@ -789,26 +754,18 @@ class Grid {
     if (last && !last.full) { sec.rows.pop(); sec.box.lastElementChild.remove(); from = last.start; }
     else if (last) from = last.start + last.n;
     const H = rowH(W + 2 * this.gpad()), G = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gap")) || 3;
-    const ar = (r, k) => Math.min(2.6, Math.max(.5, this.shape?.(sec.base + k) || r.ar || 1.5));   // k: its place in the section
+    const ar = k => clampShape(this.shape?.(sec.base + k) || sec.items[k].ar);   // k: its place in the section
     let html = "";
-    for (let i = from; i < sec.items.length;) {
-      let sum = 0, j = i, full = false;
-      while (j < sec.items.length) { sum += ar(sec.items[j], j++); if (sum * H + G * (j - i - 1) >= W) { full = true; break; } }
-      const n = j - i, room = W - G * (n - 1);
-      if (!full && sum * H >= room * .9) full = true;
-      const h = Math.round(full ? room / sum : H);
-      const ws = sec.items.slice(i, j).map((r, k) => Math.round(ar(r, i + k) * h));
-      if (full) { let d = room - ws.reduce((a, b) => a + b, 0); for (let k = 0; d !== 0; k = (k + 1) % n) { ws[k] += Math.sign(d); d -= Math.sign(d); } }
-      html += `<div class="row" style="height:${h}px;contain-intrinsic-size:auto ${h}px">`;
-      for (let k = 0; k < n; k++) {
-        const r = sec.items[i + k];
-        if (r.ghost) { html += `<div class="t" data-i="${sec.base + i + k}" style="width:${ws[k]}px"></div>`; continue; }
-        html += `<div class="t" tabindex="0" data-i="${sec.base + i + k}" style="width:${ws[k]}px"><img decoding="async" alt="" data-src="/thumb/${r.sha}" onload="this.classList.add('in')">`
+    for (const row of packRows(sec.items.length, ar, from, W, H, G)) {         // app/layout.js
+      html += `<div class="row" style="height:${row.height}px;contain-intrinsic-size:auto ${row.height}px">`;
+      for (let k = 0; k < row.n; k++) {
+        const r = sec.items[row.start + k];
+        if (r.ghost) { html += `<div class="t" data-i="${sec.base + row.start + k}" style="width:${row.widths[k]}px"></div>`; continue; }
+        html += `<div class="t" tabindex="0" data-i="${sec.base + row.start + k}" style="width:${row.widths[k]}px"><img decoding="async" alt="" data-src="/thumb/${r.sha}" onload="this.classList.add('in')">`
           + (r.fav ? I.heartFill : "") + (r.stack && this.stacks() ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (r.hidden ? `<span class="hid">Hidden</span>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
       }
       html += "</div>";
-      sec.rows.push({ start: i, n, full });
-      i = j;
+      sec.rows.push({ start: row.start, n: row.n, full: row.full });
     }
     const had = sec.box.childElementCount;
     sec.box.insertAdjacentHTML("beforeend", html);
@@ -901,10 +858,10 @@ function titleDoc() {
       months, a month opens its photos. ── */
 const lgrid = new Grid({
   grid: "#libGrid", up: "#libUp", down: "#libDown", ranked: false,
-  fetch: (c, n) => getJSON("/api/search?" + libParams() + `&limit=${n}&cursor=${c}`),
+  fetch: (c, n) => api("/api/search?" + libParams() + `&limit=${n}&cursor=${c}`),
   grain: () => 7,
   count: sec => L.months?.get(sec.key),
-  shape: i => L.shapes && i < L.shapes.length ? .5 + L.shapes[i] * 2.1 / 255 : 0,   // from /api/layout: known before the photo is
+  shape: i => L.shapes && i < L.shapes.length ? shapeFromByte(L.shapes[i]) : 0,   // from /api/layout: known before the photo is
   stacks: () => V.dedupe,
   onGrow: () => { $("#libHead").hidden = lgrid.lo > 0; if (VL === lgrid && viewing()) { arrange(); vChrome(); } },
   onError: e => {                                    // said where the photos would have been, with a way to ask again
@@ -921,12 +878,12 @@ const mgrid = new Grid({
   grid: "#monGrid", down: "#monDown", ranked: true,  // one run of photos, no headings within it; each says its day when pointed at
   fetch: async (c, n) => {
     const m = M.m, take = Math.min(n, m.n - c);
-    const d = await getJSON("/api/search?" + libParams() + `&limit=${take}&cursor=${m.at + c}`);
+    const d = await api("/api/search?" + libParams() + `&limit=${take}&cursor=${m.at + c}`);
     d.next = c + take < m.n ? c + take : null;       // the month ends here, whatever comes after it in the library
     return d;
   },
   grain: () => 0,
-  shape: i => L.shapes && M.m && M.m.at + i < L.shapes.length ? .5 + L.shapes[M.m.at + i] * 2.1 / 255 : 0,
+  shape: i => L.shapes && M.m && M.m.at + i < L.shapes.length ? shapeFromByte(L.shapes[M.m.at + i]) : 0,
   stacks: () => V.dedupe,
   onGrow: () => { if (VL === mgrid && viewing()) { arrange(); vChrome(); } },
   onError: e => { mgrid.clear(); mgrid.el.innerHTML = libSorry("Couldn’t load these photos", e); $("#monNav").innerHTML = ""; },
@@ -964,7 +921,7 @@ async function libLoad_(keep) {                      // keep: the month to stay 
   const g = ++L.asked, q = libParams();
   L.known.to("asking");
   let failed = null;
-  const [P, shapes] = await Promise.all([getJSON("/api/periods?" + q).catch(e => { failed = e; return null; }),
+  const [P, shapes] = await Promise.all([api("/api/periods?" + q).catch(e => { failed = e; return null; }),
     fetch("/api/layout?" + q).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null)]);
   if (g !== L.asked) return;                         // asked again since (another order, another view option): that answer is the one to show
   if (!P) {
@@ -986,7 +943,7 @@ async function libLoad_(keep) {                      // keep: the month to stay 
   await loading;
 }
 async function libCovers() {                          // a favourite changed: the same months and years, perhaps with other covers
-  const g = L.asked, P = await getJSON("/api/periods?" + libParams()).catch(() => null);
+  const g = L.asked, P = await api("/api/periods?" + libParams()).catch(() => null);
   if (!P || g !== L.asked || !L.known.is("known") || P.matching !== L.P.matching) return;
   L.P = P;
   if (M.m) M.m = P.months.find(x => x.key === M.key) || M.m;   // (the month showing is still the month showing)
@@ -1134,7 +1091,7 @@ addEventListener("scroll", () => {
 const AL = { id: null, album: null, sections: null };   // the album showing (null: the list of them), and what the server last said of it
 const agrid = new Grid({
   grid: "#albGrid", down: "#albDown", ranked: true,  // no dates to head it by: its own sections, or one run
-  fetch: (c, n) => getJSON(`/api/albums/${AL.id}/photos?limit=${n}&cursor=${c}`),
+  fetch: (c, n) => api(`/api/albums/${AL.id}/photos?limit=${n}&cursor=${c}`),
   grain: () => 0,
   keyOf: r => r.section || "", titleOf: key => key,
   count: sec => AL.sections?.get(sec.key),
@@ -1178,7 +1135,7 @@ async function albList() {
   if (!el.childElementCount) el.innerHTML = `<div class="head"><h1>Albums</h1><p class="num">&nbsp;</p></div>`;
   scrollTo(0, L.y.albums || 0);
   let d;
-  try { d = await getJSON("/api/albums"); }
+  try { d = await api("/api/albums"); }
   catch (e) { if (asked === AL.asked) el.innerHTML = `<div class="head"><h1>Albums</h1></div><div class="blank">${MARK}<h3>Couldn’t load the albums</h3><p>${esc(e.message)}</p><button class="btn" id="albRetry">Try again</button></div>`; return; }
   if (asked !== AL.asked || TAB !== "albums" || AL.id != null) return;
   const from = INFO?.facets.album || [];
@@ -1222,7 +1179,7 @@ $("#albMore").onclick = e => openMenu(e.currentTarget, el => {
       const mine = menu, field = (label, v, hint = "") => `<h5>${label}</h5><input type="text" aria-label="${label}" autocomplete="off" placeholder="${hint}" value="${esc(v || "")}">`;
       return menuForm(el, field("Title", a.title).replace("<input", '<input maxlength="200"') + field("Note", a.prompt, "What this album is, if you like"),
         "Save", "Saving…", "Couldn’t save", async (title, prompt) => {
-          const got = await postJSON(`/api/albums/${a.id}/rename`, { title, prompt });
+          const got = await api(`/api/albums/${a.id}/rename`, { title, prompt });
           if (menu === mine) closeMenus();
           if (AL.album?.id === a.id) { AL.album = { ...AL.album, title: got.title, prompt: got.prompt }; albHead(agrid.data?.matching ?? a.n); }
         });
@@ -1230,15 +1187,15 @@ $("#albMore").onclick = e => openMenu(e.currentTarget, el => {
     closeMenus();
     try {
       if (b.dataset.fav) {
-        const got = await postJSON(`/api/albums/${a.id}/favorite`, { fav: b.dataset.fav === "1" });
+        const got = await api(`/api/albums/${a.id}/favorite`, { fav: b.dataset.fav === "1" });
         INFO.fav += (got.fav ? 1 : -1) * got.changed; $("#browse").innerHTML = "";
         for (const r of agrid.items) if (r) favShow(r, got.fav);          // the ones loaded: every tile of theirs, wherever it shows
         libCovers();
       } else if (b.hasAttribute("data-hide")) {
-        await postJSON(`/api/albums/${a.id}/hide`, {});
+        await api(`/api/albums/${a.id}/hide`, {});
         location.href = `/changes/${a.id}`;            // looked over and applied there, as any change set
       } else if (b.hasAttribute("data-drop") && confirm(`Delete the album “${a.title}”? Its photos stay in the library.`)) {
-        await postJSON(`/api/albums/${a.id}/discard`, {});
+        await api(`/api/albums/${a.id}/discard`, {});
         AL.album = null; albGo(null, "replace");
       }
     } catch (err) { alert(err.message === "not allowed" ? "Albums can’t be changed from this account." : err.message); }
@@ -1366,7 +1323,7 @@ function stopTyping(text = S.q) { if (typing()) FIELD.to("resting"); $("#q").blu
 const pane = () => { const typed = $("#q").value.trim(); return typing() && typed && typed !== S.q ? "suggest" : isEmpty() ? "browse" : "results"; };
 const sgrid = new Grid({
   grid: "#sGrid", down: "#sDown",
-  fetch: (c, n) => getJSON((Q.s.sha ? "/api/similar?" : "/api/search?") + Q.key + `&limit=${n}&cursor=${c}`),
+  fetch: (c, n) => api((Q.s.sha ? "/api/similar?" : "/api/search?") + Q.key + `&limit=${n}&cursor=${c}`),
   grain: () => sgrid.ranked ? 0 : D?.scope || Q.s.event ? 10 : Q.s.from && Q.s.to && ymOf(Q.s.to) - ymOf(Q.s.from) <= 1 ? 10 : 7,
   stacks: () => V.dedupe && !Q.s.stack,
   count: sec => sec.key.length === 7 && F ? F.months[ymOf(sec.key)] : null,
@@ -1380,7 +1337,7 @@ function go(s) { S = s; nav(); refreshSearch(); }           // a new question: a
 function refine() { nav("replace"); refreshSearch(); }      // the same question, narrowed or widened
 function loadF() {                                    // the counts beside the question now being answered
   const key = Q.key;
-  return getJSON("/api/facets?" + key).then(f => { if (Q.key === key) { F = f; sgrid.counts(); drawSheet(); } }).catch(() => {});
+  return api("/api/facets?" + key).then(f => { if (Q.key === key) { F = f; sgrid.counts(); drawSheet(); } }).catch(() => {});
 }
 async function refreshSearch() {                      // S is asked: it becomes Q
   if (TAB !== "search") return;                     // asked when Search shows again (setTab sees that Q is not what S now says)
@@ -1445,12 +1402,12 @@ const albumTitle = () => [Q.s.q, ...filterBits(Q.s), D.scope ? tripTitle(D.scope
 async function albumFromSearch(title) {
   const q = Q, items = [];
   for (let c = 0; c != null;) {                       // the whole answer, a page at a time, as the grid asks for it
-    const d = await getJSON(`/api/search?${q.key}&limit=500&cursor=${c}`);
+    const d = await api(`/api/search?${q.key}&limit=500&cursor=${c}`);
     for (const r of d.results) items.push({ sha: r.sha });
     c = d.next;
   }
   if (!items.length) throw new Error("This search finds no photos now.");
-  return postJSON("/api/albums", { title, prompt: `From the search ${$("#sHead h1").textContent}`, items });
+  return api("/api/albums", { title, prompt: `From the search ${$("#sHead h1").textContent}`, items });
 }
 $("#sAlbum").onclick = e => openMenu(e.currentTarget, el => {
   if (!albumable()) return closeMenus();
@@ -1790,7 +1747,7 @@ function show(i, dir = 0) {
 async function loadStack(top) {
   if (!stripped(top)) return;
   let d;
-  try { d = await getJSON(`/api/search?stack=${top.sha}&shots=1&limit=500`); } catch (e) { return; }   // no strip; the details still open the stack
+  try { d = await api(`/api/search?stack=${top.sha}&shots=1&limit=500`); } catch (e) { return; }   // no strip; the details still open the stack
   if (!viewing() || items[vCur] !== top || d.results.length < 2 || !d.results.some(r => r.sha === top.sha)) return;
   vStack = d.results.map(r => r.sha === top.sha ? top : r);
   drawStrip(d.sort === "best");
@@ -1944,7 +1901,7 @@ async function favour() {
   const on = !r.fav;
   r.saving = true; vNote = ""; favShow(r, on);
   try {
-    const got = await postJSON("/api/favorite", { sha: r.sha, fav: on });
+    const got = await api("/api/favorite", { sha: r.sha, fav: on });
     INFO.fav = got.favourites; $("#browse").innerHTML = "";   // the count on Search's first page: drawn again when next shown
     libCovers();
   } catch (e) {
@@ -2208,7 +2165,7 @@ new ResizeObserver(() => { const w = document.documentElement.clientWidth; if (w
 history.scrollRestoration = "manual";               // the page puts you back where you were, card or month, itself
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});   // the "can't reach" page
 (async function init() {
-  INFO = await getJSON("/api/info");                // the library's facts; its facet counts double as the first ones
+  INFO = await api("/api/info");                // the library's facts; its facet counts double as the first ones
   if (INFO.demo) q.placeholder = "Try: latte art, kitten, waterfall in autumn";
   buildVocab();
   const params = new URLSearchParams(location.search);

@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import pages
 from http_util import HTTPError, read_json
 
 from .api import IntakeAPI, Library
@@ -65,6 +66,8 @@ def make_handler(api: IntakeAPI, extra=None):
                 return self.send(302, b"", "text/plain", [("Location", "/setup")])
             if method == "GET" and u.path in icons:
                 return self.send(200, icons[u.path].read_bytes(), "image/png")
+            if method == "GET" and (mod := pages.module(u.path)) is not None:   # what setup.html imports
+                return self.send(200, mod, pages.MODULE_TYPE)
             if method == "GET" and u.path == "/sw.js":   # an old service worker from the full app: retire it
                 return self.send(200, b"self.addEventListener('install',()=>self.skipWaiting());"
                                       b"self.addEventListener('activate',()=>self.registration.unregister());",
