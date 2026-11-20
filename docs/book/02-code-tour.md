@@ -12,10 +12,10 @@ leaving out the checked-in demo library and every Markdown file:
 | **Web pages** (six pages, the shared stylesheet, the service worker) | 8 | 4,260 |
 | **iPhone app** (Swift, plus `deploy.sh`) | 29 | 5,317 |
 | Shell scripts the pipeline runs (`pull-drive.sh`, `pull-icloud.sh`, `ingest-iphone.sh`) | 3 | 126 |
-| Tests (`tests/`, each a self-running script) | 15 | 2,098 |
+| Tests (`tests/`: 15 self-running scripts, the pytest harness and its test) | 17 | 2,268 |
 | Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts) | 23 | 2,913 |
 | The cloud preview on the Mac mini (`deploy/*.sh`) | 4 | 330 |
-| **Total** | **109** | **22,406** |
+| **Total** | **111** | **22,576** |
 
 The web pages' 4,260 lines are 2,886 of JavaScript, 865 of CSS and 509 of HTML markup. What you run
 (the server, its pages, the iPhone app and the three pipeline scripts) is **17,065 lines of code**:
@@ -47,9 +47,9 @@ A few things stand out:
   itself, which grew from 660 lines to about 1,640; on 2026-11-19 it was split the same way, into
   `catalog.py`, `browse.py`, `images.py`, `admin.py` and `encoder.py` ([chapter 11](11-server.md)).
   (The counts in this chapter are from just after that split.)
-- **The tests are about a ninth of the code.** Fifteen scripts, 2,098 lines, each run with
-  `uv run tests/<file>`, none needing a network, an account or a model download
-  ([chapter 17](17-testing-and-demo.md)).
+- **The tests are about a ninth of the code.** Fifteen scripts, each run with `uv run tests/<file>`,
+  and a small pytest harness that runs them all with one command and in CI; 2,268 lines
+  ([chapter 17](17-testing-and-demo.md)). (The harness was added on 2026-11-19, after the other counts.)
 - **The documentation is half as large as the code.** The Markdown in the repository is about 8,800
   lines, 7,000 of them this book.
 
@@ -91,7 +91,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      45  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             2,098  15 self-running test scripts (chapter 17)
+  tests/             2,268  15 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it (chapter 17)
+  pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest and ruff settings (chapter 17)
+  uv.lock                   every dependency of those groups, pinned; CI installs from it (chapter 17)
   tools/             2,913  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh
   deploy/              330  launchd plists, the cloud preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
   demo/                     104 CC0 photos, their catalog, and credits
@@ -233,6 +235,9 @@ reads the block, builds (and caches) a virtual environment with exactly those pa
 the script. Consequences:
 
 - There is **no setup step**, no `requirements.txt`, no virtual environment to activate.
+  (`photo-estate/pyproject.toml` and `uv.lock` exist for development only: one locked environment
+  for pytest, ruff and CI, [chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci). A
+  script with a header still ignores them and builds its own environment.)
 - Each script has the **dependencies it needs and no more**. `estate.py` needs only Pillow, so
   ingesting a library never installs PyTorch (about 2 GB). `faces.py` uses `onnxruntime`, which is
   far lighter than PyTorch, for the same reason.
@@ -293,3 +298,5 @@ and embedded still works in the app; each later stage adds capability.
 | [deploy/MAC-MINI.md](../../photo-estate/deploy/MAC-MINI.md) | Running as an always-on service |
 | [deploy/CLOUD-SESSIONS.md](../../photo-estate/deploy/CLOUD-SESSIONS.md) | Working on the app from a phone: cloud sessions and the preview |
 | [demo/CREDITS.md](../../photo-estate/demo/CREDITS.md) | Author and source of every demo photo |
+| [.github/workflows/ci.yml](../../.github/workflows/ci.yml) | CI on every pull request and push to main: the lockfile, ruff, the fast tests ([chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci)) |
+| [.github/workflows/book.yml](../../.github/workflows/book.yml) | Builds this book and publishes it to GitHub Pages |

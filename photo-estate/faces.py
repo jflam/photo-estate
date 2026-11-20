@@ -663,7 +663,6 @@ class People:
                     "faces": [dict(self.face(mine[i]), fit=round(float(fit[i]), 3)) for i in page]}
 
     def unknown(self, limit: int) -> dict:
-        np = self.np
         with self.lock:
             out = []
             cents = self.centroids()

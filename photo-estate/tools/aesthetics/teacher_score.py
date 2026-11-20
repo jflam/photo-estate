@@ -35,15 +35,6 @@ def main():
     print(f"backbone={model.config._name_or_path} image_size={model.config.image_size} patch={model.config.patch_size} "
           f"dtype={a.dtype} device={a.device} proc_size={pre.size} n={len(shas)}", flush=True)
 
-    def score(batch_shas):
-        ims = []
-        for s in batch_shas:
-            with Image.open(d / "img" / f"{s}.jpg") as im:
-                ims.append(im.convert("RGB"))
-        px = pre(images=ims, return_tensors="pt").pixel_values.to(a.device, dtype)
-        with torch.inference_mode():
-            return model(px).logits.squeeze(-1).float().cpu().tolist()
-
     csv_path = d / a.out
     done = set()
     if csv_path.exists():

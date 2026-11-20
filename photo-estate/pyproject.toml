@@ -1,0 +1,92 @@
+# One manifest and one lockfile (uv.lock, next to this file) for the photo-estate scripts.
+#
+# The scripts still carry their own PEP 723 `# /// script` headers, and `uv run embed.py` (or any other
+# script with a header) still builds that script's own environment and ignores this file: the
+# lightweight entry points stay as fast as they were. This file is for development: `uv sync` makes one
+# locked environment with the groups below, which the test runner (pytest) and the linter (ruff) use,
+# and which CI builds with `uv sync --locked`.
+#
+# The groups follow the scripts' headers:
+#   core    estate.py, scores.py, upload/stacks tests: pillow, HEIC support, numpy
+#   ml      embed.py and the search model (torch, transformers); includes core
+#   faces   faces.py (onnxruntime); includes core
+#   places  places.py (offline reverse geocoding and time zones); includes core
+#   tools   tools/: the book, the benchmarks, screenshots, the aesthetics experiments
+#   dev     pytest and ruff, plus core so the fast tests run in this environment (the default group)
+#
+#   uv sync                          # dev (+ core): enough for `uv run pytest -m "not slow"` and ruff
+#   uv sync --group ml --group faces --group places   # everything the server can use
+#   uv lock                          # after changing a group; commit uv.lock
+
+[project]
+name = "photo-estate"
+version = "0"
+description = "A family's photo library: scripts, a plain HTTP server and SQLite."
+# The scripts say ">=3.11" or ">=3.11,<3.14"; the ML ones (torch, onnxruntime) need the upper bound,
+# so the locked environment uses the narrower of the two.
+requires-python = ">=3.11,<3.14"
+dependencies = []
+
+[dependency-groups]
+core = [
+    "numpy>=1.26",
+    "pillow>=10.0",
+    "pillow-heif>=0.18",
+]
+ml = [
+    { include-group = "core" },
+    "torch>=2.2",
+    "transformers>=4.49",
+    "sentencepiece",
+    "protobuf",
+]
+faces = [
+    { include-group = "core" },
+    "onnxruntime>=1.17",
+]
+places = [
+    { include-group = "core" },
+    "reverse_geocode>=1.6",
+    "timezonefinder",
+    "pycountry",
+]
+tools = [
+    "markdown-it-py>=3.0",
+    "mdit-py-plugins>=0.4",
+    "pygments>=2.17",
+    "httpx[http2]",
+    "requests",
+    "playwright",
+    "scipy",
+    "scikit-learn",
+]
+dev = [
+    { include-group = "core" },
+    "pytest>=8.3",
+    "ruff>=0.15",
+]
+
+[tool.uv]
+package = false            # a folder of scripts, not an installable package
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# pytester runs pytest inside a test: tests/test_harness.py uses it to check the runner itself.
+addopts = ["-ra", "--strict-markers", "-p", "pytester"]
+markers = [
+    "legacy: a self-running script in tests/, run whole as a subprocess (see tests/conftest.py)",
+    "slow: needs the ML stack or takes minutes; left out of CI with -m \"not slow\"",
+    "server: starts the real app (embed.py serve --demo), whose environment has torch and transformers",
+    "model: needs the SigLIP 2 search model in the Hugging Face cache",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = ["demo"]
+
+[tool.ruff.lint]
+# Conservative on purpose: syntax errors and pyflakes (undefined names, unused imports and variables,
+# redefinitions), which the code passes today. Style rules and `ruff format` are not enforced: the
+# code has its own compact style, and reformatting it would bury every real change in a diff.
+select = ["E9", "F"]

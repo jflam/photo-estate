@@ -17,7 +17,7 @@ import sqlite3
 import sys
 import time
 from collections import Counter
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 

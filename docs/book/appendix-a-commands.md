@@ -153,6 +153,19 @@ Needs `icloudpd`, `sqlite3`, `uv`. First run `icloudpd --username "$ICLOUD_USER"
 | `uv run tools/thumb_burst.py URL DB` | Cold thumbnail bursts |
 | `uv run tests/test_poc.py` | End-to-end test |
 
+## Tests, lint and the lockfile
+
+Run from `photo-estate/`; they use `pyproject.toml` and `uv.lock` ([chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci)).
+
+| Command | Purpose |
+|---|---|
+| `uv sync [--group ml --group faces --group places]` | Build the locked development environment (the dev group by default) |
+| `uv run pytest -m "not slow"` | The fast tests, as CI runs them |
+| `uv run pytest [-m MARKERS] [--legacy-runner python\|uv]` | Every test (markers `slow`, `server`, `model`, `legacy`); `uv` runs each script in its own PEP 723 environment |
+| `uv run tests/<file>` | One test script on its own |
+| `uv run ruff check .` | Lint (syntax errors and pyflakes) |
+| `uv lock` / `uv lock --check` | Re-pin after changing a group / check `uv.lock` is current |
+
 ## Environment variables that matter
 
 | Variable | Effect |

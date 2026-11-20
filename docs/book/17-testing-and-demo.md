@@ -26,6 +26,68 @@ Every test is a script that runs on its own (`uv run tests/<file>` from `photo-e
 network, account or model download, and works on a scratch copy, so the checked-in demo library never
 changes. All fifteen take about a minute together.
 
+## One command: pytest, ruff and CI
+
+The scripts also run under [pytest](https://pytest.org), with one command and one summary, and the
+fast ones run in CI on every pull request. Nothing about the scripts changed for this:
+[`tests/conftest.py`](../../photo-estate/tests/conftest.py) collects each script in its `LEGACY` list
+as a single test that runs the whole script in a subprocess and passes when it exits 0; a failure shows
+the exit code and the script's last lines. Any other `test_*.py` is an ordinary pytest file, like
+[`tests/test_harness.py`](../../photo-estate/tests/test_harness.py), which checks the runner itself (a
+script that fails is reported as failed, a slow one is left out of the fast tier, no script is missing
+from the list) and that the modules the light entry points import load no torch, transformers or
+onnxruntime.
+
+```bash
+cd photo-estate
+uv run pytest -m "not slow"        # the fast tier, what CI runs: 8 scripts + the harness, about 40 s
+uv run pytest                      # everything (HF_HUB_OFFLINE=1 is set for each script)
+uv run pytest -m "server and not model"   # the app tests that work without the search model
+uv run pytest --legacy-runner=uv   # each script with `uv run`, in its own PEP 723 environment
+uv run ruff check .                # lint: syntax errors and pyflakes (unused imports, undefined names)
+uv run tests/test_poc.py           # one script on its own still works exactly as before
+```
+
+Each script is marked with what it needs (`pyproject.toml` declares the markers):
+
+| Marker | Scripts | Why |
+|---|---|---|
+| (none: the fast tier) | `test_poc`, `test_upload`, `test_intake`, `test_sync`, `test_scores`, `test_stacks`, `test_aesthetics_judge`, `test_aesthetics_taste` | Need numpy, Pillow and pillow-heif (the dev group) and `uv` |
+| `slow`, `server` | `test_changes`, `test_favorite`, `test_layout`, `test_tasks`, `test_mcp` | Start the real app (`uv run embed.py serve --demo`), whose environment has torch and transformers: gigabytes on a fresh Linux machine. `test_mcp` waits two minutes for a search without the model |
+| `slow`, `server`, `model` | `test_albums`, `test_connections` | Also need the SigLIP 2 model in the Hugging Face cache: a text search, and uploads embedded as they arrive |
+
+By default pytest runs each script with its own Python, the environment `uv sync` builds from
+[`pyproject.toml`](../../photo-estate/pyproject.toml) and its lockfile
+[`uv.lock`](../../photo-estate/uv.lock), so the fast tier uses exactly the pinned versions. The
+manifest is not a package (`package = false`) and adds nothing to running the app: a script with a
+`# /// script` header still builds its own environment from that header. Its dependency groups follow
+the headers:
+
+| Group | For | Packages |
+|---|---|---|
+| `core` | `estate.py`, `scores.py`, the fast tests | numpy, Pillow, pillow-heif |
+| `ml` | `embed.py` and the search model | core, torch, transformers, sentencepiece, protobuf |
+| `faces` | `faces.py` | core, onnxruntime |
+| `places` | `places.py` | core, reverse_geocode, timezonefinder, pycountry |
+| `tools` | `tools/` (the book, benchmarks, screenshots, the aesthetics experiments) | markdown-it-py, mdit-py-plugins, Pygments, httpx, requests, Playwright, SciPy, scikit-learn |
+| `dev` (installed by default) | pytest and ruff | core, pytest, ruff |
+
+`uv sync --group ml --group faces --group places` installs everything the server can use. After
+changing a group, run `uv lock` and commit `uv.lock`; `uv lock --check` says whether it is current.
+The manifest's `requires-python = ">=3.11,<3.14"` is the narrower of the two bounds the headers use,
+since torch and onnxruntime need the upper one.
+
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every pull request and every push
+to `main`, on Ubuntu with Python 3.12: `uv lock --check`, `uv sync --locked --group dev`,
+`ruff check .` and `pytest -m "not slow"` (with exiftool installed, so `test_poc` checks EXIF too). It
+never downloads the model and never reaches the Mac mini or a real library. Two things are left out on
+purpose: the slow tests, which need the ML stack (run `uv run pytest` on a machine that has it), and
+static type checks. `Catalog` gets its attributes through `__dict__.update` and the modules pass untyped
+dicts and tuples, so a type checker could verify almost nothing yet;
+[issue #90](https://github.com/jflam/photo-estate/issues/90) tracks typing those contracts, and a
+pyright or mypy step belongs in CI when it lands. Ruff's rules are kept to syntax errors and pyflakes
+for the same reason, and `ruff format` is not enforced: the code has its own compact style.
+
 The iPhone app has no unit tests of its own. It was checked in the iOS Simulator against the demo
 library (104 photos), with the server up and then stopped; `ios/project-sim.yml` builds it for a
 Simulator older than the upload extension needs. The demo is what makes that cheap: `embed.py serve

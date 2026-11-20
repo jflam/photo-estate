@@ -9,7 +9,8 @@ dependencies, a plain HTTP server and SQLite), and an iPhone app in `ios/` (need
   lists its API.
 - Run it on the demo library only, never a real one:
   `cd photo-estate && HF_HUB_OFFLINE=1 uv run embed.py serve --demo --port 8767`
-- Tests are self-running scripts: `uv run tests/<file>` from `photo-estate/`, every file in
+- Tests: `uv run pytest` from `photo-estate/` runs them all (`-m "not slow"` is the fast tier CI runs);
+  `uv run ruff check .` lints. Each script still runs on its own: `uv run tests/<file>`, every `test_*.py` in
   `photo-estate/tests`. The checked-in demo library (`photo-estate/demo/`) must not change.
 - For a change to the page, drive the real page with Playwright and look at screenshots in light and
   dark mode.

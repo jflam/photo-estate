@@ -10,7 +10,7 @@ job stopped mid-pipeline resumed from its stage; the catalog lock shared with in
 folder source's preview; and the API, which must never hand back or write down what was typed to sign in.
 
 The models (embed, faces) and exiftool are left out: they are covered elsewhere and take minutes."""
-import json, os, sqlite3, sys, tempfile, threading, time, zipfile
+import json, os, sqlite3, sys, tempfile, time, zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
