@@ -232,7 +232,7 @@ unit rows), `shard-NNNN.shas.txt` and `meta.json` (`model`). Without the option 
 | `GET /compare` | `compare.html`: a search, the two models' results in unlabelled columns in random order, and a vote |
 | `GET /api/compare/info` | `{a: {model, photos, dim}, b: {model, photos, dim, ready, meta}, both, votes: {a, b, same}}`; `b.ready` is false while the second model's text side loads |
 | `GET /api/compare?q=&k=48` | `{q, text, applied, candidates, a, b, overlap}`. `q` is read as `/api/search` reads it: names, places and `key:value` filters choose the photos, the words left over (`text`) are ranked. Both sides rank the same photos (those with a vector from both models), and each of `a` and `b` is `{model, text_ms, rank_ms, results: [{id, score}]}`, the top `k` (at most 200) with no match floor. 400 when there are no words to rank by; 503 while the second model loads |
-| `POST /api/compare/vote {q, winner: a\|b\|same, left, k}` | Appends a line to the votes file (`--compare-votes`, default `DIR/votes.jsonl`) and returns `{ok, votes}` |
+| `POST /api/compare/vote {q, winner: a\|b\|same, left, k}` | Appends a line to the votes file (`--compare-votes`, default `DIR/votes.jsonl`) and returns `{ok, votes}`. Takes the write rule (a `--upload-user` login or this computer, else 403), though it writes only that file |
 
 ### The People API (also on `faces.py serve`)
 

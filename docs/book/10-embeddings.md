@@ -256,7 +256,7 @@ anything over:
    384 px, 1,024 numbers a photo where the app's base model has 768) and writes one `.npy` per shard.
    On an M2 Max's GPU that is about 21 photos a second, about 65 minutes for 83,000 photos.
 3. `embed.py serve --compare-vectors DIR` loads those vectors and the second model's text side, and
-   [compare.py](../../photo-estate/compare.py) serves `/compare`: a search, read as the app reads it
+   [compare.py](../../photo-estate/compare.py), wired in by `PhotoApp` ([photo_app.py](../../photo-estate/photo_app.py)), serves `/compare`: a search, read as the app reads it
    (names, places and filters choose the photos; the words left over are ranked), ranked by each model
    over the same photos. The two columns come in random order with no names; you vote for the better
    one, and only then see which was which, with the scores and how long each took. Votes go to a file

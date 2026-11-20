@@ -8,22 +8,22 @@ leaving out the checked-in demo library and every Markdown file:
 
 | | Files | Code lines |
 |---|---:|---:|
-| **Server** (Python: `photo-estate/*.py` and `intake/`) | 27 | 7,362 |
-| **Web pages** (six pages, the shared stylesheet, the service worker) | 8 | 4,260 |
+| **Server** (Python: `photo-estate/*.py` and `intake/`) | 28 | 7,521 |
+| **Web pages** (seven pages, the shared stylesheet, the service worker) | 9 | 4,434 |
 | **iPhone app** (Swift, plus `deploy.sh`) | 29 | 5,317 |
 | Shell scripts the pipeline runs (`pull-drive.sh`, `pull-icloud.sh`, `ingest-iphone.sh`) | 3 | 126 |
-| Tests (`tests/`: 15 self-running scripts, the pytest harness and its test) | 17 | 2,268 |
-| Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts) | 23 | 2,913 |
+| Tests (`tests/`: 16 self-running scripts, the pytest harness and its test, in-process tests) | 19 | 2,436 |
+| Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts, square export and embedding) | 25 | 3,213 |
 | The cloud preview on the Mac mini (`deploy/*.sh`) | 4 | 330 |
-| **Total** | **111** | **22,576** |
+| **Total** | **116** | **23,377** |
 
-The web pages' 4,260 lines are 2,886 of JavaScript, 865 of CSS and 509 of HTML markup. What you run
-(the server, its pages, the iPhone app and the three pipeline scripts) is **17,065 lines of code**:
+The web pages' 4,434 lines are 2,979 of JavaScript, 905 of CSS and 550 of HTML markup. What you run
+(the server, its pages, the iPhone app and the three pipeline scripts) is **17,398 lines of code**:
 
 ```mermaid
-pie showData title "What you run, by part (17,065 lines)"
-    "Server: Python (7,362)" : 7362
-    "Web pages (4,260)" : 4260
+pie showData title "What you run, by part (17,398 lines)"
+    "Server: Python (7,521)" : 7521
+    "Web pages (4,434)" : 4434
     "iPhone app: Swift (5,300)" : 5300
     "Shell (143)" : 143
 ```
@@ -59,14 +59,15 @@ Code lines, measured as above.
 
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
-  embed.py             255  image embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
-  photo_app.py         504  the photo app as an object: PhotoApp (wiring, who may write, favourites, reloads) and its HTTP handler
+  embed.py             258  image embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
+  photo_app.py         526  the photo app as an object: PhotoApp (wiring, who may write, favourites, reloads) and its HTTP handler
   http_util.py         132  what the servers share: Response, bounded JSON bodies, int_param (400s), the Auth rules
   catalog.py           519  the photo app's library in memory: load(), Catalog, Live (chapter 11)
   browse.py            366  search, similar, facets, Years and Months, layout; an agent's searches
   images.py            135  thumbnails, previews, large images and originals
   admin.py             256  phone uploads, the ingest, restart, /stats, backups
   encoder.py            60  SigLIP's text (and image) side, for the photo app
+  compare.py           134  an experiment: each search ranked by a second model beside the app's own, at /compare (chapter 10)
   estate.py          1,005  ingest, link, exif, dupes, review, tag, search, stats
   faces.py             897  faces: run, serve, and the People class (who is who)
   changes.py           455  albums and change sets: proposed, reviewed, applied, reverted (chapter 26)
@@ -91,20 +92,23 @@ photo-estate/                  the server and the web app (Python run with uv; n
   setup.html           354  bringing photos in, at /setup
   review.html          272  the near-duplicate review page
   stats.html           255  library info, at /stats
+  compare.html         174  two models' results side by side, unlabelled, and a vote, at /compare
   app/estate.css        97  the stylesheet every page shares
   app/sw.js             38  service worker: the "can't reach your photos" page
 
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      45  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             2,268  15 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it;
-                            test_photo_app.py and test_http_util.py call the app in process (chapter 17);
+  tests/             2,436  16 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it;
+                            test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_core.py checks core/ against what the code before it did
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest and ruff settings (chapter 17)
   uv.lock                   every dependency of those groups, pinned; CI installs from it (chapter 17)
-  tools/             2,913  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh
+  tools/             3,213  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh,
+                            export_squares.py (the Library as square JPEGs in tar shards, for embedding experiments),
+                            embed_squares.py (a second model's vectors for those shards, for /compare)
   deploy/              330  launchd plists, the cloud preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
   demo/                     104 CC0 photos, their catalog, and credits
 

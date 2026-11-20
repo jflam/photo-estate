@@ -56,7 +56,8 @@ LEGACY: dict[str, tuple[str, ...]] = {
     "test_tasks.py": ("slow", "server"),
     "test_mcp.py": ("slow", "server"),                 # ~5 s with the model, ~2 min without (a search waits it out)
     "test_albums.py": ("slow", "server", "model"),     # text search ("latte art") needs the model
-    "test_connections.py": ("slow", "server", "model"),  # uploads are embedded as they arrive
+    "test_connections.py": ("slow", "server", "model"),
+    "test_compare.py": ("slow", "server", "model"),   # /compare: the app's own model loaded twice  # uploads are embedded as they arrive
 }
 TIMEOUT = {"fast": 300, "slow": 1800}                  # seconds, per script
 

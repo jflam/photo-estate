@@ -33,6 +33,7 @@ from pathlib import Path
 import numpy as np
 
 from browse import js
+from http_util import int_param
 
 
 def load_vectors(folder: Path) -> tuple[list[str], np.ndarray, dict]:
@@ -99,7 +100,7 @@ class Compare:
     def search(self, qs: dict) -> tuple:
         c = self.live.cat
         one = lambda k, d="": (qs.get(k) or [d])[0]
-        k = max(1, min(int(one("k", "48") or 48), 200))
+        k = int_param(qs, "k", 48, min=1, max=200)   # not a number: a 400 (http_util)
         masks, text, applied, *_ = self.browse.select(c, qs)
         if not text:
             return js({"error": "no words to rank by: the filters alone choose the same photos for both"}, 400)
