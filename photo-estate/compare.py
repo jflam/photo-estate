@@ -31,8 +31,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+from numpy.typing import NDArray
 
 from browse import js
+from catalog import Catalog
 from http_util import int_param
 
 
@@ -68,11 +70,11 @@ class Compare:
                     self.tally[w] += 1
         except (OSError, ValueError):
             pass
-        self._aligned = (None, None)
+        self._aligned: tuple[Catalog | None, NDArray[np.int64]] = (None, np.zeros(0, np.int64))
         print(f"compare: {len(shas)} vectors of {self.model_b} ({self.MB.shape[1]} numbers each) "
               f"loaded in {time.time() - t:.1f}s", flush=True)
 
-    def aligned(self, c):
+    def aligned(self, c: Catalog) -> NDArray[np.int64]:
         """For the catalog being served: each photo's row in the second model's matrix, or -1."""
         if self._aligned[0] is not c:
             self._aligned = (c, np.array([self.row_of.get(s, -1) for s in c.shas], np.int64))

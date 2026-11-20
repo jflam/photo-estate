@@ -79,8 +79,8 @@ def _decode(job: tuple[str, str, int]):
 
 
 def load_model(mid: str, threads: int):
-    import torch
-    from transformers import AutoModel, AutoProcessor
+    import torch   # pyright: ignore[reportMissingImports]  (the ml group: not in the dev environment)
+    from transformers import AutoModel, AutoProcessor   # pyright: ignore[reportMissingImports]
     torch.set_num_threads(threads)
     return torch, AutoModel.from_pretrained(mid, dtype=torch.float32).eval(), AutoProcessor.from_pretrained(mid)
 
@@ -130,6 +130,7 @@ def cmd_run(a) -> None:
                 errors += 1
                 rows.append((sha, a.model, None, None, err, now()))
             else:
+                assert raw is not None   # _decode gives bytes or an error
                 batch_ims.append(Image.frombytes("RGB", (side, side), raw))
                 batch_shas.append(sha)
             if len(batch_ims) >= a.batch:

@@ -335,4 +335,6 @@ WHERE f.source = 'you' GROUP BY p.name ORDER BY 2 DESC;
 | Every table, of every database, and the additive migrations | [core/schema.py](../../photo-estate/core/schema.py): `CATALOG` (ingest, enrichment, tags, search; `estate.SCHEMA`), `EMBEDDINGS`, `FACES`, `CHANGES`, `TASKS`, `SCORES`, `FAVORITES`, `SYNC`, `INTAKE`, `ADDED` |
 | Which file types are photos and videos | [core/media.py](../../photo-estate/core/media.py) |
 | That a fresh catalog is the same as older code made | `tests/test_core.py`, against `tests/fixtures/schema_baseline.json` |
+| The strings the status columns hold (`change_sets.op`, `.status`, `.kind`, `change_items.decision`, `agent_tasks.status`, intake's `jobs.state`) | [core/states.py](../../photo-estate/core/states.py): a `StrEnum` each, values unchanged; `tests/test_types.py` checks them |
+| The catalog as the photo app holds it in memory | `catalog.Catalog` and `PhotoMeta` in [catalog.py](../../photo-estate/catalog.py) ([chapter 11](11-server.md)) |
 | Rebuild-from-scratch of derived tables | the "write" section of `cmd_run` in [places.py](../../photo-estate/places.py) |

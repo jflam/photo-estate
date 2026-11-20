@@ -96,8 +96,8 @@ class Images:
         if path.startswith("/original/"):
             sha = path[len("/original/"):]
             m = meta.get(sha) if sha_re.match(sha) else None
-            src = m and self.original(sha, m["ext"])
-            if not m or m["ext"] not in original_types or not src.exists():
+            src = self.original(sha, m["ext"]) if m else None
+            if not m or src is None or m["ext"] not in original_types or not src.exists():
                 return 404, b"", "text/plain", "no-store"
             name = (m["path"] or "").rsplit("/", 1)[-1] or f"{sha[:12]}{m['ext']}"
             return (200, src.read_bytes(), original_types[m["ext"]], FOREVER,

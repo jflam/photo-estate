@@ -3,10 +3,12 @@ http_util.py — what the photo app's HTTP servers share (standard library only)
 bounded JSON bodies, query parameters that answer 400 instead of failing, and who may write.
 
   Response(status, body, content_type, cache, headers)   frozen; Response.of(module tuple | None) -> Response
+  RouteAnswer                                            the type of what Response.of takes (a route module's answer)
   json_response(obj, status=200) -> Response             application/json, no-store
   NOT_FOUND                                              404 text/plain
   HTTPError(status, message)                             raised by the parsers below; .response is a JSON {"error"}
-  Request(method, path, query, headers, body, local)     one request, as PhotoApp.handle takes it
+  Request(method, target, headers, body, local)          one request, as PhotoApp.handle takes it
+  Headers                                                what Request.headers is: a dict or the handler's Message
   content_length(headers) -> int                         0 when absent; HTTPError 400 when not a whole number
   read_body(rfile, headers, limit=MAX_BODY) -> bytes     the body; 413 over `limit` (left unread: close the connection)
   parse_json(raw) -> object                              an empty body is {}; HTTPError 400 when it is not JSON
@@ -31,7 +33,7 @@ import enum
 import json
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping, Protocol, TypeAlias
 
 MAX_BODY = 8 * 1024 * 1024     # bytes of JSON a POST may carry
 
@@ -54,19 +56,31 @@ class Response:
         return self.headers.get("ETag")
 
     @classmethod
-    def of(cls, got) -> Response:
+    def of(cls, got: RouteAnswer) -> Response:
         """A module's answer: a Response, or (status, body, content type[, Cache-Control[, headers]]).
         None (not ours) is a 404."""
         if isinstance(got, Response):
             return got
         if got is None:
             return NOT_FOUND
-        code, body, ctype, *rest = got
-        return cls(code, body, ctype, rest[0] if rest else "no-store", dict(rest[1]) if len(rest) > 1 else {})
+        match got:
+            case (code, body, ctype):
+                return cls(code, body, ctype)
+            case (code, body, ctype, cache):
+                return cls(code, body, ctype, cache)
+            case (code, body, ctype, cache, headers):
+                return cls(code, body, ctype, cache, dict(headers))
+        raise ValueError(f"not a route's answer: a tuple of {len(got)}")
 
     def json(self) -> Any:
         """The body, read as JSON (for tests)."""
         return json.loads(self.body) if self.body else None
+
+
+# What a route module's handle() answers, before Response.of makes it a Response: a Response, None (not
+# this module's route), or the legacy tuple (status, body, content type[, Cache-Control[, headers]]).
+RouteAnswer: TypeAlias = (Response | tuple[int, bytes, str] | tuple[int, bytes, str, str]
+                          | tuple[int, bytes, str, str, Mapping[str, str]] | None)
 
 
 def json_response(obj, status: int = 200, headers: Mapping[str, str] | None = None) -> Response:
@@ -92,13 +106,21 @@ class HTTPError(Exception):
 FORBIDDEN = HTTPError(403, "not allowed").response
 
 
+class Headers(Protocol):
+    """A request's headers: a dict (tests, PhotoApp.request) or the handler's email.message.Message
+    (whose get() ignores case)."""
+    def get(self, name: str, default: Any = None, /) -> Any: ...
+    def keys(self) -> Iterable[str]: ...
+    def __getitem__(self, name: str, /) -> Any: ...
+
+
 @dataclass(frozen=True)
 class Request:
     """One request as PhotoApp.handle takes it. `target` is the path with its query string; `local` is
     is_local() of the connection it came on (see the module docstring)."""
     method: str
     target: str
-    headers: Mapping[str, str] = field(default_factory=dict)
+    headers: Headers = field(default_factory=dict)
     body: bytes = b""
     local: bool = False
 

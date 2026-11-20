@@ -7,7 +7,8 @@ names, so nothing of what a photo shows leaves this computer, whichever model th
 
 The transport is MCP's streamable HTTP in its simplest form: each POST carries one JSON-RPC message
 (or a batch) and is answered with JSON; there is no stream and no session. `embed.py serve` mounts it
-and gives it `app`, the handful of functions the tools are made of:
+and gives it `app` (an App: the Protocol below; PhotoApp passes an AppFacade), the handful of functions
+the tools are made of:
 
   app.find(args)      -> (ids best first, their scores or None when ranked by date)
   app.row(id)         -> what is known of one photo, or None
@@ -23,6 +24,43 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable, Protocol
+
+if TYPE_CHECKING:     # for the types only: the tools reach these through `app`
+    from changes import Changes
+    from tasks import Tasks
+
+Found = tuple[list[str], list[float] | None]   # ids best first, and their scores (None: ranked by date)
+
+
+class App(Protocol):
+    """What the tools are made of (the module docstring lists it). PhotoApp gives an AppFacade: its Browse's
+    find, row, faces and overview, and its change sets and tasks. A test can give any object with these."""
+    @property
+    def find(self) -> Callable[[dict], Found]: ...
+    @property
+    def row(self) -> Callable[[str], dict[str, Any] | None]: ...
+    @property
+    def faces(self) -> Callable[[list[str]], dict[str, tuple[int, int]]]: ...
+    @property
+    def overview(self) -> Callable[[], dict[str, Any]]: ...
+    @property
+    def changes(self) -> Changes: ...
+    @property
+    def tasks(self) -> Tasks: ...
+
+
+@dataclass(frozen=True)
+class AppFacade:
+    """The App that `embed.py serve` (PhotoApp) gives the server."""
+    find: Callable[[dict], Found]
+    row: Callable[[str], dict[str, Any] | None]
+    faces: Callable[[list[str]], dict[str, tuple[int, int]]]
+    overview: Callable[[], dict[str, Any]]
+    changes: Changes
+    tasks: Tasks
+
 
 VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = """Photo Estate: one family's photo library, with tools to find photos and to propose changes to it.
@@ -93,7 +131,7 @@ def schema(props: dict, required=()) -> dict:
 
 
 class Tools:
-    def __init__(self, app):
+    def __init__(self, app: App):
         self.app = app
         find = {k: v for k, v in SEARCH.items()}
         self.tools = [   # (name, changes something?, description, input schema, function)
@@ -368,7 +406,7 @@ class Tools:
 class Server:
     """JSON-RPC over HTTP POST, as much of MCP as tools need."""
 
-    def __init__(self, app, name="photo-estate", version="1"):
+    def __init__(self, app: App, name="photo-estate", version="1"):
         self.tools, self.info = Tools(app), {"name": name, "title": "Photo Estate", "version": version}
 
     def call(self, msg, can_write: bool, who: str, in_task: bool = False):

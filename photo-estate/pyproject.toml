@@ -3,8 +3,8 @@
 # The scripts still carry their own PEP 723 `# /// script` headers, and `uv run embed.py` (or any other
 # script with a header) still builds that script's own environment and ignores this file: the
 # lightweight entry points stay as fast as they were. This file is for development: `uv sync` makes one
-# locked environment with the groups below, which the test runner (pytest) and the linter (ruff) use,
-# and which CI builds with `uv sync --locked`.
+# locked environment with the groups below, which the test runner (pytest), the linter (ruff) and the
+# type checker (pyright) use, and which CI builds with `uv sync --locked`.
 #
 # The groups follow the scripts' headers:
 #   core    estate.py, scores.py, upload/stacks tests: pillow, HEIC support, numpy
@@ -12,9 +12,9 @@
 #   faces   faces.py (onnxruntime); includes core
 #   places  places.py (offline reverse geocoding and time zones); includes core
 #   tools   tools/: the book, the benchmarks, screenshots, the aesthetics experiments
-#   dev     pytest and ruff, plus core so the fast tests run in this environment (the default group)
+#   dev     pytest, ruff and pyright, plus core so the fast tests run in this environment (the default group)
 #
-#   uv sync                          # dev (+ core): enough for `uv run pytest -m "not slow"` and ruff
+#   uv sync                          # dev (+ core): enough for `uv run pytest -m "not slow"`, ruff and pyright
 #   uv sync --group ml --group faces --group places   # everything the server can use
 #   uv lock                          # after changing a group; commit uv.lock
 
@@ -64,6 +64,7 @@ dev = [
     { include-group = "core" },
     "pytest>=8.3",
     "ruff>=0.15",
+    "pyright>=1.1.400",
 ]
 
 [tool.uv]
@@ -90,3 +91,14 @@ extend-exclude = ["demo"]
 # redefinitions), which the code passes today. Style rules and `ruff format` are not enforced: the
 # code has its own compact style, and reformatting it would bury every real change in a diff.
 select = ["E9", "F"]
+
+[tool.pyright]
+# Static type checks (issue #90): `uv run pyright` from here; CI runs it. Basic mode, on every module of the
+# app and its scripts (the folder, intake/ and core/). Left out: tests/ and tools/ (scripts that drive
+# the app from outside), and demo/. The optional groups (ml: torch, transformers; faces: onnxruntime;
+# places: reverse_geocode, timezonefinder, pycountry) are not in the dev environment, so their few
+# imports carry a narrow `# pyright: ignore[reportMissingImports]` and their objects are untyped.
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+include = ["."]
+exclude = ["tests", "tools", "demo", "**/__pycache__", "**/.*"]

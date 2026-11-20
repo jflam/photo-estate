@@ -46,10 +46,12 @@ from collections import deque
 from itertools import islice
 from multiprocessing import Pool
 from pathlib import Path
+from typing import Literal
 
 import pages   # the pages, with the shared stylesheet put in
 from core import config, schema
 from core.media import FACES_SKIP_EXT as SKIP_EXT   # RAW and GIF (core/media.py says why)
+from core.states import ClusterState
 
 MODEL = "buffalo_l"
 MODEL_URL = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
@@ -58,6 +60,7 @@ MODEL_FILES = {  # name -> sha256
     "w600k_r50.onnx": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
 }
 SCHEMA = schema.FACES
+FaceOp = Literal["undo", "forget", "name", "later", "not"]   # what face-labels.jsonl records
 SIDE = 1280        # images are read at this size (longer side): enough for faces a few % of the frame
 MIN_PX = 28        # smaller faces than this give embeddings that match anyone
 CROP = 160         # the face thumbnails the naming page shows
@@ -138,7 +141,7 @@ def model_dir() -> Path:
 class Models:
     def __init__(self, threads: int, det_size: int = 640):
         import numpy as np
-        import onnxruntime as ort
+        import onnxruntime as ort   # pyright: ignore[reportMissingImports]  (the faces group: not in the dev environment)
         ort.set_default_logger_severity(3)   # w600k_r50 declares batch 1 but takes any; it warns on every call
         self.np, d = np, model_dir()
         so = ort.SessionOptions()
@@ -151,7 +154,7 @@ class Models:
         self.anchors = {}
         for stride in (8, 16, 32):  # two anchors at every cell of each feature map
             n = det_size // stride
-            c = np.stack(np.mgrid[:n, :n][::-1], -1).reshape(-1, 2).astype(np.float32) * stride
+            c = np.stack(list(np.mgrid[:n, :n][::-1]), -1).reshape(-1, 2).astype(np.float32) * stride
             self.anchors[stride] = np.repeat(c, 2, axis=0)
 
     def detect(self, im, thresh: float = 0.5):
@@ -350,7 +353,7 @@ class People:
         self.sug = np.full(n, -1, np.int32)        # the person a face most resembles, of those not ruled out
         self.sug_score = np.zeros(n, np.float32)
         self.sug_far = np.zeros(n, bool)           # ...judged from named faces more than WINDOW years away
-        self.clusters, self.clusters_state = [], "waiting"
+        self.clusters, self.clusters_state = [], ClusterState.WAITING
         self.seed(con)
         self.rescore(con)
         con.close()
@@ -369,7 +372,9 @@ class People:
             mine = trusted & (self.pid == p)
             for y in np.unique(self.year[mine]):
                 v = self.V[mine & (self.year == y)].sum(0)
-                cp.append(p), cy.append(int(y)), C.append(v / np.linalg.norm(v))
+                cp.append(p)
+                cy.append(int(y))
+                C.append(v / np.linalg.norm(v))
         return np.array(cp, np.int32), np.array(cy, np.int32), np.array(C, np.float32).reshape(len(C), self.V.shape[1])
 
     def scores(self, rows, cents=None):
@@ -512,7 +517,8 @@ class People:
                         break
                     if k in used or p in taken or not free(k, p):
                         continue
-                    used.add(k), taken.add(p)
+                    used.add(k)
+                    taken.add(p)
                     self.pid[k], self.src[k] = p, GOOGLE
                     new.append(k)
         con.executemany("UPDATE faces SET person_id=?, source='google', labeled_at=? WHERE id=?",
@@ -525,7 +531,7 @@ class People:
         """Group the faces that resemble nobody known into people who appear often. Each group is one
         face and everything close to it, so a group never chains from one person into another."""
         np = self.np
-        self.clusters_state = "working"
+        self.clusters_state = ClusterState.WORKING
         with self.lock:
             cand = np.flatnonzero((self.pid == -1) & (self.sug_score < SUGGEST) & (self.score >= 0.65) & (self.px >= 56))
             cand = cand[np.argsort(-(self.px[cand] * self.score[cand]), kind="stable")[:60000]]   # the clearest; keeps this under a minute
@@ -545,7 +551,7 @@ class People:
                 continue
             left[members] = False
             out.append(cand[members[np.argsort(-(X[members] @ X[i]))]])
-        self.clusters, self.clusters_state = out, "ready"
+        self.clusters, self.clusters_state = out, ClusterState.READY
 
     # -- the page's API ------------------------------------------------------------------------
 
@@ -626,11 +632,12 @@ class People:
             mine = np.flatnonzero(self.pid == p)
             ys = self.year[mine]
             sums = {int(y): self.V[mine[ys == y]].sum(0) for y in np.unique(ys)}
-            total = sum(sums.values()) if sums else np.zeros(self.V.shape[1], np.float32)
+            total = sum(sums.values(), np.zeros(self.V.shape[1], np.float32))
             fit = np.empty(len(mine), np.float32)
             for y in sums:
                 at = np.flatnonzero(ys == y)
-                W = total if y == 0 else sum(v for yy, v in sums.items() if yy and abs(yy - y) <= WINDOW)
+                W = total if y == 0 else sum((v for yy, v in sums.items() if yy and abs(yy - y) <= WINDOW),
+                                             np.zeros(self.V.shape[1], np.float32))   # y's own is always in it
                 v = self.V[mine[at]]
                 dot, vv = v @ W, (v * v).sum(1)
                 rest = np.sqrt(np.maximum(float(W @ W) - 2 * dot + vv, 0))     # |W - v|: the others, without this face
@@ -673,7 +680,7 @@ class People:
                       for j in self.by_sha[self.sha[k]]]
             return {"face": self.face(k), "faces": others}
 
-    def log(self, op: str, rows, **extra):
+    def log(self, op: FaceOp, rows, **extra):
         try:
             with self.journal.open("a") as f:
                 f.write(json.dumps({"ts": now(), "op": op, **extra,
@@ -839,16 +846,17 @@ class People:
                 return (200, body_, "image/jpeg", "public, max-age=86400") if body_ else (404, b"", "text/plain", "no-store")
             if path == "/api/people":
                 return js(self.overview())
-            if path == "/api/people/review" and num("person") in self.persons:
-                return js(self.review(num("person"), num("year"), min(num("limit") or 60, 400), one("skipped") == "1"))
-            if path == "/api/people/person" and num("person") in self.persons:
-                return js(self.person_faces(num("person"), num("year"), min(num("limit") or 12, 2000)))
-            if path == "/api/people/odd" and num("person") in self.persons:
-                return js(self.odd(num("person"), num("year"), max(num("offset") or 0, 0), min(num("limit") or 60, 400)))
+            person, face = num("person"), num("face")
+            if path == "/api/people/review" and person is not None and person in self.persons:
+                return js(self.review(person, num("year"), min(num("limit") or 60, 400), one("skipped") == "1"))
+            if path == "/api/people/person" and person is not None and person in self.persons:
+                return js(self.person_faces(person, num("year"), min(num("limit") or 12, 2000)))
+            if path == "/api/people/odd" and person is not None and person in self.persons:
+                return js(self.odd(person, num("year"), max(num("offset") or 0, 0), min(num("limit") or 60, 400)))
             if path == "/api/people/unknown":
                 return js(self.unknown(min(num("limit") or 12, 100)))
-            if path == "/api/people/photo" and num("face") in self.row:
-                return js(self.photo(num("face")))
+            if path == "/api/people/photo" and face is not None and face in self.row:
+                return js(self.photo(face))
         elif method == "POST" and body is not None:
             if path == "/api/people/label":
                 return js(self.label(body))

@@ -105,7 +105,7 @@ def run_setup(library: Library, port: int, app_argv, *, practice: bool = False, 
         os.execv(argv[0], argv)
 
     def make_engine(lib: Library) -> Engine:
-        e = Engine(lib.root, lib.db, lib.store, HERE, on_ready=become_app, practice=practice, skip=skip)
+        e = Engine(*lib.chosen(), HERE, on_ready=become_app, practice=practice, skip=skip)
         e.start()
         return e
 

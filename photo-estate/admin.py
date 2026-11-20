@@ -157,12 +157,13 @@ class Admin:
     # two writes it does not matter.
 
     def prepare_arrivals(self) -> None:
-        con = None
+        assert self.inbox is not None    # these threads run only with an inbox
+        inbox, con = self.inbox, None
         while True:
             sha, path = self.arrivals.get()
             try:
                 dest = self.cache / "thumbs" / f"{sha}.jpg"
-                facts = staging_dir(self.inbox) / "facts" / f"{sha}.json"
+                facts = staging_dir(inbox) / "facts" / f"{sha}.json"
                 con = con or self.connect(self.db)
                 embedded = con.execute("SELECT 1 FROM embeddings WHERE sha256=? AND model=?", (sha, self.model)).fetchone()
                 if dest.exists() and embedded:

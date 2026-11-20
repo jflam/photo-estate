@@ -30,6 +30,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from core import schema   # photo-estate/core, beside this package
+from core.states import JOB_ACTIVE, JOB_RETRYABLE, JobState, StageState
 
 from .base import SOURCES, Cancelled, Context, Prompt
 
@@ -48,7 +49,7 @@ OPTIONAL = {"faces"}            # a failure here finishes the job with a warning
 LOCK = Path(os.environ.get("TMPDIR", "/tmp")) / "photo-estate-ingest-iphone.lock"   # shared with ingest-iphone.sh
 
 SCHEMA = schema.INTAKE
-ACTIVE = ("queued", "running", "waiting")
+ACTIVE = JOB_ACTIVE            # queued, running or waiting: not finished
 
 
 class Store:
@@ -68,8 +69,10 @@ class Store:
     def new(self, source: str, config: dict) -> int:
         with self.lock:
             t = time.time()
-            return self.con.execute("INSERT INTO jobs(source, config, state, stage, created_at, updated_at)"
-                                    " VALUES (?,?,?,?,?,?)", (source, json.dumps(config), "queued", "acquire", t, t)).lastrowid
+            jid = self.con.execute("INSERT INTO jobs(source, config, state, stage, created_at, updated_at)"
+                                   " VALUES (?,?,?,?,?,?)", (source, json.dumps(config), JobState.QUEUED, "acquire", t, t)).lastrowid
+        assert jid is not None
+        return jid
 
     def set(self, job_id: int, **kv) -> None:
         kv["updated_at"] = time.time()
@@ -95,8 +98,14 @@ class Store:
             j[k] = json.loads(j[k]) if j[k] else empty
         return j
 
+    def job(self, job_id: int) -> dict:
+        """get() for a job that must be there (the one running): KeyError if it is not."""
+        if (j := self.get(job_id)) is None:
+            raise KeyError(f"no intake job {job_id}")
+        return j
+
     def all(self) -> list[dict]:
-        return [self.get(r[0]) for r in self.q("SELECT id FROM jobs ORDER BY id DESC")]
+        return [j for r in self.q("SELECT id FROM jobs ORDER BY id DESC") if (j := self.get(r[0])) is not None]
 
     def events(self, job_id: int, after: int = 0, limit: int = 400) -> list[dict]:
         rows = self.q("SELECT id, at, text FROM (SELECT * FROM events WHERE job_id=? AND id>? ORDER BY id DESC LIMIT ?)"
@@ -232,15 +241,15 @@ class Engine:
             if self.proc and self.proc.poll() is None:
                 self.proc.terminate()
         else:
-            self.jobs.set(jid, state="cancelled", finished_at=time.time(), prompt=None)
+            self.jobs.set(jid, state=JobState.CANCELLED, finished_at=time.time(), prompt=None)
         self.jobs.event(jid, "cancelled")
         return True
 
     def retry(self, jid: int) -> bool:
         j = self.jobs.get(jid)
-        if not j or j["state"] not in ("failed", "cancelled"):
+        if not j or j["state"] not in JOB_RETRYABLE:
             return False
-        self.jobs.set(jid, state="queued", error=None, finished_at=None)
+        self.jobs.set(jid, state=JobState.QUEUED, error=None, finished_at=None)
         self.jobs.event(jid, f"trying again from “{dict(STAGES)[j['stage']]}”")
         self.poke()
         return True
@@ -254,30 +263,31 @@ class Engine:
         j["stages"] = [{"id": s, "label": label, "skipped": s in self.skip, "optional": s in OPTIONAL,
                         "searchable_after": s == READY_AFTER,
                         "state": self._stage_state(j, s)} for s, label in STAGES]
-        started = self.stage_started.get(jid) if j["state"] == "running" else None
+        started = self.stage_started.get(jid) if j["state"] == JobState.RUNNING else None
         j["stage_seconds"] = round(time.time() - started) if started else None   # not a timestamp: clocks differ
         j["events"] = self.jobs.events(jid, events_after)
         j["ready"] = j["ready_at"] is not None
         return j
 
     def list(self) -> list[dict]:
-        return [self.view(j["id"]) | {"events": []} for j in self.jobs.all()]
+        return [v | {"events": []} for j in self.jobs.all() if (v := self.view(j["id"])) is not None]
 
     @staticmethod
-    def _stage_state(j: dict, s: str) -> str:
+    def _stage_state(j: dict, s: str) -> StageState:
         at, here = STAGE_IDS.index(j["stage"]), STAGE_IDS.index(s)
-        if j["state"] == "done" or here < at:
-            return "done"
+        if j["state"] == JobState.DONE or here < at:
+            return StageState.DONE
         if here > at:
-            return "pending"
-        return {"running": "running", "waiting": "waiting", "failed": "failed"}.get(j["state"], "pending")
+            return StageState.PENDING
+        return {JobState.RUNNING: StageState.RUNNING, JobState.WAITING: StageState.WAITING,
+                JobState.FAILED: StageState.FAILED}.get(j["state"], StageState.PENDING)
 
     # -- running
 
     def start(self) -> None:
         for j in self.jobs.all():        # stopped mid-job last time (a restart): carry on where it was
-            if j["state"] in ("running", "waiting"):
-                self.jobs.set(j["id"], state="queued", prompt=None)
+            if j["state"] in (JobState.RUNNING, JobState.WAITING):
+                self.jobs.set(j["id"], state=JobState.QUEUED, prompt=None)
                 self.jobs.event(j["id"], "resuming after a restart")
         self.thread = threading.Thread(target=self._loop, daemon=True, name="intake")
         self.thread.start()
@@ -296,10 +306,10 @@ class Engine:
             self._run(nxt[0][0])
 
     def _run(self, jid: int) -> None:
-        j = self.jobs.get(jid)
+        j = self.jobs.job(jid)
         src = SOURCES.get(j["source"])
         self.current = jid
-        self.jobs.set(jid, state="running", error=None)
+        self.jobs.set(jid, state=JobState.RUNNING, error=None)
         log = lambda text: self.jobs.event(jid, text)
         try:
             if src is None:
@@ -321,22 +331,22 @@ class Engine:
                         if stage not in OPTIONAL:
                             raise
                         log(f"warning: {dict(STAGES)[stage].lower()} did not finish: {e}")
-                        self.jobs.set(jid, warnings=self.jobs.get(jid)["warnings"] + [f"{stage}: {e}"])
+                        self.jobs.set(jid, warnings=self.jobs.job(jid)["warnings"] + [f"{stage}: {e}"])
                 if stage == READY_AFTER:
                     nxt = STAGE_IDS[STAGE_IDS.index(stage) + 1]
                     self.jobs.set(jid, stage=nxt, ready_at=time.time(), media_after=media_count(self.db))
                     log("your photos are in the library and searchable")
                     self._tell(self.on_ready, jid)
-            self.jobs.set(jid, state="done", finished_at=time.time(), detail="Done", prompt=None,
+            self.jobs.set(jid, state=JobState.DONE, finished_at=time.time(), detail="Done", prompt=None,
                           media_after=media_count(self.db))
             log("done")
             if "faces" not in self.skip:
                 self._tell(self.on_faces, jid)
         except Cancelled:
-            self.jobs.set(jid, state="cancelled", finished_at=time.time(), prompt=None, detail="Cancelled")
+            self.jobs.set(jid, state=JobState.CANCELLED, finished_at=time.time(), prompt=None, detail="Cancelled")
         except Exception as e:   # a source or a stage failed: say why, keep the stage so a retry resumes there
             msg = str(e) or type(e).__name__
-            self.jobs.set(jid, state="failed", error=msg, finished_at=time.time(), prompt=None)
+            self.jobs.set(jid, state=JobState.FAILED, error=msg, finished_at=time.time(), prompt=None)
             log(f"failed: {msg}")
         finally:
             self.cancelled.discard(jid)
@@ -362,12 +372,12 @@ class Engine:
         def ask(prompt: Prompt) -> str:
             ev = threading.Event()
             self.asking[jid] = {"prompt": prompt, "event": ev, "value": None}
-            self.jobs.set(jid, state="waiting", prompt=asdict(prompt), detail=prompt.label)
+            self.jobs.set(jid, state=JobState.WAITING, prompt=asdict(prompt), detail=prompt.label)
             self.jobs.event(jid, f"waiting for you: {prompt.label}")
             ev.wait()
             value = self.asking.pop(jid, {}).get("value")
             self._check(jid)
-            self.jobs.set(jid, state="running", prompt=None)
+            self.jobs.set(jid, state=JobState.RUNNING, prompt=None)
             return value or ""
 
         ctx = Context(jid, staging, lambda t: self.jobs.event(jid, t), progress, ask,
@@ -407,19 +417,20 @@ class Engine:
         if argv is None:
             msg = "exiftool is not installed (brew install exiftool): camera and lens details were skipped"
             self.jobs.event(jid, f"warning: {msg}")
-            self.jobs.set(jid, warnings=self.jobs.get(jid)["warnings"] + [msg])
+            self.jobs.set(jid, warnings=self.jobs.job(jid)["warnings"] + [msg])
             return
         self.lock.acquire(lambda: jid in self.cancelled,
                           lambda: self.jobs.set(jid, detail="Waiting for the phone's upload to finish cataloguing"))
         try:
-            self.jobs.set(jid, detail=dict(STAGES)[stage], done=None, total=None if stage != "ingest" else self.jobs.get(jid)["total"])
+            self.jobs.set(jid, detail=dict(STAGES)[stage], done=None, total=None if stage != "ingest" else self.jobs.job(jid)["total"])
             self.stage_started[jid] = time.time()
             env = dict(os.environ, PYTHONUNBUFFERED="1")
-            self.proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                         stdin=subprocess.DEVNULL, env=env, cwd=self.here)
+            proc = self.proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                                stdin=subprocess.DEVNULL, env=env, cwd=self.here)
+            assert proc.stdout is not None   # stdout=PIPE
             tail = []
-            total = self.jobs.get(jid)["total"] if stage == "ingest" else None
-            for line in self.proc.stdout:
+            total = self.jobs.job(jid)["total"] if stage == "ingest" else None
+            for line in proc.stdout:
                 line = line.rstrip()
                 if not line:
                     continue
@@ -428,7 +439,7 @@ class Engine:
                     self.jobs.set(jid, total=total, done=0)
                 hit = next((m for rx in PROGRESS if (m := rx.search(line))), None)
                 if hit:
-                    kv = {"done": int(hit["done"])}
+                    kv: dict[str, int | str] = {"done": int(hit["done"])}
                     if hit["total"]:
                         kv["total"] = int(hit["total"])
                     elif total is not None:
@@ -441,7 +452,7 @@ class Engine:
                         continue           # progress, not news: the bar shows it
                 self.jobs.event(jid, line)
                 tail = (tail + [line])[-6:]
-            code = self.proc.wait()
+            code = proc.wait()
             self._check(jid)
             if code != 0:
                 raise RuntimeError(f"{stage} stopped (exit {code}): " + (tail[-1] if tail else "no output"))

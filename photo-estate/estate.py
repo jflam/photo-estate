@@ -145,7 +145,7 @@ def facts_of(im, upright=None) -> dict:
     """image_facts for an image already open. `upright` is the decoded image, already turned upright
     (ImageOps.exif_transpose), when the caller has one: then the file is not decoded again. Only pass it
     for formats where draft() does nothing (HEIC), or the dHash would differ from image_facts'."""
-    facts = {"width": None, "height": None, "exif_taken_at": None, "dhash": None}
+    facts: dict[str, int | str | None] = {"width": None, "height": None, "exif_taken_at": None, "dhash": None}
     try:
         facts["width"], facts["height"] = im.size
         exif = im.getexif()
@@ -693,7 +693,8 @@ def near_dupe_clusters(items: list[tuple], t: int, strict: int = 2, crowd: int =
         deg[j] = deg.get(j, 0) + 1
     adj: dict[int, set[int]] = {}
     for (i, j), d in edges.items():
-        same_moment = tt[i] is not None and tt[j] is not None and abs(tt[i] - tt[j]) <= 2
+        ti, tj = tt[i], tt[j]
+        same_moment = ti is not None and tj is not None and abs(ti - tj) <= 2
         if d <= strict or same_moment or (deg[i] < crowd and deg[j] < crowd):
             adj.setdefault(i, set()).add(j)
             adj.setdefault(j, set()).add(i)

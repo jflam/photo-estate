@@ -95,6 +95,17 @@ new catalog in through the same gate (`Live.install`), so a search never sees ha
 half a new one. The questions every route asks of the arrays are `Catalog` methods (`combine`,
 `facet_counts`, `take`, `periods`, `browse_order`, `cover_of`, `feed_row`, ...).
 
+**Every field typed.** `Catalog` is a slotted dataclass that declares each of its fields with its
+type (`M: NDArray[np.float32]`, `meta: dict[str, PhotoMeta]`, `rank: NDArray[np.int64] | None`, ...),
+and `load()` builds it by keyword, so pyright checks every attribute a route reads
+([chapter 17](17-testing-and-demo.md#type-checks)). Until issue #90 its attributes came from
+`__dict__.update` over the names of `load()`'s local variables, which no checker could follow. `best`,
+`rank` and `score` are `None` in a catalog with no scorers (the demo has none): a route checks
+`c.best is not None`, or calls `c.scored()`, which gives all three or raises `ValueError`. A photo's
+dict is a `PhotoMeta` TypedDict: the keys from `assets` and `occurrences` are always there, those
+from `exif` and `places` only when their table has a row. `STATE` is now derived from the fields: the
+ones `load()` works out, which `differences()` compares after an incremental reload.
+
 ```mermaid
 flowchart LR
     H["PhotoApp.handle"] --> BR["Browse"]

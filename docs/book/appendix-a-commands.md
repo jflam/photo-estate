@@ -166,6 +166,7 @@ Run from `photo-estate/`; they use `pyproject.toml` and `uv.lock` ([chapter 17](
 | `uv run pytest [-m MARKERS] [--legacy-runner python\|uv]` | Every test (markers `slow`, `server`, `model`, `legacy`); `uv` runs each script in its own PEP 723 environment |
 | `uv run tests/<file>` | One test script on its own |
 | `uv run ruff check .` | Lint (syntax errors and pyflakes) |
+| `uv run pyright` | Type check every module of the app (basic mode; `[tool.pyright]` in `pyproject.toml`) |
 | `uv lock` / `uv lock --check` | Re-pin after changing a group / check `uv.lock` is current |
 
 ## Environment variables that matter

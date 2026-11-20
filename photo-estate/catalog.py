@@ -4,8 +4,11 @@ facets, read from the catalog into NumPy arrays. The route modules (browse.py, i
 and embed.py's own routes all answer from one `Catalog`.
 
   load(con, ...)      read the catalog (all of it, or only what changed since `prev`) -> Catalog
-  Catalog             the arrays and per-photo dicts (see STATE), with the questions every route asks
-                      of them: combine, facet_counts, take, periods, browse_order, cover_of, ...
+  Catalog             a dataclass: the arrays and per-photo dicts, every field typed, with the questions
+                      every route asks of them: combine, facet_counts, take, periods, browse_order, ...
+  PhotoMeta           one photo's facts (Catalog.meta[sha]): a TypedDict, so a plain dict on the wire
+  Catalog.scored()    (best, rank, score) when the catalog has scorers; ValueError when it has none
+  STATE               the names of the fields load() works out (differences() compares them)
   Live                the Catalog being served, swapped for a new one after an ingest (install)
   Gate                requests share it; a swap takes it alone
 
@@ -19,9 +22,12 @@ import re
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import Any, Mapping, TypedDict
 
 import numpy as np
+from numpy.typing import NDArray
 
 from changes import hidden_shas
 from core import schema
@@ -53,7 +59,7 @@ SCREEN_SIZES = {
 }
 
 
-def is_screenshot(m: dict) -> bool:
+def is_screenshot(m: Mapping[str, Any]) -> bool:
     if m.get("camera") or m.get("lens"):
         return False
     path = (m.get("path") or "").lower()
@@ -87,11 +93,89 @@ def chunks(xs, n=500):
     return (xs[i:i + n] for i in range(0, len(xs), n))
 
 
-# The names load() produces: a Catalog's attributes.
-STATE = ('shas', 'N', 'index', 'M', 'meta', 'events', 'trips', 'has_faces', 'when', 'year', 'ym', 'm0', 'nmonths',
-         'cols', 'event_of', 'trip_of', 'fav', 'shot', 'ars', 'oldest', 'newest', 'single', 'multi', 'trip_list',
-         'people_ix', 'who', 'where', 'cities', 'common_place', 'word_re', 'visible', 'best', 'rank', 'stack_of',
-         'stack_n', 'dup', 'score')
+class PhotoFacts(TypedDict):
+    """The keys every photo's dict has: read from assets and occurrences."""
+    ext: str
+    taken: str | None                    # ISO 8601, as the source said
+    lat: float | None
+    lon: float | None
+    desc: str | None
+    people: list[str]                    # tagged by the source, then the faces named on the People page
+    albums: list[str]
+    fav: bool
+    w: int | None
+    h: int | None
+    path: str | None                     # where it was first seen: dir/filename
+
+
+class PhotoMeta(PhotoFacts, total=False):
+    """What the catalog knows of one photo (Catalog.meta[sha]): a plain dict, sent as it is in search
+    results and the sync feed. PhotoFacts' keys are always there; these only when their table has a row
+    for the photo (exif: `estate.py exif`; places: `places.py run`), and `ar` once load() has read the
+    thumbnail's shape (always, by the time a Catalog is built). Two classes rather than Required[...],
+    so the required and optional keys are right at run time too (__required_keys__)."""
+    ar: float                            # the thumbnail's width / height (upright)
+    # exif
+    camera: str | None
+    lens: str | None
+    focal: float | None
+    focal35: float | None
+    fnumber: float | None
+    exposure: float | None
+    iso: int | None
+    # places
+    local: str | None                    # local time where it was taken
+    tz: str | None
+    place: str | None
+    country: str | None
+    region: str | None
+    city: str | None
+    county: str
+    place_inferred: bool                 # placed by its event, not by its own GPS
+    event: int | None
+    event_title: str | None
+    trip: int | None
+    trip_title: str | None
+
+
+class Event(TypedDict):
+    title: str | None
+    start: str | None
+    end: str | None
+    n: int
+    trip: int | None
+
+
+class Trip(TypedDict):
+    title: str | None
+    start: str | None
+    end: str | None
+    n: int
+
+
+class TripCard(TypedDict):
+    """A trip as /api/info lists it: visible photos only, and its cover."""
+    id: int
+    title: str | None
+    start: str | None
+    end: str | None
+    n: int
+    cover: str
+
+
+class Facet(TypedDict):
+    """A facet with one value per photo: `codes[i]` indexes `labels` (-1: none)."""
+    labels: list[str]
+    ix: dict[str, int]
+    codes: NDArray[np.int32]
+
+
+class MultiFacet(TypedDict):
+    """A facet a photo can have several values of: pair k says photo `rows[k]` has `labels[codes[k]]`."""
+    labels: list[str]
+    ix: dict[str, int]
+    rows: NDArray[np.int64]
+    codes: NDArray[np.int64]
 
 
 def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dict | None = None,
@@ -116,11 +200,12 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     def where_in(q, shas):     # q's rows for these photos (q ends in "sha256 IN")
         return [r for c in chunks(shas) for r in con.execute(f"{q} ({','.join('?' * len(c))})", c)]
 
-    def read_meta(want):
+    def read_meta(want) -> tuple[dict[str, PhotoMeta], dict[str, list[str]]]:
         """Per-photo dicts from assets, occurrences and exif. `want` None: every image, by scanning
         the tables in order (startup: on a hard disk, walking an index turns each row into a seek,
         ~18 s on the Mac mini); else just those photos, by key."""
-        got, tagged = {}, {}
+        got: dict[str, PhotoMeta] = {}
+        tagged: dict[str, list[str]] = {}
         q_assets = "SELECT sha256, ext, taken_at, lat, lon, description, people, favorited, width, height FROM assets"
         q_occ = "SELECT sha256, dir || '/' || filename, album FROM occurrences"
         q_exif = "SELECT sha256, camera, lens, focal, focal35, fnumber, exposure, iso FROM exif"
@@ -194,20 +279,21 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
             shas, index_of, M = prev["shas"], old, prev["M"]
         fresh = {sha for sha in touched | set(added) if sha in index_of}
         got, tagged_new = read_meta(fresh)
-        meta = dict(prev["meta"])
+        meta: dict[str, PhotoMeta] = dict(prev["meta"])
         meta.update(got)
         tagged = dict(prev["tagged"])
         tagged.update(tagged_new)
     N, index = len(shas), index_of
 
-    events = {eid: {"title": t, "start": s0, "end": s1, "n": n, "trip": tid}
+    events: dict[int, Event] = {eid: {"title": t, "start": s0, "end": s1, "n": n, "trip": tid}
               for eid, t, s0, s1, n, tid in optional("SELECT id, title, start_local, end_local, n, trip_id FROM events")}
-    trips = {tid: {"title": t, "start": s0, "end": s1, "n": n}
+    trips: dict[int, Trip] = {tid: {"title": t, "start": s0, "end": s1, "n": n}
              for tid, t, s0, s1, n in optional("SELECT id, title, start_local, end_local, n FROM trips")}
 
-    def own(sha):              # this load's own copy of a photo's dict, to change
+    def own(sha) -> PhotoMeta:   # this load's own copy of a photo's dict, to change
         if sha not in fresh:
-            meta[sha] = dict(meta[sha], people=list(meta[sha]["people"]))
+            m = meta[sha] = meta[sha].copy()
+            m["people"] = list(m["people"])
             fresh.add(sha)
         return meta[sha]
 
@@ -219,7 +305,8 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
             " FROM places"):
         if sha in meta:
             ev = events.get(eid) or {}
-            trip_title = (trips.get(ev.get("trip")) or {}).get("title")
+            tid = ev.get("trip")
+            trip_title = trips[tid]["title"] if tid in trips else None
             key = place_key[sha] = (local, tz, city, locality, admin2, admin1, country, psrc, eid,
                                     ev.get("title"), ev.get("trip"), trip_title)
             if sha in fresh or old_keys.get(sha) != key:
@@ -309,7 +396,7 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     fav = np.array([meta[s]["fav"] for s in shas])
     shot = np.array([is_screenshot(meta[s]) for s in shas], bool)
     visible = np.array([s not in hidden for s in shas], bool)
-    ars = np.array([meta[s]["ar"] for s in shas], np.float32)
+    ars = np.array([meta[s]["ar"] for s in shas], np.float32)   # pyright: ignore[reportTypedDictNotRequiredAccess]  (set above)
     oldest = np.argsort(when, kind="stable")
     oldest = np.concatenate([oldest[when[oldest] != ""], oldest[when[oldest] == ""]])   # undated last, either way
     newest = np.concatenate([oldest[when[oldest] != ""][::-1], oldest[when[oldest] == ""]])
@@ -328,22 +415,22 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
 
     # Facets. `single`: one value per photo, choosing several means any of them. `multi`: a photo can
     # have several (albums: any of the chosen; people: all of the chosen, i.e. photos of them together).
-    def coded(values):
+    def coded(values) -> Facet:
         labels = sorted({v for v in values if v})
         ix = {v: i for i, v in enumerate(labels)}
         return {"labels": labels, "ix": ix, "codes": np.array([ix.get(v, -1) for v in values], np.int32)}
 
     single = {k: coded([meta[s].get(k) for s in shas]) for k in ("country", "region", "city", "camera", "lens")}
     single["trip"] = coded([str(t) if t is not None else None for t in trip_of])
-    multi = {}
-    for key, field in (("album", "albums"), ("person", "people")):
-        labels = sorted({v for s in shas for v in meta[s][field]})
+    multi: dict[str, MultiFacet] = {}
+    for key, part in (("album", "albums"), ("person", "people")):
+        labels = sorted({v for s in shas for v in meta[s][part]})
         ix = {v: i for i, v in enumerate(labels)}
         multi[key] = {"labels": labels, "ix": ix,
-                      "rows": np.array([i for i, s in enumerate(shas) for _ in meta[s][field]], np.int64),
-                      "codes": np.array([ix[v] for s in shas for v in meta[s][field]], np.int64)}
+                      "rows": np.array([i for i, s in enumerate(shas) for _ in meta[s][part]], np.int64),
+                      "codes": np.array([ix[v] for s in shas for v in meta[s][part]], np.int64)}
 
-    trip_list = []
+    trip_list: list[TripCard] = []
     for tid, t in sorted(trips.items(), key=lambda kv: kv[1]["start"] or "", reverse=True):
         ids = np.flatnonzero((trip_of == tid) & visible)
         if len(ids):
@@ -380,19 +467,75 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
         return "|".join(re.escape(k) for k in sorted(keys, key=len, reverse=True))
     word_re = re.compile(r"(?<![\w'’])(?:(?P<who>" + (alt(who) or "(?!)") + r")|(?P<where>" + (alt(where) or "(?!)") +
                          r"))(['’]s)?(?![\w'’])", re.I)
-    return Catalog({k: v for k, v in locals().items() if k in STATE}, raw, model, demo)
+    return Catalog(
+        shas=shas, N=N, index=index, M=M, meta=meta, events=events, trips=trips, has_faces=has_faces, when=when,
+        year=year, ym=ym, m0=m0, nmonths=nmonths, cols=cols, event_of=event_of, trip_of=trip_of, fav=fav, shot=shot,
+        ars=ars, oldest=oldest, newest=newest, single=single, multi=multi, trip_list=trip_list, people_ix=people_ix,
+        who=who, where=where, cities=cities, common_place=common_place, word_re=word_re, visible=visible, best=best,
+        rank=rank, stack_of=stack_of, stack_n=stack_n, dup=dup, score=score, raw=raw, model=model, demo=demo)
 
 
+@dataclass(slots=True, eq=False, repr=False)
 class Catalog:
-    """The library as the app holds it in memory. Its attributes are the names in STATE; `raw` is what
-    the next incremental load() starts from, and `info` is what /api/info answers."""
+    """The library as the app holds it in memory, as load() builds it. A photo is a place `i` in the
+    catalog (0..N-1): `shas[i]` names it, row `i` of `M` is its vector, and every array below has one
+    entry per photo in that order. The fields up to `score` are what load() works out (STATE names
+    them, and differences() compares them); `raw` is what the next incremental load() starts from, and
+    `info` is what /api/info answers. `best`, `rank` and `score` are None in a catalog with no scorers
+    (scores.py); the dicts and sets are empty when their optional table is (events, trips, faces)."""
+    shas: list[str]                      # every photo in the catalog, sorted
+    N: int                               # len(shas)
+    index: dict[str, int]                # sha -> its place
+    M: NDArray[np.float32]               # N x d: the search model's unit vectors
+    meta: dict[str, PhotoMeta]
+    events: dict[int, Event]
+    trips: dict[int, Trip]
+    has_faces: bool                      # the faces table has a row (the People page can load)
+    when: NDArray[np.object_]            # local time if placed, else taken; "" when undated
+    year: NDArray[np.int_]               # 0 when undated
+    ym: NDArray[np.int_]                 # month as an index from m0; -1 when undated
+    m0: int                              # the first month with a photo, as year*12+month-1
+    nmonths: int
+    cols: dict[str, NDArray[np.object_]]   # lower-cased text for the `key:value` filters: place, camera, album, person
+    event_of: NDArray[np.object_]        # event id or None
+    trip_of: NDArray[np.object_]         # trip id or None
+    fav: NDArray[np.bool_]
+    shot: NDArray[np.bool_]              # a screenshot
+    ars: NDArray[np.float32]             # aspect ratio of the thumbnail
+    oldest: NDArray[np.intp]             # every photo, oldest first, undated last
+    newest: NDArray[np.intp]             # newest first, undated last
+    single: dict[str, Facet]             # country, region, city, camera, lens, trip
+    multi: dict[str, MultiFacet]         # album, person
+    trip_list: list[TripCard]            # trips with a visible photo, newest first
+    people_ix: dict[str, int]            # person name -> its code in multi["person"]
+    who: dict[str, str]                  # a word in a typed search -> the person it names
+    where: dict[str, str]                # a word -> the place it names
+    cities: set[str]
+    common_place: set[str]               # places that are also everyday words: only when capitalized
+    word_re: re.Pattern[str]             # finds `who` and `where` words in a search
+    visible: NDArray[np.bool_]           # in no change set that hides it
+    best: NDArray[np.intp] | None        # every photo, best first; None with no scorers
+    rank: NDArray[np.int64] | None       # each photo's place in `best` (0 is the best); None with no scorers
+    stack_of: NDArray[np.int64]          # the stack a photo is in (its earliest member's place); -1 on its own
+    stack_n: NDArray[np.int64]           # how many photos its stack holds (1 on its own)
+    dup: NDArray[np.bool_]               # behind another photo of its stack
+    score: NDArray[np.float64] | None    # what "Best first" sorts by, larger is better; None with no scorers
+    raw: dict[str, Any]                  # for the next incremental load()
+    model: str
+    demo: bool
+    info: dict[str, Any] = field(init=False)
 
-    def __init__(self, state: dict, raw: dict, model: str, demo: bool):
-        self.__dict__.update(state)
-        self.raw = raw
-        self.info = {"total": int(self.visible.sum()), "model": model, "m0": self.m0, "months": self.nmonths,
-                     "trips": self.trip_list, "demo": bool(demo), "faces": self.has_faces, "best": self.best is not None,
+    def __post_init__(self) -> None:
+        self.info = {"total": int(self.visible.sum()), "model": self.model, "m0": self.m0, "months": self.nmonths,
+                     "trips": self.trip_list, "demo": bool(self.demo), "faces": self.has_faces, "best": self.best is not None,
                      **self.facet_counts({})}
+
+    def scored(self) -> tuple[NDArray[np.intp], NDArray[np.int64], NDArray[np.float64]]:
+        """(best, rank, score), for a catalog that has scorers; ValueError for one that has none (callers
+        check `best is not None` first, and answer as if no order had been asked for)."""
+        if self.best is None or self.rank is None or self.score is None:
+            raise ValueError("this catalog has no scorers: it has no best-first order")
+        return self.best, self.rank, self.score
 
     def combine(self, masks: dict, skip: str | None = None):
         # Hidden photos are in no view, unless the hidden ones are what was asked for (`hidden=1`).
@@ -427,7 +570,7 @@ class Catalog:
         or with `end` its last); None for anything else, a month outside 1-12 included."""
         m = re.fullmatch(r"(\d{4})(?:-(\d{1,2}))?", s or "")
         month = (int(m[2]) if m[2] else (12 if end else 1)) if m else 0
-        if not 1 <= month <= 12:
+        if not m or not 1 <= month <= 12:
             return None
         return int(m[1]) * 12 + month - 1 - self.m0
 
@@ -500,11 +643,11 @@ class Catalog:
 
     def browse_order(self, mask, sort: str):
         """The photos `mask` selects with nothing to rank them by: by time, or the best first."""
-        by = self.best if sort == "best" else self.oldest if sort == "old" else self.newest
+        by = self.scored()[0] if sort == "best" else self.oldest if sort == "old" else self.newest
         ids = by[mask[by]]
         if sort == "best-month":   # the Library: months newest first as ever, the best first in each
             runs = np.cumsum(np.concatenate([[0], np.diff(self.ym[ids]) != 0]))
-            ids = ids[np.lexsort((self.rank[ids], runs))]
+            ids = ids[np.lexsort((self.scored()[1][ids], runs))]
         return ids
 
     def shapes(self, order) -> bytes:
@@ -532,7 +675,9 @@ class Catalog:
         for sha, on in pairs:
             i = self.index.get(sha)
             if i is not None and bool(self.fav[i]) != on:
-                self.meta[sha] = dict(self.meta[sha], fav=on)
+                m = self.meta[sha].copy()   # never changed in place: a request may be reading the old one
+                m["fav"] = on
+                self.meta[sha] = m
                 self.fav[i] = on
         self.info["fav"] = int((self.combine({}) & self.fav).sum())
 
@@ -553,6 +698,10 @@ class Catalog:
         if "meta" in bad:
             bad += [f"meta[{s[:8]}]" for s in want.meta if not same(self.meta.get(s), want.meta[s])][:5]
         return ", ".join(bad)
+
+
+# What load() works out: a Catalog's fields but the bookkeeping (raw, model, demo, info).
+STATE = tuple(f.name for f in fields(Catalog) if f.name not in ("raw", "model", "demo", "info"))
 
 
 class Gate:

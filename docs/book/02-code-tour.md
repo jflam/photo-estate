@@ -85,6 +85,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
     media.py                  file types: extension -> MIME, the image/video/RAW/upload sets, what each decoder skips
     schema.py                 every SQLite table of every database, and the additive migrations: ensure(con, area)
     config.py                 the default ports (8766 real, 8767 demo, 8768 preview, 8769 sandbox, 8765 review, 8764 faces)
+    states.py                 the finite string domains as StrEnums (change set op/status/state, decisions, task,
+                              ingest, intake job and stage, clustering), each value the string already stored (issue #90)
 
   search.html        2,051  the photo app: Library, Albums and Search (HTML + CSS + JS in one file)
   people.html          749  the People page
@@ -101,10 +103,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
   tests/             2,436  16 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
-                            test_core.py checks core/ against what the code before it did
+                            test_core.py checks core/ against what the code before it did;
+                            test_types.py checks the typed contracts (Catalog's fields, the enums) and runs pyright
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
-  pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest and ruff settings (chapter 17)
+  pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)
   uv.lock                   every dependency of those groups, pinned; CI installs from it (chapter 17)
   tools/             3,213  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh,
                             export_squares.py (the Library as square JPEGs in tar shards, for embedding experiments),
@@ -167,7 +170,7 @@ reading one shared state object instead of closing over variables.
 
 | Module | What it holds |
 |---|---|
-| `catalog.py` | `load()`: the catalog read into a `Catalog` (vectors, per-photo dicts, columns, facets, stacks, the name and place vocabulary), its shared questions (`combine`, `facet_counts`, `take`, `periods`, ...), and `Live`, the catalog being served, swapped under a gate after an ingest |
+| `catalog.py` | `load()`: the catalog read into a `Catalog`, a slotted dataclass with every field typed (vectors, per-photo `PhotoMeta` dicts, columns, facets, stacks, the name and place vocabulary), its shared questions (`combine`, `facet_counts`, `take`, `periods`, `scored`, ...), and `Live`, the catalog being served, swapped under a gate after an ingest |
 | `browse.py` | `Browse`: the search language and `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log`, plus the same searches for an agent (`/mcp`) |
 | `images.py` | `Images`: `/thumb/`, `/preview/`, `/large/`, `/original/`, and pre-generating thumbnails |
 | `admin.py` | `Admin`: phone uploads, the ingest, restart, the `/stats` page, preparing arrivals; catalog backups |
@@ -255,7 +258,7 @@ the script. Consequences:
 
 - There is **no setup step**, no `requirements.txt`, no virtual environment to activate.
   (`photo-estate/pyproject.toml` and `uv.lock` exist for development only: one locked environment
-  for pytest, ruff and CI, [chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci). A
+  for pytest, ruff, pyright and CI, [chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci). A
   script with a header still ignores them and builds its own environment.)
 - Each script has the **dependencies it needs and no more**. `estate.py` needs only Pillow, so
   ingesting a library never installs PyTorch (about 2 GB). `faces.py` uses `onnxruntime`, which is
@@ -317,5 +320,5 @@ and embedded still works in the app; each later stage adds capability.
 | [deploy/MAC-MINI.md](../../photo-estate/deploy/MAC-MINI.md) | Running as an always-on service |
 | [deploy/CLOUD-SESSIONS.md](../../photo-estate/deploy/CLOUD-SESSIONS.md) | Working on the app from a phone: cloud sessions and the preview |
 | [demo/CREDITS.md](../../photo-estate/demo/CREDITS.md) | Author and source of every demo photo |
-| [.github/workflows/ci.yml](../../.github/workflows/ci.yml) | CI on every pull request and push to main: the lockfile, ruff, the fast tests ([chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci)) |
+| [.github/workflows/ci.yml](../../.github/workflows/ci.yml) | CI on every pull request and push to main: the lockfile, ruff, pyright, the fast tests ([chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci)) |
 | [.github/workflows/book.yml](../../.github/workflows/book.yml) | Builds this book and publishes it to GitHub Pages |

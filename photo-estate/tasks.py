@@ -32,8 +32,10 @@ import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from core import schema
+from core.states import TASK_ACTIVE, TaskStatus
 
 SCHEMA = schema.TASKS
 DEFAULT_ENV = Path.home() / ".config" / "photo-estate" / "agent.env"
@@ -110,7 +112,7 @@ class Tasks:
         row = con.execute(f"SELECT {', '.join(self.COLS)} FROM agent_tasks WHERE id=?", (tid,)).fetchone()
         if not row:
             return None
-        t = dict(zip(self.COLS, row))
+        t: dict[str, Any] = dict(zip(self.COLS, row))
         # the change set(s) the agent made, by the name it was given while it worked
         t["change_sets"] = [{"id": i, "title": title, "photos": n, "review": f"/changes/{i}"} for i, title, n in con.execute(
             "SELECT s.id, s.title, (SELECT count(*) FROM change_items WHERE set_id=s.id) FROM change_sets s"
@@ -168,7 +170,9 @@ class Tasks:
             tid = con.execute("INSERT INTO agent_tasks(prompt, created_by, created_at) VALUES (?,?,?)",
                               (prompt[:8000], who or None, now())).lastrowid
             con.commit()
+            assert tid is not None
             out = self.task(con, tid)
+            assert out is not None   # just written
         finally:
             con.close()
         self.wake.set()
@@ -178,13 +182,13 @@ class Tasks:
         t = self.get(tid, None)
         if not t:
             return {"error": "no such task"}, 404
-        if t["status"] in ("queued", "running"):
-            self.update(tid, status="cancelled", finished_at=now())
+        if t["status"] in TASK_ACTIVE:
+            self.update(tid, status=TaskStatus.CANCELLED, finished_at=now())
             with self.lock:
                 proc = self.procs.get(tid)
             if proc:
                 proc.terminate()
-        return self.get(tid, None), 200
+        return self.get(tid, None) or t, 200
 
     # -- running ---------------------------------------------------------------------------------
 
@@ -200,11 +204,13 @@ class Tasks:
             try:
                 self.run(*row)
             except Exception as e:   # the next task still gets its turn
-                self.update(row[0], status="failed", error=f"{type(e).__name__}: {e}", finished_at=now())
+                self.update(row[0], status=TaskStatus.FAILED, error=f"{type(e).__name__}: {e}", finished_at=now())
                 self.log(f"task {row[0]} failed: {type(e).__name__}: {e}")
 
     def run(self, tid: int, prompt: str) -> None:
-        self.update(tid, status="running", started_at=now())
+        if not self.command:     # submit() takes no task then (available())
+            raise RuntimeError("Claude Code is not installed on this computer")
+        self.update(tid, status=TaskStatus.RUNNING, started_at=now())
         config = {"mcpServers": {SERVER: {"type": "http", "url": self.mcp_url, "headers": {"X-Estate-Task": str(tid)}}}}
         cmd = [self.command, "-p", prompt, "--system-prompt", BRIEF, "--mcp-config", json.dumps(config), "--strict-mcp-config",
                "--tools", "", "--allowedTools", f"mcp__{SERVER}", "--output-format", "stream-json", "--verbose",
@@ -218,12 +224,14 @@ class Tasks:
                                     stderr=subprocess.PIPE, text=True)
             with self.lock:
                 self.procs[tid] = proc
+            assert proc.stdout is not None and proc.stderr is not None   # both PIPE
+            stdout, stderr = proc.stdout, proc.stderr
             timer = threading.Timer(self.timeout, proc.terminate)
             timer.start()
             errs = []
-            threading.Thread(target=lambda: errs.extend(proc.stderr), daemon=True).start()
+            threading.Thread(target=lambda: errs.extend(stderr), daemon=True).start()
             final = None
-            for line in proc.stdout:
+            for line in stdout:
                 try:
                     msg = json.loads(line)
                 except ValueError:
@@ -235,16 +243,16 @@ class Tasks:
             with self.lock:
                 self.procs.pop(tid, None)
             shutil.rmtree(work, ignore_errors=True)
-        if (self.get(tid, None) or {}).get("status") == "cancelled":
+        if (self.get(tid, None) or {}).get("status") == TaskStatus.CANCELLED:
             return self.log(f"task {tid}: cancelled")
         if final and not final.get("is_error"):
-            self.update(tid, status="done", result=final.get("result"), turns=final.get("num_turns"),
+            self.update(tid, status=TaskStatus.DONE, result=final.get("result"), turns=final.get("num_turns"),
                         cost=final.get("total_cost_usd"), finished_at=now())
         else:
             why = (final or {}).get("result") or "".join(errs)[-600:].strip() or f"the agent stopped (exit {code})"
             if final and final.get("subtype") == "error_max_turns":
                 why = f"the agent did not finish in {self.max_turns} steps"
-            self.update(tid, status="failed", error=why, turns=(final or {}).get("num_turns"),
+            self.update(tid, status=TaskStatus.FAILED, error=why, turns=(final or {}).get("num_turns"),
                         cost=(final or {}).get("total_cost_usd"), finished_at=now())
         self.log(f"task {tid}: {(self.get(tid, None) or {}).get('status')}")
 

@@ -52,7 +52,6 @@ import time
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, urlparse
 
 import catalog
@@ -63,7 +62,7 @@ from changes import Changes
 from core import config, schema
 from embed import connect, now
 from encoder import Encoder
-from estate_mcp import Server as MCPServer
+from estate_mcp import AppFacade, Server as MCPServer
 from http_util import (FORBIDDEN, MAX_BODY, NOT_FOUND, Auth, HTTPError, Request, Response, int_param,
                        json_response, parse_json, read_body)
 from images import Images
@@ -196,8 +195,8 @@ class PhotoApp:
         # endpoint below like any other client, and ends in a change set.
         self.tasks = Tasks(a.db, config.mcp_url(self.port), command=a.agent_cmd, env_file=a.agent_env,
                            model=a.agent_model, log=lambda msg: print(msg, flush=True))
-        self.mcp = MCPServer(SimpleNamespace(find=browse.find, row=browse.row, faces=browse.faces,
-                                             overview=browse.overview, changes=self.changes, tasks=self.tasks))
+        self.mcp = MCPServer(AppFacade(find=browse.find, row=browse.row, faces=browse.faces,
+                                       overview=browse.overview, changes=self.changes, tasks=self.tasks))
         if ingest:
             ingest.on_added = self.reload_catalog
             ingest.before_run = self.admin.arrivals_prepared
@@ -209,8 +208,8 @@ class PhotoApp:
             from intake.api import IntakeAPI, Library
             from intake.engine import Engine as IntakeEngine
 
-            def make_intake(lib):
-                e = IntakeEngine(lib.root, lib.db, lib.store, HERE, practice=bool(a.sandbox),
+            def make_intake(lib: Library) -> IntakeEngine:
+                e = IntakeEngine(*lib.chosen(), HERE, practice=bool(a.sandbox),
                                  on_ready=lambda jid: self.reload_catalog(),
                                  on_faces=lambda jid: (self.reload_catalog(), self.live.cat.has_faces and self.load_people()))
                 e.start()

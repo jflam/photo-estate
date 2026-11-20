@@ -4,6 +4,8 @@ Pillow, no numpy, no models, so the setup server, the CLI tools and the tests ca
   media.py    which files are photos and videos, their MIME types, and which ones each path decodes
   schema.py   every SQLite table, and the additive migrations, as ensure(con, area, ...)
   config.py   the default ports and the URLs built from them
+  states.py   the finite string domains (change set op and status, decisions, task, ingest and intake job
+              states) as StrEnums whose values are the strings already stored and sent
 
 A script in photo-estate/ imports it as `from core import media`: the script's own folder is on
 sys.path. The intake/ package is imported from there too. Scripts in a subfolder (tests/, tools/...)

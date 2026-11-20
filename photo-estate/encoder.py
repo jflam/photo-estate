@@ -31,8 +31,8 @@ class Encoder:
 
     def load(self) -> None:
         t = time.time()
-        import torch
-        from transformers import AutoImageProcessor, AutoModel, AutoTokenizer
+        import torch   # pyright: ignore[reportMissingImports]  (the ml group: not in the dev environment)
+        from transformers import AutoImageProcessor, AutoModel, AutoTokenizer   # pyright: ignore[reportMissingImports]
         torch.set_num_threads(self.threads)
         self.parts.update(torch=torch, model=AutoModel.from_pretrained(self.model_id, dtype=torch.float32).eval(),
                           tok=AutoTokenizer.from_pretrained(self.model_id))

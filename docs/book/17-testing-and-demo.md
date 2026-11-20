@@ -41,7 +41,9 @@ the exit code and the script's last lines. Any other `test_*.py` is an ordinary 
 script that fails is reported as failed, a slow one is left out of the fast tier, no script is missing
 from the list) and that the modules the light entry points import load no torch, transformers or
 onnxruntime. `tests/test_photo_app.py`, `tests/test_http_util.py`, `tests/test_core.py` and `tests/test_compare_app.py` are native too, and in the fast
-tier: they build the app in process instead of starting it.
+tier: they build the app in process instead of starting it. So is `tests/test_types.py`, which checks the
+typed contracts below: `Catalog`'s fields, a demo catalog's types with and without scorers, the state
+enums against the strings already on disk and on the wire, and pyright itself.
 
 ```bash
 cd photo-estate
@@ -50,6 +52,7 @@ uv run pytest                      # everything (HF_HUB_OFFLINE=1 is set for eac
 uv run pytest -m "server and not model"   # the app tests that work without the search model
 uv run pytest --legacy-runner=uv   # each script with `uv run`, in its own PEP 723 environment
 uv run ruff check .                # lint: syntax errors and pyflakes (unused imports, undefined names)
+uv run pyright                     # type check: every module of the app, basic mode, no errors
 uv run tests/test_poc.py           # one script on its own still works exactly as before
 ```
 
@@ -75,7 +78,7 @@ the headers:
 | `faces` | `faces.py` | core, onnxruntime |
 | `places` | `places.py` | core, reverse_geocode, timezonefinder, pycountry |
 | `tools` | `tools/` (the book, benchmarks, screenshots, the aesthetics experiments) | markdown-it-py, mdit-py-plugins, Pygments, httpx, requests, Playwright, SciPy, scikit-learn |
-| `dev` (installed by default) | pytest and ruff | core, pytest, ruff |
+| `dev` (installed by default) | pytest, ruff and pyright | core, pytest, ruff, pyright |
 
 `uv sync --group ml --group faces --group places` installs everything the server can use. After
 changing a group, run `uv lock` and commit `uv.lock`; `uv lock --check` says whether it is current.
@@ -84,14 +87,36 @@ since torch and onnxruntime need the upper one.
 
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every pull request and every push
 to `main`, on Ubuntu with Python 3.12: `uv lock --check`, `uv sync --locked --group dev`,
-`ruff check .` and `pytest -m "not slow"` (with exiftool installed, so `test_poc` checks EXIF too). It
-never downloads the model and never reaches the Mac mini or a real library. Two things are left out on
-purpose: the slow tests, which need the ML stack (run `uv run pytest` on a machine that has it), and
-static type checks. `Catalog` gets its attributes through `__dict__.update` and the modules pass untyped
-dicts and tuples, so a type checker could verify almost nothing yet;
-[issue #90](https://github.com/jflam/photo-estate/issues/90) tracks typing those contracts, and a
-pyright or mypy step belongs in CI when it lands. Ruff's rules are kept to syntax errors and pyflakes
-for the same reason, and `ruff format` is not enforced: the code has its own compact style.
+`ruff check .`, `pyright` and `pytest -m "not slow"` (with exiftool installed, so `test_poc` checks EXIF
+too). It never downloads the model and never reaches the Mac mini or a real library. The slow tests are
+left out on purpose: they need the ML stack (run `uv run pytest` on a machine that has it). Ruff's rules
+are kept to syntax errors and pyflakes, and `ruff format` is not enforced: the code has its own compact
+style.
+
+### Type checks
+
+[pyright](https://github.com/microsoft/pyright) checks every module of the app (the folder's scripts,
+`core/` and `intake/`; not `tests/`, `tools/` or `demo/`) in basic mode, configured in `pyproject.toml`'s
+`[tool.pyright]`, and CI fails on any error ([issue #90](https://github.com/jflam/photo-estate/issues/90)).
+What makes that worth having is that the contracts between the modules are typed:
+
+- `catalog.Catalog` is a slotted dataclass with every field and its type, `None` included where a
+  field can be missing: `best`, `rank` and `score` are `None` in a catalog with no scorers, and
+  `Catalog.scored()` hands out all three or raises. A route that reads a field that isn't there, or
+  uses `rank` without checking, is a type error, not a crash in production ([chapter 5](05-catalog.md)).
+- A photo's dict is `catalog.PhotoMeta`, a TypedDict: still a plain dict on the wire, but its keys and
+  which of them may be absent are written down.
+- The finite string domains (a change set's op, status and state, a reviewer's decision, a task's status,
+  the ingest's state, an intake job's state, the People page's clustering) are `StrEnum`s in
+  [`core/states.py`](../../photo-estate/core/states.py), each value the string already in the catalog,
+  intake.db and the JSON API, so nothing stored or sent changed.
+- The MCP endpoint's `app` is a Protocol (`estate_mcp.App`), which PhotoApp fills with an `AppFacade`;
+  a request's headers are `http_util.Headers` (a dict, or the handler's `Message`).
+
+The optional groups' packages (torch, transformers, onnxruntime, reverse_geocode, timezonefinder,
+pycountry) are not in the dev environment, so their imports carry a narrow
+`# pyright: ignore[reportMissingImports]`. The `pyright` package fetches its own Node.js the first
+time it runs.
 
 The iPhone app has no unit tests of its own. It was checked in the iOS Simulator against the demo
 library (104 photos), with the server up and then stopped; `ios/project-sim.yml` builds it for a
