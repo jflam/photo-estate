@@ -31,12 +31,9 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS scorers(
-  name TEXT, model TEXT,            -- quality | taste; the embedding model the weights are for
-  w BLOB, b REAL,                   -- float32 weights, one per embedding dimension; score = w . vec + b
-  info TEXT, updated_at TEXT, PRIMARY KEY(name, model));
-"""
+from core import schema
+
+SCHEMA = schema.SCORES
 NAMES = ("quality", "taste")
 GOOD = 5.0
 
@@ -47,7 +44,7 @@ def save(con: sqlite3.Connection, name: str, model: str, w, b: float = 0.0, info
     w = np.asarray(w, dtype=np.float32).ravel()
     if not len(w) or not np.isfinite(w).all() or not np.isfinite(b):
         raise ValueError(f"{name}: weights must be finite numbers")
-    con.executescript(SCHEMA)
+    schema.ensure(con, "scores")
     con.execute("INSERT OR REPLACE INTO scorers VALUES (?,?,?,?,?,?)",
                 (name, model, w.tobytes(), float(b), json.dumps(info or {}),
                  datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")))

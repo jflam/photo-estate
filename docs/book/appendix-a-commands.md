@@ -45,7 +45,7 @@ uv run embed.py [--db estate.db] [--model google/siglip2-base-patch16-256] [--th
 | `run` | `--store DIR` (**required**); `--workers 3` decoder processes; `--batch 16`; `--limit 0` | Embed every image with no embedding for this model (resumable) | [10](10-embeddings.md) |
 | `search` | `query`; `--limit 15` | Command-line semantic search | [10](10-embeddings.md) |
 | `stats` | none | Images embedded per model | |
-| `serve` | `--root DIR` (the library: `estate.db` and `store/` inside; default: the one chosen on the setup page, saved in `~/.config/photo-estate/library.json`); `--store DIR` (default `<root>/store`); `--demo`; `--sandbox` (a scratch library with practice sources, port 8768); `--port` (default 8766, or 8767 with `--demo`). With no photos in the library yet, `serve` shows the setup page (`/setup`) instead of the app, and becomes the app once the first photos are searchable; `--cache DIR` (default `<db dir>/review`); `--fast-cache DIR`; `--no-pregenerate`; `--match-floor 0.085` (`-1` = no floor); `--match-window 0.04` (`2` = show every photo, ranked); `--query-log FILE` (default `<db dir>/query-log.jsonl`) | The photo app | [11](11-server.md) |
+| `serve` | `--root DIR` (the library: `estate.db` and `store/` inside; default: the one chosen on the setup page, saved in `~/.config/photo-estate/library.json`); `--store DIR` (default `<root>/store`); `--demo`; `--sandbox` (a scratch library with practice sources, port 8769); `--port` (default 8766, or 8767 with `--demo`). With no photos in the library yet, `serve` shows the setup page (`/setup`) instead of the app, and becomes the app once the first photos are searchable; `--cache DIR` (default `<db dir>/review`); `--fast-cache DIR`; `--no-pregenerate`; `--match-floor 0.085` (`-1` = no floor); `--match-window 0.04` (`2` = show every photo, ranked); `--query-log FILE` (default `<db dir>/query-log.jsonl`) | The photo app | [11](11-server.md) |
 
 ```bash
 uv run embed.py --db estate.db run --store STORE
@@ -81,7 +81,7 @@ uv run faces.py [--db estate.db] <command>
 |---|---|---|---|
 | `run` | `--store DIR` (**required**); `--cache DIR` (default `<db dir>/review`); `--workers 3`; `--threads 6` onnxruntime threads; `--limit 0` | Detect and embed faces in images not scanned yet | [14](14-faces.md) |
 | `stats` | none | Faces found, named by source, waiting | [15](15-human-corrections.md) |
-| `serve` | `--store DIR` (**required**); `--cache DIR`; `--port 8768` | The naming page on its own (`http://127.0.0.1:8768/people`). `embed.py serve` also shows it at `/people` once faces exist | [15](15-human-corrections.md) |
+| `serve` | `--store DIR` (**required**); `--cache DIR`; `--port 8764` | The naming page on its own (`http://127.0.0.1:8764/people`). `embed.py serve` also shows it at `/people` once faces exist | [15](15-human-corrections.md) |
 
 ## places.py: where and when
 

@@ -1,0 +1,379 @@
+{
+ "about": "Which photos are screenshots, from what the catalog holds: the rule in photo-estate/catalog.py (SCREEN_SIZES, is_screenshot) and ios/PhotoEstate/Catalog/Screenshots.swift. Both apps should pass every case; tests/test_core.py runs them against catalog.py and checks the Swift size list. A case: the photo's w, h (pixels, either may be null), ext, path (its first file path), camera and lens (EXIF; null when the photo has none), and whether it is a screenshot.",
+ "screen_sizes": [
+  [
+   320,
+   480
+  ],
+  [
+   640,
+   960
+  ],
+  [
+   640,
+   1136
+  ],
+  [
+   720,
+   1280
+  ],
+  [
+   750,
+   1334
+  ],
+  [
+   768,
+   1024
+  ],
+  [
+   828,
+   1792
+  ],
+  [
+   1080,
+   1920
+  ],
+  [
+   1080,
+   2160
+  ],
+  [
+   1080,
+   2220
+  ],
+  [
+   1080,
+   2280
+  ],
+  [
+   1080,
+   2316
+  ],
+  [
+   1080,
+   2340
+  ],
+  [
+   1080,
+   2400
+  ],
+  [
+   1125,
+   2436
+  ],
+  [
+   1170,
+   2532
+  ],
+  [
+   1179,
+   2556
+  ],
+  [
+   1206,
+   2622
+  ],
+  [
+   1242,
+   2208
+  ],
+  [
+   1242,
+   2688
+  ],
+  [
+   1260,
+   2736
+  ],
+  [
+   1284,
+   2778
+  ],
+  [
+   1290,
+   2796
+  ],
+  [
+   1320,
+   2868
+  ],
+  [
+   1440,
+   2560
+  ],
+  [
+   1440,
+   2960
+  ],
+  [
+   1440,
+   3040
+  ],
+  [
+   1440,
+   3120
+  ],
+  [
+   1440,
+   3200
+  ],
+  [
+   1488,
+   2266
+  ],
+  [
+   1536,
+   2048
+  ],
+  [
+   1620,
+   2160
+  ],
+  [
+   1640,
+   2360
+  ],
+  [
+   1668,
+   2224
+  ],
+  [
+   1668,
+   2388
+  ],
+  [
+   1668,
+   2420
+  ],
+  [
+   2048,
+   2732
+  ],
+  [
+   2064,
+   2752
+  ]
+ ],
+ "cases": [
+  {
+   "name": "iphone-png",
+   "w": 1170,
+   "h": 2532,
+   "ext": ".png",
+   "path": "2023/IMG_0001.PNG",
+   "camera": null,
+   "lens": null,
+   "screenshot": true,
+   "why": "an iPhone 12-14 screen, no camera"
+  },
+  {
+   "name": "iphone-png-landscape",
+   "w": 2532,
+   "h": 1170,
+   "ext": ".png",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": true,
+   "why": "either way round"
+  },
+  {
+   "name": "iphone-jpg",
+   "w": 1179,
+   "h": 2556,
+   "ext": ".jpg",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": true,
+   "why": "not 4:3 or 16:9, so any format counts"
+  },
+  {
+   "name": "iphone-heic-uppercase-ext",
+   "w": 1290,
+   "h": 2796,
+   "ext": ".HEIC",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": true,
+   "why": "extension case does not matter"
+  },
+  {
+   "name": "camera-at-screen-size",
+   "w": 1170,
+   "h": 2532,
+   "ext": ".png",
+   "path": null,
+   "camera": "Apple iPhone 13",
+   "lens": null,
+   "screenshot": false,
+   "why": "a camera never makes a screenshot"
+  },
+  {
+   "name": "lens-at-screen-size",
+   "w": 1170,
+   "h": 2532,
+   "ext": ".png",
+   "path": null,
+   "camera": null,
+   "lens": "iPhone 13 back camera",
+   "screenshot": false,
+   "why": "a lens alone is enough"
+  },
+  {
+   "name": "named-screenshot",
+   "w": 4000,
+   "h": 3000,
+   "ext": ".jpg",
+   "path": "Takeout/Screenshots/Screenshot_20190101-101010.jpg",
+   "camera": null,
+   "lens": null,
+   "screenshot": true,
+   "why": "the name says so, any size"
+  },
+  {
+   "name": "named-screen-shot",
+   "w": null,
+   "h": null,
+   "ext": ".png",
+   "path": "Desktop/Screen Shot 2019-02-03 at 10.11.12.png",
+   "camera": null,
+   "lens": null,
+   "screenshot": true,
+   "why": "'screen shot', no size known"
+  },
+  {
+   "name": "named-but-camera",
+   "w": 1170,
+   "h": 2532,
+   "ext": ".png",
+   "path": "Screenshots/x.png",
+   "camera": "Canon EOS 5D",
+   "lens": null,
+   "screenshot": false,
+   "why": "camera first"
+  },
+  {
+   "name": "ipad-4x3-png",
+   "w": 1536,
+   "h": 2048,
+   "ext": ".png",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": true,
+   "why": "a 4:3 screen as PNG is a screenshot"
+  },
+  {
+   "name": "ipad-4x3-jpg",
+   "w": 1536,
+   "h": 2048,
+   "ext": ".jpg",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": false,
+   "why": "4:3 JPEG: a camera photo that lost its EXIF"
+  },
+  {
+   "name": "ipad-4x3-heic",
+   "w": 768,
+   "h": 1024,
+   "ext": ".heic",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": false,
+   "why": "4:3 HEIC likewise"
+  },
+  {
+   "name": "android-16x9-png",
+   "w": 720,
+   "h": 1280,
+   "ext": ".png",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": true,
+   "why": "16:9 PNG"
+  },
+  {
+   "name": "android-16x9-jpg",
+   "w": 1080,
+   "h": 1920,
+   "ext": ".jpg",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": false,
+   "why": "16:9 JPEG: a shared camera photo"
+  },
+  {
+   "name": "android-png-webp",
+   "w": 1440,
+   "h": 3200,
+   "ext": ".webp",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": true,
+   "why": "not 4:3 or 16:9"
+  },
+  {
+   "name": "not-a-screen-size",
+   "w": 1000,
+   "h": 2000,
+   "ext": ".png",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": false,
+   "why": "no screen is this size"
+  },
+  {
+   "name": "one-pixel-off",
+   "w": 1170,
+   "h": 2533,
+   "ext": ".png",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": false,
+   "why": "sizes must match exactly"
+  },
+  {
+   "name": "no-size",
+   "w": null,
+   "h": null,
+   "ext": ".png",
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": false,
+   "why": "no size, no name: not a screenshot"
+  },
+  {
+   "name": "no-ext",
+   "w": 1170,
+   "h": 2532,
+   "ext": null,
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": true,
+   "why": "no extension: only the 4:3 and 16:9 shapes need PNG"
+  },
+  {
+   "name": "no-ext-16x9",
+   "w": 1080,
+   "h": 1920,
+   "ext": null,
+   "path": null,
+   "camera": null,
+   "lens": null,
+   "screenshot": false,
+   "why": "16:9 without an extension is not PNG"
+  }
+ ]
+}

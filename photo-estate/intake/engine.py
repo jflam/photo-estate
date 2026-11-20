@@ -29,6 +29,8 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+from core import schema   # photo-estate/core, beside this package
+
 from .base import SOURCES, Cancelled, Context, Prompt
 
 STAGES = [
@@ -45,19 +47,7 @@ READY_AFTER = "embed"
 OPTIONAL = {"faces"}            # a failure here finishes the job with a warning
 LOCK = Path(os.environ.get("TMPDIR", "/tmp")) / "photo-estate-ingest-iphone.lock"   # shared with ingest-iphone.sh
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS jobs(
-  id INTEGER PRIMARY KEY, source TEXT NOT NULL, config TEXT NOT NULL,
-  state TEXT NOT NULL,          -- queued | running | waiting | done | failed | cancelled
-  stage TEXT NOT NULL,          -- the stage it is in, or resumes from
-  done INT, total INT, detail TEXT, error TEXT, warnings TEXT DEFAULT '[]',
-  paths TEXT,                   -- what acquire handed to ingest (JSON list)
-  prompt TEXT,                  -- what it is waiting for (JSON, never a secret)
-  media_before INT, media_after INT,
-  created_at REAL, updated_at REAL, ready_at REAL, finished_at REAL);
-CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, job_id INT, at REAL, text TEXT);
-CREATE INDEX IF NOT EXISTS events_job ON events(job_id, id);
-"""
+SCHEMA = schema.INTAKE
 ACTIVE = ("queued", "running", "waiting")
 
 
@@ -68,7 +58,7 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.con = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.con.execute("PRAGMA journal_mode=WAL")
-        self.con.executescript(SCHEMA)
+        schema.ensure(self.con, "intake")
         self.lock = threading.Lock()
 
     def q(self, sql, args=()):

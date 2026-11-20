@@ -41,6 +41,8 @@ import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent      # photo-estate/
+sys.path.insert(0, str(HERE))
+from core import schema  # noqa: E402
 DEMO = HERE / "demo"
 
 
@@ -85,8 +87,7 @@ def build(work: Path, n: int) -> None:
     clone("occurrences", occurrence)
     clone("embeddings")
     clone("exif", lambda d, i: d.update(data=big))
-    c.execute("CREATE TABLE IF NOT EXISTS face_scans(sha256 TEXT, model TEXT, n INT, error TEXT, created_at TEXT,"
-              " PRIMARY KEY(sha256, model))")   # as faces.py makes it: every photo counts as already scanned
+    schema.ensure(c, "faces")   # as faces.py makes it: every photo counts as already scanned
     c.execute("INSERT OR IGNORE INTO face_scans SELECT sha256, 'buffalo_l', 0, NULL, '2026-01-01' FROM assets")
     c.commit()
     c.close()

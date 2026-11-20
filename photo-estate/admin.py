@@ -36,11 +36,11 @@ from urllib.parse import unquote
 from PIL import Image, ImageOps
 
 import pages
+from core.media import DECODABLE_EXT
 from catalog import Live
 from estate import facts_of as estate_facts
 from upload import save_upload, staging_dir
 
-IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".gif", ".webp", ".tif", ".tiff", ".avif"}  # decodable stills
 
 
 def js(o, code: int = 200):
@@ -130,7 +130,7 @@ class Admin:
             stored = {}
             code, msg = save_upload(self.inbox, unquote(path[len(prefix):]), rfile, length,
                                     h.get("X-Content-SHA256"), meta, stored)
-            if stored and stored["path"].suffix.lower() in IMAGE_EXT:
+            if stored and stored["path"].suffix.lower() in DECODABLE_EXT:   # an upload's stills, less DNG
                 self.arrivals.put((stored["sha256"], stored["path"]))
             close = code >= 400   # a refused body may still be on the wire
         except OSError as e:

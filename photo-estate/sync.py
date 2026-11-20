@@ -24,6 +24,8 @@ import sqlite3
 import threading
 from pathlib import Path
 
+from core import schema
+
 
 def digest(row: dict) -> bytes:
     return hashlib.blake2b(json.dumps(row, sort_keys=True, separators=(",", ":"), default=str).encode(),
@@ -54,11 +56,8 @@ class Feed:
     def _open(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         con = sqlite3.connect(self.path, timeout=60)
-        con.executescript("""
-            PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;
-            CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
-            CREATE TABLE IF NOT EXISTS rows (sha TEXT PRIMARY KEY, digest BLOB, ver INTEGER, gone INTEGER DEFAULT 0);
-        """)
+        con.executescript("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+        schema.ensure(con, "sync")
         return con
 
     def touch(self, rows: dict[str, dict]) -> int:

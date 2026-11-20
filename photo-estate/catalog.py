@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from changes import hidden_shas
+from core import schema
 from scores import best as best_score, best_first, load as load_scorers
 from stacks import group as stack_group, seconds as stack_seconds, tops as stack_tops
 
@@ -139,7 +140,7 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
                     m["albums"].append(album)
         # exif is mostly exiftool's JSON dump (~700 MB for 120k photos); this index holds just the columns
         # read here, so startup scans ~15 MB instead. Built once, then kept up to date by SQLite.
-        optional("CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)")
+        optional(schema.EXIF_APP_INDEX)
         try:
             ex = optional(q_exif) if want is None else where_in(q_exif + " WHERE sha256 IN", got)
         except sqlite3.OperationalError:

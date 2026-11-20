@@ -71,23 +71,10 @@ import threading
 from datetime import datetime, timezone
 
 import pages
+from core import schema
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS change_sets(
-  id INTEGER PRIMARY KEY, title TEXT, prompt TEXT, op TEXT DEFAULT 'hide',
-  status TEXT DEFAULT 'open',        -- open | reverted | done
-  created_by TEXT, created_at TEXT, updated_at TEXT, applied_at TEXT, reverted_at TEXT, done_at TEXT);
-CREATE TABLE IF NOT EXISTS change_items(
-  set_id INT, sha256 TEXT,
-  decision TEXT DEFAULT 'pending',   -- pending (nobody has said: as proposed) | accept | reject (keep it)
-  applied INT DEFAULT 0,             -- 1 while this set is hiding the photo
-  score REAL, reason TEXT, decided_at TEXT, PRIMARY KEY(set_id, sha256));
-CREATE TABLE IF NOT EXISTS hidden(   -- a photo is hidden while any row names it
-  sha256 TEXT, set_id INT, hidden_at TEXT, PRIMARY KEY(sha256, set_id));
-"""
+SCHEMA, ADDED = schema.CHANGES, schema.ADDED["changes"]   # the tables, and columns newer than a catalog may be
 OPS = ("hide", "view")
-ADDED = {"change_sets": (("done_at", "TEXT"), ("kind", "TEXT DEFAULT 'list'"), ("query", "TEXT")),   # columns newer than a catalog may be
-         "change_items": (("section", "TEXT"), ("position", "INTEGER"))}
 LIVE_MAX = 20000   # a live album is at most this many of what its search finds
 DECISIONS = ("pending", "accept", "reject")
 SHA = re.compile(r"^[0-9a-f]{64}$")
@@ -125,13 +112,7 @@ class Changes:
         self.find, self.favorite, self.cover = find, favorite, cover
         self.lock = threading.Lock()   # one writer at a time; reads take no lock (WAL)
         con = self.con()
-        con.executescript(SCHEMA)
-        for table, cols in ADDED.items():
-            have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
-            for name, kind in cols:
-                if name not in have:
-                    con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
-        con.commit()
+        schema.ensure(con, "changes")   # with the columns older catalogs lack (core/schema.py ADDED)
         con.close()
 
     def con(self) -> sqlite3.Connection:

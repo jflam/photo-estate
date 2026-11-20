@@ -33,18 +33,9 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS agent_tasks(
-  id INTEGER PRIMARY KEY, prompt TEXT,
-  status TEXT DEFAULT 'queued',      -- queued | running | done | failed | cancelled
-  created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT,
-  result TEXT, error TEXT, turns INT, cost REAL);
-CREATE TABLE IF NOT EXISTS agent_events(
-  id INTEGER PRIMARY KEY, task_id INT, at TEXT,
-  kind TEXT,                         -- say (the agent's words) | tool (a call it made) | error | note
-  text TEXT);
-CREATE INDEX IF NOT EXISTS agent_events_task ON agent_events(task_id, id);
-"""
+from core import schema
+
+SCHEMA = schema.TASKS
 DEFAULT_ENV = Path.home() / ".config" / "photo-estate" / "agent.env"
 SERVER = "photo-estate"
 ROUTE = re.compile(r"^/api/tasks(?:/(\d+)(?:/(cancel))?)?$")
@@ -93,7 +84,7 @@ class Tasks:
         self.command, self.env_file = find_command(command), Path(env_file) if env_file else DEFAULT_ENV
         self.lock, self.wake, self.procs = threading.Lock(), threading.Event(), {}
         con = self.con()
-        con.executescript(SCHEMA)
+        schema.ensure(con, "tasks", "changes")   # changes: a task's change sets are read from change_sets
         # whatever was running when the app last stopped did not finish
         con.execute("UPDATE agent_tasks SET status='failed', error='the app restarted while this was running', finished_at=?"
                     " WHERE status='running'", (now(),))
@@ -120,12 +111,10 @@ class Tasks:
         if not row:
             return None
         t = dict(zip(self.COLS, row))
-        try:   # the change set(s) the agent made, by the name it was given while it worked
-            t["change_sets"] = [{"id": i, "title": title, "photos": n, "review": f"/changes/{i}"} for i, title, n in con.execute(
-                "SELECT s.id, s.title, (SELECT count(*) FROM change_items WHERE set_id=s.id) FROM change_sets s"
-                " WHERE s.created_by=? ORDER BY s.id", (f"task:{tid}",))]
-        except sqlite3.OperationalError:
-            t["change_sets"] = []
+        # the change set(s) the agent made, by the name it was given while it worked
+        t["change_sets"] = [{"id": i, "title": title, "photos": n, "review": f"/changes/{i}"} for i, title, n in con.execute(
+            "SELECT s.id, s.title, (SELECT count(*) FROM change_items WHERE set_id=s.id) FROM change_sets s"
+            " WHERE s.created_by=? ORDER BY s.id", (f"task:{tid}",))]
         last = con.execute("SELECT id, kind, text FROM agent_events WHERE task_id=? ORDER BY id DESC LIMIT 1", (tid,)).fetchone()
         t["last"] = {"id": last[0], "kind": last[1], "text": last[2]} if last else None
         if after is not None:

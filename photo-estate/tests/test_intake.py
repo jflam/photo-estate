@@ -170,11 +170,13 @@ def main():
             (raw / name).write_bytes(b"x")
         assert folder.preview({"path": str(raw)}).media == 5
         import ast
+        from core import media as core_media
         from intake import media
-        tree = ast.parse((HERE.parent / "estate.py").read_text())
-        sets = {t.id: ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
-                for t in n.targets if isinstance(t, ast.Name) and t.id in ("IMAGE_EXT", "VIDEO_EXT")}
-        assert sets == {"IMAGE_EXT": media.IMAGE_EXT, "VIDEO_EXT": media.VIDEO_EXT}, "intake/media.py differs from estate.py"
+        tree = ast.parse((HERE.parent / "estate.py").read_text())   # estate.py needs Pillow: read it, don't import it
+        names = {a.name for n in tree.body if isinstance(n, ast.ImportFrom) and n.module == "core.media" for a in n.names}
+        assert {"IMAGE_EXT", "VIDEO_EXT"} <= names, "estate.py must take its file types from core/media.py"
+        assert (media.IMAGE_EXT, media.VIDEO_EXT, media.MEDIA_EXT) == (core_media.IMAGE_EXT, core_media.VIDEO_EXT,
+                                                                     core_media.MEDIA_EXT), "intake/media.py differs from ingest"
         print("ok  previews (RAW and older video counted, same types as ingest)")
 
         # 8b. link touches only what the job brought in (#13); every step's output moves the bar (#14).

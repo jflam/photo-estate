@@ -72,7 +72,8 @@ Design points:
   one result is consumed it submits one more. Memory stays flat. (`embed.py` can use plain `imap` since
   its images are 256 px.)
 - **Progress** prints every minute: photos per second, faces found, undecodable count, ETA.
-- Videos and RAW are not scanned (`kind='image'` and `SKIP_EXT`).
+- Videos, RAW and GIF are not scanned (`kind='image'` and `SKIP_EXT`, which is `FACES_SKIP_EXT` in
+  `core/media.py`; `embed.py` skips only RAW).
 
 ## Step 1: detection with SCRFD
 

@@ -29,14 +29,12 @@ from datetime import datetime, timezone
 from multiprocessing import Pool
 from pathlib import Path
 
+from core import config, schema
+from core.media import EMBED_SKIP_EXT as SKIP_EXT   # RAW: Pillow can't decode it
 from encoder import features as _features
 
 DEFAULT_MODEL = "google/siglip2-base-patch16-256"
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS embeddings(
-  sha256 TEXT, model TEXT, dim INT, vec BLOB,   -- float16, L2-normalised; NULL when undecodable
-  error TEXT, created_at TEXT, PRIMARY KEY(sha256, model));
-"""
+SCHEMA = schema.EMBEDDINGS
 # A typed search shows only photos that match it, not the whole library in ranked order. Measured
 # for siglip2-base-patch16-256 with the two-prompt average in encoder.py (cosine between query and
 # photo), on the demo and on a 100k-photo library:
@@ -53,14 +51,13 @@ MATCH_WINDOW = 0.04
 # within 0.025 of the best, and 7-15% of those beyond it; best first, half of the first 60 photos came from
 # the loosest third. So best first keeps only what is within this of the best match.
 BEST_WINDOW = 0.025
-SKIP_EXT = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"}  # Pillow can't decode RAW
 
 
 def connect(db: str) -> sqlite3.Connection:
     con = sqlite3.connect(db, timeout=60)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
-    con.executescript(SCHEMA)
+    schema.ensure(con, "embeddings")
     return con
 
 
@@ -212,7 +209,7 @@ def _library_or_setup(a) -> bool:
     if root and _has_photos(db, a.model):
         a.db, a.store, a.root = db, store, str(root)
         return True
-    port = a.port or (8768 if a.sandbox else 8766)
+    port = config.app_port(a.port, sandbox=a.sandbox)
 
     def app_argv(lib: Library) -> list[str]:
         argv = [sys.executable, str(Path(__file__).resolve()), "--db", lib.db, "--model", a.model,
@@ -270,10 +267,11 @@ def parser() -> argparse.ArgumentParser:
                    " the setup page; with no library yet, the app opens the setup page)")
     s.add_argument("--store", help="the photo store (default: <root>/store)")
     s.add_argument("--sandbox", action="store_true",
-                   help="practise setting up: a scratch library and practice sources made from the demo photos (port 8768)")
+                   help=f"practise setting up: a scratch library and practice sources made from the demo photos (port {config.SANDBOX})")
     s.add_argument("--demo", action="store_true",
                    help="serve the ~100 public-domain photos in demo/ (--db, --store, --cache are ignored; nothing is logged)")
-    s.add_argument("--port", type=int, help="default 8766, or 8767 with --demo so it can run beside the real one")
+    s.add_argument("--port", type=int, help=f"default {config.REAL}, or {config.DEMO} with --demo so it can run beside"
+                   f" the real one ({config.SANDBOX} with --sandbox)")
     s.add_argument("--cache", help="thumbnail cache dir (default: <db dir>/review, shared with estate.py review)")
     s.add_argument("--fast-cache", help="cache dir on a faster disk (e.g. the internal SSD), filled from --cache")
     s.add_argument("--no-pregenerate", action="store_true", help="don't build missing thumbnails in the background")

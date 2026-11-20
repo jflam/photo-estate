@@ -252,7 +252,7 @@ Reading the picture: **`link` is the only stage that rewrites columns of `assets
 | `sqlite3.connect(db, timeout=60)` | embed, faces | A second process waits for the write lock |
 | `PRAGMA busy_timeout=120000` | places | `places` may be run while the app is up |
 | `INSERT OR IGNORE` / `INSERT OR REPLACE` | ingest, embed | Makes batches idempotent |
-| `executescript(SCHEMA)` with `IF NOT EXISTS` | every `connect()` | Self-initialising; no migration step |
+| `schema.ensure(con, area)` ([core/schema.py](../../photo-estate/core/schema.py)) | every `connect()` and owner's open | Self-initialising: `IF NOT EXISTS`, plus columns added only when missing |
 | Commit every N rows (200 ingest; batch embed; 64 faces) | batch jobs | At most N rows of work lost on a crash |
 | `sqlite3 db ".backup 'file'"` | end of both pull scripts | A consistent snapshot while the file is open |
 | Reads in table order, sorted in memory | server startup | On a spinning disk, walking an index turns each row into a seek |
@@ -262,6 +262,28 @@ The last two come straight from measurement ([PERFORMANCE.md](../notes/PERFORMAN
 USB hard disk, reading the `exif` table was 8.7 s of startup, a correlated subquery into
 `occurrences` 5.8 s, and reading embeddings `ORDER BY sha256` via the primary key 2.7 s (against
 0.15 s unordered).
+
+### One schema, and catalogs made by older code
+
+Every table of every database (the catalog, `sync-feed.db` beside it, the setup page's `intake.db`) is
+defined in [core/schema.py](../../photo-estate/core/schema.py), as areas: `catalog`, `embeddings`, `faces`,
+`changes`, `tasks`, `scores`, `favorites`, `sync`, `intake`. Each owner calls `schema.ensure(con, area)`
+when it opens its database (`estate.connect`, `embed.connect`, `faces.connect`, `Changes`, `Tasks`,
+`PhotoApp` for `favorites`, `Feed`, the intake `Store`), never per request. `ensure` runs the area's
+`CREATE ... IF NOT EXISTS` statements and then adds any column listed in `ADDED` that an older table lacks
+(`change_sets.done_at`, `kind`, `query`; `change_items.section`, `position`).
+
+The Mac mini's catalog was made by older code, so the rules are: additive only (nothing is dropped,
+renamed or rewritten; only `places.py` rebuilds the three tables it derives), idempotent, and no table
+scans on open. The DDL is the text the owners ran before, character for character:
+`tests/test_core.py` builds fresh databases through every open path and compares `sqlite_master` with
+`tests/fixtures/schema_baseline.json`, captured from the code before the move. There is no
+`PRAGMA user_version`: every change so far has been an added table or column, which `ensure` detects
+directly.
+
+A reader that opens a database it may not have made (`catalog.load` on the demo or an old catalog,
+`stats.py`, `scores.load`, `changes.hidden_shas`, `places.py`'s reading of its last run, `browse.faces`)
+still checks for a table and treats a missing one as empty.
 
 ## Sizes
 
@@ -310,7 +332,7 @@ WHERE f.source = 'you' GROUP BY p.name ORDER BY 2 DESC;
 
 | Topic | Code |
 |---|---|
-| Schema for ingest, enrichment, tags, search | `SCHEMA` at the top of [estate.py](../../photo-estate/estate.py) |
-| Schema for embeddings | `SCHEMA` in [embed.py](../../photo-estate/embed.py) |
-| Schema for faces and people | `SCHEMA` in [faces.py](../../photo-estate/faces.py) |
+| Every table, of every database, and the additive migrations | [core/schema.py](../../photo-estate/core/schema.py): `CATALOG` (ingest, enrichment, tags, search; `estate.SCHEMA`), `EMBEDDINGS`, `FACES`, `CHANGES`, `TASKS`, `SCORES`, `FAVORITES`, `SYNC`, `INTAKE`, `ADDED` |
+| Which file types are photos and videos | [core/media.py](../../photo-estate/core/media.py) |
+| That a fresh catalog is the same as older code made | `tests/test_core.py`, against `tests/fixtures/schema_baseline.json` |
 | Rebuild-from-scratch of derived tables | the "write" section of `cmd_run` in [places.py](../../photo-estate/places.py) |

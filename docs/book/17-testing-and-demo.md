@@ -23,6 +23,7 @@ tools in `tools/`.
 | `tests/test_tasks.py` | The agent on the library's computer, with a stand-in for Claude Code: it is started with every built-in tool off |
 | `tests/test_photo_app.py` | The photo app in process (`PhotoApp` on the demo library, no subprocess, no model; [chapter 11](11-server.md)): who may write (a viewer is refused every People write, favourites, albums, tasks, intake, the ingest and uploads; a `--upload-user` login and this computer are let in), 400 for `limit=abc`, `cursor=x` and `/api/sync?limit=abc`, 400 for a body that isn't JSON or a `Content-Length` that isn't a number, 413 over the size limit, and the headers (ETag and 304, gzip) through a real server on a free port |
 | `tests/test_http_util.py` | `http_util.py`: `Response` can't be changed, `int_param`, bounded bodies, the auth rule; months outside 1-12; intake's `job` and `after`; the setup server's 400 and 413 |
+| `tests/test_core.py` | `core/` (issue #85): every module's file types are what they were, from one list; `GET /original/<sha>` answers 200 with the right `Content-Type` for `.heif`, `.tif`, `.tiff` and `.avif`; fresh databases from every open path match `tests/fixtures/schema_baseline.json` (captured from the code before), an old `change_sets`/`change_items` gains its columns with its rows kept, a copy of the demo catalog only gains tables, and `favorites` exists once the app opens; the default ports are distinct and the task agent's MCP URL follows the app's port; the screenshot cases in `tests/fixtures/screenshot_rules.json`, and that `Screenshots.swift` lists the same screen sizes |
 
 Every test is a script that runs on its own (`uv run tests/<file>` from `photo-estate/`), needs no
 network, account or model download, and works on a scratch copy, so the checked-in demo library never
@@ -38,7 +39,7 @@ the exit code and the script's last lines. Any other `test_*.py` is an ordinary 
 [`tests/test_harness.py`](../../photo-estate/tests/test_harness.py), which checks the runner itself (a
 script that fails is reported as failed, a slow one is left out of the fast tier, no script is missing
 from the list) and that the modules the light entry points import load no torch, transformers or
-onnxruntime. `tests/test_photo_app.py` and `tests/test_http_util.py` are native too, and in the fast
+onnxruntime. `tests/test_photo_app.py`, `tests/test_http_util.py` and `tests/test_core.py` are native too, and in the fast
 tier: they build the app in process instead of starting it.
 
 ```bash

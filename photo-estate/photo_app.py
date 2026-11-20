@@ -59,6 +59,7 @@ import pages   # the pages, with the shared stylesheet put in
 from admin import Admin, backups
 from browse import Browse
 from changes import Changes
+from core import config, schema
 from embed import connect, now
 from encoder import Encoder
 from estate_mcp import Server as MCPServer
@@ -117,7 +118,7 @@ class PhotoApp:
             a.db, a.store, a.cache, a.fast_cache = str(scratch / "estate.db"), str(demo / "store"), None, None
             a.query_log = a.query_log or os.devnull
         self.store = store = Path(a.store)
-        self.port = a.port or (8767 if a.demo else 8768 if a.sandbox else 8766)
+        self.port = config.app_port(a.port, demo=a.demo, sandbox=a.sandbox)
         # Phone uploads land in a plain folder that `estate.py ingest` reads like any other source. The demo
         # takes none unless --inbox says where; otherwise the inbox sits beside the catalog.
         self.inbox = inbox = Path(a.inbox) if a.inbox else None if a.demo else Path(a.db).resolve().parent / "iphone"
@@ -129,6 +130,9 @@ class PhotoApp:
         # internal SSD, filled from the disk's cache (`seed`) on first use (images.py).
         self.cache = cache = Path(a.fast_cache) if a.fast_cache else seed
         self.t0 = time.time()
+        con = connect(a.db)               # the tables this app writes itself (core/schema.py), made when it opens
+        schema.ensure(con, "favorites")
+        con.close()
         try:
             self.live = live = catalog.Live(self.load_catalog())
         except RuntimeError as e:
@@ -176,7 +180,7 @@ class PhotoApp:
                                cover=lambda ids: self.live.cat.album_cover(ids))
         # Tasks (tasks.py): a request in words, worked on by an agent on this computer that uses the MCP
         # endpoint below like any other client, and ends in a change set.
-        self.tasks = Tasks(a.db, f"http://127.0.0.1:{self.port}/mcp", command=a.agent_cmd, env_file=a.agent_env,
+        self.tasks = Tasks(a.db, config.mcp_url(self.port), command=a.agent_cmd, env_file=a.agent_env,
                            model=a.agent_model, log=lambda msg: print(msg, flush=True))
         self.mcp = MCPServer(SimpleNamespace(find=browse.find, row=browse.row, faces=browse.faces,
                                              overview=browse.overview, changes=self.changes, tasks=self.tasks))
@@ -242,8 +246,6 @@ class PhotoApp:
             changed = [s for s in shas if bool(c.fav[c.index[s]]) != on]
             con = connect(self.a.db)
             try:
-                con.execute("CREATE TABLE IF NOT EXISTS favorites(sha256 TEXT PRIMARY KEY, fav INT NOT NULL,"
-                            " set_at TEXT, set_by TEXT)")
                 t = now()
                 con.executemany("INSERT OR REPLACE INTO favorites VALUES (?,?,?,?)", ((s, int(on), t, who or None) for s in shas))
                 con.commit()

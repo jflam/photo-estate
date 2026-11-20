@@ -80,6 +80,10 @@ photo-estate/                  the server and the web app (Python run with uv; n
   stacks.py             74  near-identical shots as one stack (chapter 25)
   pages.py              38  puts the shared stylesheet into each page as it is sent
   intake/            1,169  the setup page's engine: sources, jobs, the pipeline every source feeds (chapter 16)
+  core/                     what several parts must agree on, standard library only (issue #85):
+    media.py                  file types: extension -> MIME, the image/video/RAW/upload sets, what each decoder skips
+    schema.py                 every SQLite table of every database, and the additive migrations: ensure(con, area)
+    config.py                 the default ports (8766 real, 8767 demo, 8768 preview, 8769 sandbox, 8765 review, 8764 faces)
 
   search.html        2,051  the photo app: Library, Albums and Search (HTML + CSS + JS in one file)
   people.html          749  the People page
@@ -94,7 +98,10 @@ photo-estate/                  the server and the web app (Python run with uv; n
   ingest-iphone.sh      45  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
   tests/             2,268  15 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it;
-                            test_photo_app.py and test_http_util.py call the app in process (chapter 17)
+                            test_photo_app.py and test_http_util.py call the app in process (chapter 17);
+                            test_core.py checks core/ against what the code before it did
+  tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
+                            (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest and ruff settings (chapter 17)
   uv.lock                   every dependency of those groups, pinned; CI installs from it (chapter 17)
   tools/             2,913  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh
@@ -120,7 +127,7 @@ This is where a library becomes a catalog. Its sections (marked by comment banne
 
 | Section | What it does | Chapter |
 |---|---|---|
-| `SCHEMA` and helpers | Every table in the catalog, `connect()`, `blob_path()` | [5](05-catalog.md) |
+| `SCHEMA` and helpers | The catalog's tables (`core/schema.py`'s `CATALOG`), `connect()`, `blob_path()`; file types from `core/media.py` | [5](05-catalog.md) |
 | `ingest` | Stream files out of zips or folders, hash, store, record | [4](04-store-and-ingest.md) |
 | `link` | Match sidecars to media; merge Google, iCloud and Flickr metadata onto assets | [6](06-linking.md) |
 | `exif` | Run `exiftool`, keep the dump, promote camera/lens/exposure | [7](07-places-events-trips.md) |
@@ -218,7 +225,8 @@ flowchart TD
 ```
 
 The batch jobs never import one another, except that `places.py` uses `estate.py`'s schema and
-`reindex`; they are connected only through the SQLite file, which is why each can be run, tested,
+`reindex`; what they must agree on (file types, tables, ports) is in `core/`, which imports only the
+standard library; they are connected only through the SQLite file, which is why each can be run, tested,
 understood and re-run on its own. The server is the one place modules come together: `embed.py serve`
 imports each feature's module (and its own parts: `catalog.py`, `browse.py`, `images.py`, `admin.py`,
 `encoder.py`, which never import `embed.py`) and hands it requests, and every page goes out through `pages.py` so

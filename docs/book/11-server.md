@@ -395,9 +395,12 @@ flowchart TD
   (PERFORMANCE.md).
 - **Immutable URLs.** Names include the hash of the original, which never changes, so responses
   are `Cache-Control: public, max-age=2592000, immutable` (30 days). The browser never asks again.
-- **Original files** are served only for browser-friendly types (`.jpg`, `.jpeg`, `.heic`, `.png`,
-  `.gif`, `.webp`), with a `Content-Disposition` carrying the original file name, so "Save Image"
-  yields the real name. Other types are shared as a large JPEG instead (chapter 13).
+- **Original files** are served for the stills a phone can save (`.jpg`, `.jpeg`, `.png`, `.heic`,
+  `.heif`, `.gif`, `.webp`, `.tif`, `.tiff`, `.avif`: `ORIGINAL_TYPES` in `core/media.py`, with each
+  one's MIME type), with a `Content-Disposition` carrying the original file name, so "Save Image"
+  yields the real name. RAW, BMP and video are shared as a large JPEG instead (chapter 13). Until
+  issue #85 the list was kept by hand here and left out `.heif`, `.tif`, `.tiff` and `.avif`, which
+  answered 404 for photos the catalog holds.
 - **Hash validation.** Every image route first matches `^[0-9a-f]{64}$` and a known photo: there is
   no way to ask the server for an arbitrary path. The same applies to `/original/`.
 - **Pre-generation.** At startup a background pool (`forkserver` start method, so it does not

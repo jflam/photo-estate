@@ -341,7 +341,10 @@ described search or More like this still finds screenshots. When browsing, near-
 out by the same library-wide flag the iPhone uses, as a mask, so a count is the count of what shows and a
 cursor is a position in that list. (A ranked search instead skips, page by page, a photo nearly the same as
 one just shown.) Screenshots are told from what the catalog already holds, as on the iPhone: no camera, and
-exactly a phone or tablet screen's size, or a name that says so.
+exactly a phone or tablet screen's size, or a name that says so. The rule is written twice, in `catalog.py`
+(`SCREEN_SIZES`, `is_screenshot`) and in `Screenshots.swift`; `tests/fixtures/screenshot_rules.json` holds
+cases both should pass. `tests/test_core.py` runs them against `catalog.py` and checks that the Swift size
+list is the same; an iOS unit test reading the same file is still to be written.
 
 Changing a switch reloads both lists (`viewChanged`), with the Library staying at the month it was showing.
 Changing the size lays out both grids again (`setDens`) and keeps the first photo on screen where it was.

@@ -1,0 +1,380 @@
+{
+ "catalog": [
+  [
+   "index",
+   "agent_events_task",
+   "agent_events",
+   "CREATE INDEX agent_events_task ON agent_events(task_id, id)"
+  ],
+  [
+   "index",
+   "exif_camera",
+   "exif",
+   "CREATE INDEX exif_camera ON exif(camera)"
+  ],
+  [
+   "index",
+   "faces_sha",
+   "faces",
+   "CREATE INDEX faces_sha ON faces(sha256)"
+  ],
+  [
+   "index",
+   "occ_sha",
+   "occurrences",
+   "CREATE INDEX occ_sha ON occurrences(sha256)"
+  ],
+  [
+   "index",
+   "places_event",
+   "places",
+   "CREATE INDEX places_event ON places(event_id)"
+  ],
+  [
+   "index",
+   "sqlite_autoindex_albums_1",
+   "albums",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_assets_1",
+   "assets",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_change_items_1",
+   "change_items",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_embeddings_1",
+   "embeddings",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_exif_1",
+   "exif",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_face_later_1",
+   "face_later",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_face_not_1",
+   "face_not",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_face_scans_1",
+   "face_scans",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_favorites_1",
+   "favorites",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_flickr_1",
+   "flickr",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_hidden_1",
+   "hidden",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_occurrences_1",
+   "occurrences",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_persons_1",
+   "persons",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_places_1",
+   "places",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_scorers_1",
+   "scorers",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_sidecars_1",
+   "sidecars",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_sources_1",
+   "sources",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_tags_1",
+   "tags",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_xmp_1",
+   "xmp",
+   null
+  ],
+  [
+   "table",
+   "agent_events",
+   "agent_events",
+   "CREATE TABLE agent_events(\n  id INTEGER PRIMARY KEY, task_id INT, at TEXT,\n  kind TEXT,                         -- say (the agent's words) | tool (a call it made) | error | note\n  text TEXT)"
+  ],
+  [
+   "table",
+   "agent_tasks",
+   "agent_tasks",
+   "CREATE TABLE agent_tasks(\n  id INTEGER PRIMARY KEY, prompt TEXT,\n  status TEXT DEFAULT 'queued',      -- queued | running | done | failed | cancelled\n  created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT,\n  result TEXT, error TEXT, turns INT, cost REAL)"
+  ],
+  [
+   "table",
+   "albums",
+   "albums",
+   "CREATE TABLE albums(dir TEXT PRIMARY KEY, title TEXT, data TEXT)"
+  ],
+  [
+   "table",
+   "assets",
+   "assets",
+   "CREATE TABLE assets(\n  sha256 TEXT PRIMARY KEY, ext TEXT, kind TEXT, size INT, width INT, height INT,\n  dhash INT,                 -- 64-bit perceptual hash stored signed\n  exif_taken_at TEXT,        -- camera local time, no tz\n  taken_at TEXT,             -- merged: sidecar UTC, else EXIF\n  lat REAL, lon REAL, description TEXT, people TEXT, favorited INT DEFAULT 0, first_seen TEXT)"
+  ],
+  [
+   "table",
+   "change_items",
+   "change_items",
+   "CREATE TABLE change_items(\n  set_id INT, sha256 TEXT,\n  decision TEXT DEFAULT 'pending',   -- pending (nobody has said: as proposed) | accept | reject (keep it)\n  applied INT DEFAULT 0,             -- 1 while this set is hiding the photo\n  score REAL, reason TEXT, decided_at TEXT, section TEXT, position INTEGER, PRIMARY KEY(set_id, sha256))"
+  ],
+  [
+   "table",
+   "change_sets",
+   "change_sets",
+   "CREATE TABLE change_sets(\n  id INTEGER PRIMARY KEY, title TEXT, prompt TEXT, op TEXT DEFAULT 'hide',\n  status TEXT DEFAULT 'open',        -- open | reverted | done\n  created_by TEXT, created_at TEXT, updated_at TEXT, applied_at TEXT, reverted_at TEXT, done_at TEXT, kind TEXT DEFAULT 'list', query TEXT)"
+  ],
+  [
+   "table",
+   "embeddings",
+   "embeddings",
+   "CREATE TABLE embeddings(\n  sha256 TEXT, model TEXT, dim INT, vec BLOB,   -- float16, L2-normalised; NULL when undecodable\n  error TEXT, created_at TEXT, PRIMARY KEY(sha256, model))"
+  ],
+  [
+   "table",
+   "events",
+   "events",
+   "CREATE TABLE events(\n  id INTEGER PRIMARY KEY,    -- start time as UTC epoch seconds: stable across re-runs\n  start_local TEXT, end_local TEXT, n INT, title TEXT, place TEXT, lat REAL, lon REAL,\n  km_from_home REAL, trip_id INT)"
+  ],
+  [
+   "table",
+   "exif",
+   "exif",
+   "CREATE TABLE exif(      -- exiftool -n -G1 dump (MakerNotes and binary blobs left out)\n  sha256 TEXT PRIMARY KEY, camera TEXT, make TEXT, model TEXT, lens TEXT,\n  focal REAL, focal35 REAL, fnumber REAL, exposure REAL, iso INT, software TEXT,\n  duration REAL, fps REAL, data TEXT, error TEXT)"
+  ],
+  [
+   "table",
+   "face_later",
+   "face_later",
+   "CREATE TABLE face_later(   -- \"is this ...?\" skipped for now: still unnamed, asked again later\n  face_id INT, person_id INT, created_at TEXT, PRIMARY KEY(face_id, person_id))"
+  ],
+  [
+   "table",
+   "face_not",
+   "face_not",
+   "CREATE TABLE face_not(     -- \"this face is not that person\", so it's never suggested again\n  face_id INT, person_id INT, PRIMARY KEY(face_id, person_id))"
+  ],
+  [
+   "table",
+   "face_scans",
+   "face_scans",
+   "CREATE TABLE face_scans(   -- every image looked at, including those with no faces\n  sha256 TEXT, model TEXT, n INT, error TEXT, created_at TEXT, PRIMARY KEY(sha256, model))"
+  ],
+  [
+   "table",
+   "faces",
+   "faces",
+   "CREATE TABLE faces(\n  id INTEGER PRIMARY KEY, sha256 TEXT, idx INT, model TEXT,\n  x REAL, y REAL, w REAL, h REAL,   -- the box, as fractions of the upright image\n  score REAL,                       -- detector confidence, 0-1\n  px INT,                           -- the box's longer side in pixels, at the size it was read\n  vec BLOB,                         -- float16 x 512, L2-normalised\n  person_id INT,                    -- persons.id; 0 = a face you chose not to name; NULL = unknown\n  source TEXT,                      -- who says so: 'you', 'google' or 'auto'\n  labeled_at TEXT)"
+  ],
+  [
+   "table",
+   "favorites",
+   "favorites",
+   "CREATE TABLE favorites(sha256 TEXT PRIMARY KEY, fav INT NOT NULL, set_at TEXT, set_by TEXT)"
+  ],
+  [
+   "table",
+   "flickr",
+   "flickr",
+   "CREATE TABLE flickr(    -- Flickr account-data photo_<id>.json, keyed by photo id\n  id TEXT PRIMARY KEY, data TEXT)"
+  ],
+  [
+   "table",
+   "hidden",
+   "hidden",
+   "CREATE TABLE hidden(   -- a photo is hidden while any row names it\n  sha256 TEXT, set_id INT, hidden_at TEXT, PRIMARY KEY(sha256, set_id))"
+  ],
+  [
+   "table",
+   "occurrences",
+   "occurrences",
+   "CREATE TABLE occurrences(\n  id INTEGER PRIMARY KEY, sha256 TEXT NOT NULL, source TEXT, path TEXT, dir TEXT, filename TEXT,\n  album TEXT, sidecar_id INT, UNIQUE(source, path))"
+  ],
+  [
+   "table",
+   "persons",
+   "persons",
+   "CREATE TABLE persons(\n  id INTEGER PRIMARY KEY, name TEXT UNIQUE, born TEXT, created_at TEXT)"
+  ],
+  [
+   "table",
+   "places",
+   "places",
+   "CREATE TABLE places(    -- places.py: where and when (rebuilt on every run)\n  sha256 TEXT PRIMARY KEY, city TEXT,\n  locality TEXT,             -- the nearer suburb/neighbourhood when a big city was chosen as `city`\n  admin2 TEXT, admin1 TEXT, country TEXT, cc TEXT,\n  place_source TEXT,         -- gps | event (inferred from the photo's event)\n  tz TEXT, tz_source TEXT,   -- IANA name or fixed offset, from gps | exif | event | home\n  local_time TEXT,           -- wall-clock time where the photo was taken, no offset\n  utc_time TEXT, event_id INT)"
+  ],
+  [
+   "table",
+   "scorers",
+   "scorers",
+   "CREATE TABLE scorers(\n  name TEXT, model TEXT,            -- quality | taste; the embedding model the weights are for\n  w BLOB, b REAL,                   -- float32 weights, one per embedding dimension; score = w . vec + b\n  info TEXT, updated_at TEXT, PRIMARY KEY(name, model))"
+  ],
+  [
+   "table",
+   "search",
+   "search",
+   "CREATE VIRTUAL TABLE search USING fts5(sha256 UNINDEXED, text)"
+  ],
+  [
+   "table",
+   "search_config",
+   "search_config",
+   "CREATE TABLE 'search_config'(k PRIMARY KEY, v) WITHOUT ROWID"
+  ],
+  [
+   "table",
+   "search_content",
+   "search_content",
+   "CREATE TABLE 'search_content'(id INTEGER PRIMARY KEY, c0, c1)"
+  ],
+  [
+   "table",
+   "search_data",
+   "search_data",
+   "CREATE TABLE 'search_data'(id INTEGER PRIMARY KEY, block BLOB)"
+  ],
+  [
+   "table",
+   "search_docsize",
+   "search_docsize",
+   "CREATE TABLE 'search_docsize'(id INTEGER PRIMARY KEY, sz BLOB)"
+  ],
+  [
+   "table",
+   "search_idx",
+   "search_idx",
+   "CREATE TABLE 'search_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID"
+  ],
+  [
+   "table",
+   "sidecars",
+   "sidecars",
+   "CREATE TABLE sidecars(\n  id INTEGER PRIMARY KEY, dir TEXT, filename TEXT, title TEXT, data TEXT, UNIQUE(dir, filename))"
+  ],
+  [
+   "table",
+   "sources",
+   "sources",
+   "CREATE TABLE sources(\n  name TEXT PRIMARY KEY, entries INT, media INT, new_assets INT, bytes_seen INT, bytes_new INT,\n  finished_at TEXT)"
+  ],
+  [
+   "table",
+   "tags",
+   "tags",
+   "CREATE TABLE tags(\n  sha256 TEXT, model TEXT, caption TEXT, tags TEXT, data TEXT, seconds REAL, created_at TEXT,\n  PRIMARY KEY(sha256, model))"
+  ],
+  [
+   "table",
+   "trips",
+   "trips",
+   "CREATE TABLE trips(\n  id INTEGER PRIMARY KEY, start_local TEXT, end_local TEXT, n INT, n_events INT, title TEXT, place TEXT)"
+  ],
+  [
+   "table",
+   "xmp",
+   "xmp",
+   "CREATE TABLE xmp(       -- icloudpd --xmp-sidecar files: X.HEIC.xmp next to X.HEIC\n  dir TEXT, filename TEXT, data TEXT, PRIMARY KEY(dir, filename))"
+  ]
+ ],
+ "sync": [
+  [
+   "index",
+   "sqlite_autoindex_kv_1",
+   "kv",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_rows_1",
+   "rows",
+   null
+  ],
+  [
+   "table",
+   "kv",
+   "kv",
+   "CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)"
+  ],
+  [
+   "table",
+   "rows",
+   "rows",
+   "CREATE TABLE rows (sha TEXT PRIMARY KEY, digest BLOB, ver INTEGER, gone INTEGER DEFAULT 0)"
+  ]
+ ],
+ "intake": [
+  [
+   "index",
+   "events_job",
+   "events",
+   "CREATE INDEX events_job ON events(job_id, id)"
+  ],
+  [
+   "table",
+   "events",
+   "events",
+   "CREATE TABLE events(id INTEGER PRIMARY KEY, job_id INT, at REAL, text TEXT)"
+  ],
+  [
+   "table",
+   "jobs",
+   "jobs",
+   "CREATE TABLE jobs(\n  id INTEGER PRIMARY KEY, source TEXT NOT NULL, config TEXT NOT NULL,\n  state TEXT NOT NULL,          -- queued | running | waiting | done | failed | cancelled\n  stage TEXT NOT NULL,          -- the stage it is in, or resumes from\n  done INT, total INT, detail TEXT, error TEXT, warnings TEXT DEFAULT '[]',\n  paths TEXT,                   -- what acquire handed to ingest (JSON list)\n  prompt TEXT,                  -- what it is waiting for (JSON, never a secret)\n  media_before INT, media_after INT,\n  created_at REAL, updated_at REAL, ready_at REAL, finished_at REAL)"
+  ]
+ ]
+}

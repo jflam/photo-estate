@@ -5,9 +5,13 @@ their own; the photo app decides who may write from `tailscale serve`'s `Tailsca
 
 | Server | Started by | Default port | Purpose |
 |---|---|---|---|
-| **Photo app** | `embed.py serve` | 8766 (8767 with `--demo`) | The product; also hosts the People page |
-| **People page alone** | `faces.py serve` | 8768 | Naming only |
+| **Photo app** | `embed.py serve` | 8766 (8767 with `--demo`, 8769 with `--sandbox`) | The product; also hosts the People page |
+| **People page alone** | `faces.py serve` | 8764 | Naming only |
 | **Duplicate review** | `estate.py review` | 8765 | Near-duplicate choices |
+
+The defaults are in [core/config.py](../../photo-estate/core/config.py). Port 8768 belongs to the cloud preview
+on the Mac mini (`deploy/preview-branch.sh`, [chapter 27](27-built-with-claude.md)); before issue #73,
+`--sandbox` and `faces.py serve` defaulted to it too.
 
 ## The photo app
 
@@ -212,7 +216,7 @@ protect, has no rule of its own.
 | `GET /thumb/<sha>` | 360 px JPEG |
 | `GET /preview/<sha>` | 1600 px JPEG |
 | `GET /large/<sha>` | 4096 px JPEG |
-| `GET /original/<sha>` | The stored file (`.jpg`, `.jpeg`, `.heic`, `.png`, `.gif`, `.webp` only), `Content-Disposition: inline; filename*=UTF-8''<original name>` |
+| `GET /original/<sha>` | The stored file, for the stills a phone can save (`.jpg`, `.jpeg`, `.png`, `.heic`, `.heif`, `.gif`, `.webp`, `.tif`, `.tiff`, `.avif`; `ORIGINAL_TYPES` in [core/media.py](../../photo-estate/core/media.py)), with that type's `Content-Type` and `Content-Disposition: inline; filename*=UTF-8''<original name>`; 404 for RAW, BMP and video |
 
 All four validate `<sha>` as 64 lowercase hex characters of a known photo (else 404) and are served
 `public, max-age=2592000, immutable`.
