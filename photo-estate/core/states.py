@@ -18,12 +18,28 @@ else) turns it into a member where the code needs one.
   ClusterState   faces.People's clustering of unnamed faces: waiting | working | ready | failed
 
 Beside the lifecycles, the sets of states the modules test against: TASK_ACTIVE (a task that can be
-cancelled), JOB_ACTIVE and JOB_RETRYABLE (intake jobs). The transitions themselves are the modules'
-(upload.IngestJob.MOVES is the one written down as a table so far).
+cancelled), JOB_ACTIVE and JOB_RETRYABLE (intake jobs).
+
+The moves each lifecycle may make are tables, {state: the states it may go to}, and every write of a
+state goes through check_move(table, from, to, what), which raises IllegalMove for any other step
+(issue #86): TASK_MOVES (tasks.Tasks.move), JOB_MOVES (intake.engine.Store.move), and
+upload.IngestJob.MOVES (IngestJob._to). core.lifecycle's MOVES is checked the same way.
 """
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Collection, Mapping
+
+
+class IllegalMove(RuntimeError):
+    """A state change its lifecycle's table does not allow: a bug (or a lost race) that shows."""
+
+
+def check_move(moves: Mapping, a, b, what: str = "") -> None:
+    """Raise IllegalMove unless `moves` lets state `a` go to `b`."""
+    allowed: Collection = moves.get(a, ())
+    if b not in allowed:
+        raise IllegalMove(f"{what + ': ' if what else ''}{a} -> {b}")
 
 
 class ChangeOp(StrEnum):
@@ -52,6 +68,11 @@ class TaskStatus(StrEnum):
 
 
 TASK_ACTIVE = frozenset({TaskStatus.QUEUED, TaskStatus.RUNNING})     # a task that can still be cancelled
+TASK_MOVES: dict[TaskStatus, frozenset[TaskStatus]] = {
+    TaskStatus.QUEUED: frozenset({TaskStatus.RUNNING, TaskStatus.CANCELLED}),     # the worker claims it, or it is withdrawn
+    TaskStatus.RUNNING: frozenset({TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED}),   # failed: also an app restart
+    TaskStatus.DONE: frozenset(), TaskStatus.FAILED: frozenset(), TaskStatus.CANCELLED: frozenset(),
+}
 
 
 class IngestState(StrEnum):
@@ -73,6 +94,17 @@ class JobState(StrEnum):
 
 JOB_ACTIVE = frozenset({JobState.QUEUED, JobState.RUNNING, JobState.WAITING})   # not finished: can be cancelled
 JOB_RETRYABLE = frozenset({JobState.FAILED, JobState.CANCELLED})                 # can be tried again
+_J = JobState
+JOB_MOVES: dict[JobState, frozenset[JobState]] = {
+    _J.QUEUED: frozenset({_J.RUNNING, _J.CANCELLED}),                       # the engine claims it, or it is withdrawn
+    _J.RUNNING: frozenset({_J.WAITING, _J.DONE, _J.FAILED, _J.CANCELLED,
+                           _J.QUEUED}),                                     # queued: a restart resumes it
+    _J.WAITING: frozenset({_J.RUNNING, _J.FAILED, _J.CANCELLED, _J.QUEUED}),   # running: the person answered
+    _J.DONE: frozenset(),
+    _J.FAILED: frozenset({_J.QUEUED}),                                      # retry()
+    _J.CANCELLED: frozenset({_J.QUEUED}),
+}
+del _J
 
 
 class StageState(StrEnum):

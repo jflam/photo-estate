@@ -65,7 +65,11 @@ asks where the library should live and where the photos are now, then runs the s
 which of its seven steps it is on ("Step 2 of 7 · Copying them into your library · 9,100 of 15,856"),
 names them all, and marks the one after which photos are searchable; a step that can't count says how
 long it has been running. Its `link` covers only what the job brought in (`--source`, [chapter 6](06-linking.md)).
-Jobs are kept in `intake.db` beside the catalog and resume from their stage after a restart; the
+Jobs are kept in `intake.db` beside the catalog and resume from their stage after a restart. A job's
+state (queued, running, waiting, done, failed, cancelled) changes only by the moves in
+`core/states.py`'s `JOB_MOVES`, each one checked and written by `Store.move` in one step, and the
+engine claims a queued job the same way, so a job cancelled while it waits its turn is never started;
+cancelling a running one stops its step with SIGTERM, then SIGKILL ten seconds later (issue #86). The
 setup page stays at `/setup` (the **+** in the library's header) for adding sources later. The code
 is in `intake/`, and [INTAKE-PLAN.md](../notes/INTAKE-PLAN.md) explains how sources plug in.
 
@@ -119,6 +123,9 @@ keep being answered from the old catalog until the new one is ready. The reload 
 script says the photos are searchable ("catalog ready", after embeddings); faces run on, and the People
 page reloads when they finish. A failed run is retried after
 10 minutes, up to three times; uploads left in the inbox from before a start are picked up at startup.
+`IngestJob` (upload.py) is one state at a time (idle, quiet, starting, running, backoff) and a step its
+`MOVES` table does not list raises, rather than being logged and taken anyway; a run started by hand
+cancels the quiet-period timer, since that run catalogues whatever the timer was waiting for (issue #86).
 
 ## Running it as a service (macOS)
 

@@ -15,7 +15,14 @@ its catalog, or in setup mode becomes the full app). Faces run on after that.
 Jobs live in intake.db beside the catalog, never in it, so the catalog keeps a single writer of what it
 holds (estate.py). Every stage can run again and does only new work, so a job stopped anywhere (a
 restart, a crash, a cancel) resumes from the stage it was in. What a person types to sign in is held in
-memory for the running job only: never written down, never returned by the API."""
+memory for the running job only: never written down, never returned by the API.
+
+A job's state moves only as core.states.JOB_MOVES allows, and only through Store.move, which checks the
+step and writes it in one conditional UPDATE under the store's lock (Store.set refuses `state`). The
+engine's own view of the job it is running (`current`, `proc`, `asking`, `cancelled`) is read and written
+under one lock, `guard`, so a cancel and the job starting or ending are ordered: a job cancelled while
+queued is never claimed (queued -> running fails, and it is never run), and a running job's cancel
+stops its stage's process with SIGTERM, then SIGKILL after `grace` seconds (core.procs.stop)."""
 from __future__ import annotations
 
 import json
@@ -30,7 +37,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from core import schema   # photo-estate/core, beside this package
-from core.states import JOB_ACTIVE, JOB_RETRYABLE, JobState, StageState
+from core.procs import stop
+from core.states import JOB_ACTIVE, JOB_MOVES, JOB_RETRYABLE, JobState, StageState, check_move
 
 from .base import SOURCES, Cancelled, Context, Prompt
 
@@ -50,6 +58,7 @@ LOCK = Path(os.environ.get("TMPDIR", "/tmp")) / "photo-estate-ingest-iphone.lock
 
 SCHEMA = schema.INTAKE
 ACTIVE = JOB_ACTIVE            # queued, running or waiting: not finished
+CLAIMED = frozenset({JobState.RUNNING, JobState.WAITING})   # a job the engine has taken up
 
 
 class Store:
@@ -74,13 +83,44 @@ class Store:
         assert jid is not None
         return jid
 
-    def set(self, job_id: int, **kv) -> None:
+    COLS = frozenset({"source", "config", "stage", "detail", "done", "total", "paths", "prompt", "warnings", "error",
+                      "media_before", "media_after", "ready_at", "finished_at"})   # what set() may write
+
+    @staticmethod
+    def _row(kv: dict) -> dict:
         kv["updated_at"] = time.time()
         for k in ("paths", "prompt", "warnings"):
             if k in kv and not isinstance(kv[k], (str, type(None))):
                 kv[k] = json.dumps(kv[k])
+        return kv
+
+    def set(self, job_id: int, **kv) -> None:
+        """Write some of a job's COLS. Its state is move()'s: ValueError for `state` or any other column."""
+        if bad := set(kv) - self.COLS:
+            raise ValueError(f"not a job field set() writes: {', '.join(sorted(bad))}")
+        kv = self._row(kv)
         with self.lock:
             self.con.execute(f"UPDATE jobs SET {', '.join(f'{k}=?' for k in kv)} WHERE id=?", (*kv.values(), job_id))
+
+    def move(self, job_id: int, to: JobState, only_from=None, **kv) -> bool:
+        """Move a job to state `to` (with COLS beside it), checked against JOB_MOVES. With `only_from` (a set
+        of states), a job found in any other state is left as it is and the answer is False: the caller lost
+        a race (a cancel came first). Otherwise any step JOB_MOVES does not allow raises IllegalMove.
+        KeyError if there is no such job."""
+        if bad := set(kv) - self.COLS:
+            raise ValueError(f"not a job field: {', '.join(sorted(bad))}")
+        kv = self._row(kv)
+        with self.lock:      # the read and the write together: nothing else touches the job in between
+            row = self.con.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"no intake job {job_id}")
+            was = JobState(row[0])
+            if only_from is not None and was not in only_from:
+                return False
+            check_move(JOB_MOVES, was, to, f"intake job {job_id}")
+            cur = self.con.execute(f"UPDATE jobs SET {', '.join(f'{k}=?' for k in ('state', *kv))} WHERE id=? AND state=?",
+                                   (to, *kv.values(), job_id, was))
+            return cur.rowcount == 1
 
     def event(self, job_id: int, text: str) -> None:
         with self.lock:
@@ -182,7 +222,7 @@ TODO = re.compile(r"(?P<total>\d+) (new images )?to (do|scan)")
 class Engine:
     def __init__(self, root: Path, db: str, store: Path, here: Path, *, on_ready=None, on_faces=None,
                  practice: bool = False, skip: set[str] | None = None, uv: str | None = None,
-                 lock: CatalogLock | None = None):
+                 lock: CatalogLock | None = None, grace: float = 10.0):
         self.root, self.db, self.store, self.here = Path(root), db, Path(store), Path(here)
         self.on_ready, self.on_faces = on_ready, on_faces
         self.practice = practice
@@ -192,6 +232,8 @@ class Engine:
         self.jobs = Store(Path(db).resolve().parent / "intake.db")
         self.staging = Path(db).resolve().parent / "intake"
         self.wake = threading.Condition()
+        self.grace = grace                  # seconds between SIGTERM and SIGKILL when a cancel stops a stage
+        self.guard = threading.Lock()       # current, proc, asking and cancelled: read and written under it
         self.asking: dict[int, dict] = {}   # job id -> {"prompt", "event", "value"}: answers live only here
         self.cancelled: set[int] = set()
         self.proc: subprocess.Popen | None = None
@@ -223,33 +265,37 @@ class Engine:
         return jid
 
     def answer(self, jid: int, value: str) -> bool:
-        a = self.asking.get(jid)
-        if not a:
-            return False
-        a["value"] = value
-        a["event"].set()
-        return True
+        with self.guard:
+            a = self.asking.get(jid)
+            if not a:
+                return False
+            a["value"] = value
+            a["event"].set()
+            return True
 
     def cancel(self, jid: int) -> bool:
-        j = self.jobs.get(jid)
-        if not j or j["state"] not in ACTIVE:
-            return False
-        if self.current == jid:
-            self.cancelled.add(jid)
-            if a := self.asking.get(jid):
-                a["event"].set()
-            if self.proc and self.proc.poll() is None:
-                self.proc.terminate()
-        else:
-            self.jobs.set(jid, state=JobState.CANCELLED, finished_at=time.time(), prompt=None)
+        proc = None
+        with self.guard:     # against _run() claiming or finishing it: one of the two goes first
+            j = self.jobs.get(jid)
+            if not j or j["state"] not in ACTIVE:
+                return False
+            if self.current == jid:
+                self.cancelled.add(jid)          # _run() ends it as cancelled at its next check
+                if a := self.asking.get(jid):
+                    a["event"].set()
+                if self.proc and self.proc.poll() is None:
+                    proc = self.proc
+            elif not self.jobs.move(jid, JobState.CANCELLED, ACTIVE, finished_at=time.time(), prompt=None):
+                return False                     # not ours to run, and no longer active
+        if proc:             # SIGTERM, then SIGKILL after the grace: not in this request's thread
+            threading.Thread(target=stop, args=(proc, self.grace), daemon=True, name=f"stop intake {jid}").start()
         self.jobs.event(jid, "cancelled")
         return True
 
     def retry(self, jid: int) -> bool:
         j = self.jobs.get(jid)
-        if not j or j["state"] not in JOB_RETRYABLE:
+        if not j or not self.jobs.move(jid, JobState.QUEUED, JOB_RETRYABLE, error=None, finished_at=None):
             return False
-        self.jobs.set(jid, state=JobState.QUEUED, error=None, finished_at=None)
         self.jobs.event(jid, f"trying again from “{dict(STAGES)[j['stage']]}”")
         self.poke()
         return True
@@ -286,8 +332,7 @@ class Engine:
 
     def start(self) -> None:
         for j in self.jobs.all():        # stopped mid-job last time (a restart): carry on where it was
-            if j["state"] in (JobState.RUNNING, JobState.WAITING):
-                self.jobs.set(j["id"], state=JobState.QUEUED, prompt=None)
+            if self.jobs.move(j["id"], JobState.QUEUED, CLAIMED, prompt=None):
                 self.jobs.event(j["id"], "resuming after a restart")
         self.thread = threading.Thread(target=self._loop, daemon=True, name="intake")
         self.thread.start()
@@ -306,10 +351,12 @@ class Engine:
             self._run(nxt[0][0])
 
     def _run(self, jid: int) -> None:
+        with self.guard:     # the claim: only a job still queued (a cancel may have landed since _loop's SELECT)
+            if not self.jobs.move(jid, JobState.RUNNING, {JobState.QUEUED}, error=None):
+                return
+            self.current = jid
         j = self.jobs.job(jid)
         src = SOURCES.get(j["source"])
-        self.current = jid
-        self.jobs.set(jid, state=JobState.RUNNING, error=None)
         log = lambda text: self.jobs.event(jid, text)
         try:
             if src is None:
@@ -337,24 +384,32 @@ class Engine:
                     self.jobs.set(jid, stage=nxt, ready_at=time.time(), media_after=media_count(self.db))
                     log("your photos are in the library and searchable")
                     self._tell(self.on_ready, jid)
-            self.jobs.set(jid, state=JobState.DONE, finished_at=time.time(), detail="Done", prompt=None,
-                          media_after=media_count(self.db))
+            after = media_count(self.db)
+            with self.guard:     # a cancel that came in after the last stage still wins
+                self._check(jid)
+                self.jobs.move(jid, JobState.DONE, finished_at=time.time(), detail="Done", prompt=None, media_after=after)
             log("done")
             if "faces" not in self.skip:
                 self._tell(self.on_faces, jid)
         except Cancelled:
-            self.jobs.set(jid, state=JobState.CANCELLED, finished_at=time.time(), prompt=None, detail="Cancelled")
+            self.jobs.move(jid, JobState.CANCELLED, CLAIMED, finished_at=time.time(), prompt=None, detail="Cancelled")
         except Exception as e:   # a source or a stage failed: say why, keep the stage so a retry resumes there
-            msg = str(e) or type(e).__name__
-            self.jobs.set(jid, state=JobState.FAILED, error=msg, finished_at=time.time(), prompt=None)
-            log(f"failed: {msg}")
+            with self.guard:
+                cancelled = jid in self.cancelled    # it failed because it was stopped: that was a cancel
+            if cancelled:
+                self.jobs.move(jid, JobState.CANCELLED, CLAIMED, finished_at=time.time(), prompt=None, detail="Cancelled")
+            else:
+                msg = str(e) or type(e).__name__
+                self.jobs.move(jid, JobState.FAILED, CLAIMED, error=msg, finished_at=time.time(), prompt=None)
+                log(f"failed: {msg}")
         finally:
-            self.cancelled.discard(jid)
-            self.asking.pop(jid, None)
-            self.current = None
+            with self.guard:
+                self.cancelled.discard(jid)
+                self.asking.pop(jid, None)
+                self.current = None
 
     def _check(self, jid):
-        if jid in self.cancelled:
+        if jid in self.cancelled:     # a set's `in` is atomic: callers outside the guard see it or not
             raise Cancelled()
 
     def _acquire(self, jid: int, src, j: dict) -> list[Path]:
@@ -371,13 +426,16 @@ class Engine:
 
         def ask(prompt: Prompt) -> str:
             ev = threading.Event()
-            self.asking[jid] = {"prompt": prompt, "event": ev, "value": None}
-            self.jobs.set(jid, state=JobState.WAITING, prompt=asdict(prompt), detail=prompt.label)
+            with self.guard:     # a cancel before this finds no question to wake: it is seen here instead
+                self._check(jid)
+                self.asking[jid] = {"prompt": prompt, "event": ev, "value": None}
+            self.jobs.move(jid, JobState.WAITING, prompt=asdict(prompt), detail=prompt.label)
             self.jobs.event(jid, f"waiting for you: {prompt.label}")
             ev.wait()
-            value = self.asking.pop(jid, {}).get("value")
-            self._check(jid)
-            self.jobs.set(jid, state=JobState.RUNNING, prompt=None)
+            with self.guard:
+                value = self.asking.pop(jid, {}).get("value")
+                self._check(jid)
+            self.jobs.move(jid, JobState.RUNNING, prompt=None)
             return value or ""
 
         ctx = Context(jid, staging, lambda t: self.jobs.event(jid, t), progress, ask,
@@ -425,8 +483,10 @@ class Engine:
             self.jobs.set(jid, detail=dict(STAGES)[stage], done=None, total=None if stage != "ingest" else self.jobs.job(jid)["total"])
             self.stage_started[jid] = time.time()
             env = dict(os.environ, PYTHONUNBUFFERED="1")
-            proc = self.proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                                stdin=subprocess.DEVNULL, env=env, cwd=self.here)
+            with self.guard:     # a cancel before this is seen here; one after finds the process to stop
+                self._check(jid)
+                proc = self.proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                                    stdin=subprocess.DEVNULL, env=env, cwd=self.here)
             assert proc.stdout is not None   # stdout=PIPE
             tail = []
             total = self.jobs.job(jid)["total"] if stage == "ingest" else None
@@ -457,7 +517,8 @@ class Engine:
             if code != 0:
                 raise RuntimeError(f"{stage} stopped (exit {code}): " + (tail[-1] if tail else "no output"))
         finally:
-            self.proc = None
+            with self.guard:
+                self.proc = None
             self.lock.release()
 
     @staticmethod

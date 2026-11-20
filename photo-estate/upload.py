@@ -24,7 +24,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from core.media import UPLOAD_EXT as MEDIA_EXT   # what a phone sends: not every type ingest takes (issue #10)
-from core.states import IngestState
+from core.states import IngestState, check_move
 
 ALLOWED_EXT = MEDIA_EXT | {".xmp"}
 MAX_BYTES = 8 << 30          # a long 4K video is a few GB
@@ -146,7 +146,11 @@ class IngestJob:
       quiet     uploads have arrived: the timer runs out once they have been quiet long enough
       starting  the timer ran out: the app is finishing its own work on the uploads (before_run)
       running   the script is going (`again`: an upload arrived meanwhile, so run once more after it)
-      backoff   the last run failed: the timer starts another in ten minutes"""
+      backoff   the last run failed: the timer starts another in ten minutes
+
+    A step that is not in MOVES raises IllegalMove (issue #86). Every step is taken under `lock`, and so
+    is every change to `log`, `timer` and `proc`. Starting a run (by hand, or when the timer runs out)
+    cancels any timer still armed, so the only timer that can fire is the current one."""
 
     S = IngestState
     MOVES: dict[IngestState, tuple[IngestState, ...]] = {
@@ -177,8 +181,7 @@ class IngestJob:
         self.fresh = False        # a run added photos, so the app has not loaded them yet
 
     def _to(self, state: IngestState) -> None:      # lock held
-        if state not in self.MOVES[self.state]:
-            print(f"ingest: unexpected step {self.state} -> {state}", flush=True)
+        check_move(self.MOVES, self.state, state, "ingest")
         self.state = state
 
     def waiting(self) -> dict:
@@ -210,11 +213,11 @@ class IngestJob:
                     "waiting": waiting}
 
     def start(self) -> bool:
-        """Start a run; False if one is already going."""
+        """Start a run; False if one is already going (until its output has been followed to the end)."""
         import subprocess
         import threading
         with self.lock:
-            if self.proc is not None and self.proc.poll() is None:
+            if self.state == IngestState.RUNNING:
                 return False
             env = dict(os.environ, DB=str(self.db), STORE=str(self.store), INBOX=str(self.inbox))
             env.pop("RESTART", None)   # the page asks for a restart separately: it would kill this run's output
@@ -222,6 +225,9 @@ class IngestJob:
             self.started, self.finished, self.code = time.time(), None, None
             self.proc = subprocess.Popen([str(self.script), str(self.root)], stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, text=True, env=env, stdin=subprocess.DEVNULL)
+            if self.timer is not None:      # this run picks up whatever the timer was waiting for
+                self.timer.cancel()
+                self.timer, self.first_poke = None, None
             self._to(IngestState.RUNNING)
             threading.Thread(target=self._follow, args=(self.proc,), daemon=True).start()
             return True
@@ -283,7 +289,10 @@ class IngestJob:
         self.timer.start()
 
     def _fire(self) -> None:
+        import threading
         with self.lock:
+            if self.timer is not threading.current_thread():   # cancelled (or replaced) as it went off
+                return
             self.timer, self.first_poke = None, None
             if self.state == IngestState.RUNNING:     # one is already going (started by hand): look again when it ends
                 self.again = 0.0
@@ -309,7 +318,8 @@ class IngestJob:
         added = told = False
         for line in proc.stdout:
             line = line.rstrip()
-            self.log.append(line)
+            with self.lock:                  # status() copies the log under the lock
+                self.log.append(line)
             added = added or "new assets and sidecars" in line
             if added and not told and line.endswith(" catalog ready"):   # searchable now; faces still to come
                 told = True
@@ -332,8 +342,8 @@ class IngestJob:
             elif self.quiet and self.again is not None:
                 self._arm(self.again)
                 self._to(IngestState.QUIET)
-            else:                              # (a timer left from before a run started by hand is still to fire)
-                self._to(IngestState.QUIET if self.timer is not None else IngestState.IDLE)
+            else:
+                self._to(IngestState.IDLE)
             self.again = None
         if added and not told and self.on_added:     # a script without the "catalog ready" line
             self._tell(self.on_added)

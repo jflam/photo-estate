@@ -87,8 +87,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
     config.py                 the default ports (8766 real, 8767 demo, 8768 preview, 8769 sandbox, 8765 review, 8764 faces)
     states.py                 the finite string domains as StrEnums (change set op/status/state, decisions, task,
                               ingest, intake job and stage, clustering), each value the string already stored (issue #90)
+                              and the moves each job lifecycle may make (TASK_MOVES, JOB_MOVES) with check_move,
+                              which raises IllegalMove for any other (issue #86)
     lifecycle.py              Lifecycle: idle | loading | ready | failed for what loads in a thread (the search
                               model, the People page), under a lock, so a request hears "loading" or "failed" (issue #82)
+    procs.py                  stop(proc, grace): SIGTERM, then SIGKILL after the grace (tasks, intake jobs; issue #86)
 
   search.html        2,051  the photo app: Library, Albums and Search (HTML + CSS + JS in one file)
   people.html          749  the People page
@@ -109,7 +112,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_types.py checks the typed contracts (Catalog's fields, the enums) and runs pyright;
                             test_lifecycle.py makes the background loaders fail and race on purpose (issue #82);
                             test_live_races.py races reloads, favourites, Browse's cache and the gate (issue #83);
-                            test_faces_consistency.py keeps People's memory, SQLite and the face journal agreeing (issue #87)
+                            test_faces_consistency.py keeps People's memory, SQLite and the face journal agreeing (issue #87);
+                            test_job_lifecycles.py races the ingest job, tasks, intake jobs and the sync cursor (issue #86)
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)

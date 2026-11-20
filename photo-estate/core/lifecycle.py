@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from core.states import IllegalMove as IllegalMove, check_move   # IllegalMove: still importable from here
+
 
 class Phase(StrEnum):
     IDLE = "idle"
@@ -40,10 +42,6 @@ MOVES: dict[Phase, frozenset[Phase]] = {
     Phase.READY: frozenset({Phase.LOADING}),
     Phase.FAILED: frozenset({Phase.LOADING}),
 }
-
-
-class IllegalMove(RuntimeError):
-    pass
 
 
 class Unavailable(RuntimeError):
@@ -72,8 +70,7 @@ class Lifecycle:
         self.phase, self.value, self.error, self.at = Phase.IDLE, None, None, None
 
     def _move(self, to: Phase) -> None:   # under self.lock
-        if to not in MOVES[self.phase]:
-            raise IllegalMove(f"{self.name}: {self.phase} -> {to}")
+        check_move(MOVES, self.phase, to, self.name)
         self.phase = to
 
     def begin(self) -> None:

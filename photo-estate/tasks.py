@@ -19,6 +19,13 @@ The agent signs in with a long-lived token from `claude setup-token`, kept in a 
 can read (--agent-env, by default ~/.config/photo-estate/agent.env: a line CLAUDE_CODE_OAUTH_TOKEN=...).
 It is put in the agent's environment and nowhere else: not in the catalog, not in a log. Without the
 file the agent runs as whoever is signed in to Claude Code here, which is how it is tried on a laptop.
+
+A task's status moves only as core.states.TASK_MOVES allows (queued -> running | cancelled, running ->
+done | failed | cancelled), and every move is one conditional UPDATE (`move`: ... WHERE id=? AND
+status=?), so whichever of the worker and a cancel gets there first wins and the other sees it lost:
+the worker runs a task only if its claim (queued -> running) took, and a run's ending (running -> done |
+failed) never overwrites a cancel. A cancel stops the agent with SIGTERM, then SIGKILL after `grace`
+seconds (core.procs.stop), as the timeout does.
 """
 from __future__ import annotations
 
@@ -30,12 +37,14 @@ import sqlite3
 import subprocess
 import tempfile
 import threading
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from core import schema
-from core.states import TASK_ACTIVE, TaskStatus
+from core.procs import stop
+from core.states import TASK_ACTIVE, TASK_MOVES, TaskStatus, check_move
 
 SCHEMA = schema.TASKS
 DEFAULT_ENV = Path.home() / ".config" / "photo-estate" / "agent.env"
@@ -81,17 +90,17 @@ def find_command(given: str | None) -> str | None:
 
 class Tasks:
     def __init__(self, db: str, mcp_url: str, command: str | None = None, env_file: str | None = None,
-                 model: str | None = None, timeout: float = 3600, max_turns: int = 80, log=print):
+                 model: str | None = None, timeout: float = 3600, max_turns: int = 80, log=print, grace: float = 10.0):
         self.db, self.mcp_url, self.model, self.timeout, self.max_turns, self.log = db, mcp_url, model, timeout, max_turns, log
+        self.grace = grace       # seconds between SIGTERM and SIGKILL when an agent is stopped
         self.command, self.env_file = find_command(command), Path(env_file) if env_file else DEFAULT_ENV
         self.lock, self.wake, self.procs = threading.Lock(), threading.Event(), {}
-        con = self.con()
-        schema.ensure(con, "tasks", "changes")   # changes: a task's change sets are read from change_sets
-        # whatever was running when the app last stopped did not finish
-        con.execute("UPDATE agent_tasks SET status='failed', error='the app restarted while this was running', finished_at=?"
-                    " WHERE status='running'", (now(),))
-        con.commit()
-        con.close()
+        with closing(self.con()) as con:
+            schema.ensure(con, "tasks", "changes")   # changes: a task's change sets are read from change_sets
+            # whatever was running when the app last stopped did not finish (running -> failed)
+            con.execute("UPDATE agent_tasks SET status='failed', error='the app restarted while this was running', finished_at=?"
+                        " WHERE status='running'", (now(),))
+            con.commit()
         threading.Thread(target=self.worker, daemon=True).start()
 
     def con(self) -> sqlite3.Connection:
@@ -150,13 +159,31 @@ class Tasks:
         finally:
             con.close()
 
+    FIELDS = frozenset({"started_at", "finished_at", "result", "error", "turns", "cost"})   # what update() may write
+
     def update(self, tid: int, **fields) -> None:
-        con = self.con()
-        try:
+        """Write some of a task's FIELDS (not its status: that is move()). ValueError for any other column."""
+        if bad := set(fields) - self.FIELDS:
+            raise ValueError(f"not a task field: {', '.join(sorted(bad))}")
+        if not fields:
+            return
+        with closing(self.con()) as con, con:
             con.execute(f"UPDATE agent_tasks SET {', '.join(k + '=?' for k in fields)} WHERE id=?", (*fields.values(), tid))
-            con.commit()
-        finally:
-            con.close()
+
+    def move(self, tid: int, to: TaskStatus, frm: TaskStatus | frozenset[TaskStatus], **fields) -> bool:
+        """Move a task from `frm` (one status or a set) to `to`, with FIELDS beside it, in one conditional
+        UPDATE. True if it moved; False if the task was not in `frm` by then (someone else got there first).
+        IllegalMove if TASK_MOVES does not allow the step, ValueError for an unknown field."""
+        frms = frozenset({frm}) if isinstance(frm, str) else frm
+        for f in frms:
+            check_move(TASK_MOVES, f, to, f"task {tid}")
+        if bad := set(fields) - self.FIELDS:
+            raise ValueError(f"not a task field: {', '.join(sorted(bad))}")
+        sets = ", ".join(["status=?", *(k + "=?" for k in fields)])
+        with closing(self.con()) as con, con:
+            cur = con.execute(f"UPDATE agent_tasks SET {sets} WHERE id=? AND status IN ({', '.join('?' * len(frms))})",
+                              (to, *fields.values(), tid, *sorted(frms)))
+            return cur.rowcount == 1
 
     def submit(self, prompt, who: str = "") -> tuple[dict, int]:
         prompt = str(prompt or "").strip()
@@ -182,35 +209,36 @@ class Tasks:
         t = self.get(tid, None)
         if not t:
             return {"error": "no such task"}, 404
-        if t["status"] in TASK_ACTIVE:
-            self.update(tid, status=TaskStatus.CANCELLED, finished_at=now())
-            with self.lock:
-                proc = self.procs.get(tid)
-            if proc:
-                proc.terminate()
+        with self.lock:      # beside run()'s check before it starts the agent: one or the other goes first
+            moved = self.move(tid, TaskStatus.CANCELLED, TASK_ACTIVE, finished_at=now())
+            proc = self.procs.get(tid) if moved else None
+        if proc:             # SIGTERM, then SIGKILL after the grace: not in this request's thread
+            threading.Thread(target=stop, args=(proc, self.grace), daemon=True, name=f"stop task {tid}").start()
         return self.get(tid, None) or t, 200
 
     # -- running ---------------------------------------------------------------------------------
 
     def worker(self) -> None:
         while True:
-            con = self.con()
-            row = con.execute("SELECT id, prompt FROM agent_tasks WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
-            con.close()
+            with closing(self.con()) as con:
+                row = con.execute("SELECT id, prompt FROM agent_tasks WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
             if not row:
                 self.wake.wait(30)
                 self.wake.clear()
                 continue
+            # the claim: only if it is still queued (a cancel may have landed since the SELECT)
+            if not self.move(row[0], TaskStatus.RUNNING, TaskStatus.QUEUED, started_at=now()):
+                continue
             try:
                 self.run(*row)
             except Exception as e:   # the next task still gets its turn
-                self.update(row[0], status=TaskStatus.FAILED, error=f"{type(e).__name__}: {e}", finished_at=now())
+                self.move(row[0], TaskStatus.FAILED, TaskStatus.RUNNING, error=f"{type(e).__name__}: {e}", finished_at=now())
                 self.log(f"task {row[0]} failed: {type(e).__name__}: {e}")
 
     def run(self, tid: int, prompt: str) -> None:
+        """Run a task the worker has claimed (it is `running`) to its end."""
         if not self.command:     # submit() takes no task then (available())
             raise RuntimeError("Claude Code is not installed on this computer")
-        self.update(tid, status=TaskStatus.RUNNING, started_at=now())
         config = {"mcpServers": {SERVER: {"type": "http", "url": self.mcp_url, "headers": {"X-Estate-Task": str(tid)}}}}
         cmd = [self.command, "-p", prompt, "--system-prompt", BRIEF, "--mcp-config", json.dumps(config), "--strict-mcp-config",
                "--tools", "", "--allowedTools", f"mcp__{SERVER}", "--output-format", "stream-json", "--verbose",
@@ -220,16 +248,20 @@ class Tasks:
         work = tempfile.mkdtemp(prefix="photo-estate-task-")   # an empty folder: nothing of ours to read
         self.log(f"task {tid}: started")
         try:
-            proc = subprocess.Popen(cmd, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, text=True)
-            with self.lock:
+            with self.lock:      # a cancel that came first means the agent never starts; one after finds it in procs
+                if (self.get(tid, None) or {}).get("status") != TaskStatus.RUNNING:
+                    return self.log(f"task {tid}: cancelled")
+                proc = subprocess.Popen(cmd, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, text=True)
                 self.procs[tid] = proc
             assert proc.stdout is not None and proc.stderr is not None   # both PIPE
             stdout, stderr = proc.stdout, proc.stderr
-            timer = threading.Timer(self.timeout, proc.terminate)
+            timer = threading.Timer(self.timeout, stop, (proc, self.grace))   # SIGTERM, then SIGKILL
+            timer.daemon = True
             timer.start()
-            errs = []
-            threading.Thread(target=lambda: errs.extend(stderr), daemon=True).start()
+            errs: list[str] = []
+            reader = threading.Thread(target=self._drain, args=(stderr, errs), daemon=True)
+            reader.start()
             final = None
             for line in stdout:
                 try:
@@ -239,22 +271,26 @@ class Tasks:
                 final = self.record(tid, msg) or final
             code = proc.wait()
             timer.cancel()
+            reader.join(self.grace)  # all of stderr, to say why it stopped (bounded: a grandchild may hold it open)
         finally:
             with self.lock:
                 self.procs.pop(tid, None)
             shutil.rmtree(work, ignore_errors=True)
-        if (self.get(tid, None) or {}).get("status") == TaskStatus.CANCELLED:
-            return self.log(f"task {tid}: cancelled")
+        # the ending is one more move from running: a cancel that got there first stays
         if final and not final.get("is_error"):
-            self.update(tid, status=TaskStatus.DONE, result=final.get("result"), turns=final.get("num_turns"),
-                        cost=final.get("total_cost_usd"), finished_at=now())
+            moved = self.move(tid, TaskStatus.DONE, TaskStatus.RUNNING, result=final.get("result"), turns=final.get("num_turns"),
+                              cost=final.get("total_cost_usd"), finished_at=now())
         else:
             why = (final or {}).get("result") or "".join(errs)[-600:].strip() or f"the agent stopped (exit {code})"
             if final and final.get("subtype") == "error_max_turns":
                 why = f"the agent did not finish in {self.max_turns} steps"
-            self.update(tid, status=TaskStatus.FAILED, error=why, turns=(final or {}).get("num_turns"),
-                        cost=(final or {}).get("total_cost_usd"), finished_at=now())
-        self.log(f"task {tid}: {(self.get(tid, None) or {}).get('status')}")
+            moved = self.move(tid, TaskStatus.FAILED, TaskStatus.RUNNING, error=why, turns=(final or {}).get("num_turns"),
+                              cost=(final or {}).get("total_cost_usd"), finished_at=now())
+        self.log(f"task {tid}: {(self.get(tid, None) or {}).get('status') if moved else 'cancelled'}")
+
+    @staticmethod
+    def _drain(stream, into: list[str]) -> None:
+        into.extend(stream)
 
     def record(self, tid: int, msg: dict) -> dict | None:
         """Keep what a line of the agent's output says it did. Returns the final result message, when this is it."""

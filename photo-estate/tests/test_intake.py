@@ -128,9 +128,11 @@ def main():
 
         # 6. A failure keeps its stage; a stop mid-pipeline resumes from that stage after a restart.
         jf = e.create("folder", {"path": str(root / "store")})   # the store itself: it has photos
-        e.jobs.set(jf, state="running", stage="link", paths=[str(root / "store")])
+        crash = "UPDATE jobs SET state='running' WHERE id=?"    # as a crash would leave it (not a move the engine makes)
+        e.jobs.set(jf, stage="link", paths=[str(root / "store")])
+        e.jobs.q(crash, (jf,))
         e.cancel(jf)                                             # not current: just marked
-        e.jobs.set(jf, state="running")                          # as a crash would leave it
+        e.jobs.q(crash, (jf,))
         e2 = make(root)                                          # a second engine on the same library = a restart
         v = wait(e2, jf)
         assert v["state"] == "done", v

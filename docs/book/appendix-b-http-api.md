@@ -152,7 +152,7 @@ Response:
 | `GET /api/info` | `{"total", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
 | `GET /stats` | The library info page ([stats.html](../../photo-estate/stats.html)) |
 | `GET /api/stats[?refresh=1]` | `{state: working\|ready\|error, library, disk, app}`: library figures from memory, disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
-| `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start |
+| `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. `deleted` holds the deletions between the cursor sent and the one returned (each is sent once; none to a device that is up to date; apply them from every page). `limit` counts rows. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start |
 | `GET /api/log?ev=open\|share&sha=...&pos=N` plus the search's parameters | Appends an event to the query log; `204` |
 | `GET /api/layout?...` (same filter parameters, plus `sort`) | Every matching photo's shape, one byte each, in `/api/search`'s order: the aspect ratio between 0.5 and 2.6 in 255 steps (`application/octet-stream`, with an `ETag`). The page lays a month out from it before it knows which photos are in it |
 | `POST /api/favorite {sha, fav}` | Makes a photo a favourite, or not: `{sha, fav, favourites}`. Takes the write rule; `403` otherwise. It waits for the requests in flight, since it changes the catalog they read (the gate's write side, [chapter 11](11-server.md)) |
@@ -189,7 +189,7 @@ also answers under `/api/albums`; `/api/changes` lists only the albums that are 
 | `GET /api/tasks` | Whether an agent can run on this computer, and every task, newest first ([tasks.py](../../photo-estate/tasks.py)) |
 | `GET /api/tasks/<id>?after=N` | One task, its events after event N, and the change set it made |
 | `POST /api/tasks {prompt}` | Start one: Claude Code, run headless with only the library's MCP tools |
-| `POST /api/tasks/<id>/cancel` | Stop a task that is queued or running |
+| `POST /api/tasks/<id>/cancel` | Stop a task that is queued or running: a queued one never starts, a running one's agent gets SIGTERM, then SIGKILL after ten seconds, and the task stays `cancelled` however the agent ends. Answers the task (`404` if there is none); one already finished is returned unchanged |
 
 ### Bringing photos in (the setup page)
 
@@ -207,7 +207,7 @@ protect, has no rule of its own.
 | `POST /api/intake/preview {source, config}` | What that would bring in; changes nothing |
 | `POST /api/intake/jobs {source, config}` | Start bringing it in |
 | `POST /api/intake/jobs/<id>/answer {value}` | What a waiting job asked for (a password, a code, "ok") |
-| `POST /api/intake/jobs/<id>/cancel`, `/retry` | Stop a job, or run it again |
+| `POST /api/intake/jobs/<id>/cancel`, `/retry` | Stop a job, or run it again. A job cancelled while queued is never started; a running one's step gets SIGTERM, then SIGKILL after ten seconds. Retry is for a failed or cancelled job |
 | `POST /api/intake/choose {what: folder or file}` | The Mac's own Open dialog (only from this Mac) |
 
 ### Images

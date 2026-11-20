@@ -10,7 +10,11 @@ are new or different. A device remembers the last version it has and asks for wh
      "total": N, "trips": [...]}
 
 Rows come in (version, sha) order and `since`/`after` are the cursor to send next time, so a device
-can stop at any page and carry on later; when `more` is false it is up to date. Versions live in a small SQLite file beside the
+can stop at any page and carry on later; when `more` is false it is up to date. A deletion has a place
+in the same order, (the version it was deleted at, its sha), and a page's `deleted` is the deletions
+between the cursor sent and the cursor returned: each one reaches a device once, on the page whose
+window it falls in, and a device that is up to date is sent none (issue #86; before, every page repeated
+every deletion at or after `since`). A device must apply `deleted` from every page, as it does `photos`. Versions live in a small SQLite file beside the
 catalog (never in it), so a restart of the app does not make every device start again. `epoch` names
 that file: if it is ever lost, the new one has a new epoch, and a device that sees an epoch it does
 not know fetches everything and drops what it did not get.
@@ -22,6 +26,7 @@ import json
 import secrets
 import sqlite3
 import threading
+from contextlib import closing
 from pathlib import Path
 
 from core import schema
@@ -36,21 +41,20 @@ class Feed:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.lock = threading.Lock()
-        con = self._open()
-        got = dict(con.execute("SELECT k, v FROM kv"))
-        if "epoch" not in got:
-            got = {"epoch": secrets.token_hex(8), "version": "0"}
-            con.executemany("INSERT OR REPLACE INTO kv VALUES (?, ?)", got.items())
-            con.commit()
-        self.epoch, self.version = got["epoch"], int(got["version"])
         self.rows: dict[str, tuple[bytes, int]] = {}   # sha -> (digest, version it last changed at)
         self.gone: dict[str, int] = {}                 # sha -> version it was deleted at
-        for sha, dg, ver, gone in con.execute("SELECT sha, digest, ver, gone FROM rows"):
-            if gone:
-                self.gone[sha] = ver
-            else:
-                self.rows[sha] = (dg, ver)
-        con.close()
+        with closing(self._open()) as con:
+            got = dict(con.execute("SELECT k, v FROM kv"))
+            if "epoch" not in got:
+                got = {"epoch": secrets.token_hex(8), "version": "0"}
+                con.executemany("INSERT OR REPLACE INTO kv VALUES (?, ?)", got.items())
+                con.commit()
+            self.epoch, self.version = got["epoch"], int(got["version"])
+            for sha, dg, ver, gone in con.execute("SELECT sha, digest, ver, gone FROM rows"):
+                if gone:
+                    self.gone[sha] = ver
+                else:
+                    self.rows[sha] = (dg, ver)
         self.ready = False    # until the first update(), the feed describes the catalog of the last run
 
     def _open(self) -> sqlite3.Connection:
@@ -74,12 +78,10 @@ class Feed:
             removed = [sha for sha in self.rows if sha not in fresh] if whole else []
             if changed or removed:
                 ver = self.version + 1
-                con = self._open()
-                con.executemany("INSERT OR REPLACE INTO rows VALUES (?, ?, ?, 0)", ((s, fresh[s], ver) for s in changed))
-                con.executemany("INSERT OR REPLACE INTO rows VALUES (?, NULL, ?, 1)", ((s, ver) for s in removed))
-                con.execute("INSERT OR REPLACE INTO kv VALUES ('version', ?)", (str(ver),))
-                con.commit()
-                con.close()
+                with closing(self._open()) as con, con:   # one transaction: committed, or rolled back on an error
+                    con.executemany("INSERT OR REPLACE INTO rows VALUES (?, ?, ?, 0)", ((s, fresh[s], ver) for s in changed))
+                    con.executemany("INSERT OR REPLACE INTO rows VALUES (?, NULL, ?, 1)", ((s, ver) for s in removed))
+                    con.execute("INSERT OR REPLACE INTO kv VALUES ('version', ?)", (str(ver),))
                 for s in changed:
                     self.rows[s] = (fresh[s], ver)
                     self.gone.pop(s, None)
@@ -92,13 +94,15 @@ class Feed:
 
     def page(self, epoch: str, since: int, after: str, limit: int):
         """What a device at cursor (since, after) is missing: (shas to send, shas deleted, new cursor, more?).
-        The cursor means "I have every row up to this (version, sha)"; a device that is up to date holds
-        (version, "~"), which sorts after every sha."""
+        The cursor means "I have every row, and every deletion, up to this (version, sha)"; a device that is
+        up to date holds (version, "~"), which sorts after every sha. `limit` counts rows; the deletions
+        sent are those after the old cursor and up to the new one, so consecutive pages never repeat one."""
         with self.lock:
             if epoch != self.epoch:
                 since, after = 0, ""
-            todo = sorted((ver, sha) for sha, (_, ver) in self.rows.items() if (ver, sha) > (since, after))
-            deleted = sorted(sha for sha, ver in self.gone.items() if ver >= since)
+            start = (since, after)
+            todo = sorted((ver, sha) for sha, (_, ver) in self.rows.items() if (ver, sha) > start)
             more = len(todo) > limit
             cursor = todo[limit - 1] if more else (self.version, "~")
+            deleted = [sha for _, sha in sorted((ver, sha) for sha, ver in self.gone.items() if start < (ver, sha) <= cursor)]
             return [sha for _, sha in todo[:limit]], deleted, cursor, more
