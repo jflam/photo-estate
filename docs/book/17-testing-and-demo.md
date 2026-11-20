@@ -21,6 +21,8 @@ tools in `tools/`.
 | `tests/test_mcp.py` | The MCP endpoint as an agent uses it: an agent can propose but not apply, and no answer carries a photo |
 | `tests/test_connections.py` | Connections with the real app: `Connection: close` after an upload is honoured, a refused upload closes, a client's reset is not an error, and many uploads print no traceback |
 | `tests/test_tasks.py` | The agent on the library's computer, with a stand-in for Claude Code: it is started with every built-in tool off |
+| `tests/test_photo_app.py` | The photo app in process (`PhotoApp` on the demo library, no subprocess, no model; [chapter 11](11-server.md)): who may write (a viewer is refused every People write, favourites, albums, tasks, intake, the ingest and uploads; a `--upload-user` login and this computer are let in), 400 for `limit=abc`, `cursor=x` and `/api/sync?limit=abc`, 400 for a body that isn't JSON or a `Content-Length` that isn't a number, 413 over the size limit, and the headers (ETag and 304, gzip) through a real server on a free port |
+| `tests/test_http_util.py` | `http_util.py`: `Response` can't be changed, `int_param`, bounded bodies, the auth rule; months outside 1-12; intake's `job` and `after`; the setup server's 400 and 413 |
 
 Every test is a script that runs on its own (`uv run tests/<file>` from `photo-estate/`), needs no
 network, account or model download, and works on a scratch copy, so the checked-in demo library never
@@ -36,11 +38,12 @@ the exit code and the script's last lines. Any other `test_*.py` is an ordinary 
 [`tests/test_harness.py`](../../photo-estate/tests/test_harness.py), which checks the runner itself (a
 script that fails is reported as failed, a slow one is left out of the fast tier, no script is missing
 from the list) and that the modules the light entry points import load no torch, transformers or
-onnxruntime.
+onnxruntime. `tests/test_photo_app.py` and `tests/test_http_util.py` are native too, and in the fast
+tier: they build the app in process instead of starting it.
 
 ```bash
 cd photo-estate
-uv run pytest -m "not slow"        # the fast tier, what CI runs: 8 scripts + the harness, about 40 s
+uv run pytest -m "not slow"        # the fast tier, what CI runs: 8 scripts + the native tests, about 40 s
 uv run pytest                      # everything (HF_HUB_OFFLINE=1 is set for each script)
 uv run pytest -m "server and not model"   # the app tests that work without the search model
 uv run pytest --legacy-runner=uv   # each script with `uv run`, in its own PEP 723 environment

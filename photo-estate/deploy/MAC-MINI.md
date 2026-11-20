@@ -260,7 +260,9 @@ new arrived.
 
 To accept uploads only from your own login, add `--upload-user you@example.com` (repeatable) to the
 `serve` arguments in the plist. `tailscale serve` sets the `Tailscale-User-Login` header the app
-checks, and the app listens only on `127.0.0.1`, so nothing else can set it from the network.
+checks, and the app listens only on `127.0.0.1`, so nothing else can set it from the network. The same
+login list decides who else may change the library (favourites, albums, naming people, bringing
+photos in); programs on the mini itself, such as the task agent, always may (book chapter 11).
 
 The **Library info** page (`/stats`, the bar-chart icon) shows what is waiting and has a
 **Catalogue new photos** button that runs the script and shows its output, then **Restart to show

@@ -182,7 +182,7 @@ stopped (chapter 17's demo is what makes that cheap).
 | Topic | Where |
 |---|---|
 | The feed: `digest`, `Feed.update`, `Feed.page` | [sync.py](../../photo-estate/sync.py) |
-| `feed_update`, the `/api/sync` route | `cmd_serve` in [embed.py](../../photo-estate/embed.py); a row's extra fields in `Catalog.feed_extra` ([catalog.py](../../photo-estate/catalog.py)) |
+| `feed_update`, the `/api/sync` route | `PhotoApp` in [photo_app.py](../../photo-estate/photo_app.py); a row's extra fields in `Catalog.feed_extra` ([catalog.py](../../photo-estate/catalog.py)) |
 | The sync loop and its published state | [SyncEngine.swift](../../ios/PhotoEstate/Catalog/SyncEngine.swift) |
 | The replica's schema, `apply`, `dropOtherEpochs` | [Catalog.swift](../../ios/PhotoEstate/Catalog/Catalog.swift) |
 | The request and response, in full | [Appendix B](appendix-b-http-api.md) |

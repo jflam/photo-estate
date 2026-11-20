@@ -59,7 +59,9 @@ Code lines, measured as above.
 
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
-  embed.py             663  image embeddings: run, search, and serve (cmd_serve: setting the app up and wiring it)
+  embed.py             255  image embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
+  photo_app.py         504  the photo app as an object: PhotoApp (wiring, who may write, favourites, reloads) and its HTTP handler
+  http_util.py         132  what the servers share: Response, bounded JSON bodies, int_param (400s), the Auth rules
   catalog.py           519  the photo app's library in memory: load(), Catalog, Live (chapter 11)
   browse.py            366  search, similar, facets, Years and Months, layout; an agent's searches
   images.py            135  thumbnails, previews, large images and originals
@@ -91,7 +93,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      45  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             2,268  15 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it (chapter 17)
+  tests/             2,268  15 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it;
+                            test_photo_app.py and test_http_util.py call the app in process (chapter 17)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest and ruff settings (chapter 17)
   uv.lock                   every dependency of those groups, pinned; CI installs from it (chapter 17)
   tools/             2,913  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh
@@ -141,8 +144,8 @@ that is the main product. Its parts:
 | `_decode`, `load_model`, `cmd_run` | Compute and store an embedding for every image |
 | `cmd_search` | Command-line semantic search |
 | `_library_or_setup` | No library yet: serve the setup page instead (intake/) |
-| `cmd_serve` | **The photo server**: sets it up, wires its modules together, and sends each request to the one that answers it |
-| `main` | The command line, including `serve --demo` and `serve --sandbox` |
+| `cmd_serve` | **The photo server**: finds the library (or serves the setup page), builds a `PhotoApp` (photo_app.py), starts it and serves it |
+| `parser`, `main` | The command line, including `serve --demo` and `serve --sandbox`; `parser()` is also what tests build a `PhotoApp`'s options from |
 
 `cmd_serve` began as about 660 lines holding the whole app as closures over the NumPy arrays loaded
 at startup (the embedding matrix, the metadata columns, the facet codes). Closures were simpler than
@@ -159,9 +162,13 @@ reading one shared state object instead of closing over variables.
 | `admin.py` | `Admin`: phone uploads, the ingest, restart, the `/stats` page, preparing arrivals; catalog backups |
 | `encoder.py` | `Encoder`: the model's text side for typed searches, and its image side for uploads |
 
-What stays in `cmd_serve` (about 500 lines) is the wiring: options and demo mode, the request
-handler, the page and app files, `/api/info`, `/api/sync`, favourites, album downloads and reloads.
-Chapter 11 goes through it all.
+What was left in `cmd_serve` after that (about 500 lines of wiring: demo mode, the request handler,
+the page and app files, `/api/info`, `/api/sync`, favourites, album downloads and reloads) became the
+`PhotoApp` class in `photo_app.py` the same day: its state is attributes instead of closures and
+mutable dicts, `PhotoApp.handle(Request) -> Response` answers a request in process, and the HTTP
+handler in front of it only reads the request and writes the answer. `http_util.py` holds what the
+servers share: the frozen `Response`, bounded JSON bodies (400, 413), `int_param` (400 for a query
+parameter that isn't a number), and the `Auth` rules for who may write. Chapter 11 goes through it all.
 
 ### faces.py: faces, and who they are
 

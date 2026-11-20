@@ -734,11 +734,13 @@ class People:
             pend = body.get("pending")
             if isinstance(pend, dict) and pend.get("person") in self.persons:
                 m = self.pending(pend["person"]) & ~self.skipped(pend["person"])
-                if pend.get("year") is not None:
-                    m = m & (self.year == int(pend["year"]))
+                year = pend.get("year")       # null: every year; a number (or one as text); anything else: none
+                if year is not None:
+                    ok = isinstance(year, int) or isinstance(year, str) and year.lstrip("-").isdigit()
+                    m = m & (self.year == int(year)) if ok else m & False
                 skip = {self.row[i] for i in body.get("not") or [] if i in self.row}
                 rows = [int(k) for k in self.np.flatnonzero(m) if int(k) not in skip]
-            if body.get("cluster") is not None and 0 <= body["cluster"] < len(self.clusters):
+            if isinstance(body.get("cluster"), int) and 0 <= body["cluster"] < len(self.clusters):
                 c = self.clusters[body["cluster"]]      # the whole group, not just the faces shown
                 rows = [int(k) for k in c[(self.pid[c] == -1) & (self.sug_score[c] < SUGGEST)]]
             undo = [self.row[i] for i in body.get("undo") or [] if i in self.row]
@@ -890,6 +892,8 @@ def cmd_stats(a) -> None:
 def cmd_serve(a) -> None:
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, urlparse
+
+    from http_util import HTTPError, read_json
     cache = Path(a.cache or Path(a.db).resolve().parent / "review")
     people = People(a.db, a.store, [cache])
     meta = dict(connect(a.db).execute("SELECT sha256, ext FROM assets WHERE kind='image'"))
@@ -940,11 +944,13 @@ def cmd_serve(a) -> None:
 
         def do_POST(self):
             u = urlparse(self.path)
-            try:
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
-            except ValueError:
-                body = None
-            self.reply(people.handle("POST", u.path, parse_qs(u.query), body))
+            try:   # 400 for a bad Content-Length or a body that isn't JSON, 413 over http_util.MAX_BODY
+                body = read_json(self.rfile, self.headers)
+            except HTTPError as e:
+                self.close_connection = True           # the body may be unread: don't take it for the next request
+                r = e.response
+                return self.reply((r.status, r.body, r.content_type, r.cache))
+            self.reply(people.handle("POST", u.path, parse_qs(u.query), body if isinstance(body, dict) else None))
 
     class Server(ThreadingHTTPServer):
         request_queue_size = 256

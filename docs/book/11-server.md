@@ -1,11 +1,12 @@
 # 11. The photo server
 
 `embed.py serve` is the product: a local web server that holds your whole library in memory and
-answers every search, filter and thumbnail request in milliseconds. `cmd_serve` in `embed.py` sets
-it up and sends each request on; the work is done by a handful of modules that all answer from one
-in-memory catalog of NumPy arrays. This chapter takes it apart: how the code is laid out, what it
-loads, how it is laid out in memory, how a request becomes a response, and the engineering that makes
-it feel instant even when the photos live on a USB hard disk.
+answers every search, filter and thumbnail request in milliseconds. `PhotoApp` in `photo_app.py` sets
+it up and sends each request on (`cmd_serve` in `embed.py` builds one and serves it); the work is done
+by a handful of modules that all answer from one in-memory catalog of NumPy arrays. This chapter takes
+it apart: how the code is laid out, what it loads, how it is laid out in memory, how a request becomes
+a response, and the engineering that makes it feel instant even when the photos live on a USB hard
+disk.
 
 ```bash
 uv run embed.py --db estate.db serve --store STORE      # http://127.0.0.1:8766/
@@ -18,8 +19,9 @@ uv run embed.py serve --demo                            # http://127.0.0.1:8767/
 grew to about 1,640 lines that way. It is now split the way the later features (change sets, the
 People page, tasks, `/mcp`, `/setup`) were added from the start: **a module per area, each with an
 object whose `handle(method, path, qs, body, ...)` answers its own routes**, returning `(status, body,
-content type, Cache-Control[, headers])` or `None` when the path is not its own. The handler in
-`cmd_serve` tries them in turn and sends what comes back (`Handler.reply`).
+content type, Cache-Control[, headers])` or `None` when the path is not its own. `PhotoApp.handle` in
+[photo_app.py](../../photo-estate/photo_app.py) tries them in turn and returns what comes back as an
+`http_util.Response`, which the HTTP handler writes out.
 
 | Module | Object | Answers |
 |---|---|---|
@@ -33,9 +35,54 @@ content type, Cache-Control[, headers])` or `None` when the path is not its own.
 | [estate_mcp.py](../../photo-estate/estate_mcp.py) | `Server` | `/mcp` |
 | [intake/api.py](../../photo-estate/intake/api.py) | `IntakeAPI` | `/setup`, `/api/intake*` |
 
-What stays in `cmd_serve` (about 500 lines) is what ties the modules together: reading the options
-and setting up the demo, the request handler, the page and the home-screen app files, `/api/info`,
-`/api/sync`, favourites, album downloads, and re-reading the catalog after an ingest or a change set.
+What ties the modules together is `PhotoApp` (photo_app.py, about 500 lines): setting up the demo, the
+page and the home-screen app files, `/api/info`, `/api/sync`, favourites, album downloads, who may
+write, and re-reading the catalog after an ingest or a change set. `cmd_serve` in embed.py is now
+four lines: find the library (or serve the setup page), build a `PhotoApp`, `start()` it, `serve()` it.
+
+**The app is an object you can call.** Building a `PhotoApp` reads the catalog and starts no thread;
+`start()` begins the background work (the search model, faces, the sync feed, thumbnails, the inbox
+sweep, backups). `PhotoApp.handle(Request) -> Response` answers one request in process, so a test
+builds a `PhotoApp` on the demo library and calls it directly, with no subprocess and no PyTorch
+([tests/test_photo_app.py](../../photo-estate/tests/test_photo_app.py)); `make_server(host, 0)` puts the
+real HTTP layer in front of it on a free port. The HTTP layer (`make_handler`) only reads the request,
+with a bounded body, and writes the `Response`: the 304 for a matching `ETag`, gzip, the headers. Two
+routes stream and stay in it: phone uploads (into the inbox as they arrive) and album downloads (a
+zip written as it is read). A `Response` is a frozen dataclass (`status, body, content_type, cache,
+headers`); the extra headers it carries (`Retry-After`, `Content-Disposition`, `ETag`) replaced the
+handler's old mutable `extra_headers`.
+
+### Who may write
+
+`--upload-user` names the Tailscale logins that may change the library; with none named, everyone who
+can reach the app may (the demo, and a library only you use). The app listens on `127.0.0.1` only, so
+a request reaches it either through `tailscale serve`, which adds `Tailscale-User-Login`, or from a
+program on the Mac itself: the browser there, the headless agent that works on tasks (tasks.py) and
+an MCP client such as Claude Code. A request is **local** when it comes from `127.0.0.1` or `::1`
+with none of a proxy's headers (`Tailscale-User-Login`, `X-Forwarded-For`, `Forwarded`: `is_local` in
+intake/server.py).
+
+Every request that changes the library takes one rule, `Auth.LOCAL_OR_WRITER`: a `--upload-user` login
+or a local request. That covers naming, merging and relabelling people (`POST /api/people/label`,
+`label-many`, `person`), favourites, albums and change sets, tasks, bringing photos in (`POST
+/api/intake/...`), the ingest, restarting, and uploads. Reading is open to anyone who can reach the
+app (`Auth.PUBLIC`), and so is `/mcp`, whose write tools take the same rule. The rules are one table,
+`ROUTE_AUTH` in photo_app.py, checked before a request reaches its module; a refused request is `403
+{"error": "not allowed"}` (an upload's is admin.py's own `403 not allowed`). Until 2026-11-19 the People
+page's writes took no permission at all, and intake, the ingest, restart and uploads took a
+`--upload-user` login but refused this Mac's own browser and agent; the other writes already let
+local requests in. Local requests are let in because whoever runs a program on the Mac can already
+change the catalog's files.
+
+### Malformed requests
+
+A request the app can't read is answered, not raised (`http_util.py`): a query parameter that should
+be a number and isn't (`limit` and `cursor` on `/api/search`, `limit` on `/api/sync`, `job` and
+`after` on `/api/intake`) is `400 {"error": "limit must be a whole number"}`; a POST body that is not
+JSON is `400 {"error": "the body is not JSON"}` (on `/mcp`, JSON-RPC's own parse error, also a 400); a
+`Content-Length` that is not a number is a 400; and a JSON body over 8 MB (`http_util.MAX_BODY`) is a
+413, answered without reading it, and the connection is closed. An empty body is still `{}`. A month
+filter (`from=`, `to=`) outside 1-12 is ignored, like any other unreadable date.
 
 **One state object, not closures.** The modules share the in-memory catalog through one object,
 `catalog.Live`, whose `cat` is the `Catalog` being served. A `Catalog` is built once by `load()` and
@@ -48,7 +95,7 @@ half a new one. The questions every route asks of the arrays are `Catalog` metho
 
 ```mermaid
 flowchart LR
-    H["Handler in cmd_serve"] --> BR["Browse"]
+    H["PhotoApp.handle"] --> BR["Browse"]
     H --> IM["Images"]
     H --> AD["Admin"]
     H --> OTH["People, Changes, Tasks,<br/>MCP Server, IntakeAPI"]
@@ -56,7 +103,7 @@ flowchart LR
     OTH -.->|"callbacks: find, cover,<br/>facts, favourite"| LIVE
     BR --> ENC["Encoder"]
     AD --> ENC
-    RL["reload (cmd_serve)"] -->|"catalog.load(prev) → Live.install"| LIVE
+    RL["PhotoApp.reload_catalog"] -->|"catalog.load(prev) → Live.install"| LIVE
 ```
 
 ## The shape of it
@@ -369,7 +416,8 @@ All from measurements in [PERFORMANCE.md](../notes/PERFORMANCE.md):
 | gzip for JSON and `text/*` over 1 KB, level 5 | JSON and the page shrink 4-6×; JPEGs do not |
 | `ETag` and `no-cache` for `/` and PWA files | Browsers revalidate each load, so editing `search.html` shows at once; an unchanged page costs a 304 |
 | `request_queue_size = 256`, `daemon_threads` | The default listen backlog is 5; behind an HTTP/2 proxy a screenful of thumbnails arrives as dozens of simultaneous connections and overflowed it (502s) |
-| Listen on `127.0.0.1` only | The app has no authentication; put a proxy in front for remote access |
+| Listen on `127.0.0.1` only | The app has no sign-in of its own; `tailscale serve` in front says who is asking, and `--upload-user` who may write (above) |
+| JSON bodies up to 8 MB, read only after `Content-Length` is checked | A body that is too large is refused (413) before it is read, and the connection closed so it is not taken for the next request |
 
 ### When a client goes away
 
@@ -458,7 +506,7 @@ modules of their own:
 | `GET /api/ingest`, `POST /api/ingest` | The state of, and a manual start of, `ingest-iphone.sh` | [16](16-operations.md) |
 | `GET /original/<sha>` | The file as stored: what the web page and the phone share | [13](13-photo-app.md) |
 
-Two more things exist only for phone uploads. **Hot reload** (`reload_catalog` in `cmd_serve`):
+Two more things exist only for phone uploads. **Hot reload** (`PhotoApp.reload_catalog`):
 after an ingest the server re-reads what changed *in the background* (`catalog.load` with the last
 load's `raw`) and swaps the new catalog in under the gate, clearing the rankings cache, so searches
 never wait and nothing needs a restart; it ends by calling `feed_update()`. **Preparing arrivals**
@@ -470,7 +518,7 @@ follows has nothing left to do for it.
 
 | Topic | Code |
 |---|---|
-| Wiring, demo mode, reloads, favourites | `cmd_serve` in [embed.py](../../photo-estate/embed.py) |
+| Wiring, demo mode, reloads, favourites, who may write | `PhotoApp`, `ROUTE_AUTH` in [photo_app.py](../../photo-estate/photo_app.py); `cmd_serve` in [embed.py](../../photo-estate/embed.py) |
 | Startup load | `load` in [catalog.py](../../photo-estate/catalog.py), from `q_emb = ...` to `return Catalog(...)` |
 | Facets and live counts | `coded`, `single`, `multi` in `load`; `Catalog.combine`, `Catalog.facet_counts` |
 | Mask building | `Browse.select`, `parse`, `read_words`, `view_masks`, `Browse.place_mask` in [browse.py](../../photo-estate/browse.py); `Catalog.person_mask` |
@@ -478,6 +526,6 @@ follows has nothing left to do for it.
 | Text encoder | `Encoder` in [encoder.py](../../photo-estate/encoder.py) |
 | Images and caches | `Images.image`, `Images.pregenerate`, `_thumb` in [images.py](../../photo-estate/images.py); `jpeg_size` in catalog.py |
 | Uploads, ingest, restart, `/stats`, backups | `Admin` and `backups` in [admin.py](../../photo-estate/admin.py) |
-| HTTP | `Handler.send`, `Handler.reply`, `do_GET`, `do_POST`, `Server` in `cmd_serve` |
+| HTTP | `make_handler` (`Handler.send`, `answer`, `upload`, `download`), `Server` in photo_app.py; `Response`, `read_body`, `int_param`, `Auth` in [http_util.py](../../photo-estate/http_util.py) |
 | Query log | `Browse.record`, `unlogged` in browse.py |
 | Benchmarks | [tools/bench_server.py](../../photo-estate/tools/bench_server.py), [tools/thumb_burst.py](../../photo-estate/tools/thumb_burst.py), [tools/bench_ingest.py](../../photo-estate/tools/bench_ingest.py) |

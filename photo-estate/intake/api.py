@@ -12,6 +12,8 @@ setup server (no library yet) and the full app (embed.py serve) mount it, so it 
   POST /api/intake/jobs/<id>/cancel | retry
   POST /api/intake/choose    {what: folder|file}  the Mac's own Open dialog (only from this Mac)
 
+A query parameter that should be a number and isn't (`job`, `after`) is a 400 {"error"}.
+
 Nothing here returns what a person typed to sign in: `answer` hands it to the running job and forgets it."""
 from __future__ import annotations
 
@@ -22,6 +24,8 @@ import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
+
+from http_util import HTTPError, int_param   # photo-estate/http_util.py, beside this package
 
 from . import sources  # noqa: F401  (registers every source)
 from .engine import Engine, media_count
@@ -140,13 +144,19 @@ class IntakeAPI:
                 "sources": [s.describe() for s in srcs], "jobs": e.list() if e else []}
 
     def handle(self, method: str, path: str, qs: dict, body, local: bool):
-        one = lambda k, d="": (qs.get(k) or [d])[0]
-        body = body if isinstance(body, dict) else {}
+        """One request -> (status, body, content type), or None if it isn't ours. A query parameter that is
+        not a number (`job`, `after`) is a 400."""
+        try:
+            return self.route(method, path, qs, body if isinstance(body, dict) else {}, local)
+        except HTTPError as x:
+            return self.err(x.status, x.message)
+
+    def route(self, method: str, path: str, qs: dict, body: dict, local: bool):
         if method == "GET" and path in ("/setup", "/setup/"):
             import pages
             return 200, pages.page("setup.html"), "text/html; charset=utf-8"
         if method == "GET" and path == "/setup/practice-consent" and self.practice:
-            return 200, consent_page(int(one("job", "0") or 0)), "text/html; charset=utf-8"
+            return 200, consent_page(int_param(qs, "job", 0)), "text/html; charset=utf-8"
         if not path.startswith("/api/intake"):
             return None
         parts = path.rstrip("/").split("/")[3:]          # after /api/intake
@@ -177,7 +187,7 @@ class IntakeAPI:
             except (IndexError, ValueError):
                 return self.err(404, "No such job.")
             if method == "GET" and len(parts) == 2:
-                v = e.view(jid, int(one("after", "0") or 0))
+                v = e.view(jid, int_param(qs, "after", 0, min=0))
                 return self.ok(v) if v else self.err(404, "No such job.")
             if method == "POST" and len(parts) == 3 and parts[2] in ("answer", "cancel", "retry"):
                 if parts[2] == "answer":

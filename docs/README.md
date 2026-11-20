@@ -18,7 +18,7 @@ introduction; everything else is here.
 | [The book](book/README.md) ([as a website](https://jflam.github.io/photo-estate/)) | How every piece works, 27 chapters with diagrams |
 | [book/02-code-tour.md](book/02-code-tour.md) | The map of the code: every file, with line counts |
 | [book/appendix-a-commands.md](book/appendix-a-commands.md) | Every command and option |
-| [book/appendix-b-http-api.md](book/appendix-b-http-api.md) | Every HTTP endpoint, including `/mcp` |
+| [book/appendix-b-http-api.md](book/appendix-b-http-api.md) | Every HTTP endpoint, including `/mcp`, who may call it, and its status codes |
 | [book/appendix-c-glossary.md](book/appendix-c-glossary.md) | The words the code and the book use |
 
 Each Python module's docstring also lists its commands or its API, and each Swift file starts with what

@@ -65,7 +65,7 @@ uv run embed.py serve --demo
 | `--ingest-script FILE` | `ingest-iphone.sh` | What the Library info page and automatic runs execute |
 | `--ingest-quiet SECONDS` | 60 | Quiet time after an upload before a run starts (0 turns automatic runs off) |
 | `--ingest-max-wait SECONDS` | 600 | The latest a run starts after the first upload of a burst |
-| `--upload-user LOGIN` (repeatable) | any | Only these Tailscale users may upload or run ingest |
+| `--upload-user LOGIN` (repeatable) | any | Only these Tailscale users (and requests from this computer) may change the library: upload, ingest, favourites, albums, People, intake ([chapter 11](11-server.md)) |
 | `--backup-dir DIR` | off | Copy the catalog and `face-labels.jsonl` here ([16](16-operations.md)) |
 | `--backup-every HOURS` / `--backup-keep N` | 24 / 7 | How often, and how many copies to keep |
 

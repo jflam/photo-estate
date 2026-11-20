@@ -87,7 +87,11 @@ Stated plainly so nobody has to discover them.
   differ slightly.
 - The README says the Check page lists faces "least certain first"; the code orders by descending
   score (most likely first).
-- `cmd_serve` grew to a 1,640-line function and was split on 2026-11-19 into modules with `handle()` objects over one shared catalog (catalog.py, browse.py, images.py, admin.py, encoder.py; chapter 11). What is left in it (about 500 lines) is wiring, favourites and reloads.
+- `cmd_serve` grew to a 1,640-line function and was split on 2026-11-19 into modules with `handle()` objects over one shared catalog (catalog.py, browse.py, images.py, admin.py, encoder.py; chapter 11). The wiring, favourites and reloads left in it then became the `PhotoApp` class (photo_app.py), which a test can build and call in process.
+- Five HTTP servers are still written separately: the photo app (photo_app.py), the setup server
+  (intake/server.py), `faces.py serve`, `estate.py review` and tools/aesthetics/judge.py. The first
+  three share http_util.py's bounded body reading; the last two do not, and none share routing or the
+  `send` that writes headers. Folding them onto one handler is the next step (issue #88, phase 2).
 - The demo is the only automated check of ranking quality, and it is a few hundred searches by eye, not a
   test.
 

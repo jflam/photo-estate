@@ -12,7 +12,8 @@ browsed lists, and the same searches as an agent's tools (estate_mcp.py) ask the
   Browse.handle(method, path, qs, body, headers) -> (status, body, content type, Cache-Control[, headers]) or None
   Browse.find / row / faces / overview            what estate_mcp.py's tools are made of
 
-Every answer is worked out from the catalog being served (catalog.Live), read once per request.
+Every answer is worked out from the catalog being served (catalog.Live), read once per request. A
+`limit` or `cursor` that is not a whole number raises http_util.HTTPError (400), which PhotoApp answers.
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ from pathlib import Path
 import numpy as np
 
 from catalog import COMMON_WORDS, Catalog, Live, chunks, is_screenshot
+from http_util import int_param
 
 filter_re = re.compile(r'\b(place|camera|album|person|people|year|date|event|trip|is):("([^"]*)"|(\S+))', re.I)
 sha_re = re.compile(r"^[0-9a-f]{64}$")
@@ -268,8 +270,8 @@ class Browse:
         """/api/search and /api/similar: one page of a ranked or browsed list."""
         one = lambda k, d="": (qs.get(k) or [d])[0]
         t = time.time()
-        limit = max(1, min(int(one("limit", "120")), 500))
-        start = max(0, int(one("cursor", "0")))
+        limit = int_param(qs, "limit", 120, min=1, max=500)        # http_util.HTTPError 400 when not a number
+        start = int_param(qs, "cursor", 0, min=0)
         masks, text, applied, scope, names, places = self.select(c, qs)
         deduped = view_masks(c, qs, masks, text, path == "/api/similar")
         mask = c.combine(masks)

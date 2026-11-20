@@ -1,7 +1,7 @@
 # Appendix B: HTTP API reference
 
-Three servers share the same style (plain `BaseHTTPRequestHandler`, JSON, no authentication, loopback
-only):
+Three servers share the same style (plain `BaseHTTPRequestHandler`, JSON, loopback only, no sign-in of
+their own; the photo app decides who may write from `tailscale serve`'s `Tailscale-User-Login`, below):
 
 | Server | Started by | Default port | Purpose |
 |---|---|---|---|
@@ -11,11 +11,12 @@ only):
 
 ## The photo app
 
-`embed.py serve`'s handler sends each request to the module that answers it ([chapter 11](11-server.md)):
+`embed.py serve` builds a `PhotoApp` ([photo_app.py](../../photo-estate/photo_app.py)), whose `handle` sends
+each request to the module that answers it ([chapter 11](11-server.md)):
 
 | Routes | Answered by |
 |---|---|
-| `/`, the app files, `/api/info`, `/api/sync`, `/api/favorite`, `/api/albums/<id>/download` | `cmd_serve` in [embed.py](../../photo-estate/embed.py) |
+| `/`, the app files, `/api/info`, `/api/sync`, `/api/favorite`, `/api/albums/<id>/download` | `PhotoApp` in [photo_app.py](../../photo-estate/photo_app.py) |
 | `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log` | `Browse` in [browse.py](../../photo-estate/browse.py) |
 | `/thumb/`, `/preview/`, `/large/`, `/original/` | `Images` in [images.py](../../photo-estate/images.py) |
 | `/api/upload/...`, `/api/ingest`, `/api/restart`, `/stats`, `/api/stats` | `Admin` in [admin.py](../../photo-estate/admin.py) |
@@ -25,6 +26,40 @@ only):
 | `/setup`, `/api/intake*` (not with `--demo`) | `IntakeAPI` in [intake/api.py](../../photo-estate/intake/api.py) |
 
 All of them answer from the same in-memory catalog (`catalog.Live`, in [catalog.py](../../photo-estate/catalog.py)).
+
+### Who may write
+
+Reading is open to anyone who can reach the app. Every request that changes the library takes one rule
+(`Auth.LOCAL_OR_WRITER`, `ROUTE_AUTH` in photo_app.py, [chapter 11](11-server.md)): the caller is a
+`--upload-user` login (the `Tailscale-User-Login` header `tailscale serve` adds), or the request comes
+from this computer itself (`127.0.0.1` or `::1`, with no `Tailscale-User-Login`, `X-Forwarded-For` or
+`Forwarded` header): the browser there, the task agent, a local MCP client. With no `--upload-user`,
+everyone may write. Otherwise the answer is `403 {"error": "not allowed"}` (uploads: `403 not allowed`,
+text).
+
+| Writes (the rule above) | Open to anyone |
+|---|---|
+| `POST /api/people/label`, `/api/people/label-many`, `/api/people/person` | every `GET` |
+| `POST /api/favorite` | `POST /mcp` (its write tools take the rule: a caller who may not write gets an `isError` result) |
+| `POST /changes...`, `/api/changes...`, `/api/albums...`, `/api/tasks...` | `OPTIONS /api/upload/...` |
+| `POST /api/intake/...` | |
+| `POST /api/ingest`, `/api/restart` | |
+| `PUT` and `POST /api/upload/...` | |
+
+Before 2026-11-19 the three People writes took no permission, and intake, the ingest, restart and
+uploads took a `--upload-user` login only (this computer's own requests were refused there).
+
+### Malformed requests
+
+| Request | Answer |
+|---|---|
+| A number parameter that isn't one: `limit`, `cursor` on `/api/search` and `/api/similar`; `limit` on `/api/sync`; `job`, `after` on `/setup/practice-consent` and `/api/intake/jobs/<id>` | `400 {"error": "limit must be a whole number"}` (named for the parameter). Numbers out of range are clamped as before (`limit` 1-500 on search, 1-10000 on sync) |
+| A POST body that isn't JSON | `400 {"error": "the body is not JSON"}`; on `/mcp`, JSON-RPC's `-32700` error, also a 400. An empty body is `{}` |
+| A `Content-Length` that isn't a whole number | `400 {"error": "Content-Length must be a whole number"}` |
+| A JSON body over 8 MB (`http_util.MAX_BODY`) | `413 {"error": "the body is over 8388608 bytes"}`, before reading it; the connection is closed |
+| `from=` or `to=` with a month outside 1-12 (`2020-00`, `2020-99`) | Ignored, like any date that can't be read |
+
+The setup server (`intake/server.py`) and `faces.py serve` read bodies the same way.
 
 ### Pages and files
 
@@ -38,7 +73,7 @@ All of them answer from the same in-memory catalog (`catalog.Live`, in [catalog.
 
 | Request | Returns |
 |---|---|
-| `PUT /api/upload/<YYYY/MM/DD/name.ext>` | Saves the body to the inbox (`--inbox`, default `<db dir>/iphone`; none with `--demo`). `Content-Length` is required; an optional `X-Content-SHA256` is checked against the bytes received. `201 {"status":"stored"}`; `200 "exists"` if the same path and size is already there (so retries are safe); `409` if the path exists with a different size; `400` for a bad path, short body or wrong checksum; `403` if `--upload-user` is set and `Tailscale-User-Login` is not one of them; `411` without a length |
+| `PUT /api/upload/<YYYY/MM/DD/name.ext>` | Saves the body to the inbox (`--inbox`, default `<db dir>/iphone`; none with `--demo`). `Content-Length` is required; an optional `X-Content-SHA256` is checked against the bytes received. `201 {"status":"stored"}`; `200 "exists"` if the same path and size is already there (so retries are safe); `409` if the path exists with a different size; `400` for a bad path, short body or wrong checksum; `403` if `--upload-user` is set, `Tailscale-User-Login` is not one of them and the request is not from this computer; `411` without a length |
 
 The extension must be a photo or video type, or `X.<media ext>.xmp` for a sidecar. The server never
 writes the catalog: `ingest-iphone.sh` ingests the inbox ([upload.py](../../photo-estate/upload.py)).
@@ -46,7 +81,8 @@ writes the catalog: `ingest-iphone.sh` ingests the inbox ([upload.py](../../phot
 `GET /api/ingest` reports the inbox and the last run; `POST /api/ingest` runs `ingest-iphone.sh`
 (one at a time: `202`, or `409` if a run is going) and `POST /api/restart` relaunches the app, but
 only when launchd started it (else `409`). The Library info page (`/stats`) has the buttons for
-these. All three honour `--upload-user`, and none take a body: the script and its arguments are fixed.
+these. Both POSTs take the write rule, and their body, if any, is not looked at: the script and its
+arguments are fixed.
 
 `GET /api/ingest` returns `{enabled, running, started_at, finished_at, exit_code, log: [last 300
 lines], restart_needed, waiting: {files, bytes}, can_restart}`; `{"enabled": false}` with `--demo`.
@@ -114,7 +150,7 @@ Response:
 | `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start |
 | `GET /api/log?ev=open\|share&sha=...&pos=N` plus the search's parameters | Appends an event to the query log; `204` |
 | `GET /api/layout?...` (same filter parameters, plus `sort`) | Every matching photo's shape, one byte each, in `/api/search`'s order: the aspect ratio between 0.5 and 2.6 in 255 steps (`application/octet-stream`, with an `ETag`). The page lays a month out from it before it knows which photos are in it |
-| `POST /api/favorite {sha, fav}` | Makes a photo a favourite, or not: `{sha, fav, favourites}`. Takes the same permission as uploading (`--upload-user`, or a request from this computer); `403` otherwise |
+| `POST /api/favorite {sha, fav}` | Makes a photo a favourite, or not: `{sha, fav, favourites}`. Takes the write rule; `403` otherwise |
 
 ### Albums and change sets
 
@@ -153,7 +189,9 @@ also answers under `/api/albums`; `/api/changes` lists only the albums that are 
 ### Bringing photos in (the setup page)
 
 Answered by [intake/api.py](../../photo-estate/intake/api.py), both by the full app and by the small
-setup server that runs before there is a library. Starting a job takes the same permission as uploading.
+setup server that runs before there is a library. In the full app every POST takes the write rule (a
+job reads any folder on this computer); the setup server, which runs before there is a library to
+protect, has no rule of its own.
 
 | Request | Does |
 |---|---|
@@ -194,6 +232,9 @@ All four validate `<sha>` as 64 lowercase hex characters of a known photo (else 
 | `POST /api/people/label-many` | `{"items": [label bodies]}`: apply in order, rescore once |
 | `POST /api/people/person` | `{"id", "name"?, "born"?}`: rename (or merge) and set birth month |
 
+The three POSTs take the write rule in the photo app (`403` for a viewer); `faces.py serve`, run by
+hand on this computer, has no rule.
+
 `POST /api/people/label` body (any combination):
 
 ```json
@@ -232,6 +273,8 @@ Returns `{"ok": true, "pending": N}`.
 | 204 | `/api/log` |
 | 304 | A conditional request matched the `ETag` |
 | 201 | `PUT /api/upload/...` stored a new file |
-| 400 | A malformed review decision, or a refused upload |
+| 400 | A malformed request (a number parameter, a body that isn't JSON, a bad `Content-Length`: above), a malformed review decision, or a refused upload |
+| 403 | A write from a caller who may not write (above) |
 | 404 | Unknown sha, unknown path, or `/api/similar` with an unknown photo |
+| 413 | A JSON body over 8 MB |
 | 503 | `/people` before the face data has loaded |

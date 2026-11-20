@@ -50,8 +50,9 @@ def test_scripts_run_whole_and_failures_are_reported(pytester: pytest.Pytester):
     everything.stdout.fnmatch_lines(["*test_mcp.py exited 1*", "*a slow script must not run*"])
 
 
-LIGHT = ["admin", "browse", "catalog", "changes", "encoder", "estate_mcp", "images", "pages", "scores",
-         "stacks", "stats", "sync", "tasks", "upload", "intake", "intake.server", "intake.engine", "intake.api"]
+LIGHT = ["admin", "browse", "catalog", "changes", "encoder", "estate_mcp", "http_util", "images", "pages",
+         "photo_app", "scores", "stacks", "stats", "sync", "tasks", "upload", "intake", "intake.server",
+         "intake.engine", "intake.api"]
 
 
 def test_lightweight_modules_do_not_import_the_ml_stack(estate_root):

@@ -16,7 +16,8 @@ that catalogues them, restarting, the Library info page, and the catalog's backu
   Admin.forget_library()        the library numbers on /stats are out of date (a reload, a favourite)
   backups(...)                  --backup-dir: a copy of the catalog every --backup-every hours
 
-Writing (uploading, ingesting, restarting) takes --upload-user: `allowed` says whether the caller is one.
+Writing (uploading, ingesting, restarting) takes the app's write rule: a --upload-user login or a request from
+this computer (photo_app.ROUTE_AUTH). `allowed` says whether the caller passes it.
 """
 from __future__ import annotations
 
