@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import embed  # noqa: E402
 import http_util  # noqa: E402
 from photo_app import ROUTE_AUTH, PhotoApp, policy  # noqa: E402
+from core.lifecycle import Lifecycle  # noqa: E402
 
 WRITER, VIEWER = "writer@example.com", "viewer@example.com"
 AS_WRITER = {"Tailscale-User-Login": WRITER}
@@ -105,6 +106,13 @@ def test_every_write_is_local_or_writer():
         assert policy(method, path) is http_util.Auth.PUBLIC, (method, path)
 
 
+def ready_people(stub) -> Lifecycle:
+    people = Lifecycle("the People page")
+    people.begin()
+    people.succeed(stub)
+    return people
+
+
 class StubPeople:
     def __init__(self):
         self.calls = []
@@ -119,8 +127,7 @@ def with_people(restricted, monkeypatch):
     """The demo has no faces: a People page that records what reaches it."""
     stub = StubPeople()
     monkeypatch.setattr(restricted.live.cat, "has_faces", True)
-    monkeypatch.setitem(restricted.people, "state", "ready")
-    monkeypatch.setitem(restricted.people, "p", stub)
+    monkeypatch.setattr(restricted, "people", ready_people(stub))
     return restricted, stub
 
 
@@ -140,8 +147,7 @@ def test_people_writes_need_a_writer(with_people, path):
 def test_everyone_writes_without_upload_user(app, monkeypatch):
     stub = StubPeople()
     monkeypatch.setattr(app.live.cat, "has_faces", True)
-    monkeypatch.setitem(app.people, "state", "ready")
-    monkeypatch.setitem(app.people, "p", stub)
+    monkeypatch.setattr(app, "people", ready_people(stub))
     assert app.a.upload_user == []
     assert app.request("POST", "/api/people/label", AS_VIEWER, body={}).status == 200
 

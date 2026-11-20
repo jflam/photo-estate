@@ -27,6 +27,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
+from core.lifecycle import Unavailable
+
 if TYPE_CHECKING:     # for the types only: the tools reach these through `app`
     from changes import Changes
     from tasks import Tasks
@@ -440,7 +442,8 @@ class Server:
                 out = fn(args, who) if writes else fn(args)
                 return ok({"content": [{"type": "text", "text": json.dumps(out, separators=(",", ":"), default=str)}],
                            "structuredContent": out, "isError": False})
-            except (ValueError, KeyError, TypeError, PermissionError) as e:   # the agent can read it and try again
+            except (ValueError, KeyError, TypeError, PermissionError, Unavailable) as e:   # the agent can read it and try again
+                # (Unavailable: the search model is still loading, or failed to load; encoder.py)
                 text = f"missing argument: {e}" if isinstance(e, KeyError) else str(e)
                 return ok({"content": [{"type": "text", "text": text}], "isError": True})
         return err(-32601, f"method not found: {method}")

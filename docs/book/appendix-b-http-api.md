@@ -72,7 +72,7 @@ The setup server (`intake/server.py`) and `faces.py serve` read bodies the same 
 |---|---|
 | `GET /` , `/index.html` | `search.html`, with an `ETag` and `Cache-Control: no-cache` |
 | `GET /manifest.webmanifest`, `/icon-180.png`, `/icon-192.png`, `/icon-512.png`, `/icon-maskable-512.png`, `/sw.js` | The files in `app/`, served from the site root |
-| `GET /people`, `/people/` | `people.html`, once faces exist and `People` has loaded (else 503) |
+| `GET /people`, `/people/` | `people.html`, once faces exist and `People` has loaded (else 503; 500 with the error if loading them failed) |
 
 ### Uploads from the phone
 
@@ -239,11 +239,11 @@ unit rows), `shard-NNNN.shas.txt` and `meta.json` (`model`). Without the option 
 | Request | Purpose |
 |---|---|
 | `GET /face/<id>` | The 160 px face crop (regenerated from the original if the cache lacks it); cached one day |
-| `GET /api/people` | The overview: faces, photos, named, ignored, pending, people with year counts and cover, and the state of the unknown-groups job |
+| `GET /api/people` | The overview: faces, photos, named, ignored, pending, people with year counts and cover, and the state of the unknown-groups job (`unknown`: `waiting`, `working`, `ready` or `failed`) |
 | `GET /api/people/review?person=ID[&year=Y][&limit=60][&skipped=1]` | Faces waiting for that person, most likely first |
 | `GET /api/people/person?person=ID[&year=Y][&limit=12]` | A person's named faces: a few per year, or all of one year |
 | `GET /api/people/odd?person=ID[&year=Y][&offset=0][&limit=60]` | A person's named faces, least like the rest first |
-| `GET /api/people/unknown[?limit=12]` | Groups of unnamed faces |
+| `GET /api/people/unknown[?limit=12]` | Groups of unnamed faces: `{state, groups}`, `state` as in the overview; with `failed`, also `error` (what the grouping raised) and no groups |
 | `GET /api/people/photo?face=ID` | One face's photo and every face in it |
 | `POST /api/people/label` | Name, forget, rule out, put aside, undo, name a cluster ([chapter 15](15-human-corrections.md) for the body) |
 | `POST /api/people/label-many` | `{"items": [label bodies]}`: apply in order, rescore once |
@@ -294,4 +294,5 @@ Returns `{"ok": true, "pending": N}`.
 | 403 | A write from a caller who may not write (above) |
 | 404 | Unknown sha, unknown path, or `/api/similar` with an unknown photo |
 | 413 | A JSON body over 8 MB |
-| 503 | `/people` before the face data has loaded |
+| 500 | A part loaded in the background failed (issue #82): a typed search after the search model failed to load (`{"error": "the search model (...) failed to load: ..."}`), or `/people`, `/face/*` and `/api/people/*` after the faces failed to load (the error as text; `/people` as a page that says so) |
+| 503 | `/people` before the face data has loaded; a typed search (`/api/search?q=`, `/api/periods` and the rest that read words) while the search model is still loading after waiting 90 s for it (`{"error": "... is still loading ..."}`, `Retry-After: 5`) |

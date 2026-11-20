@@ -15,7 +15,7 @@ else) turns it into a member where the code needs one.
   IngestState    upload.IngestJob      idle | quiet | starting | running | backoff
   JobState       intake jobs.state     queued | running | waiting | done | failed | cancelled
   StageState     an intake stage, as the page shows it: done | pending | running | waiting | failed
-  ClusterState   faces.People's clustering of unnamed faces: waiting | working | ready
+  ClusterState   faces.People's clustering of unnamed faces: waiting | working | ready | failed
 
 Beside the lifecycles, the sets of states the modules test against: TASK_ACTIVE (a task that can be
 cancelled), JOB_ACTIVE and JOB_RETRYABLE (intake jobs). The transitions themselves are the modules'
@@ -87,6 +87,7 @@ class ClusterState(StrEnum):
     WAITING = "waiting"
     WORKING = "working"
     READY = "ready"
+    FAILED = "failed"      # the clustering raised: People.clusters_error says what
 
 
 class AlbumKind(StrEnum):

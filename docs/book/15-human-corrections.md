@@ -219,6 +219,12 @@ another": the same star-not-chain rule as the near-duplicate finder (chapter 8).
 appear under **Who is this?** with a guess ("Matthew?") if the group's first 12 faces average ≥ 0.25 against
 a known person.
 
+The job's state (`clusters_state`: `waiting`, `working`, `ready`, or `failed`) changes under the
+People lock, and the new groups are swapped in with it, so a reader sees the old groups or the new ones,
+never half of them. If the grouping raises, the state is `failed` with the error (`clusters_error`);
+`/api/people/unknown` reports both, and the page stops asking every 1.5 s and says the unnamed faces
+could not be grouped, while naming everyone else still works (issue #82).
+
 ## The corrections you can make
 
 Every interaction on the People page boils down to a handful of operations on faces, and one

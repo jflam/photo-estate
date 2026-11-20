@@ -307,12 +307,35 @@ Four things start in threads *after* the arrays are built, so the page and filte
 
 | Thread | Does | Why in the background |
 |---|---|---|
-| People | `from faces import People; People(...)` | Loading all faces and scoring them takes seconds; only `/people` needs it. Until it is ready, `/people` answers 503 "Faces are still loading" |
+| People | `from faces import People; People(...)` | Loading all faces and scoring them takes seconds; only `/people` needs it. Until it is ready, `/people` answers 503 "Faces are still loading"; if the load raises, 500 with the error (see below) |
 | Text encoder | `import torch`, load SigLIP, then one `"warm-up"` encode | Importing PyTorch is **most of startup time** and only typed queries need it. The warm-up takes the ~1 s first-forward-pass penalty away from the first real query |
 | Thumbnail pre-generation | Make every missing 360 px thumbnail | So scrolling never waits for HEIC decoding |
 | Sync feed | `Feed(...)`, then `feed_update()` | Compares the loaded catalog with the change feed the iPhone app syncs from (chapter 20); until it finishes, `/api/sync` answers 503 |
 
-A typed search that arrives before the encoder is ready simply blocks on `Encoder.ready.wait()`.
+A typed search that arrives before the encoder is ready waits for it, but only `encoder.WAIT` (90 s): the
+request holds the catalog gate, so it must not wait forever. Then it is answered 503 with `Retry-After`.
+
+#### When a background load fails (issue #82)
+
+The search model and the People page are each a `Lifecycle` ([core/lifecycle.py](../../photo-estate/core/lifecycle.py)):
+`idle -> loading -> ready | failed`, and `ready | failed -> loading` again for a reload. Any other move
+raises `IllegalMove`. The phase, the last good value and the error are read and written under the
+object's lock, and its event is set when a load ends either way. A loader runs `begin()`, then
+`succeed()` or `fail()` in a try/except, so a load that raises can no longer leave a request waiting
+forever:
+
+| Part | While loading | When the load raised |
+|---|---|---|
+| Search model (`Encoder`) | `text()`, `side`, `image()` wait up to 90 s, then raise `ModelLoading`: 503 `{"error"}` with `Retry-After: 5` | They raise `ModelFailed` at once: 500 `{"error": "the search model (...) failed to load: ..."}`. Browsing, filters and thumbnails keep working |
+| People page (`PhotoApp.load_people`) | 503, as before | 500, the page says "Faces could not be loaded" and the error, and stops refreshing. Loads run one at a time; a reload that fails keeps the loaded one answering |
+| Grouping unnamed faces (`People.cluster`) | `/api/people/unknown` says `working` | It says `failed` with an `error`; the page stops asking and says so |
+| `/api/stats` disk numbers (`Admin.stats_job`) | `state: working` | `state: error` with the error, and `running` is cleared |
+
+`PhotoApp.handle` turns `core.lifecycle.Unavailable` (what `ModelLoading` and `ModelFailed` are) into
+those answers for every route, and the MCP endpoint makes it a tool error the agent can read.
+`Admin.st` is only touched under `st_lock`, and `stats_payload` answers from one copy taken under it;
+the job reads the catalog for the library numbers inside the catalog gate, never while holding
+`st_lock` (a request holds the gate first, then `st_lock`), and not during the slow walk of the disk.
 Measured on the author's Mac mini with a 100k library: first answer in 9-17 s after restart (most of
 it reading the catalog off a USB disk), typed search ready 14-22 s.
 

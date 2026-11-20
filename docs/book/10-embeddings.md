@@ -156,6 +156,11 @@ Three details that each matter for quality:
    the framed form moves the query toward it and makes scores more stable. The thresholds below were
    *measured with this averaging*, so changing the prompts means re-measuring them.
 
+In the app the model loads in a background thread (`Encoder.start`). A query that arrives first waits
+for it, at most 90 s (`encoder.WAIT`), then gets a 503; if the load raised (no model in the cache, no
+PyTorch, out of memory), every query gets a 500 that says why at once, rather than waiting forever
+(issue #82, [chapter 11](11-server.md)).
+
 The command-line `embed.py search` uses a single prompt (the lower-cased query), so its scores are
 close to, but not identical to, the app's.
 

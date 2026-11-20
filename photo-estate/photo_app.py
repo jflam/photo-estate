@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import html
 import io
 import json
 import os
@@ -60,6 +61,7 @@ from admin import Admin, backups
 from browse import Browse
 from changes import Changes
 from core import config, schema
+from core.lifecycle import Lifecycle, Phase, Unavailable
 from embed import connect, now
 from encoder import Encoder
 from estate_mcp import AppFacade, Server as MCPServer
@@ -143,7 +145,8 @@ class PhotoApp:
 
         # The People page (/people): who each face is, and the questions worth asking. It's faces.py's,
         # mounted here so naming works wherever the app does. Loads in the background, like the encoder.
-        self.people = {"state": "loading" if live.cat.has_faces else "none", "p": None}   # none | loading | ready
+        # Its Lifecycle's value is the faces.People that answers; people_state() is what the page is told.
+        self.people, self.people_loading = Lifecycle("the People page"), threading.Lock()   # one load at a time
         self.encoder = Encoder(a.model, a.threads, images=bool(inbox))   # the image side too, for photos from the phone
         # Devices that keep their own copy of the catalog (the iPhone app) follow it through a change feed
         # (sync.py). The feed's versions live beside the catalog, never in it.
@@ -158,7 +161,7 @@ class PhotoApp:
         self.images = Images(live, store, cache, seed)
         self.admin = Admin(live, self.encoder, connect, now, db=a.db, model=a.model, store=store, cache=cache, seed=seed,
                            inbox=inbox, ingest=ingest, query_log=qlog, demo=a.demo,
-                           faces_ready=lambda: self.people["state"] == "ready")
+                           faces_ready=lambda: self.people_state() == "ready")
         # An experiment: the same search ranked by a second model's vectors (compare.py). Without its
         # vectors the app runs as usual: on the mini it is a launchd service, and a stop would only repeat.
         self.compare = None
@@ -223,11 +226,28 @@ class PhotoApp:
         return catalog.load(connect(self.a.db), self.a.model, self.cache, self.seed, prev, demo=self.a.demo)
 
     def load_people(self) -> None:
-        """Again after a reload: the one that is ready keeps answering until the new one is."""
-        from faces import People
-        p = People(self.a.db, self.a.store, [self.cache] if self.cache == self.seed else [self.cache, self.seed],
-                   log=lambda msg: print(msg, flush=True))
-        self.people.update(p=p, state="ready")
+        """Again after a reload: the one that is ready keeps answering until the new one is, and keeps
+        answering if the new one fails. Loads run one at a time, so the newest faces are the last swapped in."""
+        with self.people_loading:
+            self.people.begin()
+            try:
+                from faces import People
+                p = People(self.a.db, self.a.store, [self.cache] if self.cache == self.seed else [self.cache, self.seed],
+                           log=lambda msg: print(msg, flush=True))
+            except Exception as e:   # a missing or broken table, out of memory: /people says so, not "loading"
+                self.people.fail(e)
+                print(f"people: failed to load: {self.people.snapshot().error}", flush=True)
+                return
+            self.people.succeed(p)
+
+    def people_state(self) -> str:
+        """none (no faces) | loading | ready | failed (and nothing loaded before to keep answering)."""
+        s = self.people.snapshot()
+        if s.value is not None:
+            return "ready"
+        if s.phase is Phase.FAILED:
+            return "failed"
+        return "loading" if self.live.cat.has_faces else "none"
 
     def start(self) -> None:
         a = self.a
@@ -235,7 +255,7 @@ class PhotoApp:
             threading.Thread(target=self.load_people, daemon=True).start()
         self.encoder.start()
         if self.compare:   # after the app's own: importing transformers from two threads at once fails,
-            threading.Thread(target=lambda: (self.encoder.ready.wait(), self.encoder_b.load()),   # and typed
+            threading.Thread(target=lambda: (self.encoder.state.wait(None), self.encoder_b.load()),   # and typed
                              daemon=True).start()                                                 # searches come first
         threading.Thread(target=self.feed_update, daemon=True).start()
         if self.ingest:
@@ -357,7 +377,8 @@ class PhotoApp:
 
     def handle(self, req: Request) -> Response:
         """One request -> its Response. Holds the catalog gate (catalog.Live) for all but the slow ones, so
-        a request sees one catalog from start to finish. A malformed request is a 400, never an exception."""
+        a request sees one catalog from start to finish. A malformed request is a 400, never an exception;
+        a search that needs the model while it loads is a 503, and after it failed to load a 500 (encoder.py)."""
         try:
             if req.target.startswith(UNGATED) or req.target.endswith("/download"):
                 return self.route(req)
@@ -365,6 +386,8 @@ class PhotoApp:
                 return self.route(req)
         except HTTPError as e:
             return e.response
+        except Unavailable as e:
+            return json_response({"error": str(e)}, e.status, {"Retry-After": "5"} if e.status == 503 else None)
 
     def route(self, req: Request) -> Response:
         method, headers, local = req.method, req.headers, req.local
@@ -455,14 +478,22 @@ class PhotoApp:
         """A People page request (faces.py), or None if the path isn't one. Writes were authorized in route()."""
         if not self.live.cat.has_faces or not path.startswith(("/people", "/face/", "/api/people")):
             return None
-        if self.people["state"] != "ready":
-            if method == "GET" and path.rstrip("/") == "/people":   # the page itself: wait, and ask again
+        s = self.people.snapshot()
+        page = method == "GET" and path.rstrip("/") == "/people"
+        if s.value is None and s.phase is Phase.FAILED:   # nothing loaded to keep answering: say why, don't spin
+            if page:
+                return Response(500, pages.waiting("Faces could not be loaded", f"{html.escape(s.error or '')}. The rest"
+                                                   " of the library works; the faces load again after the next"
+                                                   " ingest or restart.", refresh=False), "text/html; charset=utf-8")
+            return Response(500, f"Faces could not be loaded: {s.error}".encode(), "text/plain")
+        if s.value is None:
+            if page:   # the page itself: wait, and ask again
                 return Response(503, pages.waiting("Finding everyone", "Faces load after the library does. This takes"
                                                    " under a minute; the page opens by itself."), "text/html; charset=utf-8")
             return Response(503, b"Faces are still loading; try again in a moment.", "text/plain")
         if method == "POST" and not isinstance(body, dict):
             return json_response({"error": "expected a JSON object"}, 400)
-        return Response.of(self.people["p"].handle(method, path, qs, body))
+        return Response.of(s.value.handle(method, path, qs, body))
 
     def changes_route(self, method: str, path: str, qs: dict, body, who: str) -> Response | None:
         """Change sets (changes.py) and tasks (tasks.py): the review page and their API. Proposing, deciding

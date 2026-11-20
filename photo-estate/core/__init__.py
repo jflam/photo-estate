@@ -6,6 +6,8 @@ Pillow, no numpy, no models, so the setup server, the CLI tools and the tests ca
   config.py   the default ports and the URLs built from them
   states.py   the finite string domains (change set op and status, decisions, task, ingest and intake job
               states) as StrEnums whose values are the strings already stored and sent
+  lifecycle.py  something loaded in a background thread (the search model, the People page): idle |
+              loading | ready | failed under a lock, so a request is told "loading" or "failed", never hangs
 
 A script in photo-estate/ imports it as `from core import media`: the script's own folder is on
 sys.path. The intake/ package is imported from there too. Scripts in a subfolder (tests/, tools/...)

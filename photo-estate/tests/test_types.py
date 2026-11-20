@@ -141,7 +141,7 @@ def test_enum_values_are_the_legacy_strings():
         states.IngestState: ("idle", "quiet", "starting", "running", "backoff"),
         states.JobState: ("queued", "running", "waiting", "done", "failed", "cancelled"),
         states.StageState: ("done", "pending", "running", "waiting", "failed"),
-        states.ClusterState: ("waiting", "working", "ready"),
+        states.ClusterState: ("waiting", "working", "ready", "failed"),
     }
     for enum, values in legacy.items():
         assert tuple(m.value for m in enum) == values, enum

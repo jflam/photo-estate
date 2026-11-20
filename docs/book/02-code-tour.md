@@ -87,6 +87,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
     config.py                 the default ports (8766 real, 8767 demo, 8768 preview, 8769 sandbox, 8765 review, 8764 faces)
     states.py                 the finite string domains as StrEnums (change set op/status/state, decisions, task,
                               ingest, intake job and stage, clustering), each value the string already stored (issue #90)
+    lifecycle.py              Lifecycle: idle | loading | ready | failed for what loads in a thread (the search
+                              model, the People page), under a lock, so a request hears "loading" or "failed" (issue #82)
 
   search.html        2,051  the photo app: Library, Albums and Search (HTML + CSS + JS in one file)
   people.html          749  the People page
@@ -104,7 +106,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
   tests/             2,436  16 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_core.py checks core/ against what the code before it did;
-                            test_types.py checks the typed contracts (Catalog's fields, the enums) and runs pyright
+                            test_types.py checks the typed contracts (Catalog's fields, the enums) and runs pyright;
+                            test_lifecycle.py makes the background loaders fail and race on purpose (issue #82)
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)

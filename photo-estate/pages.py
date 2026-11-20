@@ -31,12 +31,13 @@ def _versioned(m: re.Match) -> bytes:
     return b'href="/%s?v=%s"' % (m[1], v.encode())
 
 
-def waiting(title: str, why: str) -> bytes:
-    """A page for a part of the app that is not ready yet (faces load after the library does). It asks again by itself."""
+def waiting(title: str, why: str, refresh: bool = True) -> bytes:
+    """A page for a part of the app that is not ready yet (faces load after the library does). It asks again by
+    itself, unless refresh is False (a part that failed: asking again would only say so again)."""
     css = (HERE / "app" / "estate.css").read_text()
     return f"""<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="refresh" content="4"><title>{title} — Photo Estate</title>
+{'<meta http-equiv="refresh" content="4">' if refresh else ""}<title>{title} — Photo Estate</title>
 <style>{css}
 body {{ min-height: 100dvh; display: grid; place-items: center; }}
 .mark .s {{ animation: rise 2.4s var(--ease) infinite alternate; }}

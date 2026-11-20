@@ -353,7 +353,7 @@ class People:
         self.sug = np.full(n, -1, np.int32)        # the person a face most resembles, of those not ruled out
         self.sug_score = np.zeros(n, np.float32)
         self.sug_far = np.zeros(n, bool)           # ...judged from named faces more than WINDOW years away
-        self.clusters, self.clusters_state = [], ClusterState.WAITING
+        self.clusters, self.clusters_state, self.clusters_error = [], ClusterState.WAITING, None   # under self.lock
         self.seed(con)
         self.rescore(con)
         con.close()
@@ -529,9 +529,23 @@ class People:
 
     def cluster(self):
         """Group the faces that resemble nobody known into people who appear often. Each group is one
-        face and everything close to it, so a group never chains from one person into another."""
+        face and everything close to it, so a group never chains from one person into another. Runs in its
+        own thread; the state (working, then ready or failed with clusters_error) changes under self.lock,
+        and the groups are swapped in with it, so a reader sees the old groups or the new, never half."""
+        with self.lock:
+            self.clusters_state, self.clusters_error = ClusterState.WORKING, None
+        try:
+            out = self.find_clusters()
+        except Exception as e:   # the page stops asking and says so, instead of "Grouping..." forever
+            with self.lock:
+                self.clusters_state, self.clusters_error = ClusterState.FAILED, f"{type(e).__name__}: {e}"
+            print(f"people: grouping the unnamed faces failed: {self.clusters_error}", flush=True)
+            return
+        with self.lock:
+            self.clusters, self.clusters_state = out, ClusterState.READY
+
+    def find_clusters(self) -> list:
         np = self.np
-        self.clusters_state = ClusterState.WORKING
         with self.lock:
             cand = np.flatnonzero((self.pid == -1) & (self.sug_score < SUGGEST) & (self.score >= 0.65) & (self.px >= 56))
             cand = cand[np.argsort(-(self.px[cand] * self.score[cand]), kind="stable")[:60000]]   # the clearest; keeps this under a minute
@@ -551,7 +565,7 @@ class People:
                 continue
             left[members] = False
             out.append(cand[members[np.argsort(-(X[members] @ X[i]))]])
-        self.clusters, self.clusters_state = out, ClusterState.READY
+        return out
 
     # -- the page's API ------------------------------------------------------------------------
 
@@ -671,7 +685,8 @@ class People:
                             "from": int(ys.min()) if len(ys) else 0, "to": int(ys.max()) if len(ys) else 0, "guess": guess})
                 if len(out) >= limit:
                     break
-            return {"state": self.clusters_state, "groups": out}
+            return {"state": self.clusters_state, "groups": out,
+                    **({"error": self.clusters_error} if self.clusters_state == ClusterState.FAILED else {})}
 
     def photo(self, face_id: int) -> dict:
         with self.lock:
