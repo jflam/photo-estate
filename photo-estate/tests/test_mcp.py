@@ -6,7 +6,7 @@
 handshake, the tool list, finding photos, proposing a change set and amending it, and reading back
 what a person kept. Checks that an agent can propose but not apply, and that no tool result carries
 anything but ids, scores and facts. Starts the real app (`embed.py serve --demo`)."""
-import json, os, socket, subprocess, sys, time, urllib.error, urllib.request
+import json, os, socket, subprocess, time, urllib.error, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent

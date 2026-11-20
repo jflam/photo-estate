@@ -41,6 +41,9 @@ from pathlib import Path, PurePosixPath
 
 from PIL import Image, ImageOps
 
+from core import config, schema
+from core.media import IMAGE_EXT, RAW_EXT, VIDEO_EXT, kind_of  # noqa: F401  (kind_of and the sets are estate's API)
+
 try:
     import pillow_heif
 
@@ -50,9 +53,6 @@ except ImportError:  # HEIC support is optional
 
 Image.MAX_IMAGE_PIXELS = None  # panoramas are legitimate
 
-IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".gif", ".webp", ".bmp", ".tif", ".tiff",
-             ".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf", ".avif"}
-VIDEO_EXT = {".mp4", ".mov", ".m4v", ".3gp", ".avi", ".mkv", ".mts", ".m2ts", ".webm", ".mpg", ".wmv"}
 YEAR_DIR = re.compile(r"^(Photos from|Fotos von|Photos de|Fotos de|Foto dal|Foto's uit) \d{4}$")
 EDITED = re.compile(r"-(edited|bearbeitet|modifié|editado|modificato|bewerkt|redigeret|muokattu)$", re.I)
 DUPN = re.compile(r"\(\d+\)$")
@@ -63,52 +63,7 @@ FLICKR_FILE = re.compile(r"(\d+)(?:_[0-9a-f]{10})?_o\.[A-Za-z0-9]+$")
 FILENAME_TITLE = re.compile(r"^[A-Za-z]{0,6}[_-]?\d+(\.[A-Za-z0-9]{3,4})?$")
 U64 = (1 << 64) - 1
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS sources(
-  name TEXT PRIMARY KEY, entries INT, media INT, new_assets INT, bytes_seen INT, bytes_new INT,
-  finished_at TEXT);
-CREATE TABLE IF NOT EXISTS assets(
-  sha256 TEXT PRIMARY KEY, ext TEXT, kind TEXT, size INT, width INT, height INT,
-  dhash INT,                 -- 64-bit perceptual hash stored signed
-  exif_taken_at TEXT,        -- camera local time, no tz
-  taken_at TEXT,             -- merged: sidecar UTC, else EXIF
-  lat REAL, lon REAL, description TEXT, people TEXT, favorited INT DEFAULT 0, first_seen TEXT);
-CREATE TABLE IF NOT EXISTS occurrences(
-  id INTEGER PRIMARY KEY, sha256 TEXT NOT NULL, source TEXT, path TEXT, dir TEXT, filename TEXT,
-  album TEXT, sidecar_id INT, UNIQUE(source, path));
-CREATE INDEX IF NOT EXISTS occ_sha ON occurrences(sha256);
-CREATE TABLE IF NOT EXISTS sidecars(
-  id INTEGER PRIMARY KEY, dir TEXT, filename TEXT, title TEXT, data TEXT, UNIQUE(dir, filename));
-CREATE TABLE IF NOT EXISTS albums(dir TEXT PRIMARY KEY, title TEXT, data TEXT);
-CREATE TABLE IF NOT EXISTS xmp(       -- icloudpd --xmp-sidecar files: X.HEIC.xmp next to X.HEIC
-  dir TEXT, filename TEXT, data TEXT, PRIMARY KEY(dir, filename));
-CREATE TABLE IF NOT EXISTS flickr(    -- Flickr account-data photo_<id>.json, keyed by photo id
-  id TEXT PRIMARY KEY, data TEXT);
-CREATE TABLE IF NOT EXISTS exif(      -- exiftool -n -G1 dump (MakerNotes and binary blobs left out)
-  sha256 TEXT PRIMARY KEY, camera TEXT, make TEXT, model TEXT, lens TEXT,
-  focal REAL, focal35 REAL, fnumber REAL, exposure REAL, iso INT, software TEXT,
-  duration REAL, fps REAL, data TEXT, error TEXT);
-CREATE INDEX IF NOT EXISTS exif_camera ON exif(camera);
-CREATE TABLE IF NOT EXISTS places(    -- places.py: where and when (rebuilt on every run)
-  sha256 TEXT PRIMARY KEY, city TEXT,
-  locality TEXT,             -- the nearer suburb/neighbourhood when a big city was chosen as `city`
-  admin2 TEXT, admin1 TEXT, country TEXT, cc TEXT,
-  place_source TEXT,         -- gps | event (inferred from the photo's event)
-  tz TEXT, tz_source TEXT,   -- IANA name or fixed offset, from gps | exif | event | home
-  local_time TEXT,           -- wall-clock time where the photo was taken, no offset
-  utc_time TEXT, event_id INT);
-CREATE INDEX IF NOT EXISTS places_event ON places(event_id);
-CREATE TABLE IF NOT EXISTS events(
-  id INTEGER PRIMARY KEY,    -- start time as UTC epoch seconds: stable across re-runs
-  start_local TEXT, end_local TEXT, n INT, title TEXT, place TEXT, lat REAL, lon REAL,
-  km_from_home REAL, trip_id INT);
-CREATE TABLE IF NOT EXISTS trips(
-  id INTEGER PRIMARY KEY, start_local TEXT, end_local TEXT, n INT, n_events INT, title TEXT, place TEXT);
-CREATE TABLE IF NOT EXISTS tags(
-  sha256 TEXT, model TEXT, caption TEXT, tags TEXT, data TEXT, seconds REAL, created_at TEXT,
-  PRIMARY KEY(sha256, model));
-CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(sha256 UNINDEXED, text);
-"""
+SCHEMA = schema.CATALOG   # the catalog's own tables (core/schema.py); places.py reads it too
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -121,13 +76,8 @@ def connect(db: str) -> sqlite3.Connection:
     con = sqlite3.connect(db)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
-    con.executescript(SCHEMA)
+    schema.ensure(con, "catalog")
     return con
-
-
-def kind_of(name: str) -> str | None:
-    ext = PurePosixPath(name).suffix.lower()
-    return "image" if ext in IMAGE_EXT else "video" if ext in VIDEO_EXT else None
 
 
 def blob_path(store: Path, sha: str, ext: str) -> Path:
@@ -766,7 +716,6 @@ def _ts(s: str | None) -> float | None:
         return None
 
 
-RAW_EXT = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"}
 # category -> (label, default decision); "largest" keeps only the biggest copy, "all" keeps every one
 DUPE_CATEGORIES = {
     "copies":    ("Same moment, different file (re-encoded, resized or re-uploaded copy)", "largest"),
@@ -1135,7 +1084,7 @@ def main() -> None:
     s = sub.add_parser("review", help="local web page to review near-duplicates (nothing is deleted)")
     s.add_argument("--store", required=True)
     s.add_argument("--threshold", type=int, default=5)
-    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--port", type=int, default=config.REVIEW)
     s.add_argument("--out", help="where thumbnails and decisions.json go (default: <db dir>/review)")
     s.set_defaults(fn=cmd_review)
 

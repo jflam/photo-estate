@@ -24,6 +24,9 @@ phone: the browser  --tailnet-->  Mac mini :8768, the demo app of the branch wit
 | 8767 | the demo library | `~/src/photo-estate-demo`, a worktree | someone moves the worktree by hand |
 | 8768 | the demo library, as a preview | a clone the preview keeps for itself, in `/Users/photopreview` | a newer commit is pushed to any branch |
 
+No other default takes these ports: `embed.py serve --sandbox` is on 8769 and `faces.py serve` on 8764
+(`photo-estate/core/config.py`; issue #73).
+
 Only 8768 follows GitHub by itself, which means the mini runs whatever a session pushes. So the
 preview runs as `photopreview`, a user that cannot read my home folder or `/Volumes/estate`, and not
 as me: 8766 and 8767 still run under my account. A firewall rule for that user stops it making

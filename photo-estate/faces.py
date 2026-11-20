@@ -8,7 +8,7 @@ faces.py — Tier 4: find every face, and work out who it is with your help.
 
   run     detect and embed the faces in every image not scanned yet (resumable)
   stats   how many faces are found, named, and waiting for you
-  serve   the naming page on its own (http://127.0.0.1:8768/people); `embed.py serve` also shows
+  serve   the naming page on its own (http://127.0.0.1:8764/people); `embed.py serve` also shows
           it at /people once faces have been scanned
 
   uv run faces.py --db /Volumes/estate/estate.db run --store /Volumes/estate/store
@@ -48,6 +48,8 @@ from multiprocessing import Pool
 from pathlib import Path
 
 import pages   # the pages, with the shared stylesheet put in
+from core import config, schema
+from core.media import FACES_SKIP_EXT as SKIP_EXT   # RAW and GIF (core/media.py says why)
 
 MODEL = "buffalo_l"
 MODEL_URL = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
@@ -55,27 +57,7 @@ MODEL_FILES = {  # name -> sha256
     "det_10g.onnx": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
     "w600k_r50.onnx": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
 }
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS faces(
-  id INTEGER PRIMARY KEY, sha256 TEXT, idx INT, model TEXT,
-  x REAL, y REAL, w REAL, h REAL,   -- the box, as fractions of the upright image
-  score REAL,                       -- detector confidence, 0-1
-  px INT,                           -- the box's longer side in pixels, at the size it was read
-  vec BLOB,                         -- float16 x 512, L2-normalised
-  person_id INT,                    -- persons.id; 0 = a face you chose not to name; NULL = unknown
-  source TEXT,                      -- who says so: 'you', 'google' or 'auto'
-  labeled_at TEXT);
-CREATE INDEX IF NOT EXISTS faces_sha ON faces(sha256);
-CREATE TABLE IF NOT EXISTS face_scans(   -- every image looked at, including those with no faces
-  sha256 TEXT, model TEXT, n INT, error TEXT, created_at TEXT, PRIMARY KEY(sha256, model));
-CREATE TABLE IF NOT EXISTS persons(
-  id INTEGER PRIMARY KEY, name TEXT UNIQUE, born TEXT, created_at TEXT);   -- born: 'YYYY' or 'YYYY-MM'
-CREATE TABLE IF NOT EXISTS face_not(     -- "this face is not that person", so it's never suggested again
-  face_id INT, person_id INT, PRIMARY KEY(face_id, person_id));
-CREATE TABLE IF NOT EXISTS face_later(   -- "is this ...?" skipped for now: still unnamed, asked again later
-  face_id INT, person_id INT, created_at TEXT, PRIMARY KEY(face_id, person_id));
-"""
-SKIP_EXT = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf", ".gif"}
+SCHEMA = schema.FACES
 SIDE = 1280        # images are read at this size (longer side): enough for faces a few % of the frame
 MIN_PX = 28        # smaller faces than this give embeddings that match anyone
 CROP = 160         # the face thumbnails the naming page shows
@@ -92,7 +74,7 @@ def connect(db: str) -> sqlite3.Connection:
     con = sqlite3.connect(db, timeout=60)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
-    con.executescript(SCHEMA)
+    schema.ensure(con, "faces")
     return con
 
 
@@ -663,7 +645,6 @@ class People:
                     "faces": [dict(self.face(mine[i]), fit=round(float(fit[i]), 3)) for i in page]}
 
     def unknown(self, limit: int) -> dict:
-        np = self.np
         with self.lock:
             out = []
             cents = self.centroids()
@@ -735,11 +716,13 @@ class People:
             pend = body.get("pending")
             if isinstance(pend, dict) and pend.get("person") in self.persons:
                 m = self.pending(pend["person"]) & ~self.skipped(pend["person"])
-                if pend.get("year") is not None:
-                    m = m & (self.year == int(pend["year"]))
+                year = pend.get("year")       # null: every year; a number (or one as text); anything else: none
+                if year is not None:
+                    ok = isinstance(year, int) or isinstance(year, str) and year.lstrip("-").isdigit()
+                    m = m & (self.year == int(year)) if ok else m & False
                 skip = {self.row[i] for i in body.get("not") or [] if i in self.row}
                 rows = [int(k) for k in self.np.flatnonzero(m) if int(k) not in skip]
-            if body.get("cluster") is not None and 0 <= body["cluster"] < len(self.clusters):
+            if isinstance(body.get("cluster"), int) and 0 <= body["cluster"] < len(self.clusters):
                 c = self.clusters[body["cluster"]]      # the whole group, not just the faces shown
                 rows = [int(k) for k in c[(self.pid[c] == -1) & (self.sug_score[c] < SUGGEST)]]
             undo = [self.row[i] for i in body.get("undo") or [] if i in self.row]
@@ -891,6 +874,8 @@ def cmd_stats(a) -> None:
 def cmd_serve(a) -> None:
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, urlparse
+
+    from http_util import HTTPError, read_json
     cache = Path(a.cache or Path(a.db).resolve().parent / "review")
     people = People(a.db, a.store, [cache])
     meta = dict(connect(a.db).execute("SELECT sha256, ext FROM assets WHERE kind='image'"))
@@ -941,11 +926,13 @@ def cmd_serve(a) -> None:
 
         def do_POST(self):
             u = urlparse(self.path)
-            try:
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
-            except ValueError:
-                body = None
-            self.reply(people.handle("POST", u.path, parse_qs(u.query), body))
+            try:   # 400 for a bad Content-Length or a body that isn't JSON, 413 over http_util.MAX_BODY
+                body = read_json(self.rfile, self.headers)
+            except HTTPError as e:
+                self.close_connection = True           # the body may be unread: don't take it for the next request
+                r = e.response
+                return self.reply((r.status, r.body, r.content_type, r.cache))
+            self.reply(people.handle("POST", u.path, parse_qs(u.query), body if isinstance(body, dict) else None))
 
     class Server(ThreadingHTTPServer):
         request_queue_size = 256
@@ -975,7 +962,7 @@ def main() -> None:
     s = sub.add_parser("serve", help="the naming page")
     s.add_argument("--store", required=True)
     s.add_argument("--cache", help="thumbnail cache dir (default: <db dir>/review)")
-    s.add_argument("--port", type=int, default=8768)
+    s.add_argument("--port", type=int, default=config.FACES)
     s.set_defaults(fn=cmd_serve)
     a = p.parse_args()
     a.fn(a)

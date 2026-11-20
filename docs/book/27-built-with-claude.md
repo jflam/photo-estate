@@ -111,7 +111,9 @@ the search model and exiftool, and ends with a list of what is ready and what is
 can tell what its environment lacks without guessing.
 
 **Tests that are scripts.** Each file in `tests/` runs on its own with `uv run tests/<file>`, needs
-no network, account or model, and says what it checked. A session runs all fifteen after a change.
+no network, account or model, and says what it checked. A session runs all fifteen after a change, or
+`uv run pytest` for all of them at once; CI runs the fast ones on every pull request
+([chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci)).
 
 **Looking, not just testing.** The pages are checked by driving them with Playwright and reading the
 screenshots, in light and dark mode; the iPhone app by the Simulator's screenshots. Most of what goes

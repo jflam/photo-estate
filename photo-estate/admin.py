@@ -16,7 +16,8 @@ that catalogues them, restarting, the Library info page, and the catalog's backu
   Admin.forget_library()        the library numbers on /stats are out of date (a reload, a favourite)
   backups(...)                  --backup-dir: a copy of the catalog every --backup-every hours
 
-Writing (uploading, ingesting, restarting) takes --upload-user: `allowed` says whether the caller is one.
+Writing (uploading, ingesting, restarting) takes the app's write rule: a --upload-user login or a request from
+this computer (photo_app.ROUTE_AUTH). `allowed` says whether the caller passes it.
 """
 from __future__ import annotations
 
@@ -35,11 +36,11 @@ from urllib.parse import unquote
 from PIL import Image, ImageOps
 
 import pages
+from core.media import DECODABLE_EXT
 from catalog import Live
 from estate import facts_of as estate_facts
 from upload import save_upload, staging_dir
 
-IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".gif", ".webp", ".tif", ".tiff", ".avif"}  # decodable stills
 
 
 def js(o, code: int = 200):
@@ -129,7 +130,7 @@ class Admin:
             stored = {}
             code, msg = save_upload(self.inbox, unquote(path[len(prefix):]), rfile, length,
                                     h.get("X-Content-SHA256"), meta, stored)
-            if stored and stored["path"].suffix.lower() in IMAGE_EXT:
+            if stored and stored["path"].suffix.lower() in DECODABLE_EXT:   # an upload's stills, less DNG
                 self.arrivals.put((stored["sha256"], stored["path"]))
             close = code >= 400   # a refused body may still be on the wire
         except OSError as e:

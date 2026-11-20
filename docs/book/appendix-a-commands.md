@@ -45,7 +45,7 @@ uv run embed.py [--db estate.db] [--model google/siglip2-base-patch16-256] [--th
 | `run` | `--store DIR` (**required**); `--workers 3` decoder processes; `--batch 16`; `--limit 0` | Embed every image with no embedding for this model (resumable) | [10](10-embeddings.md) |
 | `search` | `query`; `--limit 15` | Command-line semantic search | [10](10-embeddings.md) |
 | `stats` | none | Images embedded per model | |
-| `serve` | `--root DIR` (the library: `estate.db` and `store/` inside; default: the one chosen on the setup page, saved in `~/.config/photo-estate/library.json`); `--store DIR` (default `<root>/store`); `--demo`; `--sandbox` (a scratch library with practice sources, port 8768); `--port` (default 8766, or 8767 with `--demo`). With no photos in the library yet, `serve` shows the setup page (`/setup`) instead of the app, and becomes the app once the first photos are searchable; `--cache DIR` (default `<db dir>/review`); `--fast-cache DIR`; `--no-pregenerate`; `--match-floor 0.085` (`-1` = no floor); `--match-window 0.04` (`2` = show every photo, ranked); `--query-log FILE` (default `<db dir>/query-log.jsonl`) | The photo app | [11](11-server.md) |
+| `serve` | `--root DIR` (the library: `estate.db` and `store/` inside; default: the one chosen on the setup page, saved in `~/.config/photo-estate/library.json`); `--store DIR` (default `<root>/store`); `--demo`; `--sandbox` (a scratch library with practice sources, port 8769); `--port` (default 8766, or 8767 with `--demo`). With no photos in the library yet, `serve` shows the setup page (`/setup`) instead of the app, and becomes the app once the first photos are searchable; `--cache DIR` (default `<db dir>/review`); `--fast-cache DIR`; `--no-pregenerate`; `--match-floor 0.085` (`-1` = no floor); `--match-window 0.04` (`2` = show every photo, ranked); `--query-log FILE` (default `<db dir>/query-log.jsonl`) | The photo app | [11](11-server.md) |
 
 ```bash
 uv run embed.py --db estate.db run --store STORE
@@ -65,7 +65,7 @@ uv run embed.py serve --demo
 | `--ingest-script FILE` | `ingest-iphone.sh` | What the Library info page and automatic runs execute |
 | `--ingest-quiet SECONDS` | 60 | Quiet time after an upload before a run starts (0 turns automatic runs off) |
 | `--ingest-max-wait SECONDS` | 600 | The latest a run starts after the first upload of a burst |
-| `--upload-user LOGIN` (repeatable) | any | Only these Tailscale users may upload or run ingest |
+| `--upload-user LOGIN` (repeatable) | any | Only these Tailscale users (and requests from this computer) may change the library: upload, ingest, favourites, albums, People, intake ([chapter 11](11-server.md)) |
 | `--backup-dir DIR` | off | Copy the catalog and `face-labels.jsonl` here ([16](16-operations.md)) |
 | `--backup-every HOURS` / `--backup-keep N` | 24 / 7 | How often, and how many copies to keep |
 
@@ -81,7 +81,7 @@ uv run faces.py [--db estate.db] <command>
 |---|---|---|---|
 | `run` | `--store DIR` (**required**); `--cache DIR` (default `<db dir>/review`); `--workers 3`; `--threads 6` onnxruntime threads; `--limit 0` | Detect and embed faces in images not scanned yet | [14](14-faces.md) |
 | `stats` | none | Faces found, named by source, waiting | [15](15-human-corrections.md) |
-| `serve` | `--store DIR` (**required**); `--cache DIR`; `--port 8768` | The naming page on its own (`http://127.0.0.1:8768/people`). `embed.py serve` also shows it at `/people` once faces exist | [15](15-human-corrections.md) |
+| `serve` | `--store DIR` (**required**); `--cache DIR`; `--port 8764` | The naming page on its own (`http://127.0.0.1:8764/people`). `embed.py serve` also shows it at `/people` once faces exist | [15](15-human-corrections.md) |
 
 ## places.py: where and when
 
@@ -152,6 +152,19 @@ Needs `icloudpd`, `sqlite3`, `uv`. First run `icloudpd --username "$ICLOUD_USER"
 | `uv run tools/bench_server.py URL [--h2] [--quick] [--store DIR]` | Endpoint latency |
 | `uv run tools/thumb_burst.py URL DB` | Cold thumbnail bursts |
 | `uv run tests/test_poc.py` | End-to-end test |
+
+## Tests, lint and the lockfile
+
+Run from `photo-estate/`; they use `pyproject.toml` and `uv.lock` ([chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci)).
+
+| Command | Purpose |
+|---|---|
+| `uv sync [--group ml --group faces --group places]` | Build the locked development environment (the dev group by default) |
+| `uv run pytest -m "not slow"` | The fast tests, as CI runs them |
+| `uv run pytest [-m MARKERS] [--legacy-runner python\|uv]` | Every test (markers `slow`, `server`, `model`, `legacy`); `uv` runs each script in its own PEP 723 environment |
+| `uv run tests/<file>` | One test script on its own |
+| `uv run ruff check .` | Lint (syntax errors and pyflakes) |
+| `uv lock` / `uv lock --check` | Re-pin after changing a group / check `uv.lock` is current |
 
 ## Environment variables that matter
 

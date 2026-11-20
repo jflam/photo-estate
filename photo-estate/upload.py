@@ -22,8 +22,8 @@ import re
 import time
 from pathlib import Path, PurePosixPath
 
-MEDIA_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".gif", ".webp", ".tif", ".tiff", ".dng", ".avif",
-             ".mp4", ".mov", ".m4v", ".3gp"}
+from core.media import UPLOAD_EXT as MEDIA_EXT   # what a phone sends: not every type ingest takes (issue #10)
+
 ALLOWED_EXT = MEDIA_EXT | {".xmp"}
 MAX_BYTES = 8 << 30          # a long 4K video is a few GB
 PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _().+,'=-]*$")   # one path segment: no dots first, no slashes

@@ -9,7 +9,7 @@
 --quick skips the preview/large decode tests, which need --store and --cache on this machine (they pick
 originals present in --store whose previews are not yet in --cache; the server then caches them).
 """
-import argparse, os, sys, time, random
+import argparse, os, time, random
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 

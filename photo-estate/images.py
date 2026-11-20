@@ -29,13 +29,13 @@ import pillow_heif
 from PIL import Image, ImageOps
 
 from catalog import Live
+from core.media import ORIGINAL_TYPES
 
 pillow_heif.register_heif_opener()
 Image.MAX_IMAGE_PIXELS = None
 
 sha_re = re.compile(r"^[0-9a-f]{64}$")
-original_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".heic": "image/heic", ".png": "image/png",
-                  ".gif": "image/gif", ".webp": "image/webp"}
+original_types = ORIGINAL_TYPES   # .jpg .jpeg .png .heic .heif .gif .webp .tif .tiff .avif (core/media.py)
 SIZES = (("/thumb/", "thumbs", 360), ("/preview/", "previews", 1600), ("/large/", "large", 4096))
 FOREVER = "public, max-age=2592000, immutable"
 

@@ -5,7 +5,7 @@
 # ///
 """End-to-end test: build a synthetic Google Takeout with the real-world quirks, ingest it in two
 rolling batches, link sidecars, check de-dupe, tag through a mock OpenAI-compatible VLM, search."""
-import base64, io, json, random, shutil, sqlite3, subprocess, sys, tempfile, threading, zipfile
+import base64, io, json, random, shutil, sqlite3, subprocess, tempfile, threading, zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from datetime import datetime, timedelta, timezone

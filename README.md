@@ -230,7 +230,7 @@ instructions for each service: Google Photos (Takeout zips), Flickr's export, or
 brings them in, shows progress as it goes, and opens your library once the first photos are
 searchable. Add more later from the **+** in the library's header. To try the whole flow first,
 with practice sources made from the demo photos and no accounts, run `uv run embed.py serve --sandbox`
-(<http://127.0.0.1:8768/>). iCloud, Google Drive, Dropbox and OneDrive are next
+(<http://127.0.0.1:8769/>). iCloud, Google Drive, Dropbox and OneDrive are next
 ([INTAKE-PLAN.md](docs/notes/INTAKE-PLAN.md)).
 
 By hand, every source goes through the same steps, and each step only does new work, so adding photos

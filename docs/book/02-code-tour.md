@@ -12,10 +12,10 @@ leaving out the checked-in demo library and every Markdown file:
 | **Web pages** (six pages, the shared stylesheet, the service worker) | 8 | 4,260 |
 | **iPhone app** (Swift, plus `deploy.sh`) | 29 | 5,317 |
 | Shell scripts the pipeline runs (`pull-drive.sh`, `pull-icloud.sh`, `ingest-iphone.sh`) | 3 | 126 |
-| Tests (`tests/`, each a self-running script) | 15 | 2,098 |
+| Tests (`tests/`: 15 self-running scripts, the pytest harness and its test) | 17 | 2,268 |
 | Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts) | 23 | 2,913 |
 | The cloud preview on the Mac mini (`deploy/*.sh`) | 4 | 330 |
-| **Total** | **109** | **22,406** |
+| **Total** | **111** | **22,576** |
 
 The web pages' 4,260 lines are 2,886 of JavaScript, 865 of CSS and 509 of HTML markup. What you run
 (the server, its pages, the iPhone app and the three pipeline scripts) is **17,065 lines of code**:
@@ -47,9 +47,9 @@ A few things stand out:
   itself, which grew from 660 lines to about 1,640; on 2026-11-19 it was split the same way, into
   `catalog.py`, `browse.py`, `images.py`, `admin.py` and `encoder.py` ([chapter 11](11-server.md)).
   (The counts in this chapter are from just after that split.)
-- **The tests are about a ninth of the code.** Fifteen scripts, 2,098 lines, each run with
-  `uv run tests/<file>`, none needing a network, an account or a model download
-  ([chapter 17](17-testing-and-demo.md)).
+- **The tests are about a ninth of the code.** Fifteen scripts, each run with `uv run tests/<file>`,
+  and a small pytest harness that runs them all with one command and in CI; 2,268 lines
+  ([chapter 17](17-testing-and-demo.md)). (The harness was added on 2026-11-19, after the other counts.)
 - **The documentation is half as large as the code.** The Markdown in the repository is about 8,800
   lines, 7,000 of them this book.
 
@@ -59,7 +59,9 @@ Code lines, measured as above.
 
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
-  embed.py             663  image embeddings: run, search, and serve (cmd_serve: setting the app up and wiring it)
+  embed.py             255  image embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
+  photo_app.py         504  the photo app as an object: PhotoApp (wiring, who may write, favourites, reloads) and its HTTP handler
+  http_util.py         132  what the servers share: Response, bounded JSON bodies, int_param (400s), the Auth rules
   catalog.py           519  the photo app's library in memory: load(), Catalog, Live (chapter 11)
   browse.py            366  search, similar, facets, Years and Months, layout; an agent's searches
   images.py            135  thumbnails, previews, large images and originals
@@ -78,6 +80,10 @@ photo-estate/                  the server and the web app (Python run with uv; n
   stacks.py             74  near-identical shots as one stack (chapter 25)
   pages.py              38  puts the shared stylesheet into each page as it is sent
   intake/            1,169  the setup page's engine: sources, jobs, the pipeline every source feeds (chapter 16)
+  core/                     what several parts must agree on, standard library only (issue #85):
+    media.py                  file types: extension -> MIME, the image/video/RAW/upload sets, what each decoder skips
+    schema.py                 every SQLite table of every database, and the additive migrations: ensure(con, area)
+    config.py                 the default ports (8766 real, 8767 demo, 8768 preview, 8769 sandbox, 8765 review, 8764 faces)
 
   search.html        2,051  the photo app: Library, Albums and Search (HTML + CSS + JS in one file)
   people.html          749  the People page
@@ -91,7 +97,13 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      45  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             2,098  15 self-running test scripts (chapter 17)
+  tests/             2,268  15 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it;
+                            test_photo_app.py and test_http_util.py call the app in process (chapter 17);
+                            test_core.py checks core/ against what the code before it did
+  tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
+                            (which photos are screenshots, for the server's and the iPhone app's tests)
+  pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest and ruff settings (chapter 17)
+  uv.lock                   every dependency of those groups, pinned; CI installs from it (chapter 17)
   tools/             2,913  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh
   deploy/              330  launchd plists, the cloud preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
   demo/                     104 CC0 photos, their catalog, and credits
@@ -115,7 +127,7 @@ This is where a library becomes a catalog. Its sections (marked by comment banne
 
 | Section | What it does | Chapter |
 |---|---|---|
-| `SCHEMA` and helpers | Every table in the catalog, `connect()`, `blob_path()` | [5](05-catalog.md) |
+| `SCHEMA` and helpers | The catalog's tables (`core/schema.py`'s `CATALOG`), `connect()`, `blob_path()`; file types from `core/media.py` | [5](05-catalog.md) |
 | `ingest` | Stream files out of zips or folders, hash, store, record | [4](04-store-and-ingest.md) |
 | `link` | Match sidecars to media; merge Google, iCloud and Flickr metadata onto assets | [6](06-linking.md) |
 | `exif` | Run `exiftool`, keep the dump, promote camera/lens/exposure | [7](07-places-events-trips.md) |
@@ -139,8 +151,8 @@ that is the main product. Its parts:
 | `_decode`, `load_model`, `cmd_run` | Compute and store an embedding for every image |
 | `cmd_search` | Command-line semantic search |
 | `_library_or_setup` | No library yet: serve the setup page instead (intake/) |
-| `cmd_serve` | **The photo server**: sets it up, wires its modules together, and sends each request to the one that answers it |
-| `main` | The command line, including `serve --demo` and `serve --sandbox` |
+| `cmd_serve` | **The photo server**: finds the library (or serves the setup page), builds a `PhotoApp` (photo_app.py), starts it and serves it |
+| `parser`, `main` | The command line, including `serve --demo` and `serve --sandbox`; `parser()` is also what tests build a `PhotoApp`'s options from |
 
 `cmd_serve` began as about 660 lines holding the whole app as closures over the NumPy arrays loaded
 at startup (the embedding matrix, the metadata columns, the facet codes). Closures were simpler than
@@ -157,9 +169,13 @@ reading one shared state object instead of closing over variables.
 | `admin.py` | `Admin`: phone uploads, the ingest, restart, the `/stats` page, preparing arrivals; catalog backups |
 | `encoder.py` | `Encoder`: the model's text side for typed searches, and its image side for uploads |
 
-What stays in `cmd_serve` (about 500 lines) is the wiring: options and demo mode, the request
-handler, the page and app files, `/api/info`, `/api/sync`, favourites, album downloads and reloads.
-Chapter 11 goes through it all.
+What was left in `cmd_serve` after that (about 500 lines of wiring: demo mode, the request handler,
+the page and app files, `/api/info`, `/api/sync`, favourites, album downloads and reloads) became the
+`PhotoApp` class in `photo_app.py` the same day: its state is attributes instead of closures and
+mutable dicts, `PhotoApp.handle(Request) -> Response` answers a request in process, and the HTTP
+handler in front of it only reads the request and writes the answer. `http_util.py` holds what the
+servers share: the frozen `Response`, bounded JSON bodies (400, 413), `int_param` (400 for a query
+parameter that isn't a number), and the `Auth` rules for who may write. Chapter 11 goes through it all.
 
 ### faces.py: faces, and who they are
 
@@ -209,7 +225,8 @@ flowchart TD
 ```
 
 The batch jobs never import one another, except that `places.py` uses `estate.py`'s schema and
-`reindex`; they are connected only through the SQLite file, which is why each can be run, tested,
+`reindex`; what they must agree on (file types, tables, ports) is in `core/`, which imports only the
+standard library; they are connected only through the SQLite file, which is why each can be run, tested,
 understood and re-run on its own. The server is the one place modules come together: `embed.py serve`
 imports each feature's module (and its own parts: `catalog.py`, `browse.py`, `images.py`, `admin.py`,
 `encoder.py`, which never import `embed.py`) and hands it requests, and every page goes out through `pages.py` so
@@ -233,6 +250,9 @@ reads the block, builds (and caches) a virtual environment with exactly those pa
 the script. Consequences:
 
 - There is **no setup step**, no `requirements.txt`, no virtual environment to activate.
+  (`photo-estate/pyproject.toml` and `uv.lock` exist for development only: one locked environment
+  for pytest, ruff and CI, [chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci). A
+  script with a header still ignores them and builds its own environment.)
 - Each script has the **dependencies it needs and no more**. `estate.py` needs only Pillow, so
   ingesting a library never installs PyTorch (about 2 GB). `faces.py` uses `onnxruntime`, which is
   far lighter than PyTorch, for the same reason.
@@ -293,3 +313,5 @@ and embedded still works in the app; each later stage adds capability.
 | [deploy/MAC-MINI.md](../../photo-estate/deploy/MAC-MINI.md) | Running as an always-on service |
 | [deploy/CLOUD-SESSIONS.md](../../photo-estate/deploy/CLOUD-SESSIONS.md) | Working on the app from a phone: cloud sessions and the preview |
 | [demo/CREDITS.md](../../photo-estate/demo/CREDITS.md) | Author and source of every demo photo |
+| [.github/workflows/ci.yml](../../.github/workflows/ci.yml) | CI on every pull request and push to main: the lockfile, ruff, the fast tests ([chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci)) |
+| [.github/workflows/book.yml](../../.github/workflows/book.yml) | Builds this book and publishes it to GitHub Pages |

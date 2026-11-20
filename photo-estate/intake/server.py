@@ -7,7 +7,6 @@ which has been polling, sees the app answer and opens the library. The job carri
 the new process, which resumes it from intake.db."""
 from __future__ import annotations
 
-import json
 import os
 import sys
 import threading
@@ -15,6 +14,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+from http_util import HTTPError, read_json
 
 from .api import IntakeAPI, Library
 from .engine import Engine
@@ -54,10 +55,12 @@ def make_handler(api: IntakeAPI, extra=None):
             u = urlparse(self.path)
             body = None
             if method == "POST":
-                try:
-                    body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
-                except ValueError:
-                    return self.send(400, b'{"error":"bad JSON"}', "application/json")
+                try:   # 400 for a bad Content-Length or a body that isn't JSON, 413 over http_util.MAX_BODY
+                    body = read_json(self.rfile, self.headers)
+                except HTTPError as e:
+                    self.close_connection = True       # the body may be unread: don't take it for the next request
+                    r = e.response
+                    return self.send(r.status, r.body, r.content_type)
             if method == "GET" and u.path in ("/", "/index.html", "/people", "/stats"):
                 return self.send(302, b"", "text/plain", [("Location", "/setup")])
             if method == "GET" and u.path in icons:

@@ -7,7 +7,7 @@ to keep are marked bit by bit, it is applied, changed, undone and applied again,
 it hides are in no view (search, More like this, the Library's months, the counts, the copy a phone
 keeps) while every other photo still is. Starts the real app (`embed.py serve --demo`) and talks to
 it over HTTP, as the page and an agent do."""
-import json, os, socket, subprocess, sys, time, urllib.error, urllib.request
+import json, os, socket, subprocess, time, urllib.error, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent

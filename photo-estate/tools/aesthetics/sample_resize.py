@@ -12,12 +12,14 @@ Photos stay on the mini and on the owner's Mac cache only.
 
   nice -n 10 uv run sample_resize.py --out ~/aesthetic-pilot
 """
-import argparse, sqlite3, time, os
+import argparse, sqlite3, sys, time, os
 from multiprocessing import Pool
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # photo-estate/, for core/
+from core.media import EMBED_SKIP_EXT as SKIP_EXT  # noqa: E402  (RAW: Pillow can't decode it)
+
 MODEL = "google/siglip2-base-patch16-256"
-SKIP_EXT = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"}
 DB = "file:/Volumes/estate/estate.db?mode=ro"
 STORE = Path("/Volumes/estate/store")
 

@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from changes import hidden_shas
+from core import schema
 from scores import best as best_score, best_first, load as load_scorers
 from stacks import group as stack_group, seconds as stack_seconds, tops as stack_tops
 
@@ -139,7 +140,7 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
                     m["albums"].append(album)
         # exif is mostly exiftool's JSON dump (~700 MB for 120k photos); this index holds just the columns
         # read here, so startup scans ~15 MB instead. Built once, then kept up to date by SQLite.
-        optional("CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)")
+        optional(schema.EXIF_APP_INDEX)
         try:
             ex = optional(q_exif) if want is None else where_in(q_exif + " WHERE sha256 IN", got)
         except sqlite3.OperationalError:
@@ -422,10 +423,13 @@ class Catalog:
         return {"kind": kind, "id": ident, **got} if got else None
 
     def month_index(self, s: str, end: bool = False):
+        """"2020" or "2020-07" -> a month as an index into the catalog's months (the first month of a year,
+        or with `end` its last); None for anything else, a month outside 1-12 included."""
         m = re.fullmatch(r"(\d{4})(?:-(\d{1,2}))?", s or "")
-        if not m:
+        month = (int(m[2]) if m[2] else (12 if end else 1)) if m else 0
+        if not 1 <= month <= 12:
             return None
-        return int(m[1]) * 12 + (int(m[2]) if m[2] else (12 if end else 1)) - 1 - self.m0
+        return int(m[1]) * 12 + month - 1 - self.m0
 
     def person_mask(self, name: str):
         m = np.zeros(self.N, bool)

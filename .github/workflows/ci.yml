@@ -1,0 +1,51 @@
+# Checks every pull request and every push to main: the lockfile is current, ruff finds nothing, and the
+# fast tests pass. Everything runs from photo-estate/, against photo-estate/pyproject.toml and uv.lock.
+#
+# Left out on purpose (run them on a machine that has them: `uv run pytest` runs everything):
+#   - the slow tests (`-m slow`): they start the real app, whose environment brings torch and
+#     transformers, and two of them need the SigLIP 2 search model. CI never downloads the model and
+#     never reaches the Mac mini or a real library: it sees only the checked-in demo library.
+#   - static type checks: Catalog gets its attributes through __dict__.update and the modules pass
+#     untyped dicts and tuples between each other, so a type checker can verify almost nothing yet.
+#     Issue #90 tracks typing those contracts; add a pyright or mypy step here when it lands.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: photo-estate
+    env:
+      UV_PYTHON: "3.12"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.13.5"
+          enable-cache: true
+          cache-dependency-glob: photo-estate/uv.lock
+      - name: exiftool (test_poc checks EXIF with it, and skips those checks without it)
+        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends libimage-exiftool-perl
+      - name: Lockfile matches pyproject.toml
+        run: uv lock --check
+      - name: Install the dev environment (dev group, from uv.lock)
+        run: uv sync --locked --group dev
+      - name: Lint (ruff)
+        run: uv run --locked ruff check .
+      - name: Fast tests
+        run: uv run --locked pytest -m "not slow"

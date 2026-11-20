@@ -8,7 +8,7 @@ does in the same stream-json form. Checks that a task is started with every buil
 only the library's tools allowed, that its sign-in file reaches it (and nothing else sees it), that
 the change set it makes is tied to the task, that its steps can be read while it runs and after, and
 that stopping, failing and queueing work. Starts the real app (`embed.py serve --demo`)."""
-import json, os, socket, stat, subprocess, sys, tempfile, time, urllib.error, urllib.request
+import json, os, socket, stat, subprocess, tempfile, time, urllib.error, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
