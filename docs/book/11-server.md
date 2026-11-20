@@ -34,6 +34,7 @@ content type, Cache-Control[, headers])` or `None` when the path is not its own.
 | [changes.py](../../photo-estate/changes.py), [tasks.py](../../photo-estate/tasks.py) | `Changes`, `Tasks` | `/changes`, `/api/changes*`, `/api/albums*`, `/api/tasks*` |
 | [estate_mcp.py](../../photo-estate/estate_mcp.py) | `Server` | `/mcp` |
 | [intake/api.py](../../photo-estate/intake/api.py) | `IntakeAPI` | `/setup`, `/api/intake*` |
+| [compare.py](../../photo-estate/compare.py) | `Compare` | `/compare`, `/api/compare*`, only with `--compare-vectors`: a second model's ranking beside the app's own ([chapter 10](10-embeddings.md)) |
 
 What ties the modules together is `PhotoApp` (photo_app.py, about 500 lines): setting up the demo, the
 page and the home-screen app files, `/api/info`, `/api/sync`, favourites, album downloads, who may
@@ -65,7 +66,8 @@ intake/server.py).
 Every request that changes the library takes one rule, `Auth.LOCAL_OR_WRITER`: a `--upload-user` login
 or a local request. That covers naming, merging and relabelling people (`POST /api/people/label`,
 `label-many`, `person`), favourites, albums and change sets, tasks, bringing photos in (`POST
-/api/intake/...`), the ingest, restarting, and uploads. Reading is open to anyone who can reach the
+/api/intake/...`), the ingest, restarting, and uploads; and a vote on `/compare` (it writes only a
+file beside the second model's vectors, but it is a record kept of what you said). Reading is open to anyone who can reach the
 app (`Auth.PUBLIC`), and so is `/mcp`, whose write tools take the same rule. The rules are one table,
 `ROUTE_AUTH` in photo_app.py, checked before a request reaches its module; a refused request is `403
 {"error": "not allowed"}` (an upload's is admin.py's own `403 not allowed`). Until 2026-11-19 the People

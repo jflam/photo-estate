@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Compare models — Photo Estate</title>
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="theme-color" content="#f8f6f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)">
+<style>
+/*@estate.css*/
+main { max-width: 1400px; margin: 0 auto; padding: 18px calc(var(--pad) + env(safe-area-inset-right)) calc(120px + env(safe-area-inset-bottom)) calc(var(--pad) + env(safe-area-inset-left)); }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.lead { margin-top: 6px; color: var(--ink-2); max-width: 760px; }
+form { display: flex; gap: 8px; margin-top: 22px; }
+form input { flex: 1; height: 44px !important; font-size: 17px; padding: 0 18px !important; }
+form .btn { height: 44px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.chips button { height: 30px; padding: 0 12px; border-radius: 999px; background: var(--well); font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.chips button:hover { background: var(--well-2); color: var(--ink); }
+.status { margin-top: 18px; color: var(--muted); font-size: 13.5px; min-height: 20px; font-variant-numeric: tabular-nums; }
+.status b { color: var(--ink); font-weight: 600; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 14px; }
+.col { min-width: 0; }
+.col h2 { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 17px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 10px; }
+.col h2 small { font-size: 12.5px; font-weight: 500; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col.won h2 span { color: var(--sun); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: var(--gap); }
+.tile { position: relative; aspect-ratio: 1; background: var(--tile); border-radius: 6px; overflow: hidden; cursor: zoom-in; }
+.tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tile i { position: absolute; left: 5px; top: 5px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; font: 600 11px/20px var(--sans);
+  text-align: center; font-style: normal; background: rgba(0,0,0,.55); color: #fff; }
+.tile b { position: absolute; right: 5px; bottom: 5px; padding: 1px 6px; border-radius: 8px; font: 600 11px/18px var(--mono); background: rgba(0,0,0,.55); color: #fff; }
+.tile.only::after { content: ""; position: absolute; inset: 0; border-radius: 6px; box-shadow: inset 0 0 0 3px var(--sun); pointer-events: none; }
+.key { margin-top: 10px; color: var(--muted); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+.key u { display: inline-block; width: 12px; height: 12px; border-radius: 3px; box-shadow: inset 0 0 0 2px var(--sun); }
+.vote { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom)); display: flex; gap: 8px; padding: 8px;
+  border-radius: 999px; background: var(--raised); box-shadow: var(--shadow); z-index: 5; max-width: calc(100vw - 24px); }
+.vote .btn { height: 40px; }
+.tally { margin-top: 26px; color: var(--muted); font-size: 13.5px; }
+.tally b { color: var(--ink); }
+.blank { padding: 64px 0; }
+.lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.86); display: grid; place-items: center; z-index: 10; cursor: zoom-out; }
+.lightbox img { max-width: 94vw; max-height: 90vh; border-radius: 8px; }
+@media (max-width: 760px) {
+  .cols { gap: 10px; }
+  .grid { grid-template-columns: repeat(2, 1fr); }
+  .col h2 small { display: none; }
+  .vote .btn { padding: 0 12px; }
+  .vote kbd { display: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1 class="display">Compare models</h1>
+      <p class="lead">Each search is ranked twice, by the model the app uses now and by a second one. The two columns
+        come in random order with no names, so judge the photos, then say which side found them better.</p>
+    </div>
+    <a class="link" href="/">Back to the Library</a>
+  </header>
+  <form id="f">
+    <input type="text" id="q" placeholder="Describe a photo: kids at the lake, a birthday cake, snow in the mountains" autocomplete="off" enterkeyhint="search">
+    <button class="btn pri">Compare</button>
+  </form>
+  <div class="chips" id="chips"></div>
+  <div class="status" id="status"></div>
+  <div id="out"></div>
+  <div class="tally" id="tally"></div>
+</main>
+<div class="vote" id="vote" hidden>
+  <button class="btn" data-w="left"><kbd>1</kbd> Left is better</button>
+  <button class="btn" data-w="same"><kbd>2</kbd> Same</button>
+  <button class="btn" data-w="right"><kbd>3</kbd> Right is better</button>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const EXAMPLES = ["kids at the lake", "birthday cake with candles", "snowy mountains", "a dog on the beach",
+  "fireworks at night", "a crowded city street", "grandparents with a baby", "food on a plate"];
+let info = null, cur = null, voted = false;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const short = m => (m || "").replace(/^google\//, "");
+
+function tally() {
+  if (!info) return;
+  const v = info.votes, n = v.a + v.b + v.same;
+  $("tally").innerHTML = n ? `Votes so far: <b>${v.a}</b> for ${esc(short(info.a.model))}, <b>${v.b}</b> for ${esc(short(info.b.model))}, <b>${v.same}</b> the same.`
+                           : "No votes yet.";
+}
+
+async function loadInfo() {
+  info = await (await fetch("/api/compare/info")).json();
+  $("status").innerHTML = `<b>${info.both.toLocaleString()}</b> photos have vectors from both models` +
+    (info.b.ready ? "" : ` · the second model's text side is still loading`);
+  tally();
+  if (!info.b.ready) setTimeout(loadInfo, 3000);
+}
+
+function column(side, label) {
+  const r = cur[side], other = new Set(cur[side === "a" ? "b" : "a"].results.map(x => x.id));
+  const name = voted ? `<small title="reading the words · ranking the photos">${esc(short(r.model))} · ${r.text_ms} + ${r.rank_ms} ms</small>` : `<small></small>`;
+  return `<section class="col" data-side="${side}"><h2><span>${label}</span>${name}</h2><div class="grid">` +
+    r.results.map((x, i) => `<div class="tile${other.has(x.id) ? "" : " only"}" data-id="${x.id}">` +
+      `<img loading="lazy" src="/thumb/${x.id}" alt=""><i>${i + 1}</i>${voted ? `<b>${x.score.toFixed(3)}</b>` : ""}</div>`).join("") +
+    `</div></section>`;
+}
+
+function render() {
+  if (!cur) return;
+  const [L, R] = cur.order;
+  $("out").innerHTML = `<div class="cols">${column(L, "Left")}${column(R, "Right")}</div>` +
+    `<p class="key"><u></u> in this column's top ${cur.a.results.length} only · ${cur.overlap} photos are in both</p>`;
+  $("vote").hidden = voted;
+  if (voted) {
+    const w = cur.winner;
+    document.querySelectorAll(".col").forEach(c => c.classList.toggle("won", c.dataset.side === w));
+  }
+}
+
+async function run(q) {
+  q = q.trim();
+  if (!q) return;
+  $("q").value = q;
+  history.replaceState(null, "", "?q=" + encodeURIComponent(q));
+  $("status").textContent = "Searching…";
+  const res = await fetch("/api/compare?k=48&q=" + encodeURIComponent(q));
+  const body = await res.json();
+  if (!res.ok) { $("status").textContent = body.error || "Something went wrong"; $("out").innerHTML = ""; $("vote").hidden = true; return; }
+  cur = body;
+  cur.order = Math.random() < .5 ? ["a", "b"] : ["b", "a"];
+  voted = false;
+  const filt = body.applied.length ? ` · filters: ${body.applied.map(esc).join(", ")} · ranking “${esc(body.text)}”` : "";
+  $("status").innerHTML = `<b>${body.candidates.toLocaleString()}</b> photos to choose from${filt}`;
+  render();
+}
+
+async function vote(which) {
+  if (!cur || voted) return;
+  const winner = which === "same" ? "same" : which === "left" ? cur.order[0] : cur.order[1];
+  const res = await fetch("/api/compare/vote", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({q: cur.q, winner, left: cur.order[0], k: cur.a.results.length})});
+  const body = await res.json();
+  if (res.ok) { info.votes = body.votes; tally(); }
+  cur.winner = winner;
+  voted = true;
+  render();
+  const name = winner === "same" ? "Same" : `${which === "left" ? "Left" : "Right"} was ${short(cur[winner].model)}`;
+  $("status").innerHTML += ` · <b>${esc(name)}</b>`;
+}
+
+$("f").onsubmit = e => { e.preventDefault(); run($("q").value); };
+$("vote").onclick = e => { const b = e.target.closest("button"); if (b) vote(b.dataset.w); };
+$("chips").innerHTML = EXAMPLES.map(x => `<button type="button">${esc(x)}</button>`).join("");
+$("chips").onclick = e => { const b = e.target.closest("button"); if (b) run(b.textContent); };
+$("out").onclick = e => {
+  const t = e.target.closest(".tile"); if (!t) return;
+  const lb = document.createElement("div");
+  lb.className = "lightbox"; lb.innerHTML = `<img src="/preview/${t.dataset.id}" alt="">`;
+  lb.onclick = () => lb.remove(); document.body.append(lb);
+};
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  if (e.key === "Escape") document.querySelector(".lightbox")?.remove();
+  const w = {"1": "left", "2": "same", "3": "right"}[e.key];
+  if (w) vote(w);
+});
+loadInfo();
+const q0 = new URLSearchParams(location.search).get("q");
+if (q0) run(q0);
+</script>
+</body>
+</html>

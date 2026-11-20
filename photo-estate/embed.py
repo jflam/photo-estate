@@ -298,6 +298,9 @@ def parser() -> argparse.ArgumentParser:
                    " (e.g. a folder on another disk than the catalog)")
     s.add_argument("--backup-every", type=float, default=24.0, help="hours between catalog backups")
     s.add_argument("--backup-keep", type=int, default=7, help="catalog backups to keep")
+    s.add_argument("--compare-vectors", help="experiment: a folder of a second model's vectors (tools/embed_squares.py);"
+                   " /compare then ranks each search by both models side by side")
+    s.add_argument("--compare-votes", help="where /compare records which side won (default: votes.jsonl in --compare-vectors)")
     s.add_argument("--query-log", help="where to record searches and photos opened (default: <db dir>/query-log.jsonl)")
     s.set_defaults(fn=cmd_serve)
     return p
