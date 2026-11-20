@@ -55,7 +55,8 @@ class Compare:
     def __init__(self, live, browse, vectors: Path, encoder, votes: Path):
         self.live, self.browse, self.encoder, self.votes = live, browse, encoder, votes
         t = time.time()
-        shas, self.MB, self.meta = load_vectors(vectors)
+        shas, MB, self.meta = load_vectors(vectors)
+        self.MB = MB.astype(np.float32)   # once, not per query (83,000 x 1,024 is 340 MB)
         self.row_of = {s: i for i, s in enumerate(shas)}
         self.model_b = self.meta.get("model", "?")
         self.lock, self.cache, self.tally = threading.Lock(), {}, {"a": 0, "b": 0, "same": 0}
@@ -113,7 +114,8 @@ class Compare:
             t = time.time()   # reading the words (cached after the first time), then ranking the photos
             vec = self.browse.text_vec(text) if side == "a" else self.text_b(text)
             t1 = time.time()
-            sims = (c.M[ids] if side == "a" else self.MB[rows[ids]].astype(np.float32)) @ vec
+            # the whole matrix times the query, then the chosen photos: no copy of the matrix per query
+            sims = (c.M @ vec)[ids] if side == "a" else (self.MB @ vec)[rows[ids]]
             top = np.argsort(-sims, kind="stable")[:k]
             out[side] = {"model": self.browse.model if side == "a" else self.model_b,
                          "text_ms": round((t1 - t) * 1000, 1), "rank_ms": round((time.time() - t1) * 1000, 1),
