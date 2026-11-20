@@ -9,11 +9,12 @@ and embed.py's own routes all answer from one `Catalog`.
   PhotoMeta           one photo's facts (Catalog.meta[sha]): a TypedDict, so a plain dict on the wire
   Catalog.scored()    (best, rank, score) when the catalog has scorers; ValueError when it has none
   STATE               the names of the fields load() works out (differences() compares them)
-  Live                the Catalog being served, swapped for a new one after an ingest (install)
-  Gate                requests share it; a swap takes it alone
+  Live                the Catalog being served, swapped for a new one after an ingest (install), changed in
+                      place for a favourite (update); `generation` counts both
+  Gate                requests share it; a swap takes it alone (not re-entrant: swap() inside it raises)
 
 A Catalog is never changed after it is built, with one exception: a favourite set in the app is shown
-in the installed one at once (embed.py's set_favorites), rather than waiting for a reload.
+in the installed one at once (photo_app.py's set_favorites, through Live.update), rather than waiting for a reload.
 """
 from __future__ import annotations
 
@@ -705,31 +706,42 @@ STATE = tuple(f.name for f in fields(Catalog) if f.name not in ("raw", "model", 
 
 
 class Gate:
-    """Requests share it; a swap takes it alone. Writers wait first, so a stream of requests can't starve a reload."""
+    """Requests share it; a swap takes it alone. Writers wait first, so a stream of requests can't starve a reload.
+    Not re-entrant: a thread inside it (as a reader or in a swap) that asks for a swap would wait for itself
+    forever once a writer waits, so swap() raises instead. Lock order: the gate first, then any module's own
+    lock (Browse.lru_lock, PhotoApp.fav_lock, Admin.st_lock, ...); never the gate while holding one."""
     def __init__(self):
         self.cv, self.readers, self.writing, self.waiting = threading.Condition(), 0, False, 0
+        self.mine = threading.local()   # .n: how many times this thread is inside the gate
 
     def __enter__(self):
         with self.cv:
             while self.writing or self.waiting:
                 self.cv.wait()
             self.readers += 1
+        self.mine.n = getattr(self.mine, "n", 0) + 1
 
     def __exit__(self, *exc):
+        self.mine.n -= 1
         with self.cv:
             self.readers -= 1
             self.cv.notify_all()
 
     def swap(self, fn):
+        """fn() alone, with no request reading; returns what it returns."""
+        if getattr(self.mine, "n", 0):
+            raise RuntimeError("Gate.swap from inside the gate would wait for itself")
         with self.cv:
             self.waiting += 1
             while self.readers or self.writing:
                 self.cv.wait()
             self.waiting -= 1
             self.writing = True
+        self.mine.n = 1
         try:
-            fn()
+            return fn()
         finally:
+            self.mine.n = 0
             with self.cv:
                 self.writing = False
                 self.cv.notify_all()
@@ -737,15 +749,26 @@ class Gate:
 
 class Live:
     """The catalog the app is serving (`cat`), shared by every route module. A request reads `cat` inside
-    the gate (embed.py's Handler holds it for every request but slow ones), so it sees one catalog from
-    start to finish; install() swaps a new one in only while no request is being served."""
+    the gate (photo_app.py's handle() holds it for every request but slow ones), so it sees one catalog from
+    start to finish; install() swaps a new one in, and update() changes this one, only while no request is
+    being served. `generation` counts those changes: anything worked out from the catalog (Browse's cache)
+    belongs to the generation it was made in, and is never used in a later one."""
 
     def __init__(self, cat: Catalog):
-        self.cat, self.gate = cat, Gate()
+        self.cat, self.gate, self.generation = cat, Gate(), 0
 
     def install(self, cat: Catalog, then=None) -> None:
+        """Serve `cat` from now on; then(cat) runs in the same swap, before any request sees it."""
         def swap_in():
             self.cat = cat
+            self.generation += 1
             if then:
                 then(cat)
         self.gate.swap(swap_in)
+
+    def update(self, fn):
+        """fn(cat) on the catalog being served, with no request reading it (a favourite); returns its result."""
+        def change():
+            self.generation += 1
+            return fn(self.cat)
+        return self.gate.swap(change)

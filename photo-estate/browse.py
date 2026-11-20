@@ -141,20 +141,26 @@ class Browse:
     # -- caching --------------------------------------------------------------------------------
 
     def remember(self, key, make):
-        """Small cache so paging through one search doesn't redo the text encoding and the ranking."""
+        """Small cache so paging through one search doesn't redo the text encoding and the ranking. An entry
+        is the catalog generation's it was made in (Live.generation): one made while the catalog was
+        replaced or a favourite set is not kept, and none is found again in a later generation."""
+        gen = self.live.generation
+        key = (gen, key)
         with self.lru_lock:
             if key in self.lru:
                 self.lru.move_to_end(key)
                 return self.lru[key]
         val = make()
         with self.lru_lock:
-            self.lru[key] = val
-            while len(self.lru) > 24:
-                self.lru.popitem(last=False)
+            if self.live.generation == gen:
+                self.lru[key] = val
+                while len(self.lru) > 24:
+                    self.lru.popitem(last=False)
         return val
 
     def forget(self) -> None:
-        """Drop every cached mask and ranking: the catalog, or a favourite, has changed."""
+        """Drop every cached mask and ranking: the catalog, or a favourite, has changed. (They would not be
+        used again anyway, being an earlier generation's; this only frees them.)"""
         with self.lru_lock:
             self.lru.clear()
 

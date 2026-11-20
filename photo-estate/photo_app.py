@@ -90,6 +90,7 @@ ROUTE_AUTH: tuple[tuple[str, tuple[str, ...], Auth], ...] = (
 )
 # Requests that don't hold the catalog gate: they read no catalog, or only briefly, and can be slow.
 UNGATED = ("/api/upload/", "/api/intake", "/setup")
+FAVORITE = re.compile(r"/api/favorite|/api/albums/\d+/favorite")   # (POST) the gate's write side, in set_favorites
 APP_TYPES = {".webmanifest": "application/manifest+json", ".js": "text/javascript; charset=utf-8",
              ".png": "image/png"}
 
@@ -179,9 +180,11 @@ class PhotoApp:
         # and `estate.py link` writes it again on every ingest, so what a person says here is kept beside it
         # (the `favorites` table) and wins. It shows at once: the photo's row, the count and every cached
         # order and cover are brought up to date here rather than by re-reading the catalog (catalog.load reads
-        # the table too, so a reload agrees). `fav_log` is every one set since the start, so a reload that
-        # read the table a moment too early can be put right as it is swapped in.
-        self.fav_lock, self.fav_log = threading.Lock(), []
+        # the table too, so a reload agrees). While a reload is reading the catalog, `fav_log` is every one
+        # set since it began (None otherwise), so a reload that read the table a moment too early is put right
+        # as it is swapped in. fav_lock guards fav_log; fav_write puts one set_favorites at a time.
+        # Lock order: fav_write, then live.gate, then fav_lock (catalog.Gate).
+        self.fav_lock, self.fav_write, self.fav_log = threading.Lock(), threading.Lock(), None
         # Re-reading the catalog is in one of three states: idle, running, or rerun (asked again while
         # running: when this run ends, another starts, so nothing that was asked for is missed).
         self.reload_state = {"state": "idle", "at": None, "seconds": None, "error": None}
@@ -275,25 +278,40 @@ class PhotoApp:
     # -- favourites, reloads, change sets ----------------------------------------------------------
 
     def set_favorites(self, shas, on: bool, who: str) -> int:
-        """Record them, show them, tell the phones. Returns how many photos it changed."""
-        c = self.live.cat
-        shas = [s for s in dict.fromkeys(shas) if s in c.index]
-        with self.fav_lock:
-            changed = [s for s in shas if bool(c.fav[c.index[s]]) != on]
-            con = connect(self.a.db)
+        """Record them, show them, tell the phones. Returns how many photos it changed. Called outside the
+        gate (handle() lets the favourite routes through without it): showing them takes its write side."""
+        with self.fav_write:   # one at a time, so the table and the catalog end up with the same last word
+            shas = [s for s in dict.fromkeys(shas) if s in self.live.cat.index]
+            con = connect(self.a.db)   # the table first, outside the gate: requests aren't held up by SQLite
             try:
                 t = now()
                 con.executemany("INSERT OR REPLACE INTO favorites VALUES (?,?,?,?)", ((s, int(on), t, who or None) for s in shas))
                 con.commit()
             finally:
                 con.close()
-            self.fav_log.extend((s, on) for s in shas)
-            c.show_favorites((s, on) for s in shas)
-            self.browse.forget()            # covers and "favourites only" lists were worked out without them
-            self.admin.forget_library()
-        if self.feed.ready and changed:
-            self.feed.touch({s: c.feed_row(s) for s in changed if c.visible[c.index[s]]})
+
+            def show(c: catalog.Catalog):   # the catalog being served now, no request reading it
+                changed = [s for s in shas if s in c.index and bool(c.fav[c.index[s]]) != on]
+                with self.fav_lock:
+                    if self.fav_log is not None:   # a reload is reading the catalog: it may have read the table too early
+                        self.fav_log.extend((s, on) for s in shas)
+                c.show_favorites((s, on) for s in shas)
+                self.browse.forget()            # covers and "favourites only" lists were worked out without them
+                self.admin.forget_library()
+                return changed, {s: c.feed_row(s) for s in changed if c.visible[c.index[s]]} if self.feed.ready else {}
+            changed, rows = self.live.update(show)
+        if rows:
+            self.feed.touch(rows)
         return len(changed)
+
+    def caught_up(self, cat: catalog.Catalog) -> None:
+        """In the swap that installs a reloaded catalog: show it the favourites set while it was read, and
+        drop the log (the table had the ones before, so it now reflects them all)."""
+        with self.fav_lock:
+            cat.show_favorites(self.fav_log or ())
+            self.fav_log = None
+        self.browse.forget()      # cached masks and rankings are the old catalog's
+        self.admin.forget_library()
 
     def reload_catalog(self) -> None:
         """Re-read the catalog and swap it in, with no restart. The new catalog is built on the side while the
@@ -306,20 +324,22 @@ class PhotoApp:
             rs["state"] = "running"
         try:
             while True:
-                t, mark = time.time(), len(self.fav_log)
+                t = time.time()
+                with self.fav_lock:
+                    self.fav_log = []         # favourites set from here on are shown to the new catalog too
                 try:
                     fresh = self.load_catalog(self.live.cat.raw)
                     if os.environ.get("PHOTO_ESTATE_CHECK_RELOAD"):   # tools/bench_ingest.py --check
                         print(f"reload check: {fresh.differences(self.load_catalog()) or 'same as a full load'}", flush=True)
-                    self.live.install(fresh, then=lambda cat: cat.show_favorites(self.fav_log[mark:]))   # set mid-load
-                    self.browse.forget()      # cached masks and rankings are the old catalog's
-                    self.admin.forget_library()
+                    self.live.install(fresh, then=self.caught_up)
                     rs.update(at=time.time(), seconds=time.time() - t, error=None)
                     print(f"catalog reloaded: {fresh.N} images in {time.time() - t:.1f}s", flush=True)
                     self.feed_update()
                     if not self.a.no_pregenerate:
                         threading.Thread(target=self.images.pregenerate, daemon=True).start()
                 except Exception as e:   # keep serving the old catalog
+                    with self.fav_lock:
+                        self.fav_log = None
                     rs["error"] = f"{type(e).__name__}: {e}"
                     print(f"catalog reload failed: {rs['error']}", flush=True)
                 with self.reload_lock:
@@ -377,10 +397,10 @@ class PhotoApp:
 
     def handle(self, req: Request) -> Response:
         """One request -> its Response. Holds the catalog gate (catalog.Live) for all but the slow ones, so
-        a request sees one catalog from start to finish. A malformed request is a 400, never an exception;
+        a request sees one catalog from start to finish (gated()). A malformed request is a 400, never an exception;
         a search that needs the model while it loads is a 503, and after it failed to load a 500 (encoder.py)."""
         try:
-            if req.target.startswith(UNGATED) or req.target.endswith("/download"):
+            if not self.gated(req.method, urlparse(req.target).path):
                 return self.route(req)
             with self.live.gate:
                 return self.route(req)
@@ -388,6 +408,13 @@ class PhotoApp:
             return e.response
         except Unavailable as e:
             return json_response({"error": str(e)}, e.status, {"Retry-After": "5"} if e.status == 503 else None)
+
+    @staticmethod
+    def gated(method: str, path: str) -> bool:
+        """Whether a request holds the catalog gate: not the slow ones (UNGATED, album downloads), nor
+        setting favourites, which takes the gate's write side itself (set_favorites)."""
+        return not (path.startswith(UNGATED) or path.endswith("/download")
+                    or method == "POST" and FAVORITE.fullmatch(path) is not None)
 
     def route(self, req: Request) -> Response:
         method, headers, local = req.method, req.headers, req.local
@@ -512,10 +539,14 @@ class PhotoApp:
         """POST /api/favorite {sha, fav}: a photo is, or is no longer, a favourite. It changes what everyone
         sees (a month's cover is a favourite if it has one): LOCAL_OR_WRITER, checked in route()."""
         sha, on = (body.get("sha"), body.get("fav")) if isinstance(body, dict) else (None, None)
-        if not isinstance(sha, str) or sha not in self.live.cat.index or not isinstance(on, bool):
+        with self.live.gate:              # (here without it: handle() leaves it to set_favorites)
+            known = isinstance(sha, str) and sha in self.live.cat.index
+        if not known or not isinstance(on, bool):
             return json_response({"error": "say which photo (sha) and fav: true or false"}, 400)
         self.set_favorites([sha], on, who)
-        return json_response({"sha": sha, "fav": on, "favourites": self.live.cat.info["fav"]})
+        with self.live.gate:
+            n = self.live.cat.info["fav"]
+        return json_response({"sha": sha, "fav": on, "favourites": n})
 
     def album_files(self, sid: int):
         """The album's title and its (original file, name in the zip) pairs, or None if there is no such album."""

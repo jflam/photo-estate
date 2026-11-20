@@ -90,9 +90,11 @@ filter (`from=`, `to=`) outside 1-12 is ignored, like any other unreadable date.
 `catalog.Live`, whose `cat` is the `Catalog` being served. A `Catalog` is built once by `load()` and
 then only read (a favourite set in the app is the one exception: it is shown in place at once). A
 route reads `live.cat` once at the start and uses that catalog to the end; the handler holds `Live`'s
-`Gate` for every request except slow ones (uploads, setup, album downloads), and a reload swaps the
-new catalog in through the same gate (`Live.install`), so a search never sees half an old catalog and
-half a new one. The questions every route asks of the arrays are `Catalog` methods (`combine`,
+`Gate` for every request except slow ones (uploads, setup, album downloads, judged on the path
+without its query string, `PhotoApp.gated`), and a reload swaps the new catalog in through the same gate
+(`Live.install`), so a search never sees half an old catalog and half a new one. Setting a favourite
+changes the catalog being served through the gate's write side too (`Live.update`), so its requests
+(`POST /api/favorite`, `POST /api/albums/<id>/favorite`) are let through without the read side. The questions every route asks of the arrays are `Catalog` methods (`combine`,
 `facet_counts`, `take`, `periods`, `browse_order`, `cover_of`, `feed_row`, ...).
 
 **Every field typed.** `Catalog` is a slotted dataclass that declares each of its fields with its
@@ -486,8 +488,39 @@ The server is multi-threaded but not multi-process. The relevant locks are small
 - `Browse.lru_lock` protects the ranking cache.
 - `Browse.qlog_lock` serialises query-log appends.
 - `Live.gate` lets requests share the catalog and a reload swap it alone (writers first, so a stream
-  of requests cannot starve a reload).
+  of requests cannot starve a reload). It is not re-entrant: a thread inside it that asks for a swap
+  would wait for itself once a writer waits, so `Gate.swap` raises `RuntimeError` instead.
+- `PhotoApp.fav_write` puts favourites one at a time; `PhotoApp.fav_lock` guards `fav_log`.
 - `People` has its own `RLock`.
+
+**Lock order.** Take `live.gate` before any module's own lock (`Browse.lru_lock`, `PhotoApp.fav_lock`,
+`Admin.st_lock`, ...), and never take the gate while holding one: a request holds the gate and then
+takes the others, so the opposite order could deadlock against it. The only lock taken before the gate
+is `fav_write` (below), and nothing that holds the gate takes it.
+
+**The catalog generation.** `Live.generation` counts every change to the catalog being served: an
+install and a favourite each add one, inside the gate's write side. `Browse.remember` keys its cache
+by the generation the entry was made in and keeps a value only if the generation is unchanged when it
+is done, so nothing worked out from an older catalog (a mask, a ranking sized to the old `N`) is ever
+used once a newer one is served, even in the moment between an install and `Browse.forget()`, which
+now only frees memory. (`Admin`'s `/stats` numbers keep their own counter, `st_gen`, bumped by
+`forget_library`.)
+
+**Favourites and reloads.** `PhotoApp.set_favorites`, called outside the gate:
+
+1. takes `fav_write`, so two calls reach the table and the catalog in the same order;
+2. writes the `favorites` table, outside the gate (a slow SQLite write holds up no request);
+3. in `Live.update` (the gate's write side) resolves `live.cat` there and then, shows the favourites
+   in it (`Catalog.show_favorites`), and, if a reload is reading the catalog, appends them to
+   `fav_log` under `fav_lock`.
+
+`reload_catalog` sets `fav_log = []` (under `fav_lock`) before it reads the catalog; in the swap that
+installs the new one (`PhotoApp.caught_up`, under the gate and then `fav_lock`) it shows the new
+catalog everything in `fav_log` and sets it back to `None`. So the log holds only the favourites set
+during one read, and is empty between reloads. A favourite is never lost and never lands on a replaced
+catalog: if its step 3 comes before the swap, it is in the log (the read had begun) or in the table the
+read saw (it had not); if after, it is shown to the new catalog directly. Its step 2 comes before step
+3, so a favourite missing from the log was in the table before the read began.
 
 NumPy releases the GIL during large array operations, so concurrent searches overlap usefully, and
 for one household a handful of simultaneous requests is the realistic load.
@@ -547,7 +580,8 @@ modules of their own:
 
 Two more things exist only for phone uploads. **Hot reload** (`PhotoApp.reload_catalog`):
 after an ingest the server re-reads what changed *in the background* (`catalog.load` with the last
-load's `raw`) and swaps the new catalog in under the gate, clearing the rankings cache, so searches
+load's `raw`) and swaps the new catalog in under the gate, with the favourites set meanwhile, and
+clears the rankings cache, so searches
 never wait and nothing needs a restart; it ends by calling `feed_update()`. **Preparing arrivals**
 (`Admin.prepare_arrivals`): a photo that has just been uploaded gets its grid thumbnail and its
 embedding made in the server's own process, using the model it already holds, so the ingest that
@@ -557,7 +591,7 @@ follows has nothing left to do for it.
 
 | Topic | Code |
 |---|---|
-| Wiring, demo mode, reloads, favourites, who may write | `PhotoApp`, `ROUTE_AUTH` in [photo_app.py](../../photo-estate/photo_app.py); `cmd_serve` in [embed.py](../../photo-estate/embed.py) |
+| Wiring, demo mode, reloads, favourites, who may write | `PhotoApp` (`set_favorites`, `caught_up`, `reload_catalog`, `gated`), `ROUTE_AUTH` in [photo_app.py](../../photo-estate/photo_app.py); `Live`, `Gate` in [catalog.py](../../photo-estate/catalog.py); `cmd_serve` in [embed.py](../../photo-estate/embed.py) |
 | Startup load | `load` in [catalog.py](../../photo-estate/catalog.py), from `q_emb = ...` to `return Catalog(...)` |
 | Facets and live counts | `coded`, `single`, `multi` in `load`; `Catalog.combine`, `Catalog.facet_counts` |
 | Mask building | `Browse.select`, `parse`, `read_words`, `view_masks`, `Browse.place_mask` in [browse.py](../../photo-estate/browse.py); `Catalog.person_mask` |
