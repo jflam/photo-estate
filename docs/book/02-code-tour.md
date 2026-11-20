@@ -69,7 +69,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   encoder.py            60  SigLIP's text (and image) side, for the photo app
   compare.py           134  an experiment: each search ranked by a second model beside the app's own, at /compare (chapter 10)
   estate.py          1,005  ingest, link, exif, dupes, review, tag, search, stats
-  faces.py             897  faces: run, serve, and the People class (who is who)
+  faces.py           1,053  faces: run, serve, and the People class (who is who)
   changes.py           455  albums and change sets: proposed, reviewed, applied, reverted (chapter 26)
   places.py            388  place names, local time, events, trips
   estate_mcp.py        383  the library as MCP tools for an agent, at /mcp (chapter 26)
@@ -108,7 +108,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_core.py checks core/ against what the code before it did;
                             test_types.py checks the typed contracts (Catalog's fields, the enums) and runs pyright;
                             test_lifecycle.py makes the background loaders fail and race on purpose (issue #82);
-                            test_live_races.py races reloads, favourites, Browse's cache and the gate (issue #83)
+                            test_live_races.py races reloads, favourites, Browse's cache and the gate (issue #83);
+                            test_faces_consistency.py keeps People's memory, SQLite and the face journal agreeing (issue #87)
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)

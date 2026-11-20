@@ -43,6 +43,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from collections import deque
+from contextlib import closing
 from itertools import islice
 from multiprocessing import Pool
 from pathlib import Path
@@ -60,7 +61,7 @@ MODEL_FILES = {  # name -> sha256
     "w600k_r50.onnx": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
 }
 SCHEMA = schema.FACES
-FaceOp = Literal["undo", "forget", "name", "later", "not"]   # what face-labels.jsonl records
+FaceOp = Literal["undo", "forget", "name", "later", "not", "rename", "merge", "born"]   # what face-labels.jsonl records
 SIDE = 1280        # images are read at this size (longer side): enough for faces a few % of the frame
 MIN_PX = 28        # smaller faces than this give embeddings that match anyone
 CROP = 160         # the face thumbnails the naming page shows
@@ -305,6 +306,19 @@ SRC = {None: NONE, "auto": AUTO_SRC, "google": GOOGLE, "you": YOU}
 SRC_NAME = {v: k for k, v in SRC.items()}
 
 
+class Draft:
+    """A copy of what a change touches (who each face is, the not/later sets, the people) and the journal
+    records it will write: changed while the change's SQLite transaction runs, and swapped into People
+    (People.commit) only once that commits."""
+
+    def __init__(self, pe: People):
+        self.pid, self.src = pe.pid.copy(), pe.src.copy()
+        self.nots = {q: set(s) for q, s in pe.nots.items()}
+        self.later = {q: set(s) for q, s in pe.later.items()}
+        self.persons = {q: dict(i) for q, i in pe.persons.items()}
+        self.logs: list[tuple[FaceOp, list, dict]] = []
+
+
 class People:
     """Every face in memory, who each one is, and the questions worth asking. Used by `faces.py serve`
     and mounted at /people by `embed.py serve`."""
@@ -315,7 +329,17 @@ class People:
         self.lock = threading.RLock()
         self.journal = Path(db).resolve().parent / "face-labels.jsonl"
         t0 = time.time()
-        con = connect(db)
+        with closing(connect(db)) as con:
+            self.load(con)
+        self.rescore()
+        log(f"people: {self.n} faces, {len(self.persons)} people, {int((self.pid > 0).sum())} named,"
+            f" {int(self.pending().sum())} to review, in {time.time() - t0:.1f}s")
+        threading.Thread(target=self.cluster, daemon=True).start()
+
+    def load(self, con):
+        """Read every face, person and not/later decision, and name what Google's tags say. Only __init__
+        calls it: a People that fails here is never used, and its connection is closed (closing())."""
+        import numpy as np
         # Faces in photos a change set hides (changes.py) are left out: nobody is asked who they are.
         shown = (" AND f.sha256 NOT IN (SELECT sha256 FROM hidden)"
                  if con.execute("SELECT 1 FROM sqlite_master WHERE name='hidden'").fetchone() else "")
@@ -355,11 +379,6 @@ class People:
         self.sug_far = np.zeros(n, bool)           # ...judged from named faces more than WINDOW years away
         self.clusters, self.clusters_state, self.clusters_error = [], ClusterState.WAITING, None   # under self.lock
         self.seed(con)
-        self.rescore(con)
-        con.close()
-        log(f"people: {n} faces, {len(self.persons)} people, {int((self.pid > 0).sum())} named,"
-            f" {int(self.pending().sum())} to review, in {time.time() - t0:.1f}s")
-        threading.Thread(target=self.cluster, daemon=True).start()
 
     # -- scoring -------------------------------------------------------------------------------
 
@@ -405,23 +424,25 @@ class People:
                     S[sl, j][(ty > 0) & (ty < int(born))] = -1          # not before they were born
         return pids, S, far
 
-    def rescore(self, con=None):
-        """Recompute every suggestion and every automatic name from the faces named so far."""
+    def rescore(self):
+        """Recompute every suggestion and every automatic name from the faces named so far. Worked out on
+        new arrays, the changed names written in one transaction, and the arrays swapped in after it
+        commits, all under self.lock: if SQLite raises, the old suggestions and names stand."""
         np = self.np
         with self.lock:
             rows = np.flatnonzero(self.src < GOOGLE)   # everything you or Google haven't settled
-            old = self.pid[rows].copy()
-            self.sug[:], self.sug_score[:], self.sug_far[:] = -1, 0, False
-            self.pid[rows], self.src[rows] = -1, NONE
-            pids, S, far = self.scores(rows)
+            pid, src = self.pid.copy(), self.src.copy()
+            sug, sug_score, sug_far = np.full(self.n, -1, np.int32), np.zeros(self.n, np.float32), np.zeros(self.n, bool)
+            pid[rows], src[rows] = -1, NONE
+            pids, S, far = self.scores(rows)           # reads only the trusted names, which this leaves alone
             if pids:
                 at = {int(r): k for k, r in enumerate(rows)}
                 for j, p in enumerate(pids):
                     ks = [at[r] for r in self.nots.get(p, ()) if r in at]
                     S[ks, j] = -1
                 col = {p: j for j, p in enumerate(pids)}
-                for k in np.flatnonzero((self.src >= GOOGLE) & (self.pid > 0)):   # nobody is in a photo twice
-                    j = col.get(int(self.pid[k]))
+                for k in np.flatnonzero((src >= GOOGLE) & (pid > 0)):   # nobody is in a photo twice
+                    j = col.get(int(pid[k]))
                     if j is not None:
                         for o in self.by_sha[self.sha[k]]:
                             if o != k and o in at:
@@ -430,28 +451,25 @@ class People:
                 top = S[np.arange(len(rows)), best]
                 S[np.arange(len(rows)), best] = -1
                 second = S.max(1)
-                self.sug[rows] = np.array(pids, np.int32)[best]
-                self.sug_score[rows] = top
-                self.sug_far[rows] = far[np.arange(len(rows)), best]
-                sure = (top >= AUTO) & (top - second >= AUTO_MARGIN) & ~self.sug_far[rows] & (self.px[rows] >= 40)
+                sug[rows] = np.array(pids, np.int32)[best]
+                sug_score[rows] = top
+                sug_far[rows] = far[np.arange(len(rows)), best]
+                sure = (top >= AUTO) & (top - second >= AUTO_MARGIN) & ~sug_far[rows] & (self.px[rows] >= 40)
                 keep = {}                                   # two sure faces of one person in a photo: only the closer
                 for i in np.flatnonzero(sure):
-                    key = (self.sha[rows[i]], int(self.sug[rows[i]]))
+                    key = (self.sha[rows[i]], int(sug[rows[i]]))
                     if key not in keep or top[i] > top[keep[key]]:
                         keep[key] = i
                 sure[:] = False
                 sure[list(keep.values())] = True
-                self.pid[rows[sure]], self.src[rows[sure]] = self.sug[rows[sure]], AUTO_SRC
-            changed = rows[self.pid[rows] != old]
+                pid[rows[sure]], src[rows[sure]] = sug[rows[sure]], AUTO_SRC
+            changed = rows[pid[rows] != self.pid[rows]]
             if len(changed):
-                own = con is None
-                con = con or connect(self.db)
-                con.executemany("UPDATE faces SET person_id=?, source=?, labeled_at=? WHERE id=?",
-                                [(int(self.pid[r]) if self.pid[r] > 0 else None, "auto" if self.pid[r] > 0 else None,
-                                  now(), int(self.ids[r])) for r in changed])
-                con.commit()
-                if own:
-                    con.close()
+                with closing(connect(self.db)) as con, con:
+                    con.executemany("UPDATE faces SET person_id=?, source=?, labeled_at=? WHERE id=?",
+                                    [(int(pid[r]) if pid[r] > 0 else None, "auto" if pid[r] > 0 else None,
+                                      now(), int(self.ids[r])) for r in changed])
+            self.pid, self.src, self.sug, self.sug_score, self.sug_far = pid, src, sug, sug_score, sug_far
 
     def skipped(self, p):
         """Faces you put off deciding about for this person."""
@@ -521,9 +539,9 @@ class People:
                     taken.add(p)
                     self.pid[k], self.src[k] = p, GOOGLE
                     new.append(k)
-        con.executemany("UPDATE faces SET person_id=?, source='google', labeled_at=? WHERE id=?",
-                        [(int(self.pid[k]), now(), int(self.ids[k])) for k in new if self.src[k] == GOOGLE])
-        con.commit()
+        with con:   # the new people and Google's names together, or neither (and then no People at all)
+            con.executemany("UPDATE faces SET person_id=?, source='google', labeled_at=? WHERE id=?",
+                            [(int(self.pid[k]), now(), int(self.ids[k])) for k in new if self.src[k] == GOOGLE])
 
     # -- faces nobody has named ----------------------------------------------------------------
 
@@ -606,10 +624,15 @@ class People:
                     "ignored": int((self.pid == 0).sum()), "pending": int(self.pending().sum()),
                     "people": people, "unknown": self.clusters_state}
 
-    def review(self, p: int, year, limit: int, skipped: bool = False) -> dict:
+    # review, person_faces, odd and photo look the person or face up under self.lock and return None (a 404)
+    # when it isn't there: a merge can delete a person between the request arriving and the lock.
+
+    def review(self, p: int, year, limit: int, skipped: bool = False) -> dict | None:
         """Faces waiting for p, most likely first; the ones you skipped are kept apart (skipped=True)."""
         np = self.np
         with self.lock:
+            if p not in self.persons:
+                return None
             pend, later = self.pending(p), self.skipped(p)
             m = pend & later if skipped else pend & ~later
             total = int(m.sum())
@@ -620,10 +643,12 @@ class People:
             return {"person": {"id": p, **self.persons[p]}, "total": total, "matching": int(m.sum()),
                     "skipped": int((pend & later).sum()), "faces": [self.face(k) for k in rows]}
 
-    def person_faces(self, p: int, year, limit: int) -> dict:
+    def person_faces(self, p: int, year, limit: int) -> dict | None:
         """A person's named faces: a few per year for the timeline, or all of one year."""
         np = self.np
         with self.lock:
+            if p not in self.persons:
+                return None
             mine = self.pid == p
             if year is not None:
                 rows = np.flatnonzero(mine & (self.year == year))
@@ -637,12 +662,14 @@ class People:
                 out[int(y)] = [self.face(k) for k in sorted(rows, key=lambda k: self.date[k])]
             return {"person": {"id": p, **self.persons[p]}, "years": out}
 
-    def odd(self, p: int, year, offset: int, limit: int) -> dict:
+    def odd(self, p: int, year, offset: int, limit: int) -> dict | None:
         """A person's named faces, least like the rest of them first: each face against the mean of their
         other named faces from within WINDOW years (every year, if the photo is undated). A face with no
         others near it in time comes first too. This is where the mistakes are."""
         np = self.np
         with self.lock:
+            if p not in self.persons:
+                return None
             mine = np.flatnonzero(self.pid == p)
             ys = self.year[mine]
             sums = {int(y): self.V[mine[ys == y]].sum(0) for y in np.unique(ys)}
@@ -688,9 +715,10 @@ class People:
             return {"state": self.clusters_state, "groups": out,
                     **({"error": self.clusters_error} if self.clusters_state == ClusterState.FAILED else {})}
 
-    def photo(self, face_id: int) -> dict:
+    def photo(self, face_id: int) -> dict | None:
         with self.lock:
-            k = self.row[face_id]
+            if (k := self.row.get(face_id)) is None:
+                return None
             others = [dict(self.face(j), name=self.persons.get(int(self.pid[j]), {}).get("name"))
                       for j in self.by_sha[self.sha[k]]]
             return {"face": self.face(k), "faces": others}
@@ -704,28 +732,42 @@ class People:
         except OSError as e:
             print(f"face-labels.jsonl: {e}", flush=True)
 
-    def person_id(self, con, who) -> int:
-        """An id, or a name: an existing person's, or a new person's."""
+    def person_id(self, con, who, d: Draft) -> int:
+        """An id, or a name: an existing person's, or a new person's (in the draft, until it commits)."""
         if isinstance(who, int):
             return who
         name = " ".join(str(who).split())
-        for p, info in self.persons.items():
+        for p, info in d.persons.items():
             if info["name"].lower() == name.lower():
                 return p
         p = con.execute("INSERT INTO persons(name, created_at) VALUES (?,?)", (name, now())).lastrowid
-        self.persons[p] = {"name": name, "born": None}
+        d.persons[p] = {"name": name, "born": None}
         return p
 
+    # Every change is worked out on a Draft (a copy of what it touches) while its SQL runs in one
+    # transaction; the draft is swapped in, and the journal written, only once that commits. All of it
+    # happens under self.lock, so changes reach SQLite in the order they reach memory and the two never
+    # disagree; if SQLite raises (locked, disk full), memory is as it was and the connection is closed.
+
+    def commit(self, d: Draft) -> None:
+        """Swap in a draft whose transaction committed, and journal what it did. Under self.lock."""
+        self.pid, self.src, self.nots, self.later, self.persons = d.pid, d.src, d.nots, d.later, d.persons
+        for op, rows, extra in d.logs:
+            self.log(op, rows, **extra)
+
     def label_many(self, body: dict) -> dict:
-        """{items: [label bodies]}: a page of decisions, applied in order, then one rescore."""
+        """{items: [label bodies]}: a page of decisions, applied in order in one transaction, then one rescore."""
         with self.lock:
-            for item in body.get("items") or []:
-                if isinstance(item, dict):
-                    self.label(item, rescore=False)
+            d = Draft(self)
+            with closing(connect(self.db)) as con, con:
+                for item in body.get("items") or []:
+                    if isinstance(item, dict):
+                        self.decide(item, d, con)
+            self.commit(d)
             self.rescore()
             return {"ok": True, "pending": int(self.pending().sum())}
 
-    def label(self, body: dict, rescore: bool = True) -> dict:
+    def label(self, body: dict) -> dict:
         """{faces: [ids], person: id | "name" | 0 (don't name) | null (forget), cluster: n, not: [ids], not_person: id}.
         {pending: {person: id, year: y | null}} in place of faces: every face waiting for that person (in that
         year), less the ones in `not`, so you can say yes to all of them and find the mistakes afterwards.
@@ -733,96 +775,111 @@ class People:
         undo_person (for everyone, without it).
         later: [ids], later_person: id puts those faces aside, unnamed, to be asked about again later."""
         with self.lock:
-            con = connect(self.db)
-            rows = [self.row[i] for i in body.get("faces") or [] if i in self.row]
-            pend = body.get("pending")
-            if isinstance(pend, dict) and pend.get("person") in self.persons:
-                m = self.pending(pend["person"]) & ~self.skipped(pend["person"])
-                year = pend.get("year")       # null: every year; a number (or one as text); anything else: none
-                if year is not None:
-                    ok = isinstance(year, int) or isinstance(year, str) and year.lstrip("-").isdigit()
-                    m = m & (self.year == int(year)) if ok else m & False
-                skip = {self.row[i] for i in body.get("not") or [] if i in self.row}
-                rows = [int(k) for k in self.np.flatnonzero(m) if int(k) not in skip]
-            if isinstance(body.get("cluster"), int) and 0 <= body["cluster"] < len(self.clusters):
-                c = self.clusters[body["cluster"]]      # the whole group, not just the faces shown
-                rows = [int(k) for k in c[(self.pid[c] == -1) & (self.sug_score[c] < SUGGEST)]]
-            undo = [self.row[i] for i in body.get("undo") or [] if i in self.row]
-            if undo:                                    # take back whatever was said about these faces
-                up = body.get("undo_person")             # only what was said about this person, if given
-                for k in undo:
-                    for q in [up] if up is not None else list(self.nots) + list(self.later):
-                        self.nots.get(q, set()).discard(k)
-                        self.later.get(q, set()).discard(k)
-                    self.pid[k], self.src[k] = -1, NONE
-                where, extra = ("face_id=? AND person_id=?", (up,)) if up is not None else ("face_id=?", ())
-                for t in ("face_not", "face_later"):
-                    con.executemany(f"DELETE FROM {t} WHERE {where}", [(int(self.ids[k]), *extra) for k in undo])
-                con.executemany("UPDATE faces SET person_id=NULL, source=NULL, labeled_at=? WHERE id=?",
-                                [(now(), int(self.ids[k])) for k in undo])
-                self.log("undo", undo)
-            who = body.get("person")
-            if rows and who is None:
-                for k in rows:                          # "that's not them": forget the name, and don't offer it again
-                    if self.pid[k] > 0:
-                        self.nots.setdefault(int(self.pid[k]), set()).add(k)
-                        con.execute("INSERT OR IGNORE INTO face_not VALUES (?,?)", (int(self.ids[k]), int(self.pid[k])))
-                    self.pid[k], self.src[k] = -1, NONE
-                con.executemany("UPDATE faces SET person_id=NULL, source=NULL, labeled_at=? WHERE id=?",
-                                [(now(), int(self.ids[k])) for k in rows])
-                self.log("forget", rows)
-            elif rows:
-                p = 0 if who == 0 else self.person_id(con, who)
-                for k in rows:
-                    self.pid[k], self.src[k] = p, YOU
-                con.executemany("UPDATE faces SET person_id=?, source='you', labeled_at=? WHERE id=?",
-                                [(p, now(), int(self.ids[k])) for k in rows])
-                self.log("name", rows, person=self.persons[p]["name"] if p else None)
-            later, lp = [self.row[i] for i in body.get("later") or [] if i in self.row], body.get("later_person")
-            if later and lp in self.persons:
-                self.later.setdefault(lp, set()).update(later)
-                con.executemany("INSERT OR IGNORE INTO face_later VALUES (?,?,?)", [(int(self.ids[k]), lp, now()) for k in later])
-                self.log("later", later, person=self.persons[lp]["name"])
-            wrong, np_ = [self.row[i] for i in body.get("not") or [] if i in self.row], body.get("not_person")
-            if wrong and np_ in self.persons:
-                self.nots.setdefault(np_, set()).update(wrong)
-                con.executemany("INSERT OR IGNORE INTO face_not VALUES (?,?)", [(int(self.ids[k]), np_) for k in wrong])
-                self.log("not", wrong, person=self.persons[np_]["name"])
-            con.commit()
-            if rescore:
-                self.rescore(con)
-            con.close()
+            d = Draft(self)
+            with closing(connect(self.db)) as con, con:
+                self.decide(body, d, con)
+            self.commit(d)
+            self.rescore()
             return {"ok": True, "pending": int(self.pending().sum())}
 
+    def decide(self, body: dict, d: Draft, con) -> None:
+        """One label body (label's docstring) applied to the draft and written to con's open transaction."""
+        np = self.np
+        rows = [self.row[i] for i in body.get("faces") or [] if i in self.row]
+        pend = body.get("pending")
+        if isinstance(pend, dict) and pend.get("person") in d.persons:
+            pp = pend["person"]           # pending(pp) less skipped(pp), as the draft has them so far
+            m = (d.pid == -1) & (self.sug_score >= SUGGEST) & (self.sug == pp)
+            m[list(d.later.get(pp, ()))] = False
+            year = pend.get("year")       # null: every year; a number (or one as text); anything else: none
+            if year is not None:
+                ok = isinstance(year, int) or isinstance(year, str) and year.lstrip("-").isdigit()
+                m = m & (self.year == int(year)) if ok else m & False
+            skip = {self.row[i] for i in body.get("not") or [] if i in self.row}
+            rows = [int(k) for k in np.flatnonzero(m) if int(k) not in skip]
+        if isinstance(body.get("cluster"), int) and 0 <= body["cluster"] < len(self.clusters):
+            c = self.clusters[body["cluster"]]      # the whole group, not just the faces shown
+            rows = [int(k) for k in c[(d.pid[c] == -1) & (self.sug_score[c] < SUGGEST)]]
+        undo = [self.row[i] for i in body.get("undo") or [] if i in self.row]
+        if undo:                                    # take back whatever was said about these faces
+            up = body.get("undo_person")             # only what was said about this person, if given
+            for k in undo:
+                for q in [up] if up is not None else list(d.nots) + list(d.later):
+                    d.nots.get(q, set()).discard(k)
+                    d.later.get(q, set()).discard(k)
+                d.pid[k], d.src[k] = -1, NONE
+            where, extra = ("face_id=? AND person_id=?", (up,)) if up is not None else ("face_id=?", ())
+            for t in ("face_not", "face_later"):
+                con.executemany(f"DELETE FROM {t} WHERE {where}", [(int(self.ids[k]), *extra) for k in undo])
+            con.executemany("UPDATE faces SET person_id=NULL, source=NULL, labeled_at=? WHERE id=?",
+                            [(now(), int(self.ids[k])) for k in undo])
+            d.logs.append(("undo", undo, {}))
+        who = body.get("person")
+        if rows and who is None:
+            for k in rows:                          # "that's not them": forget the name, and don't offer it again
+                if d.pid[k] > 0:
+                    d.nots.setdefault(int(d.pid[k]), set()).add(k)
+                    con.execute("INSERT OR IGNORE INTO face_not VALUES (?,?)", (int(self.ids[k]), int(d.pid[k])))
+                d.pid[k], d.src[k] = -1, NONE
+            con.executemany("UPDATE faces SET person_id=NULL, source=NULL, labeled_at=? WHERE id=?",
+                            [(now(), int(self.ids[k])) for k in rows])
+            d.logs.append(("forget", rows, {}))
+        elif rows:
+            p = 0 if who == 0 else self.person_id(con, who, d)
+            for k in rows:
+                d.pid[k], d.src[k] = p, YOU
+            con.executemany("UPDATE faces SET person_id=?, source='you', labeled_at=? WHERE id=?",
+                            [(p, now(), int(self.ids[k])) for k in rows])
+            d.logs.append(("name", rows, {"person": d.persons[p]["name"] if p else None}))
+        later, lp = [self.row[i] for i in body.get("later") or [] if i in self.row], body.get("later_person")
+        if later and lp in d.persons:
+            d.later.setdefault(lp, set()).update(later)
+            con.executemany("INSERT OR IGNORE INTO face_later VALUES (?,?,?)", [(int(self.ids[k]), lp, now()) for k in later])
+            d.logs.append(("later", later, {"person": d.persons[lp]["name"]}))
+        wrong, np_ = [self.row[i] for i in body.get("not") or [] if i in self.row], body.get("not_person")
+        if wrong and np_ in d.persons:
+            d.nots.setdefault(np_, set()).update(wrong)
+            con.executemany("INSERT OR IGNORE INTO face_not VALUES (?,?)", [(int(self.ids[k]), np_) for k in wrong])
+            d.logs.append(("not", wrong, {"person": d.persons[np_]["name"]}))
+
     def edit_person(self, body: dict) -> dict:
-        """{id, name?, born?}: rename (onto an existing name = merge the two) or set when they were born."""
+        """{id, name?, born?}: rename (onto an existing name = merge the two) or set when they were born.
+        A merge moves everything of p's to the other person: their faces, and p's face_not and face_later
+        rows (a face already ruled out or put aside for both keeps one row), in SQLite and in memory, and
+        leaves nothing that names p. Journalled as born, rename and merge records."""
         with self.lock:
             p = body.get("id")
             if p not in self.persons:
                 return {"error": "unknown person"}
-            con = connect(self.db)
-            if "born" in body:
-                born = (body["born"] or "").strip()[:7] or None
-                self.persons[p]["born"] = born
-                con.execute("UPDATE persons SET born=? WHERE id=?", (born, p))
-            name = " ".join(str(body.get("name") or "").split())
-            if name and name != self.persons[p]["name"]:
-                other = next((q for q, i in self.persons.items() if q != p and i["name"].lower() == name.lower()), None)
-                if other is None:
-                    self.persons[p]["name"] = name
-                    con.execute("UPDATE persons SET name=? WHERE id=?", (name, p))
-                else:                                   # merge p into the person who already has that name
-                    self.pid[self.pid == p] = other
-                    con.execute("UPDATE faces SET person_id=? WHERE person_id=?", (other, p))
-                    con.execute("UPDATE OR IGNORE face_not SET person_id=? WHERE person_id=?", (other, p))
-                    con.execute("DELETE FROM face_not WHERE person_id=?", (p,))
-                    con.execute("DELETE FROM persons WHERE id=?", (p,))
-                    self.nots.setdefault(other, set()).update(self.nots.pop(p, set()))
-                    del self.persons[p]
-                    p = other
-            con.commit()
-            self.rescore(con)
-            con.close()
+            d = Draft(self)
+            with closing(connect(self.db)) as con, con:
+                if "born" in body:
+                    born = (body["born"] or "").strip()[:7] or None
+                    if born != d.persons[p]["born"]:
+                        d.logs.append(("born", [], {"person": d.persons[p]["name"], "born": born}))
+                    d.persons[p]["born"] = born
+                    con.execute("UPDATE persons SET born=? WHERE id=?", (born, p))
+                name = " ".join(str(body.get("name") or "").split())
+                if name and name != d.persons[p]["name"]:
+                    other = next((q for q, i in d.persons.items() if q != p and i["name"].lower() == name.lower()), None)
+                    if other is None:
+                        d.logs.append(("rename", [], {"person": d.persons[p]["name"], "name": name}))
+                        d.persons[p]["name"] = name
+                        con.execute("UPDATE persons SET name=? WHERE id=?", (name, p))
+                    else:                                   # merge p into the person who already has that name
+                        d.pid[d.pid == p] = other
+                        con.execute("UPDATE faces SET person_id=? WHERE person_id=?", (other, p))
+                        for t in ("face_not", "face_later"):   # (face_id, person_id) is the key: a row both have stays once
+                            con.execute(f"UPDATE OR IGNORE {t} SET person_id=? WHERE person_id=?", (other, p))
+                            con.execute(f"DELETE FROM {t} WHERE person_id=?", (p,))
+                        con.execute("DELETE FROM persons WHERE id=?", (p,))
+                        for sets in (d.nots, d.later):
+                            if moved := sets.pop(p, None):
+                                sets.setdefault(other, set()).update(moved)
+                        d.logs.append(("merge", [], {"person": d.persons.pop(p)["name"], "into": d.persons[other]["name"]}))
+                        p = other
+            self.commit(d)
+            self.rescore()
             return {"ok": True, "id": p}
 
     def crop(self, face_id: int):
@@ -853,6 +910,7 @@ class People:
         one = lambda k, d="": (qs.get(k) or [d])[0]
         num = lambda k: int(one(k)) if one(k).lstrip("-").isdigit() else None
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":")).encode(), "application/json", "no-store")
+        found = lambda o: None if o is None else js(o)   # None: no such person or face (looked up under the lock)
         if method == "GET":
             if path in ("/people", "/people/"):
                 return 200, pages.page("people.html"), "text/html; charset=utf-8", "no-cache"
@@ -862,16 +920,16 @@ class People:
             if path == "/api/people":
                 return js(self.overview())
             person, face = num("person"), num("face")
-            if path == "/api/people/review" and person is not None and person in self.persons:
-                return js(self.review(person, num("year"), min(num("limit") or 60, 400), one("skipped") == "1"))
-            if path == "/api/people/person" and person is not None and person in self.persons:
-                return js(self.person_faces(person, num("year"), min(num("limit") or 12, 2000)))
-            if path == "/api/people/odd" and person is not None and person in self.persons:
-                return js(self.odd(person, num("year"), max(num("offset") or 0, 0), min(num("limit") or 60, 400)))
+            if path == "/api/people/review" and person is not None:
+                return found(self.review(person, num("year"), min(num("limit") or 60, 400), one("skipped") == "1"))
+            if path == "/api/people/person" and person is not None:
+                return found(self.person_faces(person, num("year"), min(num("limit") or 12, 2000)))
+            if path == "/api/people/odd" and person is not None:
+                return found(self.odd(person, num("year"), max(num("offset") or 0, 0), min(num("limit") or 60, 400)))
             if path == "/api/people/unknown":
                 return js(self.unknown(min(num("limit") or 12, 100)))
-            if path == "/api/people/photo" and face is not None and face in self.row:
-                return js(self.photo(face))
+            if path == "/api/people/photo" and face is not None:
+                return found(self.photo(face))
         elif method == "POST" and body is not None:
             if path == "/api/people/label":
                 return js(self.label(body))

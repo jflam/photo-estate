@@ -240,14 +240,35 @@ endpoint, `POST /api/people/label`, implements them all.
 | **Name a whole group** | `{cluster: n, person: ...}` | Applies to every still-unsettled face in the group, not only the ones shown |
 | **Yes to everything waiting** | `{pending: {person, year}, person, not: [...]}` | Every pending face for that person (in that year), less the excluded ones |
 | **Take it back** | `{undo: [ids], undo_person?}` | Removes the name, and the `not` / `later` rows (for that person, or all if omitted) |
-| **Rename or merge a person** | `POST /api/people/person {id, name}` | A new name renames; an existing person's name merges the two (faces, `face_not` rows) |
+| **Rename or merge a person** | `POST /api/people/person {id, name}` | A new name renames; an existing person's name (any case) merges the two: their faces, `face_not` and `face_later` rows move to the person who keeps the name (a face ruled out or put aside for both keeps one row), in SQLite and in memory, and nothing naming the merged person is left |
 | **Set a birth month** | `POST /api/people/person {id, born}` | Enables age labels and the "not before birth" rule |
-| **A page of decisions** | `POST /api/people/label-many {items: [...]}` | Applies each in order with *one* rescore at the end |
+| **A page of decisions** | `POST /api/people/label-many {items: [...]}` | Applies each in order, in one transaction, with *one* rescore at the end |
 
-Every change does three things, in this order, under one lock: updates the in-memory arrays; writes
-SQLite (`faces`, `persons`, `face_not`, `face_later`) and commits; and **rescores**, so the suggestions
-and automatic names reflect it immediately. `label-many` exists so saving a page of 60 decisions costs
-one rescore, not sixty.
+Every change does four things, in this order, all under the People lock (issue #87):
+
+1. **Works the change out on a draft** (`Draft`): copies of who each face is (`pid`, `src`), the `not`
+   and `later` sets and the people, while writing the same change to SQLite (`faces`, `persons`,
+   `face_not`, `face_later`) in **one transaction** on a connection that is always closed
+   (`with closing(connect(db)) as con, con:`). A page of `label-many` items is one draft and one
+   transaction: all of the page or none of it.
+2. **Commits**, then swaps the draft in (`People.commit`). If SQLite raises instead (the database is
+   locked past the 60 s timeout, the disk is full), the transaction rolls back, the connection is closed,
+   nothing in memory has changed, nothing is journalled, and the request fails.
+3. **Journals** what it did (below), only once it is committed.
+4. **Rescores**, so the suggestions and automatic names reflect it immediately. `rescore()` follows the
+   same rule: new arrays, the changed automatic names written in one transaction, the arrays swapped in
+   after it commits.
+
+The commit happens *inside* the lock on purpose. Two changes that committed outside it could reach
+SQLite in one order and memory in the other, and then disagree for good; inside it, SQLite and memory
+see every change in the same order. The cost is that a page asking for faces waits out a commit (a few
+milliseconds), or SQLite's busy timeout when another process holds the database. The lock is a module
+lock: nothing here asks for the catalog's gate while holding it (chapter 11). `label-many` exists so
+saving a page of 60 decisions costs one rescore, not sixty.
+
+Requests that read one person or one face (`review`, `person`, `odd`, `photo`) look it up *under* the
+lock and answer 404 when it is not there, so a request for a person a merge has just deleted gets a 404,
+not an error.
 
 ### The journal
 
@@ -262,8 +283,24 @@ face's box**, not by the face's database id:
 The intent (README: "Everything you decide is also written to a plain log file") is that your work
 should survive a re-scan with a better face model, where database ids would change but a photo's hash
 and a face's position would still identify it. The operations logged are `name`, `forget`, `undo`,
-`later` and `not`. **At present nothing reads the journal back**: it is a durable record, with replay
-tooling still to be written.
+`later` and `not` (each with its `faces`; `name`, `later` and `not` with the `person`'s name), and,
+from `POST /api/people/person`, three that name people rather than faces (issue #87), so a replay keeps
+renames and merges. Their `faces` is always empty:
+
+```json
+{"ts":"…","op":"rename","person":"Ally","name":"Allie","faces":[]}
+{"ts":"…","op":"merge","person":"Allie","into":"Alice","faces":[]}
+{"ts":"…","op":"born","person":"Alice","born":"1990-04","faces":[]}
+```
+
+`rename`: the person called `person` is called `name` from now on. `merge`: everyone called `person`
+is `into` from now on, and `person` is gone (`into` is the kept person's name as stored, which may
+differ in case from what was typed). `born`: `person`'s birth month (`"YYYY"`, `"YYYY-MM"` or `null`),
+written only when it changes. Like the others they name people by name, never by id, and are applied
+in file order: a `name` record before a `rename` or `merge` is renamed with it. A record is written only
+after its change committed. **At present nothing reads the journal back**: it is a durable record, with
+replay tooling still to be written (#31); `tests/test_faces_consistency.py` folds the records into who
+each face is, to show they are enough.
 
 ## The People page, workflow by workflow
 

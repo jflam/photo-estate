@@ -246,8 +246,13 @@ unit rows), `shard-NNNN.shas.txt` and `meta.json` (`model`). Without the option 
 | `GET /api/people/unknown[?limit=12]` | Groups of unnamed faces: `{state, groups}`, `state` as in the overview; with `failed`, also `error` (what the grouping raised) and no groups |
 | `GET /api/people/photo?face=ID` | One face's photo and every face in it |
 | `POST /api/people/label` | Name, forget, rule out, put aside, undo, name a cluster ([chapter 15](15-human-corrections.md) for the body) |
-| `POST /api/people/label-many` | `{"items": [label bodies]}`: apply in order, rescore once |
-| `POST /api/people/person` | `{"id", "name"?, "born"?}`: rename (or merge) and set birth month |
+| `POST /api/people/label-many` | `{"items": [label bodies]}`: apply in order, in one transaction (all or none), rescore once |
+| `POST /api/people/person` | `{"id", "name"?, "born"?}`: rename (or merge: a name another person has, in any case, moves this person's faces, `face_not` and `face_later` rows to them) and set birth month. Returns `{"ok": true, "id": ID}` (the kept person's id after a merge), or `{"error": "unknown person"}` |
+
+`review`, `person`, `odd` (an unknown or just-merged `person`) and `photo` (an unknown `face`) are 404.
+Each POST is one SQLite transaction; if SQLite refuses it (locked, disk full) nothing changes, and the
+request fails as any request that raises does: the server prints the error and closes the connection
+without an answer ([chapter 15](15-human-corrections.md)).
 
 The three POSTs take the write rule in the photo app (`403` for a viewer); `faces.py serve`, run by
 hand on this computer, has no rule.
@@ -292,7 +297,7 @@ Returns `{"ok": true, "pending": N}`.
 | 201 | `PUT /api/upload/...` stored a new file |
 | 400 | A malformed request (a number parameter, a body that isn't JSON, a bad `Content-Length`: above), a malformed review decision, or a refused upload |
 | 403 | A write from a caller who may not write (above) |
-| 404 | Unknown sha, unknown path, or `/api/similar` with an unknown photo |
+| 404 | Unknown sha, unknown path, `/api/similar` with an unknown photo, or `/api/people/{review,person,odd}` with an unknown person (one just merged away included) and `/api/people/photo` with an unknown face |
 | 413 | A JSON body over 8 MB |
 | 500 | A part loaded in the background failed (issue #82): a typed search after the search model failed to load (`{"error": "the search model (...) failed to load: ..."}`), or `/people`, `/face/*` and `/api/people/*` after the faces failed to load (the error as text; `/people` as a page that says so) |
 | 503 | `/people` before the face data has loaded; a typed search (`/api/search?q=`, `/api/periods` and the rest that read words) while the search model is still loading after waiting 90 s for it (`{"error": "... is still loading ..."}`, `Retry-After: 5`) |
