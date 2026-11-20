@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import tasks  # noqa: E402
+from core import events  # noqa: E402
 from core.lifecycle import IllegalMove  # noqa: E402
 from core.states import IngestState, JobState, TaskStatus  # noqa: E402
 from intake import sources  # noqa: E402,F401  (registers every source)
@@ -87,7 +88,7 @@ def test_ingest_start_is_guarded_by_state(tmp_path):
 
 
 def test_ingest_start_cancels_an_armed_timer(tmp_path):
-    job = ingest_job(tmp_path, "echo '== 1 new assets and sidecars: link'", quiet=30, max_wait=60)
+    job = ingest_job(tmp_path, "echo '" + events.line("event", name="new_assets", count=1) + "'", quiet=30, max_wait=60)
     ended = threading.Event()
     job.on_faces = ended.set                          # called once _follow has finished with the run
     job.poke()

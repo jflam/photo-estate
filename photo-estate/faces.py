@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Literal
 
 import pages   # the pages, with the shared stylesheet put in
-from core import config, schema
+from core import config, events, schema
 from core.media import FACES_SKIP_EXT as SKIP_EXT   # RAW and GIF (core/media.py says why)
 from core.states import ClusterState
 
@@ -250,6 +250,7 @@ def cmd_run(a) -> None:
         print(f"{done} images already scanned ({found} faces), {len(todo)} to do", flush=True)
     else:
         print(f"{len(todo)} new images to scan", flush=True)
+    events.emit_progress("faces", 0, len(todo))
     if not todo:
         return
     models = Models(a.threads)
@@ -293,6 +294,7 @@ def cmd_run(a) -> None:
                 rate = n / (time.time() - t0)
                 print(f"{datetime.now():%H:%M:%S} {n}/{len(jobs)} {rate:.1f} img/s, {nfaces} faces,"
                       f" {errors} undecodable, ~{(len(jobs) - n) / rate / 3600:.1f} h left", flush=True)
+                events.emit_progress("faces", n, len(jobs))
                 last = time.time()
         flush()
     dt = time.time() - t0

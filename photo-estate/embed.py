@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from multiprocessing import Pool
 from pathlib import Path
 
-from core import config, schema
+from core import config, events, schema
 from core.media import EMBED_SKIP_EXT as SKIP_EXT   # RAW: Pillow can't decode it
 from encoder import features as _features
 
@@ -99,6 +99,7 @@ def cmd_run(a) -> None:
     done = "" if a.after_rowid is not None else \
         f"{con.execute('SELECT count(*) FROM embeddings WHERE model=?', (a.model,)).fetchone()[0]} already embedded, "
     print(f"{a.model}: {done}{len(todo)} to do ({len(skipped)} RAW files skipped)", flush=True)
+    events.emit_progress("embed", 0, len(todo))
     if not todo:
         return
     torch, model, proc = load_model(a.model, a.threads)
@@ -140,6 +141,7 @@ def cmd_run(a) -> None:
                 eta = (len(jobs) - n) / rate / 3600
                 print(f"{datetime.now():%H:%M:%S} {n}/{len(jobs)} {rate:.1f} img/s,"
                       f" {errors} undecodable, ~{eta:.1f} h left", flush=True)
+                events.emit_progress("embed", n, len(jobs))
                 last = time.time()
         flush()
     dt = time.time() - t0

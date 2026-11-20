@@ -41,7 +41,7 @@ from pathlib import Path, PurePosixPath
 
 from PIL import Image, ImageOps
 
-from core import config, schema
+from core import config, events, schema
 from core.media import IMAGE_EXT, RAW_EXT, VIDEO_EXT, kind_of  # noqa: F401  (kind_of and the sets are estate's API)
 
 try:
@@ -250,7 +250,10 @@ def cmd_ingest(a) -> None:
                 continue
             st["media"] += 1
             if a.progress and st["media"] % 25 == 0:   # for the setup page (intake/engine.py)
-                print(f"progress {done_before + st['media']}", flush=True)
+                if events.enabled():
+                    events.emit_progress("ingest", done_before + st["media"])
+                else:
+                    print(f"progress {done_before + st['media']}", flush=True)
             if con.execute("SELECT 1 FROM occurrences WHERE source=? AND path=?",
                            (name, path)).fetchone():
                 continue  # resuming an interrupted run
@@ -379,7 +382,7 @@ def cmd_link(a) -> None:
     pending, by_stem, flickr_hits = [], {}, {}
     occ = con.execute(f"SELECT id, sha256, dir, filename FROM occurrences {occ_where}", occ_args).fetchall()
     for i, (oid, sha, d, fn) in enumerate(occ, 1):
-        progress(i, len(occ), "matching each photo with its details", every=2000)
+        progress(i, len(occ), "matching each photo with its details", every=2000, stage="link")
         sid = match_sidecar(fn, side.get(d, EMPTY_INDEX))
         album = albums.get(d) or default_album(d)
         fl = flickr_for(fn, flickr) if sid is None else None
@@ -462,7 +465,7 @@ def cmd_link(a) -> None:
                      json.dumps({"id": m["id"], "photopage": m.get("photopage"), "privacy": m.get("privacy")}),
                      0, now()))
     for i, (sha, acc) in enumerate(merged.items(), 1):
-        progress(i, len(merged), "saving dates, places and albums", every=2000)
+        progress(i, len(merged), "saving dates, places and albums", every=2000, stage="link")
         con.execute("UPDATE assets SET taken_at=coalesce(?, exif_taken_at, ?), lat=?, lon=?,"
                     " description=?, people=?, favorited=? WHERE sha256=?",
                     (acc.get("taken"), acc.get("fallback_taken"), acc.get("lat"), acc.get("lon"),
@@ -604,6 +607,7 @@ def cmd_exif(a) -> None:
             dt = time.time() - t0
             print(f"{time.strftime('%H:%M:%S')} {n}/{len(todo)} {n / dt:.0f} files/s,"
                   f" ~{(len(todo) - n) / max(n / dt, 1e-6) / 60:.0f} min left", flush=True)
+            events.emit_progress("exif", n, len(todo))
     reindex(con, [sha for sha, _ in todo] if not a.force else None, report=True)
     con.commit()
     print(f"done: {n} assets in {(time.time() - t0) / 60:.1f} min, {cams} with a camera name")
@@ -614,10 +618,14 @@ def cmd_exif(a) -> None:
         print(f"  {c:7}  {cam}")
 
 
-def progress(done: int, total: int, what: str, every: int = 1000) -> None:
-    """A `progress N of M: what` line for the setup page (intake/engine.py), every `every` items and at the end."""
+def progress(done: int, total: int, what: str, every: int = 1000, stage: str = "search") -> None:
+    """How far a step has got, for the setup page (intake/engine.py), every `every` items and at the end: a
+    progress event when the parent asked for them (core/events.py), else a `progress N of M: what` line."""
     if total and (done % every == 0 or done == total):
-        print(f"progress {done} of {total}: {what}", flush=True)
+        if events.enabled():
+            events.emit_progress(stage, done, total, what)
+        else:
+            print(f"progress {done} of {total}: {what}", flush=True)
 
 
 def reindex(con, shas: list[str] | None = None, report: bool = False) -> None:

@@ -12,7 +12,7 @@ uv run estate.py [--db estate.db] <command> [options]
 | Command | Arguments and options | Purpose | Chapter |
 |---|---|---|---|
 | `ingest` | `sources...` (zips or folders); `--store DIR` (**required**); `--force` re-scan sources already ingested; `--delete-after` delete each zip once ingested | Hash and store media; record occurrences, sidecars, XMP, Flickr JSON | [4](04-store-and-ingest.md) |
-| `link` | `--source NAME` (repeatable): only the photos those sources brought in, and every other copy of them; the name is the folder or zip `ingest` read | Match sidecars to media; merge dates, GPS, people, favourites, albums; rebuild the text index (only the touched photos' rows with `--source`); prints `progress N of M: what` | [6](06-linking.md) |
+| `link` | `--source NAME` (repeatable): only the photos those sources brought in, and every other copy of them; the name is the folder or zip `ingest` read | Match sidecars to media; merge dates, GPS, people, favourites, albums; rebuild the text index (only the touched photos' rows with `--source`); prints `progress N of M: what` (progress events instead with `PHOTO_ESTATE_EVENTS=1`, [16](16-operations.md)) | [6](06-linking.md) |
 | `exif` | `--store DIR` (**required**); `--workers N` (default: half the CPUs); `--batch 200`; `--limit 0` (all); `--force` | Read all metadata with `exiftool`; promote camera, lens, exposure | [7](07-places-events-trips.md) |
 | `dupes` | `--threshold 5` max dHash Hamming distance; `--limit 20`; `--json FILE` | Exact and near-duplicate report | [8](08-duplicates.md) |
 | `review` | `--store DIR` (**required**); `--threshold 5`; `--port 8765`; `--out DIR` (default `<db dir>/review`) | Local page to choose which near-duplicates to keep (records choices only) | [8](08-duplicates.md) |
@@ -123,6 +123,7 @@ Needs `rclone`, `sqlite3`, `uv`, bash 4 and GNU `df`. See [chapter 3](03-repatri
 | `DB`, `STORE`, `INBOX` | `ROOT/estate.db`, `ROOT/store`, `ROOT/iphone` | Where things are; the catalog may be on another disk than the store |
 | `SKIP_MODELS=1` | off | Catalogue only; leave embeddings and faces for later |
 | `RESTART=LABEL` | none | When run by hand, restart that launchd job at the end |
+| `PHOTO_ESTATE_EVENTS=1` | off | Also print the event lines the app reads (`new_assets`, `catalog_ready`, and the steps' progress; [16](16-operations.md)); the app sets it |
 
 Only new photos are touched by each stage; safe to run while the app is up and to overlap (a second run
 exits at once). The app runs it itself after uploads ([24](24-uploading.md)).

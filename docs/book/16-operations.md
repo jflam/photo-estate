@@ -73,6 +73,50 @@ cancelling a running one stops its step with SIGTERM, then SIGKILL ten seconds l
 setup page stays at `/setup` (the **+** in the library's header) for adding sources later. The code
 is in `intake/`, and [INTAKE-PLAN.md](../notes/INTAKE-PLAN.md) explains how sources plug in.
 
+### How the steps report back: the event lines
+
+The setup page's progress bar and the photo app's live reload are driven by one small protocol, not by
+the steps' human-readable output ([core/events.py](../../photo-estate/core/events.py), issue #84; before it,
+a reworded log line could stall the bar or the reload, as in issues #12-#14). A parent that wants the
+events sets `PHOTO_ESTATE_EVENTS=1` in the child's environment; `intake/engine.py` does for every stage
+and `upload.py`'s `IngestJob` does for `ingest-iphone.sh`, which passes it on to the scripts it runs. Without
+it nothing changes: a person running a step by hand sees the same lines as before.
+
+Each event is one line on the child's stdout, `@@pe ` followed by a JSON object:
+
+```
+@@pe {"v":"1.0","type":"progress","stage":"link","done":2000,"total":14327,"what":"matching each photo with its details"}
+@@pe {"v":"1.0","type":"event","name":"new_assets","count":3}
+@@pe {"v":"1.0","type":"event","name":"catalog_ready"}
+```
+
+| Field | Meaning |
+|---|---|
+| `v` | `"MAJOR.MINOR"`, now `"1.0"`. A reader takes any `1.x` line and ignores fields it does not know; a line of another major version is ignored |
+| `type` | `progress` or `event`; a reader ignores any other type |
+| `stage`, `done`, `total`, `what` | `progress`: which step reports (below), how many items it has done, out of how many (left out when it is not known yet), and what it is doing now (optional, shown as the step's detail) |
+| `name` and its fields | `event`: `new_assets` (`count`: assets plus XMP sidecars the ingest added; above 0 means the run brought photos in) and `catalog_ready` (the new photos are searchable; faces still to come). A reader ignores names it does not know |
+
+| Who | Prints | Where it used to be only a human line |
+|---|---|---|
+| `estate.py ingest --progress` | `progress` `ingest`, every 25 photos read (no total: the engine has it from the preview) | `progress N` (now printed only without events) |
+| `estate.py link` | `progress` `link` (matching, saving), every 2,000 and at the end | `progress N of M: what` (likewise) |
+| `estate.py exif` | `progress` `exif`, after each exiftool batch | `HH:MM:SS N/M F files/s` (still printed) |
+| full-text rebuild (`link`, `exif`, `places`) | `progress` `search`, every 1,000 and at the end | `progress N of M: updating search` (only without events) |
+| `places.py run` | `progress` `places`, its five steps | `progress K of 5: what` (only without events) |
+| `embed.py run`, `faces.py run` | `progress` `embed`/`faces` with `done` 0 when it knows the total, then each minute | `N to do`, `N new images to scan`, `HH:MM:SS N/M R img/s` (still printed) |
+| `ingest-iphone.sh` | `new_assets` after the ingest (also `count` 0, before "nothing new"), `catalog_ready` right after the line "catalog ready" | "N new assets and sidecars", "catalog ready" (still printed) |
+
+The parents read the child's stdout with stderr merged into it, so an event comes in order with the lines
+around it (`catalog_ready` before the faces step's output). `core.events.parse(line)` is the one reader:
+it returns a `Progress` or an `Event`, or `None` for a human line, a malformed one, another major version or
+an unknown type, and never raises. Lines starting with `@@pe ` are never shown: the engine turns `progress`
+into the job's `done`, `total` and `detail` (through `Store.set`; a total holds for later counts without
+one) and writes every other line to the job's log; `IngestJob` keeps every other line in the log the
+Library info page shows, and reloads the catalog at `catalog_ready` once a `new_assets` with a count
+above 0 came first (at the end of a successful run if `catalog_ready` never comes). `face-labels.jsonl`
+is a separate thing, the People page's decision journal, and none of this goes in it.
+
 By hand, run from `photo-estate/`, with `DB` and `STORE` set:
 
 ```bash
@@ -120,7 +164,8 @@ cataloguing at once. Otherwise (an upload failed, or an older app) an upload sta
 `--ingest-max-wait` (600 s) after the first of a burst. It then runs `ingest-iphone.sh`, and when that
 added photos the app re-reads what changed in the catalog in the background and swaps it in, with no restart: searches
 keep being answered from the old catalog until the new one is ready. The reload starts as soon as the
-script says the photos are searchable ("catalog ready", after embeddings); faces run on, and the People
+script says the photos are searchable (its `catalog_ready` event, after embeddings: see "How the steps
+report back" above); faces run on, and the People
 page reloads when they finish. A failed run is retried after
 10 minutes, up to three times; uploads left in the inbox from before a start are picked up at startup.
 `IngestJob` (upload.py) is one state at a time (idle, quiet, starting, running, backoff) and a step its

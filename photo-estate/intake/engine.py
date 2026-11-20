@@ -9,6 +9,10 @@ for every source:
   embed     embed.py run: what is in each photo, for search           } by hand
   faces     faces.py run: faces for the People page (optional: a failure here still leaves the photos in)
 
+Each stage runs with PHOTO_ESTATE_EVENTS=1, so it reports how far it has got as progress events
+(core/events.py, issue #84): those move the job's bar (done, total, detail) and never go in its log; every
+other line of its output (stdout and stderr together) is a line of the log, as written.
+
 After `embed` the job is *ready*: its photos are searchable, and `on_ready` is called (the app reloads
 its catalog, or in setup mode becomes the full app). Faces run on after that.
 
@@ -27,7 +31,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import sqlite3
 import subprocess
@@ -36,7 +39,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-from core import schema   # photo-estate/core, beside this package
+from core import events, schema   # photo-estate/core, beside this package
 from core.procs import stop
 from core.states import JOB_ACTIVE, JOB_MOVES, JOB_RETRYABLE, JobState, StageState, check_move
 
@@ -210,13 +213,6 @@ class CatalogLock:
         if self.held:
             self.held = False
             shutil.rmtree(self.path, ignore_errors=True)
-
-
-PROGRESS = [  # how each stage's output says how far it has got
-    re.compile(r"^progress (?P<done>\d+)(?: of (?P<total>\d+))?(?:: (?P<what>.+))?$"),   # estate.py, places.py
-    re.compile(r"(?P<done>\d+)/(?P<total>\d+) [\d.]+ (?:img|files)/s"),  # embed.py, faces.py, estate.py exif
-]
-TODO = re.compile(r"(?P<total>\d+) (new images )?to (do|scan)")
 
 
 class Engine:
@@ -482,7 +478,7 @@ class Engine:
         try:
             self.jobs.set(jid, detail=dict(STAGES)[stage], done=None, total=None if stage != "ingest" else self.jobs.job(jid)["total"])
             self.stage_started[jid] = time.time()
-            env = dict(os.environ, PYTHONUNBUFFERED="1")
+            env = dict(os.environ, PYTHONUNBUFFERED="1", **{events.ENV: "1"})   # progress as events (issue #84)
             with self.guard:     # a cancel before this is seen here; one after finds the process to stop
                 self._check(jid)
                 proc = self.proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -494,22 +490,17 @@ class Engine:
                 line = line.rstrip()
                 if not line:
                     continue
-                if (m := TODO.search(line)) and stage != "ingest":
-                    total = int(m["total"])
-                    self.jobs.set(jid, total=total, done=0)
-                hit = next((m for rx in PROGRESS if (m := rx.search(line))), None)
-                if hit:
-                    kv: dict[str, int | str] = {"done": int(hit["done"])}
-                    if hit["total"]:
-                        kv["total"] = int(hit["total"])
-                    elif total is not None:
-                        kv["total"] = total
-                    what = hit.groupdict().get("what")
-                    if what:
-                        kv["detail"] = what[:1].upper() + what[1:]
-                    self.jobs.set(jid, **kv)
-                    if line.startswith("progress "):
-                        continue           # progress, not news: the bar shows it
+                if line.startswith(events.PREFIX):   # the bar's, not the details': never in the job's log
+                    if isinstance(ev := events.parse(line), events.Progress):
+                        if ev.total is not None:         # a step's total holds for its later counts
+                            total = ev.total
+                        kv: dict[str, int | str] = {"done": ev.done}
+                        if total is not None:
+                            kv["total"] = total
+                        if ev.what:
+                            kv["detail"] = ev.what[:1].upper() + ev.what[1:]
+                        self.jobs.set(jid, **kv)
+                    continue
                 self.jobs.event(jid, line)
                 tail = (tail + [line])[-6:]
             code = proc.wait()

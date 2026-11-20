@@ -164,7 +164,7 @@ def cmd_run(a) -> None:
     # lookup are the slow parts), and EXIF offsets from exiftool's JSON (a big table): both are reused
     # for photos already in `places`, so a run costs about what the new photos cost. --full redoes all.
     current = tables_current(con)
-    step = lambda k, what: estate.progress(k, 5, what, every=1)   # for the setup page: the steps, not photos
+    step = lambda k, what: estate.progress(k, 5, what, every=1, stage="places")   # for the setup page: the steps, not photos
     step(1, "reading the library")
 
     def sel(t, cols):          # what the last run wrote, as far as it can still be read

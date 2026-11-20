@@ -13,9 +13,16 @@ from PIL import Image, ImageDraw
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
+from core import events  # noqa: E402
 from upload import IngestJob, clean_path, save_upload  # noqa: E402
 
 ESTATE = HERE.parent / "estate.py"
+# What ingest-iphone.sh prints for the app (core/events.py): the app goes by these, not by its human lines.
+CATALOG_READY = "echo '" + events.line("event", name="catalog_ready") + "'\n"
+
+
+def new_assets(n: int) -> str:
+    return "echo '" + events.line("event", name="new_assets", count=n) + "'\n"
 
 
 def jpeg(seed: int) -> bytes:
@@ -104,7 +111,7 @@ def main():
         # the page's "Catalogue new photos" button: one run at a time, output kept, waiting counted
         fake = td / "fake.sh"
         fake.write_text("#!/usr/bin/env bash\necho \"inbox=$INBOX root=$1 restart=${RESTART:-unset}\"; sleep 1\n"
-                        "echo '== 2 new assets and sidecars: link'\n")
+                        "echo '== 2 new assets and sidecars: link'\n" + new_assets(2))
         fake.chmod(0o755)
         os.environ["RESTART"] = "com.example.should-not-leak"
         job = IngestJob(fake, td, db, store, inbox)
@@ -125,7 +132,8 @@ def main():
         # automatic runs: a burst of uploads makes one run, after the quiet period; one that arrives
         # while it runs makes a second; and the app is told when a run added photos
         count = td / "runs"
-        fake.write_text(f"#!/usr/bin/env bash\necho x >> {count}; sleep 1\necho '== 1 new assets and sidecars: link'\n")
+        fake.write_text(f"#!/usr/bin/env bash\necho x >> {count}; sleep 1\necho '== 1 new assets and sidecars: link'\n"
+                        + new_assets(1))
         auto = IngestJob(fake, td, db, store, inbox, quiet=0.6, max_wait=5)
         told = []
         auto.on_added = lambda: told.append(1)
@@ -160,8 +168,8 @@ def main():
 
         # the app reloads when the photos are searchable, before the slow faces step ends
         staged = td / "staged.sh"
-        staged.write_text("#!/usr/bin/env bash\necho '== 12:00:00 2 new assets and sidecars: link'\n"
-                          "echo '== 12:00:01 catalog ready'\nsleep 1.5\necho 'faces done'\n")
+        staged.write_text("#!/usr/bin/env bash\necho '== 12:00:00 2 new assets and sidecars: link'\n" + new_assets(2)
+                          + "echo '== 12:00:01 catalog ready'\n" + CATALOG_READY + "sleep 1.5\necho 'faces done'\n")
         staged.chmod(0o755)
         job = IngestJob(staged, td, db, store, inbox)
         events = []

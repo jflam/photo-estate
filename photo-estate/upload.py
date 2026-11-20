@@ -23,6 +23,7 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
+from core import events
 from core.media import UPLOAD_EXT as MEDIA_EXT   # what a phone sends: not every type ingest takes (issue #10)
 from core.states import IngestState, check_move
 
@@ -138,7 +139,9 @@ class IngestJob:
     """Runs ingest-iphone.sh from the web page, one run at a time, and keeps its output to show.
 
     The script does the work (ingest, link, exif, places, embeddings, faces); this only starts it,
-    follows its output and says what is waiting in the inbox. It is started with fixed arguments, so
+    follows its output and says what is waiting in the inbox. Its human lines go in `log`, to show; what
+    it did is read from its events (core/events.py, issue #84), never from that text: new_assets with a
+    count above 0 means the run added photos, and catalog_ready after it means they are searchable. It is started with fixed arguments, so
     nothing a client sends reaches the command line.
 
     It is in one state at a time (`state`), and `MOVES` is every step it can take:
@@ -219,7 +222,8 @@ class IngestJob:
         with self.lock:
             if self.state == IngestState.RUNNING:
                 return False
-            env = dict(os.environ, DB=str(self.db), STORE=str(self.store), INBOX=str(self.inbox))
+            env = dict(os.environ, DB=str(self.db), STORE=str(self.store), INBOX=str(self.inbox),
+                       **{events.ENV: "1"})   # its steps tell _follow what happened (core/events.py)
             env.pop("RESTART", None)   # the page asks for a restart separately: it would kill this run's output
             self.log.clear()
             self.started, self.finished, self.code = time.time(), None, None
@@ -316,12 +320,19 @@ class IngestJob:
     def _follow(self, proc) -> None:
         import threading
         added = told = False
-        for line in proc.stdout:
+        for line in proc.stdout:             # the script's stdout and stderr: human lines and events
             line = line.rstrip()
-            with self.lock:                  # status() copies the log under the lock
-                self.log.append(line)
-            added = added or "new assets and sidecars" in line
-            if added and not told and line.endswith(" catalog ready"):   # searchable now; faces still to come
+            if not line.startswith(events.PREFIX):
+                with self.lock:              # status() copies the log under the lock
+                    self.log.append(line)
+                continue
+            ev = events.parse(line)          # the log is for people: event lines never go in it
+            if not isinstance(ev, events.Event):
+                continue
+            if ev.name == "new_assets":
+                n = ev.fields.get("count")
+                added = added or (isinstance(n, int) and n > 0)
+            if ev.name == "catalog_ready" and added and not told:   # searchable now; faces still to come
                 told = True
                 with self.lock:
                     self.fresh = True
@@ -345,7 +356,7 @@ class IngestJob:
             else:
                 self._to(IngestState.IDLE)
             self.again = None
-        if added and not told and self.on_added:     # a script without the "catalog ready" line
+        if added and not told and self.on_added:     # a script without the catalog_ready event
             self._tell(self.on_added)
         if added and code == 0 and self.on_faces:
             self._tell(self.on_faces)

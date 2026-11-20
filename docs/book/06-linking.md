@@ -217,8 +217,9 @@ the test in `test_poc.py` re-imports a Flickr photo from a plain folder and chec
 
 ## What `link` prints
 
-While it works, `progress N of M: what` lines for the setup page, one phase at a time (matching each
-photo with its details, saving dates, places and albums, updating search). At the end:
+While it works, `progress N of M: what` lines, one phase at a time (matching each photo with its
+details, saving dates, places and albums, updating search); run by the setup page, which sets
+`PHOTO_ESTATE_EVENTS=1`, the same counts come as progress events instead ([chapter 16](16-operations.md)). At the end:
 
 ```
 linked 11/11 occurrences to sidecars (0 Live Photo clips via their still, 2 Flickr photos);

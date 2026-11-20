@@ -92,6 +92,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
     lifecycle.py              Lifecycle: idle | loading | ready | failed for what loads in a thread (the search
                               model, the People page), under a lock, so a request hears "loading" or "failed" (issue #82)
     procs.py                  stop(proc, grace): SIGTERM, then SIGKILL after the grace (tasks, intake jobs; issue #86)
+    events.py                 the steps' event lines (`@@pe {json}`, version 1.0, only with PHOTO_ESTATE_EVENTS=1):
+                              progress and new_assets/catalog_ready, emitted by estate, places, embed, faces and
+                              ingest-iphone.sh, read by intake/engine.py and upload.py (issue #84, chapter 16)
 
   search.html        2,051  the photo app: Library, Albums and Search (HTML + CSS + JS in one file)
   people.html          749  the People page
@@ -113,7 +116,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_lifecycle.py makes the background loaders fail and race on purpose (issue #82);
                             test_live_races.py races reloads, favourites, Browse's cache and the gate (issue #83);
                             test_faces_consistency.py keeps People's memory, SQLite and the face journal agreeing (issue #87);
-                            test_job_lifecycles.py races the ingest job, tasks, intake jobs and the sync cursor (issue #86)
+                            test_job_lifecycles.py races the ingest job, tasks, intake jobs and the sync cursor (issue #86);
+                            test_events.py checks the steps' event lines at both ends (issue #84)
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)

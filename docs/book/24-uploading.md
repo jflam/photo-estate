@@ -159,7 +159,7 @@ sequenceDiagram
     Ph->>S: POST /api/upload/... (X-Batch id/3) x3
     S->>S: files into inbox, thumbnail and embedding prepared
     S->>J: last file of the batch: run now
-    J->>S: catalog ready
+    J->>S: catalog_ready event
     S->>S: hot reload, then feed_update (version + 1)
     D->>S: GET /api/sync?since=V
     S-->>D: the new photos
