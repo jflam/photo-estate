@@ -61,7 +61,7 @@ The system uses **SigLIP 2** (Google), specifically `google/siglip2-base-patch16
 | Training signal | A sigmoid loss: each image-text pair is scored independently as "match or not", rather than CLIP's softmax over a batch |
 | Text length | Padded to 64 tokens |
 | Licence | Apache-2.0 |
-| Run on | CPU, PyTorch float32; no GPU needed |
+| Run on | The Mac's GPU (MPS) when there is one, else the CPU; PyTorch float32 either way (`--device`) |
 
 Because the two encoders are separate, an image's vector can be **computed once and stored**, and
 any later text query needs only the (small) text tower. That is the property that makes a
@@ -81,6 +81,28 @@ benchmark photos.) Two further findings from that measurement are encoded in the
 was fastest** (12 was no faster) and **bfloat16 was slower than float32** on that CPU, which is why
 `load_model` uses `dtype=torch.float32` and `--threads` defaults to 8. A bigger model is item 3 on
 the roadmap and would mean re-embedding the whole library, which is why vectors are stored per model.
+
+### CPU or GPU: `--device`
+
+`--device auto` (the default) runs the model on the Mac's GPU through PyTorch's MPS backend when there
+is one, and on the CPU otherwise; `--device cpu` or `--device mps` picks one. Only the model moves: the
+photos' vectors stay in NumPy in ordinary memory (on a Mac the GPU shares it anyway), and each query
+vector is copied back, 3 KB, before it is compared with them. Measured on 2026-11-20, model work only
+(decoding excluded), PyTorch float32:
+
+| | M1 Mac mini, CPU | M1 Mac mini, GPU | M2 Max, CPU | M2 Max, GPU |
+|---|---:|---:|---:|---:|
+| Base, photos/s (batches of 32) | 12.5 | 26.7 | 23.7 | 163 |
+| Large 384 px, photos/s | 1.3 | 3.5 | 3.3 | 23 |
+| Base, one query's text pass | 47 ms | 18 ms | | |
+| Large 384 px, one query's text pass | 159 ms | 57 ms | | |
+
+(The mini was running the app and deep in swap, so its numbers are lower bounds.) A search encodes two
+phrasings of the query (`Encoder.text`), so it takes about twice the text pass. The vectors agree: on
+the demo's 104 photos, image vectors made on the GPU and the CPU have a cosine of at least 0.9997 (as
+close as two CPU runs months apart), and 15 queries gave identical scores to five decimals and identical
+rankings, with no photo crossing `MATCH_FLOOR` differently. So a library embedded on one can be
+searched from the other.
 
 ## Embedding every photo: `embed.py run`
 

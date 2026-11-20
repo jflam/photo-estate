@@ -18,7 +18,7 @@ it did.
 | **Derived tables recomputed from scratch** (`places`, `events`, `trips`) | Incremental updates | Seconds to run; no stale rows possible; rules can change freely |
 | **Expensive results stored per model** (`embeddings`, `tags`, `faces.model`) | Overwrite | A better model is an experiment, not a migration |
 | **Google Takeout, not an API** | The Photos Library API | The API no longer returns your whole library (since 31 March 2025); Takeout is the only full export |
-| **Local models on the CPU** | Cloud vision APIs; a rented GPU | Privacy ("nothing is sent to the cloud") and cost; a one-time overnight job. Measured, not assumed |
+| **Local models, on the Mac's own GPU when it has one** | Cloud vision APIs; a rented GPU | Privacy ("nothing is sent to the cloud") and cost; a one-time overnight job. Measured, not assumed: the built-in GPU is 2–7× faster than the CPU (chapter 10), and nothing leaves the machine |
 | **Brute-force vector search in NumPy** | A vector database; `sqlite-vec`; an ANN index | At 100k × 768 a full scan is a few milliseconds, exact, and has no index to build or keep consistent |
 | **Whole library in RAM** | Query the database per request | Filters, facets and counts become vectorised array operations; requests take milliseconds. Costs about 1.7 GB |
 | **Read the query before ranking it** | Send everything to the image model | The model cannot know your people or reliably place a photo |

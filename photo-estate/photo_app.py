@@ -148,7 +148,7 @@ class PhotoApp:
         # mounted here so naming works wherever the app does. Loads in the background, like the encoder.
         # Its Lifecycle's value is the faces.People that answers; people_state() is what the page is told.
         self.people, self.people_loading = Lifecycle("the People page"), threading.Lock()   # one load at a time
-        self.encoder = Encoder(a.model, a.threads, images=bool(inbox))   # the image side too, for photos from the phone
+        self.encoder = Encoder(a.model, a.threads, images=bool(inbox), device=a.device)   # the image side too, for photos from the phone
         # Devices that keep their own copy of the catalog (the iPhone app) follow it through a change feed
         # (sync.py). The feed's versions live beside the catalog, never in it.
         self.feed = Feed(Path(a.db).resolve().parent / "sync-feed.db")
@@ -170,7 +170,7 @@ class PhotoApp:
             from compare import Compare
             vec_dir = Path(a.compare_vectors).expanduser()
             try:
-                self.encoder_b = Encoder(json.loads((vec_dir / "meta.json").read_text())["model"], a.threads)
+                self.encoder_b = Encoder(json.loads((vec_dir / "meta.json").read_text())["model"], a.threads, device=a.device)
                 self.compare = Compare(live, browse, vec_dir, self.encoder_b,
                                        Path(a.compare_votes).expanduser() if a.compare_votes else vec_dir / "votes.jsonl")
             except (OSError, ValueError, KeyError) as e:

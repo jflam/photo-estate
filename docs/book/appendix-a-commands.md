@@ -37,7 +37,7 @@ $E search '"sea stacks"'
 ## embed.py: embeddings and the photo app
 
 ```bash
-uv run embed.py [--db estate.db] [--model google/siglip2-base-patch16-256] [--threads 8] <command>
+uv run embed.py [--db estate.db] [--model google/siglip2-base-patch16-256] [--threads 8] [--device auto|mps|cpu] <command>
 ```
 
 | Command | Options | Purpose | Chapter |

@@ -18,6 +18,9 @@ catalog tools don't pull in PyTorch).
 
 Vectors are L2-normalised float16, one row per (sha256, model), so a better model can be added
 later without touching the first. Queries must use the same model as the vectors they search.
+The model runs on the Mac's GPU (MPS) when there is one (--device auto), else on the CPU; the vectors
+it makes agree with the CPU's to a cosine of 0.9997 or better (queries: identical rankings), so vectors
+made on either can be searched from the other.
 """
 from __future__ import annotations
 
@@ -31,6 +34,7 @@ from pathlib import Path
 
 from core import config, events, schema
 from core.media import EMBED_SKIP_EXT as SKIP_EXT   # RAW: Pillow can't decode it
+from encoder import DEVICES, pick_device
 from encoder import features as _features
 
 DEFAULT_MODEL = "google/siglip2-base-patch16-256"
@@ -78,11 +82,13 @@ def _decode(job: tuple[str, str, int]):
         return sha, None, f"{type(e).__name__}: {e}"[:300]
 
 
-def load_model(mid: str, threads: int):
+def load_model(mid: str, threads: int, device: str = "auto"):
+    """torch, the model on its device (encoder.pick_device), the processor, and the device's name."""
     import torch   # pyright: ignore[reportMissingImports]  (the ml group: not in the dev environment)
     from transformers import AutoModel, AutoProcessor   # pyright: ignore[reportMissingImports]
     torch.set_num_threads(threads)
-    return torch, AutoModel.from_pretrained(mid, dtype=torch.float32).eval(), AutoProcessor.from_pretrained(mid)
+    dev = pick_device(torch, device)
+    return torch, AutoModel.from_pretrained(mid, dtype=torch.float32).eval().to(dev), AutoProcessor.from_pretrained(mid), dev
 
 
 def cmd_run(a) -> None:
@@ -102,7 +108,8 @@ def cmd_run(a) -> None:
     events.emit_progress("embed", 0, len(todo))
     if not todo:
         return
-    torch, model, proc = load_model(a.model, a.threads)
+    torch, model, proc, dev = load_model(a.model, a.threads, a.device)
+    print(f"model on {dev}", flush=True)
     side = proc.image_processor.size["height"]
     import numpy as np
     from PIL import Image
@@ -116,9 +123,9 @@ def cmd_run(a) -> None:
         nonlocal batch_ims, batch_shas, rows
         if batch_ims:
             with torch.no_grad():
-                px = proc(images=batch_ims, return_tensors="pt")["pixel_values"]
+                px = proc(images=batch_ims, return_tensors="pt")["pixel_values"].to(dev)
                 v = torch.nn.functional.normalize(_features(torch, model.get_image_features(pixel_values=px)), dim=-1)
-            for s, vec in zip(batch_shas, v.numpy().astype(np.float16)):
+            for s, vec in zip(batch_shas, v.cpu().numpy().astype(np.float16)):
                 rows.append((s, a.model, vec.shape[0], vec.tobytes(), None, now()))
         con.executemany("INSERT OR REPLACE INTO embeddings VALUES (?,?,?,?,?,?)", rows)
         con.commit()
@@ -161,10 +168,10 @@ def cmd_search(a) -> None:
         sys.exit(f"no embeddings for {a.model}; run `embed.py run` first")
     shas = [r[0] for r in rows]
     M = np.frombuffer(b"".join(r[1] for r in rows), dtype=np.float16).reshape(len(rows), -1).astype(np.float32)
-    torch, model, proc = load_model(a.model, a.threads)
+    torch, model, proc, dev = load_model(a.model, a.threads, a.device)
     with torch.no_grad():
-        ti = proc(text=[a.query.lower()], padding="max_length", max_length=64, return_tensors="pt")
-        q = torch.nn.functional.normalize(_features(torch, model.get_text_features(**ti)), dim=-1)[0].numpy()
+        ti = proc(text=[a.query.lower()], padding="max_length", max_length=64, return_tensors="pt").to(dev)
+        q = torch.nn.functional.normalize(_features(torch, model.get_text_features(**ti)), dim=-1)[0].cpu().numpy()
     sims = M @ q
     top = np.argsort(-sims)[: a.limit]
     print(f"{a.query!r}: top {len(top)} of {len(rows)} images ({a.model})")
@@ -216,7 +223,7 @@ def _library_or_setup(a) -> bool:
 
     def app_argv(lib: Library) -> list[str]:
         argv = [sys.executable, str(Path(__file__).resolve()), "--db", lib.db, "--model", a.model,
-                "--threads", str(a.threads), "serve", "--root", str(lib.root), "--store", str(lib.store), "--port", str(port)]
+                "--threads", str(a.threads), "--device", a.device, "serve", "--root", str(lib.root), "--store", str(lib.store), "--port", str(port)]
         return argv + (["--sandbox"] if a.sandbox else []) + (["--fast-cache", a.fast_cache] if a.fast_cache else [])
 
     lib = Library(root, db, store, fixed=bool(a.root and not a.sandbox) or bool(a.store) or explicit_db,
@@ -252,6 +259,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--db", default="estate.db")
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--threads", type=int, default=8, help="PyTorch threads (8 measured fastest)")
+    p.add_argument("--device", choices=DEVICES, default="auto",
+                   help="where the model runs: auto (the Mac's GPU when there is one), mps or cpu")
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("run", help="embed images that have no embedding for --model yet")
     s.add_argument("--store", required=True)
