@@ -333,10 +333,24 @@ extension Catalog {
         if hideDups { sql += " AND p.dup=0" }
         if hideShots { sql += " AND NOT \(Screenshots.sql)" }
         let size = "CASE WHEN p.stack IS NULL THEN 0 ELSE (SELECT count(*) FROM photos s WHERE s.stack=p.stack) END"
-        let q = "SELECT \(Tile.columns), \(size) FROM photos p WHERE \(sql) ORDER BY p.whenk='' , p.whenk \(oldFirst ? "ASC" : "DESC"), p.sha"
+        let live = "p.stack IS NOT NULL AND EXISTS (SELECT 1 FROM photos s WHERE s.stack=p.stack AND s.live IS NOT NULL)"
+        let q = "SELECT \(Tile.columns), \(size), \(live) FROM photos p WHERE \(sql) ORDER BY p.whenk='' , p.whenk \(oldFirst ? "ASC" : "DESC"), p.sha"
         return (try? await store.read { db in
-            try db.query(q, args) { Tile(row: $0, stack: Int32($0.int(9))) }
+            try db.query(q, args) { var t = Tile(row: $0, stack: Int32($0.int(9))); t.stackLive = $0.bool(10); return t }
         }) ?? []
+    }
+
+    /// The clip a tile plays while it is held in the grid: the photo's own if it is a Live Photo, or, on top
+    /// of a stack (`stack`), that of the stack's best shot that is one.
+    func liveClip(_ sha: String, stack: Bool) async -> String? {
+        try? await store.read { db in
+            if let own = try db.one("SELECT live FROM photos WHERE sha=? AND live IS NOT NULL", [sha], { $0.string(0) }) ?? nil { return own }
+            guard stack else { return nil }
+            return try db.one("""
+                SELECT live FROM photos WHERE stack=(SELECT stack FROM photos WHERE sha=?) AND live IS NOT NULL
+                ORDER BY best IS NULL, best DESC, whenk, sha LIMIT 1
+                """, [sha], { $0.string(0) }) ?? nil
+        }
     }
 
     /// The photos of one stack, best first (the one on top first), for the viewer's strip.

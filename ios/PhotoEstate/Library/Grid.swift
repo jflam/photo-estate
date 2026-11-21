@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import UIKit
 
@@ -695,9 +696,17 @@ private final class TileView: UIImageView {
     private let live = UIImageView(image: UIImage(systemName: "livephoto",
                                                   withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)))
     var index = 0
+    // a Live Photo (or a stack with one in it), held: its clip plays over the tile until it is let go
+    private var clip: String?? = nil          // the clip to play, once looked up (.some(nil): it has none)
+    private var marked = false, stacked = false, held = false
+    private var movie: MovieView?
+    private lazy var hold = UILongPressGestureRecognizer(target: self, action: #selector(holding(_:)))
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        hold.minimumPressDuration = 0.3
+        hold.isEnabled = false
+        addGestureRecognizer(hold)
         contentMode = .scaleAspectFill
         clipsToBounds = true
         backgroundColor = Estate.well
@@ -748,9 +757,13 @@ private final class TileView: UIImageView {
         if !stack.isHidden { stack.text = String(tile.stack) }
         length.isHidden = !tile.video
         if tile.video { length.text = Tile.clock(tile.dur) }
-        live.isHidden = !tile.live || tile.video
+        if tile.sha != sha { letGo(); clip = nil }
+        marked = (tile.live || tile.stackLive) && !tile.video && !tile.isLocal
+        stacked = tile.stack > 1
+        live.isHidden = !marked
+        hold.isEnabled = marked
         setNeedsLayout()
-        accessibilityLabel = [tile.video ? "video, \(Tile.clock(tile.dur))" : nil, tile.live ? "Live Photo" : nil,
+        accessibilityLabel = [tile.video ? "video, \(Tile.clock(tile.dur))" : nil, marked ? "Live Photo" : nil,
                               Dates.long(tile.when), tile.city?.split(separator: ",").first.map(String.init), tile.fav ? "favourite" : nil,
                               stack.isHidden ? nil : "stack of \(tile.stack)", tile.isLocal ? "not yet on the server" : nil]
             .compactMap { $0 }.joined(separator: ", ")
@@ -770,7 +783,52 @@ private final class TileView: UIImageView {
         }
     }
 
-    func clear() { task?.cancel() }
+    func clear() { task?.cancel(); letGo() }
+
+    @objc private func holding(_ g: UILongPressGestureRecognizer) {
+        switch g.state {
+        case .began:
+            held = true
+            let want = sha, stacked = stacked
+            Task { [weak self] in
+                guard let self else { return }
+                let found: String?
+                if case .some(let known) = self.clip { found = known } else { found = await Catalog.shared.liveClip(want, stack: stacked) }
+                guard self.sha == want else { return }
+                self.clip = .some(found)
+                guard self.held, let found else { return }
+                let m = MovieView(fill: true)
+                m.frame = self.bounds
+                m.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                m.alpha = 0
+                self.insertSubview(m, at: 0)
+                self.movie = m
+                m.onReady = { [weak self, weak m] in
+                    guard let self, let m, self.held, self.movie === m else { return }
+                    Haptics.tap()
+                    m.player?.isMuted = true
+                    m.player?.play()
+                    UIView.animate(withDuration: 0.12) { m.alpha = 1 }
+                }
+                m.onEnd = { [weak self] in self?.letGo() }
+                m.onFailed = { [weak self] in self?.letGo() }
+                m.load(AVPlayerItem(url: Server.video(found)))
+            }
+        case .ended, .cancelled, .failed:
+            letGo()
+        default: break
+        }
+    }
+
+    /// Back to the still: the hold ended, the clip did, or the tile is another photo's now.
+    private func letGo() {
+        held = false
+        guard let m = movie else { return }
+        movie = nil
+        m.release()
+        UIView.animate(withDuration: 0.12, animations: { m.alpha = 0 }, completion: { _ in m.removeFromSuperview() })
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState]) { self.alpha = 1 }
+    }
 
     // a photo gives a little under the finger
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {

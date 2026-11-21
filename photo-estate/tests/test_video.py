@@ -732,6 +732,23 @@ def test_kind_and_is_filters(app):
     assert results(a, "kind=video&q=is:photo") == []
 
 
+def test_a_stack_with_a_live_photo_in_it_says_which_clip_it_plays(lib):
+    """Two shots of one moment, the second a Live Photo: both rows of the stack name its clip (`stack_live`),
+    so the tile on top can play it. A Live Photo on its own has `live` and no `stack_live`."""
+    p, alone = lib.photos[10], lib.photos[3]
+    lib.video(V3, ext=".jpg", vec=lib.vec_of(p), taken=lib.taken_of(p), kind="image", dur=None)
+    lib.video(C1, ext=".mov", dur=2.0)
+    lib.video(C2, ext=".mov", dur=2.0)
+    lib.pair(C1, V3)
+    lib.pair(C2, alone)
+    c = lib.load()
+    g = int(c.stack_of[c.index[p]])
+    assert g >= 0 and g == c.stack_of[c.index[V3]] and c.stack_live == {g: C1}
+    rows, _, _ = c.take(np.array([c.index[p], c.index[V3], c.index[alone]]), 0, 10, False)
+    assert [r.get("stack_live") for r in rows] == [C1, C1, None]
+    assert [r.get("live") for r in rows] == [None, C1, C2]
+
+
 def test_stills_carry_their_clip_and_clips_are_in_no_list(app):
     every = results(app.app, "")
     assert len(every) == app.n and app.clip not in {r["sha"] for r in every}

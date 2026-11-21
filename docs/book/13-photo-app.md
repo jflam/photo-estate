@@ -522,6 +522,12 @@ with a mouse, or Enter or Space while LIVE has the focus. It fades in only once 
 at its end, or when it fails, the still is back (`VIDEO`'s `live` back to `still`). A long press is the
 press, not a menu.
 
+**In a grid**, a Live Photo's tile has a small LIVE mark, and so does the tile on top of a stack with a
+Live Photo anywhere in it (the row's `stack_live`, in a list that stacks). The tile held for a quarter of
+a second, or its mark pointed at with a mouse, plays the clip over the tile with the same second `<video>`
+and the same `VIDEO` state; let go, moved off to scroll, or at the clip's end, the still is back. A hold
+that played is not a click, so the photo does not open. The **Videos** chip is the first of the chips.
+
 ### Fly in, fly out
 
 Opening animates the photo from its grid tile's rectangle to its fitted place (a "FLIP" animation

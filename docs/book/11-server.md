@@ -412,7 +412,9 @@ Every result is the photo's `meta` plus its `sha`: `ext`, `taken`, `local`, `tz`
 `fnumber`, `exposure`, `iso`, `place`, `city`, `region`, `country`, `county`, `place_inferred`,
 `event`, `event_title`, `trip`, `trip_title`. A video's row also has `kind: "video"` and `dur`; a
 Live Photo's still has `live`, its clip's sha; a photo's row has none of the three, so it is what it
-was before there were videos. A search with words adds `at` to a video's row: the seconds into it
+was before there were videos. A row of a stack with a Live Photo in it also has `stack_live`: the clip the
+stack plays when its tile is held, the row's own if it is a Live Photo, else that of the stack's best shot
+that is one (`Catalog.stack_live`). A search with words adds `at` to a video's row: the seconds into it
 where they match best (`Catalog.moment`), so a player can start there. The page needs all of it for the details panel without
 another round trip, and the JSON is gzipped (150 results: 120 KB → 14 KB on the wire).
 

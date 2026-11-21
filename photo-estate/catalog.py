@@ -474,6 +474,14 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     stack_of = stack_group(np.array([stack_seconds(meta[x]["taken"]) for x in shas]), M, visible & ~video)
     top, stack_n = stack_tops(stack_of, rank)
     dup = ~top                      # behind another photo of its stack
+    # A stack is a Live Photo if any of its shots is: the clip a held stack plays is its best such shot's.
+    stack_live: dict[int, str] = {}
+    held: dict[int, int] = {}
+    for sha, its_clip in live.items():
+        if (i := index.get(sha)) is not None and stack_of[i] >= 0:
+            g, r = int(stack_of[i]), (int(rank[i]) if rank is not None else i)
+            if g not in held or r < held[g]:
+                held[g], stack_live[g] = r, its_clip
 
     # Facets. `single`: one value per photo, choosing several means any of them. `multi`: a photo can
     # have several (albums: any of the chosen; people: all of the chosen, i.e. photos of them together).
@@ -535,7 +543,7 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
         ars=ars, oldest=oldest, newest=newest, single=single, multi=multi, trip_list=trip_list, people_ix=people_ix,
         who=who, where=where, cities=cities, common_place=common_place, word_re=word_re, visible=visible,
         video=video, clips=clips, F=F, frame_of=frame_of, frame_t=frame_t, best=best,
-        rank=rank, stack_of=stack_of, stack_n=stack_n, dup=dup, score=score, raw=raw, model=model, demo=demo)
+        rank=rank, stack_of=stack_of, stack_n=stack_n, stack_live=stack_live, dup=dup, score=score, raw=raw, model=model, demo=demo)
 
 
 @dataclass(slots=True, eq=False, repr=False)
@@ -586,6 +594,7 @@ class Catalog:
     rank: NDArray[np.int64] | None       # each photo's place in `best` (0 is the best); None with no scorers
     stack_of: NDArray[np.int64]          # the stack a photo is in (its earliest member's place); -1 on its own
     stack_n: NDArray[np.int64]           # how many photos its stack holds (1 on its own)
+    stack_live: dict[int, str]           # a stack with a Live Photo in it (named as stack_of does) -> the clip of its best such shot
     dup: NDArray[np.bool_]               # behind another photo of its stack
     score: NDArray[np.float64] | None    # what "Best first" sorts by, larger is better; None with no scorers
     raw: dict[str, Any]                  # for the next incremental load()
@@ -750,6 +759,9 @@ class Catalog:
                 continue
             kept.append(i)
         rows = [dict(sha=shas[i], **meta[shas[i]], **({"stack": int(stack_n[i]), "stack_of": shas[stack_of[i]]} if stack_n[i] > 1 else {})) for i in kept]
+        for i, r in zip(kept, rows):        # a stack with a Live Photo in it: the clip holding it plays (its own, if it is one)
+            if stack_n[i] > 1 and (clip := r.get("live") or self.stack_live.get(int(stack_of[i]))):
+                r["stack_live"] = clip
         return rows, hidden, pos if pos < len(order) else None
 
     def show_favorites(self, pairs) -> None:

@@ -28,7 +28,9 @@ is kept in `thumbs.db` and its preview by the same rules as any photo's, so the 
 show it offline as a still. The video itself is never kept. When its page in the viewer is up, AVPlayer
 streams it from `/video/<sha>`, which answers byte ranges, and lets it go when the page goes
 (Movie.swift; chapter 23). A Live Photo's clip is streamed the same way, by the clip's own sha, while
-the still is held. With no server, a video's page shows its poster and says "Videos play from your
+the still is held. In the grid too: a Live Photo's tile, or the tile on top of a stack with one in it,
+has the Live mark, and held it plays the clip over the tile, muted (the stack plays its best Live shot's:
+`Catalog.liveClip`). With no server, a video's page shows its poster and says "Videos play from your
 server, which isn’t reachable right now.", and a held Live Photo stays still and says so; when the
 server is back the page tries again. A video that is still in the phone's own Photos library, and not
 yet on the server (chapter 24), plays from Photos instead, fetched from iCloud if the phone keeps only

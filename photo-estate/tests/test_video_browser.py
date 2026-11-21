@@ -267,3 +267,32 @@ def test_a_live_photo_plays_while_held(app, page):
     p.keyboard.up("Enter")
     wait_media(p, lambda m: m == [], "the clip did not stop when Enter was let go")
     assert p.locator("#v.on").count() == 1, "Enter on LIVE must not close or leave the photo"
+
+
+def test_a_live_tile_plays_while_held_and_does_not_open(app, page):
+    """In the grid: a Live Photo's tile held with the mouse plays its clip over the tile, and letting go is
+    not a click (the photo does not open); pointing at its LIVE mark plays it too. A quick click still opens."""
+    p = page
+    p.goto(app + "/?search")
+    p.wait_for_selector('#browse .th[data-v="Videos 2026"]')
+    p.click('#browse .th[data-v="Videos 2026"]')
+    p.wait_for_selector("#sGrid .t .lv")
+    box = p.locator("#sGrid .t:has(.lv)").first.bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+    p.mouse.move(x, y)
+    p.mouse.down()
+    m = wait_media(p, lambda m: playing(m, clip=True), "holding a Live tile did not play its clip")
+    assert m[0]["muted"] and p.locator("#sGrid .t video.clip").count() == 1
+    p.mouse.up()
+    wait_media(p, lambda m: m == [], "the clip did not stop when the tile was let go")
+    p.wait_for_timeout(200)
+    assert p.locator("#v.on").count() == 0, "letting go of a held tile opened the photo"
+
+    p.hover("#sGrid .t .lv")
+    wait_media(p, lambda m: playing(m, clip=True), "pointing at a tile's LIVE mark did not play its clip")
+    p.mouse.move(5, 5)
+    wait_media(p, lambda m: m == [], "the clip did not stop when the mouse left the mark")
+
+    p.mouse.click(x, y)
+    p.wait_for_selector("#v.on")

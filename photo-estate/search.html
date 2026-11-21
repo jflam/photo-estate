@@ -95,7 +95,11 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
   background: rgba(0,0,0,.55); color: #fff; font: 600 12px/18px inherit; font-variant-numeric: tabular-nums; pointer-events: none; }
 .t .dur svg { flex: none; }
 .t .lv { position: absolute; right: 7px; bottom: 6px; display: flex; align-items: center; gap: 3px; color: #fff; opacity: .9;
-  font: 700 9.5px/14px inherit; letter-spacing: .08em; text-shadow: 0 1px 3px rgba(0,0,0,.6); filter: drop-shadow(0 1px 2px rgba(0,0,0,.45)); pointer-events: none; }
+  font: 700 9.5px/14px inherit; letter-spacing: .08em; text-shadow: 0 1px 3px rgba(0,0,0,.6); filter: drop-shadow(0 1px 2px rgba(0,0,0,.45)); cursor: default; }
+/* its clip plays over the tile while the tile is held, or the mark is pointed at (a stack plays its best Live shot's) */
+.t:has(.lv) { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.t video.clip { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; pointer-events: none; transition: opacity .15s; }
+.t video.clip.in { opacity: 1; }
 .t:has(.dur, .lv) .cap { padding-right: 64px; }
 /* ghosts: a list laid out before its photos are known, every tile the shape its photo will be */
 .grid.ghost .t { cursor: default; }
@@ -772,7 +776,7 @@ class Grid {
         const r = sec.items[row.start + k];
         if (r.ghost) { html += `<div class="t" data-i="${sec.base + row.start + k}" style="width:${row.widths[k]}px"></div>`; continue; }
         html += `<div class="t" tabindex="0" data-i="${sec.base + row.start + k}" style="width:${row.widths[k]}px"><img decoding="async" alt="" data-src="/thumb/${r.sha}" onload="this.classList.add('in')">`
-          + (r.fav ? I.heartFill : "") + (r.stack && this.stacks() ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (r.hidden ? `<span class="hid">Hidden</span>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + badge(r) + `</div>`;
+          + (r.fav ? I.heartFill : "") + (r.stack && this.stacks() ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (r.hidden ? `<span class="hid">Hidden</span>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + badge(r, this.stacks()) + `</div>`;
       }
       html += "</div>";
       sec.rows.push({ start: row.start, n: row.n, full: row.full });
@@ -798,8 +802,9 @@ const gridOf = el => grids().find(g => g.el.contains(el));
 const isVideo = r => r?.kind === "video";
 // What a tile says of its photo besides the picture: a video, how long it is (just that it is one, when
 // that is not known); a Live Photo, that it is one.
-const badge = r => isVideo(r) ? `<span class="dur" aria-label="Video${r.dur ? ", " + duration(r.dur) : ""}">${I.play}${r.dur ? duration(r.dur) : ""}</span>`
-  : r.live ? `<span class="lv" aria-label="Live Photo">${I.live}LIVE</span>` : "";
+const liveClip = (r, stacks) => !r || r.ghost || isVideo(r) ? null : r.live || (stacks && r.stack_live) || null;   // the clip a tile plays when held: its own, or its stack's
+const badge = (r, stacks) => isVideo(r) ? `<span class="dur" aria-label="Video${r.dur ? ", " + duration(r.dur) : ""}">${I.play}${r.dur ? duration(r.dur) : ""}</span>`
+  : liveClip(r, stacks) ? `<span class="lv" aria-label="Live Photo: press and hold to play it">${I.live}LIVE</span>` : "";
 const caption = r => { const d = dParts(when(r)); return [d && fMed.format(d), firstPart(r.city || "")].filter(Boolean).join("  ·  "); };
 const barH = () => $(TAB === "library" ? "#lbar" : TAB === "albums" ? "#abar" : "#sbar").offsetHeight;
 
@@ -1457,6 +1462,7 @@ function drawNotice(suggesting) {
 
 /* the filter chips under the field: what is chosen comes first */
 const PILLS = [
+  { id: "video", label: "Videos" },                 // first: what kind of thing is looked for. Only in a library that has any (INFO.videos)
   { id: "where", label: "Where", tabs: [["country", "Countries"], ["region", "Regions"], ["city", "Places"]] },
   { id: "people", label: "People", tabs: [["person", "People"]] },
   { id: "albums", label: "Albums", tabs: [["album", "Albums"]] },
@@ -1464,7 +1470,6 @@ const PILLS = [
   { id: "when", label: "When" },
   { id: "camera", label: "Camera", tabs: [["camera", "Cameras"], ["lens", "Lenses"]] },
   { id: "fav", label: "Favourites" },
-  { id: "video", label: "Videos" },                 // only in a library that has any (INFO.videos)
 ];
 const toggles = { fav: I.heart, video: I.play };    // a chip that is on or off, with no sheet behind it
 function pillValue(p, s = S) {
@@ -1964,6 +1969,43 @@ liveBtn.addEventListener("keydown", e => {
 liveBtn.addEventListener("keyup", e => { if (e.key === " " || e.key === "Enter") liveOff(); });
 liveBtn.addEventListener("blur", liveOff);
 liveBtn.addEventListener("contextmenu", e => e.preventDefault());   // a long press is the press, not a menu
+// The same on a tile in a grid: a Live Photo's tile (or a stack with one in it) held for a moment plays its
+// clip over the tile, until it is let go, the finger moves off to scroll, or the clip ends; a mouse over the
+// LIVE mark plays it too. A hold that played is not a click: the photo does not open.
+let tHold = null, tHeld = false;                     // { t, clip, x, y, timer, on, hover }; tHeld: the click that follows a hold is not one
+const tLive = e => {
+  const t = e.target.closest?.(".t"), g = t && grids().find(g => g.el.contains(t));
+  const c = g && liveClip(g.items[+t.dataset.i], g.stacks());
+  return c ? { t, clip: c } : null;
+};
+function tPlay() {
+  if (!tHold || v.classList.contains("on") || !VIDEO.live(clip, tHold.clip)) return;
+  tHold.on = true; $("img", tHold.t).after(clip);
+}
+function tStop() {
+  if (!tHold) return;
+  clearTimeout(tHold.timer);
+  if (tHold.on) liveOff();
+  tHold = null;
+}
+document.addEventListener("pointerdown", e => {
+  if (e.button || e.target.closest(".stk") || tHold?.hover) return;
+  tStop();
+  const h = tLive(e);
+  if (h) tHold = { ...h, x: e.clientX, y: e.clientY, on: false, hover: false, timer: setTimeout(tPlay, 280) };
+});
+document.addEventListener("pointermove", e => { if (tHold && !tHold.on && !tHold.hover && Math.hypot(e.clientX - tHold.x, e.clientY - tHold.y) > 8) tStop(); });
+const tUp = () => { if (!tHold || tHold.hover) return; if (tHold.on) { tHeld = true; setTimeout(() => { tHeld = false; }, 80); } tStop(); };
+document.addEventListener("pointerup", tUp);
+document.addEventListener("pointercancel", tUp);
+document.addEventListener("click", e => { if (tHeld) { tHeld = false; e.stopPropagation(); e.preventDefault(); } }, true);
+document.addEventListener("contextmenu", e => { if (tHold && !tHold.hover) e.preventDefault(); });
+document.addEventListener("pointerover", e => {
+  if (e.pointerType !== "mouse" || tHold || !e.target.closest?.(".t .lv")) return;
+  const h = tLive(e);
+  if (h) { tHold = { ...h, on: false, hover: true, timer: 0 }; tPlay(); }
+});
+document.addEventListener("pointerout", e => { if (tHold?.hover && e.target.closest?.(".lv") && !e.relatedTarget?.closest?.(".lv")) tStop(); });
 
 // Anything that names a set of photos is a way into that set: it shows them in Search.
 function find(s) {

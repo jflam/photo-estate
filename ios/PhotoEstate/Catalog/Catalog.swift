@@ -40,6 +40,7 @@ struct Photo: Identifiable, Equatable {
     var video = false         // a video, not a still: it plays from the server, at `/video/<sha>`
     var dur: Double?          // a video's length in seconds
     var live: String?         // a Live Photo's moving part: the sha of its short clip, also at `/video/<sha>`
+    var stackLive: String?    // from a search: the clip its stack plays when held (its own, or its best Live shot's)
     var at: Double?           // a video a typed search found: where in it the words match best, in seconds
 
     var id: String { sha }
@@ -63,7 +64,7 @@ struct Photo: Identifiable, Equatable {
         event = n("event"); eventTitle = s("event_title"); trip = n("trip"); tripTitle = s("trip_title")
         people = (j["people"] as? [String]) ?? []; albums = (j["albums"] as? [String]) ?? []
         stackOf = s("stack_of"); stackN = n("stack").map(Int.init) ?? 0; best = d("best")
-        video = s("kind") == "video"; dur = d("dur"); live = s("live"); at = d("at")
+        video = s("kind") == "video"; dur = d("dur"); live = s("live"); at = d("at"); stackLive = s("stack_live")
     }
 
     static let columns = """
@@ -101,6 +102,7 @@ struct Tile: Equatable {
     var best: Float = -.infinity      // what "Best first" sorts by; -infinity when the server has not said
     var video = false                 // a video: the grid shows its length, the viewer plays it
     var live = false                  // a Live Photo: a still with a short clip that plays while held
+    var stackLive = false             // on top of a stack that has a Live Photo in it: held in the grid, the stack plays its clip
     var dur: Float = 0                // a video's length in seconds
     var at: Float = 0                 // where a video starts playing: where a typed search matched it
 
@@ -109,6 +111,7 @@ struct Tile: Equatable {
         self.init(sha: p.sha, ar: Float(p.ar), when: p.when, city: p.city, fav: p.fav, stack: Int32(p.stackN),
                   best: p.best.map { Float($0) } ?? -.infinity)
         video = p.video; live = p.live != nil; dur = Float(p.dur ?? 0); at = Float(p.at ?? 0)
+        stackLive = p.stackLive != nil
     }
 
     init(sha: String, ar: Float, when: String, city: String?, fav: Bool, stack: Int32 = 0, best: Float = -.infinity) {

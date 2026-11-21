@@ -297,7 +297,7 @@ final class LibraryModel: ObservableObject {
             }
             guard g == gen else { return }
             // The count on a tile says "there are more behind this one": not so when stacks are spread out.
-            if !collapse { for i in tiles.indices where tiles[i].stack != 0 { tiles[i].stack = 0 } }
+            if !collapse { for i in tiles.indices where tiles[i].stack != 0 { tiles[i].stack = 0; tiles[i].stackLive = false } }
             self.plan = plan
             ranked = isRanked
             self.order = order
@@ -333,7 +333,7 @@ final class LibraryModel: ObservableObject {
             for p in page.photos { served[p.sha] = p }
             next = page.next
             var more = page.photos.map(LibraryModel.tile)
-            if !(hideDups && query.stack == nil) { for i in more.indices { more[i].stack = 0 } }
+            if !(hideDups && query.stack == nil) { for i in more.indices { more[i].stack = 0; more[i].stackLive = false } }
             grid = GridData(tiles: grid.tiles + more, grain: 0, id: grid.id + 1, reset: grid.reset)
         }
     }

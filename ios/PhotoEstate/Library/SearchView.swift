@@ -448,7 +448,7 @@ struct Cover: View {
 
 /// The filter chips above the grid.
 enum Pill: String, CaseIterable, Identifiable {
-    case place, people, albums, trips, dates, camera, fav, videos
+    case videos, place, people, albums, trips, dates, camera, fav      // (in the order the chips stand)
     var id: String { rawValue }
 
     var title: String {
