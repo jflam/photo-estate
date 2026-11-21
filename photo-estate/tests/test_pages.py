@@ -7,7 +7,8 @@ page imports by address (/app/dom.js); nothing is bundled. Checked here, without
   anything else), the photo app revalidated like a page;
 - every page imports only modules that exist, and only names those modules export;
 - no page has its own copy of a shared helper again (esc, $, api, toast, machine);
-- the secondary pages ask the server only through api.js: no fetch() or setInterval() of their own (issue #80).
+- the secondary pages ask the server only through api.js: no fetch() or setInterval() of their own (issue #80);
+- the photo app's machines are strict, and their state is in the flow modules, not beside them (issue #81).
 
 The modules' own unit tests are in app/tests/ (`npm test` in photo-estate/app).
 
@@ -118,6 +119,22 @@ def test_the_secondary_pages_ask_the_server_only_through_api_js(page):
     assert not re.search(r"\bfetch\(", src), f"{page} calls fetch() itself: use api() from app/api.js"
     assert not re.search(r"\bsetInterval\(", src), f"{page} polls with setInterval: use loop() or poll()"
     assert "/app/api.js" in src
+
+
+def test_the_photo_apps_machines_are_strict_and_own_their_state():
+    """Issue #81: in search.html a step the table does not have throws, so nothing depends on a refused
+    step's `false`; and what a state knows is owned by the state (app/*-flow.js), not kept in variables
+    beside the machine, where it outlived the state it belonged to."""
+    src = script("search.html")
+    for call in re.findall(r"\bmachine\((?:[^()]|\([^()]*\))*\)", src):
+        assert "strict: true" in call, f"search.html: a machine that is not strict: {call}"
+    assert not re.search(r"(?:if|while)\s*\(\s*!?\s*[\w.]+\.to\(", src), "search.html branches on the result of a step: ask can() or is() first"
+    assert not re.search(r"\b(?:&&|\|\|)\s*[\w.]+\.to\(", src)
+    for gone in (r"\blet [^;\n]*\b(?:vCur|vPick|vStack|VL|sheetUp|shareFile|settle|vNote)\b", r"\bnavWaiting\b", r"\bL\.(?:asked|loading|retry)\b",
+                 r"\bM\.m\b", r"\bAL\.", r"\.ends\b", r"\.gen\b"):
+        assert not re.search(gone, src), f"search.html keeps state beside its machines again: {gone}"
+    for module in ("viewer-flow.js", "grid-flow.js", "library-flow.js", "albums-flow.js", "favourite.js"):
+        assert f"/app/{module}" in src, f"search.html does not use {module}"
 
 
 def test_esc_escapes_both_quotes():

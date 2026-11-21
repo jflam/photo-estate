@@ -10,8 +10,10 @@ dependencies, a plain HTTP server and SQLite), and an iPhone app in `ios/` (need
 - Run it on the demo library only, never a real one:
   `cd photo-estate && HF_HUB_OFFLINE=1 uv run embed.py serve --demo --port 8767`
 - The script the pages share is in `photo-estate/app/*.js`: native ES modules with JSDoc types (`dom.js`,
-  `api.js`, `fsm.js`, `toast.js`, `format.js`; `query.js` and `layout.js` for `search.html`), imported by
-  address (`import { esc } from "/app/dom.js"`), no bundler. A helper two pages need goes there, with a
+  `api.js`, `fsm.js`, `toast.js`, `format.js`; `query.js`, `layout.js` and the state machines `*-flow.js`
+  and `favourite.js` for `search.html`), imported by address (`import { esc } from "/app/dom.js"`), no
+  bundler. A page's state machines are strict (`flow()` in `fsm.js`: a step not in the table throws) and
+  own their data; they live in a module with a unit test, not in the page. A helper two pages need goes there, with a
   unit test in `app/tests/`. A page's script is a module: nothing in it is on `window`, so no
   `onclick="..."` in markup.
 - Tests: `uv run pytest` from `photo-estate/` runs them all (`-m "not slow"` is the fast tier CI runs);

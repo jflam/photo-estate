@@ -9,6 +9,7 @@
 //   fromParams(p)        <- URLSearchParams (what toParams wrote, or an address typed by hand)
 //   filtered(s)          whether it is narrowed by anything but its words
 //   isEmpty(s)           whether it asks nothing at all
+//   FIELD_STEPS          the field the words are typed in: resting or typing
 
 /** @typedef {"country" | "region" | "city" | "person" | "album" | "camera" | "lens" | "trip"} Facet */
 
@@ -94,3 +95,12 @@ export const filtered = s => KEYS.some(k => s.f[k].length > 0) || !!(s.event || 
  * @returns {boolean}
  */
 export const isEmpty = s => !s.q && !s.sha && !filtered(s);
+
+/** @typedef {"resting" | "typing"} FieldState */
+
+// The field the question's words are typed in is resting or being typed in. Typing starts with a tap in it
+// and ends however it ends (a search, Cancel, a tap elsewhere): search.html's FIELD, a strict machine.
+export const FIELD_STEPS = /** @type {Record<FieldState, readonly FieldState[]>} */ ({
+  resting: ["typing"],
+  typing: ["resting"],
+});

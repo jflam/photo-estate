@@ -159,14 +159,32 @@ which needs a browser or builds anything:
   the server (`changes-flow.test.js`); the stats loop never has two requests in flight and shows a 500
   as an error (`stats-watch.test.js`); `loop()` under every interleaving of start, stop, pause and now
   (`loop.test.js`); and the setup machines take every step in their tables and refuse every other
-  (`setup-flow.test.js`).
+  (`setup-flow.test.js`). The photo app's machines
+  ([issue #81](https://github.com/jflam/photo-estate/issues/81), [chapter 13](13-photo-app.md#the-machines))
+  are tested the same way. `machines.test.js` tries every pair of states of every table: the steps in
+  the table are taken, every other pair throws a `TransitionError` and leaves the machine and its data
+  as they were. `grid-flow.test.js`: a question edited while its answer is on its way shows only the
+  new question's photos and aborts the old request; a month's answer that arrives after the month
+  changed is dropped; the retry timer of a list that was replaced or cleared is cleared, and does
+  nothing if it fires. `library-flow.test.js`: the library asked twice shows the second answer; a
+  failure with the months known keeps them; and every view switched faster than the server answers
+  (library, month, album, search and back) ends with only the last of each drawn, everything
+  superseded aborted, and no machine throwing. `albums-flow.test.js`: an album from a search that is
+  cancelled by moving on asks for no further page and makes no album, and one left to finish has the
+  name and note given at the start. `favourite.test.js`: a double toggle, a toggle during a save,
+  answers out of order and a failed save all end on what was last asked for, or put back.
+  `viewer-flow.test.js`, on a model of the browser's history: open, next and previous, close; close
+  while still opening; the close button against the Back button; the one-second fallback when the
+  browser never reports the entry gone; and that nothing the viewer knew survives `closed`.
 
 On the Python side, `tests/test_pages.py` (fast tier) holds the two together: every page imports only
 modules that are served and names they export, no page has grown its own copy of `esc` or `api` again,
 and the photo app and the setup server send the modules as `text/javascript`.
 
 `tests/test_pages.py` also refuses a `fetch()` or a `setInterval()` in the secondary pages: they ask
-the server through `api.js`, `loop()` and `poll()`.
+the server through `api.js`, `loop()` and `poll()`. And it holds `search.html` to issue #81: every
+`machine()` in it is strict, nothing branches on the result of a step, and the variables that used to
+sit beside the machines have not come back.
 
 **In a browser.** [`tests/test_pages_browser.py`](../../photo-estate/tests/test_pages_browser.py)
 (slow tier) drives the secondary pages with Playwright and makes their requests fail or never end with
@@ -176,7 +194,15 @@ Save works again after a 500, a batch that fails midway leaves the page in step 
 the wait for the unnamed faces ends on `failed`, on a change of view and after ten minutes; on
 `changes.html` a library that never settles is given up on after two minutes with a way to check again,
 and a refused mark is put back from the server; on `stats.html` a 500 is an error and the page never has
-two polls in flight. Each test starts a real server (`embed.py serve --demo`, `estate.py review`,
+two polls in flight. On `search.html` (issue #81) requests are held back and let go after the person has
+moved on: a question edited while its answer is on its way shows only the new question's photos; an
+album being made from a search is not made (no `POST`, no further page of the search) after a change of
+tab or of question, and left to finish takes its note from the moment it was asked for; a double click
+on the heart ends off, with `fav: true` then `fav: false` sent, and a save that fails is put back and
+said; the viewer opened and closed quickly with Escape, Back and Forward leaves the address right and
+the page usable; and a hundred actions across every view, each answered a few actions late, throw
+nothing. The page under test has no service worker (`service_workers="block"`): a request that passes
+through one is not seen by `page.route`. Each test starts a real server (`embed.py serve --demo`, `estate.py review`,
 `faces.py serve`) on the demo library or a scratch copy of its catalog (the People page's copy is given
 synthetic faces, since the demo has none), and fails on any uncaught error or console error in the page.
 Playwright is in the dev group; the tests use its own Chromium if it has one
@@ -184,7 +210,7 @@ Playwright is in the dev group; the tests use its own Chromium if it has one
 and are skipped when there is none. CI does not run them (they are slow, and it has no browser).
 
 ```bash
-uv run pytest tests/test_pages_browser.py     # about 15 s once the servers' environments exist
+uv run pytest tests/test_pages_browser.py     # about 45 s once the servers' environments exist
 ```
 
 Those tests cover the regressions; they do not look at the pages. For a change to a page, still drive

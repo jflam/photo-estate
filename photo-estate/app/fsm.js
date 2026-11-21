@@ -2,6 +2,7 @@
 // work that takes time without its answer landing in the wrong place.
 //
 //   machine(name, steps, state, options)   a state machine with a table of the steps it may take
+//   flow(name, steps, state, onChange)     a strict machine whose states own their data
 //   latest()                               one piece of async work at a time: a new run cancels the one before,
 //                                          and an answer nobody is waiting for any more is dropped (STALE)
 //   poll(step, options)                    ask again and again until an answer is the last one; bounded, cancellable
@@ -9,11 +10,31 @@
 //   STALE, TransitionError, PollError
 //
 // Nothing here touches the page, so all of it runs under `node --test` (app/tests/fsm.test.js).
+//
+// The rule about steps (issue #81). A step the code asks for that the table does not have is a bug in
+// the code, never something to carry on from. So the machines of the photo app (search.html) and of
+// the setup page are strict: flow(), or machine() with `strict: true`. A refused step throws a
+// TransitionError before anything has changed: the machine is where it was, and so is the data its
+// state owns, because that data is handed over in the same call (flow's `to(next, data)`) and not
+// written beside it afterwards. Code that takes a step is therefore in one of two positions:
+//
+//   - the step is legal wherever the code can be reached (a tap in the field starts typing): it just
+//     takes it;
+//   - the event can arrive in more than one state (a second finger, Back, an answer from the server):
+//     it asks first, with is() or can(), and does nothing when the answer is no. A late answer is not
+//     such a case: it is dropped before it reaches a machine at all, by the signal of the work it
+//     belonged to (latest()) or because the state object it was asked for is no longer the one the
+//     machine holds (`flow.data !== mine`).
+//
+// A TransitionError that does get thrown surfaces where any bug does (an uncaught error or an
+// unhandled rejection, in the console), with the machine and the two states in its message, and the
+// page carries on from the state it was in. machine() without `strict` still only reports a refused
+// step and returns false: the secondary pages' save queue uses that, and checks the answer.
 
 /* ── machines. Whatever in the page is in one of several states (a list loading, the photo viewer, a finger on
       the screen) says so in one place: its name, the state it is in, and every step it may take. A step that
-      is not in its table is refused and reported, so a mistake shows as a line in the console naming the two
-      states, not as a page that is subtly wrong some time later. ── */
+      is not in its table is refused: reported, and in a strict machine thrown, so a mistake shows as a line
+      in the console naming the two states, not as a page that is subtly wrong some time later. ── */
 
 /** A step a strict machine was asked to take that is not in its table. */
 export class TransitionError extends Error {
@@ -85,6 +106,57 @@ export function machine(name, steps, state, options = {}) {
       state = next;
       onChange?.(next, from);
       return true;
+    },
+  };
+}
+
+/**
+ * @template {string} S
+ * @typedef {object} Flow
+ * @property {S} state
+ * @property {Record<string, any>} data            what the state it is in owns
+ * @property {(...names: S[]) => boolean} is
+ * @property {(next: S) => boolean} can
+ * @property {(next: S, data?: Record<string, any>) => Record<string, any>} to  take the step, with the
+ *   data the new state owns (nothing by default: the old state's data is dropped). Returns that data.
+ *   A step that is not in the table throws a TransitionError and changes nothing.
+ */
+
+/**
+ * A strict machine whose states own their data: what a state needs to know is handed over at the step
+ * into it and gone at the step out of it, so nothing is left behind by a state that has ended. The
+ * data object is also the state's identity: work started for a state keeps the object, and when it
+ * ends compares it with `flow.data` to learn whether its answer is still wanted.
+ *
+ *     const VW = flow("viewer", { closed: ["open"], open: ["closed"] }, "closed");
+ *     const mine = VW.to("open", { photo: 3 });
+ *     VW.to("closed");                  // VW.data is {} again: there is no photo of a closed viewer
+ *     VW.data === mine;                 // false: whatever was started for that opening is stale
+ *
+ * `onChange(to, from, data, old)` is told after every step, with the data of the state entered and of
+ * the state left (to stop what that one had under way: a timer, a request).
+ *
+ * @template {string} S
+ * @param {string} name
+ * @param {Record<S, readonly S[]>} steps
+ * @param {S} state
+ * @param {(to: S, from: S, data: Record<string, any>, old: Record<string, any>) => void} [onChange]
+ * @returns {Flow<S>}
+ */
+export function flow(name, steps, state, onChange) {
+  const m = machine(name, steps, state, { strict: true, onRefuse: () => {} });
+  /** @type {Record<string, any>} */ let data = {};
+  return {
+    get state() { return m.state; },
+    get data() { return data; },
+    is: m.is,
+    can: m.can,
+    to(next, d = {}) {
+      const from = m.state, old = data;
+      m.to(next);
+      data = d;
+      onChange?.(next, from, d, old);
+      return d;
     },
   };
 }

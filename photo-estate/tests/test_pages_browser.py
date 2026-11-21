@@ -7,7 +7,13 @@ or never ends, provoked with request interception (page.route) against the real 
 - changes.html: a library that never settles is given up on, visibly, with a way to check again; a mark
   the server refuses is put back;
 - stats.html: a 500 is shown as an error, not drawn as figures; the page never has two of its polls in
-  flight, whatever is pressed.
+  flight, whatever is pressed;
+- search.html (issue #81): a question edited while its answer is on its way shows only the new
+  question's photos; an album being made from a search is not made once the person has moved on, and
+  left to finish takes its name from the moment it was asked for; a double click on the heart ends as
+  last asked, on the page and on the server, and a save that fails is put back; the viewer opened and
+  closed quickly, with Back and Forward, leaves the page usable and the address right; a session of
+  every view switched faster than the server answers throws nothing.
 
 Slow tier (`uv run pytest -m slow`): each test starts a real server (`uv run embed.py serve --demo`,
 `estate.py review`, `faces.py serve`) on the demo library or on a scratch copy of its catalog, never on
@@ -77,8 +83,10 @@ def browser():
 
 @pytest.fixture
 def page(browser):
-    """A page whose uncaught errors fail the test, and whose console errors are kept (page.said)."""
-    ctx = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US")
+    """A page whose uncaught errors fail the test, and whose console errors are kept (page.said). No service
+    worker: a request that passes through one (the photo app's, once it has claimed the page) is not seen by
+    page.route, and whether it has yet is a matter of timing."""
+    ctx = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US", service_workers="block")
     p = ctx.new_page()
     p.errors, p.said = [], []
     p.on("pageerror", lambda e: p.errors.append(str(e)))
@@ -418,6 +426,261 @@ def test_stats_has_one_poll_loop(page, demo_app):
     stats = [p for p in asked if p == "/api/stats"]
     assert 8 <= len(stats) <= 12 + 9, f"{len(stats)} asks for the figures in 12 s: one loop, every 1.5 s or at a press"
     assert all(a != b for a, b in zip(asked, asked[1:])), "the two questions take turns in the one loop"
+
+
+# ── search.html (issue #81) ─────────────────────────────────────────────────────────────────────
+
+class Hold:
+    """Requests kept waiting (page.route), let go when the test says so: how an answer is made to arrive
+    after the person has moved on."""
+
+    def __init__(self, page, pattern, when=lambda request: True):
+        self.page, self.pattern, self.held, self.seen = page, pattern, [], []
+        self.handler = lambda route: (self.seen.append(route.request), self.held.append(route)) if when(route.request) else route.fallback()
+        page.route(pattern, self.handler)
+
+    def wait(self, n=1):
+        for _ in range(200):
+            if len(self.held) >= n:
+                return
+            self.page.wait_for_timeout(25)
+        raise AssertionError(f"{len(self.held)} of {n} requests for {self.pattern} were made")
+
+    def release(self):
+        """Let everything held, and everything after it, through."""
+        self.page.unroute(self.pattern, self.handler)
+        for route in self.held:
+            try:
+                route.continue_()
+            except Exception:                              # the page gave the request up: there is nothing to answer
+                pass
+        self.held = []
+
+
+def watch_search(page):
+    """Console warnings (a refused step of a machine is one) and requests the page gave up, as they happen."""
+    page.warned, page.dropped = [], []
+    page.on("console", lambda m: page.warned.append(m.text) if m.type == "warning" and "blocked by Playwright" not in m.text else None)
+    page.on("requestfailed", lambda r: page.dropped.append(r.url))
+
+
+def tiles(page, grid="#sGrid"):
+    return page.evaluate(f"""() => [...document.querySelectorAll('{grid} .t img')].map(i => (i.dataset.src || i.src).split('/').pop())""")
+
+
+def heading(page):
+    return page.locator("#sHead h1").inner_text()
+
+
+def test_search_a_query_edited_mid_fetch_shows_only_the_new_query(page, demo_app):
+    watch_search(page)
+    want = [r["sha"] for r in call(demo_app, "/api/search?q=waterfall&dedupe=1&shots=0&limit=150")["results"]]
+    kittens = {r["sha"] for r in call(demo_app, "/api/search?q=kitten&dedupe=1&shots=0&limit=150")["results"]}
+    assert want and kittens and set(want) != kittens
+    page.goto(demo_app + "/?search")
+    page.locator("#browse .idea").first.wait_for()
+    slow = Hold(page, "**/api/search?*", lambda r: "q=kitten" in r.url)
+    page.locator("#q").fill("kitten")
+    page.keyboard.press("Enter")
+    slow.wait()                                                 # the first question is on its way, and stays there
+    page.locator("#q").fill("waterfall")
+    page.keyboard.press("Enter")
+    page.wait_for_function("document.querySelector('#sHead h1').textContent === '“waterfall”'")
+    page.wait_for_function(f"document.querySelectorAll('#sGrid .t').length === {len(want)}")
+    slow.release()                                              # now the first answer may come
+    page.wait_for_timeout(600)
+    assert heading(page) == "“waterfall”"
+    assert tiles(page) == want, "the grid shows the new question's photos, and only those"
+    assert any("q=kitten" in u and "cursor=0" in u for u in page.dropped), "the first question's request was aborted"
+    assert page.url.endswith("?q=waterfall")
+    assert not page.warned
+
+
+def albums_made(base):
+    return [s["title"] for s in call(base, "/api/albums")["sets"]]
+
+
+@pytest.mark.parametrize("move", ["navigation", "a query edit"])
+def test_search_an_album_from_a_search_is_not_made_after_moving_on(page, demo_app, move):
+    watch_search(page)
+    before = albums_made(demo_app)
+    posted = []
+    page.on("request", lambda r: posted.append(r.post_data_json) if r.method == "POST" and r.url.endswith("/api/albums") else None)
+    page.goto(demo_app + "/?q=kitten")
+    page.locator("#sGrid .t").first.wait_for()
+    slow = Hold(page, "**/api/search?*", lambda r: "limit=500" in r.url)     # the pages the album is collected from
+    page.locator("#sAlbum").click()
+    page.locator(".menu form input").fill("Kittens, never made")
+    page.locator(".menu form button").click()
+    slow.wait()
+    if move == "navigation":
+        page.locator('#tabbar [data-tab="library"]').click()
+        page.locator("#libGrid .t").first.wait_for()
+    else:
+        page.locator("#q").fill("waterfall")
+        page.keyboard.press("Enter")
+        page.wait_for_function("document.querySelector('#sHead h1').textContent === '“waterfall”'")
+    slow.release()
+    page.wait_for_timeout(700)
+    assert posted == [], "no album was asked for"
+    assert len(slow.seen) == 1, "no further page of the search was asked for"
+    assert any("limit=500" in u for u in page.dropped), "the page being read was aborted"
+    assert albums_made(demo_app) == before
+    assert page.locator(".menu").count() == 0 and page.locator("#toast.on").count() == 0, "and nothing says one was"
+    assert ("?q=waterfall" in page.url) if move != "navigation" else page.url.rstrip("/") == demo_app
+    assert not page.warned
+
+
+def test_search_an_album_from_a_search_takes_its_name_from_the_start(page, demo_app):
+    """Left to finish, the album is of the question, and under the note, of the moment it was asked for
+    (the demo app serves a scratch copy of the catalog: the album is made there)."""
+    posted = []
+    page.on("request", lambda r: posted.append(r.post_data_json) if r.method == "POST" and r.url.endswith("/api/albums") else None)
+    kittens = [r["sha"] for r in call(demo_app, "/api/search?q=kitten&dedupe=1&shots=0&limit=500")["results"]]
+    page.goto(demo_app + "/?q=kitten")
+    page.locator("#sGrid .t").first.wait_for()
+    slow = Hold(page, "**/api/search?*", lambda r: "limit=500" in r.url)
+    page.locator("#sAlbum").click()
+    page.locator(".menu form input").fill("Kittens of #81")
+    page.locator(".menu form button").click()
+    slow.wait()
+    page.evaluate("document.querySelector('#sHead h1').textContent = 'Something else'")    # the page changes under it
+    slow.release()
+    page.wait_for_function("document.querySelector('#albHead h1').textContent === 'Kittens of #81'")
+    assert [(a["title"], a["prompt"], [i["sha"] for i in a["items"]]) for a in posted] == [("Kittens of #81", "From the search “kitten”", kittens)]
+    assert "?album=" in page.url
+    assert tiles(page, "#albGrid") == kittens
+
+
+def test_search_a_double_click_on_the_heart_ends_as_last_asked(page, demo_app):
+    watch_search(page)
+    sent = []
+    page.on("request", lambda r: sent.append(r.post_data_json) if r.url.endswith("/api/favorite") else None)
+    page.goto(demo_app + "/?q=kitten")
+    page.locator("#sGrid .t").nth(2).click()
+    heart = page.locator("#vFavBtn")
+    heart.wait_for()
+    sha = tiles(page)[2]
+    truth = lambda: next(r for r in call(demo_app, "/api/search?q=kitten&dedupe=1&shots=0&limit=150")["results"] if r["sha"] == sha)["fav"]
+    assert heart.get_attribute("aria-pressed") == "false" and not truth()
+    slow = Hold(page, "**/api/favorite")
+    heart.dblclick()                                            # on, and off again before the first is answered
+    slow.wait()
+    assert heart.get_attribute("aria-pressed") == "false", "the page shows what was last asked for"
+    assert len(sent) == 1, "one save at a time"
+    slow.release()
+    page.wait_for_function("document.querySelectorAll('#sGrid .t')[2].querySelector('.fv') === null")
+    for _ in range(100):
+        if len(sent) == 2:
+            break
+        page.wait_for_timeout(20)
+    page.wait_for_timeout(300)
+    assert [(s["sha"], s["fav"]) for s in sent] == [(sha, True), (sha, False)], "the last request is the last thing asked for"
+    assert heart.get_attribute("aria-pressed") == "false" and not truth(), "and the page and the server agree"
+
+    heart.click()                                               # once: on, and it stays on
+    page.wait_for_function("document.querySelectorAll('#sGrid .t')[2].querySelector('.fv') !== null")
+    page.wait_for_timeout(300)
+    assert heart.get_attribute("aria-pressed") == "true" and truth() and len(sent) == 3
+
+    page.route("**/api/favorite", refuse(500, "database is locked"))        # a save that fails is put back, and said
+    heart.click()
+    page.wait_for_function("document.querySelector('#vNote').textContent === 'Couldn’t save the favourite'")
+    assert heart.get_attribute("aria-pressed") == "true" and truth()
+    assert page.locator("#sGrid .t").nth(2).locator(".fv").count() == 1
+    page.unroute("**/api/favorite")
+    heart.click()                                               # and it can be tried again
+    page.wait_for_function("document.querySelectorAll('#sGrid .t')[2].querySelector('.fv') === null")
+    page.wait_for_timeout(300)
+    assert not truth() and not page.warned
+
+
+def test_search_the_viewer_opened_and_closed_quickly_with_back_and_forward(page, demo_app):
+    watch_search(page)
+    page.goto(demo_app + "/?q=kitten")
+    grid = page.locator("#sGrid .t")
+    grid.first.wait_for()
+    home = page.url
+    state = lambda: page.evaluate("[document.querySelector('#v').classList.contains('on'), !!history.state.v, history.state.d, location.search]")
+    closed = lambda: page.wait_for_function("!document.querySelector('#v').classList.contains('on') && !history.state.v")
+    for i in range(3):                                          # the button (Escape), pressed while the photo is still flying in
+        grid.nth(i).click()
+        page.evaluate(f"""() => {{ document.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Escape' }}));
+                                  document.querySelectorAll('#sGrid .t')[{i + 1}].click(); }}""")    # at once: the last one is still leaving
+        closed()
+    assert state() == [False, False, 0, "?q=kitten"]
+    for i in range(3):                                          # Back, pressed at once
+        grid.nth(i).click()
+        page.go_back()
+        closed()
+    assert state() == [False, False, 0, "?q=kitten"]
+    page.go_forward()                                           # into the entry a photo left: stepped over, back to the search
+    page.wait_for_timeout(400)
+    assert state() == [False, False, 0, "?q=kitten"]
+    grid.nth(1).click()                                         # open, on to the next two, close: the tile it goes back into
+    page.keyboard.press("ArrowRight"); page.keyboard.press("ArrowRight")
+    page.wait_for_function("document.querySelector('#vPrev').disabled === false")
+    page.keyboard.press("Escape")
+    page.locator('#tabbar [data-tab="albums"]').click()         # a step asked for while the viewer is leaving waits its turn
+    page.wait_for_function("location.search === '?albums' && !document.querySelector('#v').classList.contains('on')")
+    assert page.evaluate("history.state.d") == 1
+    page.go_back()
+    page.wait_for_function("location.search === '?q=kitten'")
+    grid.first.wait_for()
+    grid.nth(4).click()                                         # and the page is still usable
+    page.wait_for_function("document.querySelector('#v').classList.contains('on') && history.state.v === 1")
+    page.locator("#vClose").click()
+    closed()
+    assert page.url == home and not page.warned
+
+
+def test_search_a_rapid_navigation_session_throws_nothing(page, demo_app):
+    """Every view, switched faster than the server answers (each request is kept back until a few
+    actions later): no uncaught error (a TransitionError is one; the `page` fixture fails the test on
+    any), no console warning, and the page ends where the last action left it."""
+    watch_search(page)
+    made = call(demo_app, "/api/albums", {"title": "For the session", "prompt": "", "items": [
+        {"sha": r["sha"]} for r in call(demo_app, "/api/search?q=waterfall&limit=5")["results"]]})["id"]
+    page.goto(demo_app + "/")
+    page.locator("#libGrid .t").first.wait_for()
+    slow = Hold(page, "**/api/**", lambda r: "/api/log" not in r.url)
+    js = lambda code: page.evaluate(f"() => {{ {code} }}")
+    click = lambda sel: js(f"document.querySelector('{sel}')?.click()")
+    ask = lambda q: js(f"const q = document.querySelector('#q'); q.focus(); q.value = '{q}'; q.dispatchEvent(new Event('input'));"
+                       "q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))")
+    steps = [
+        lambda: click('#scale [data-s="years"]'), lambda: click('#scale [data-s="months"]'), lambda: click("#libPeriods .card"),
+        lambda: click("#monNav button"), lambda: click("#monGrid .t"), lambda: page.keyboard.press("ArrowRight"), lambda: page.keyboard.press("Escape"),
+        lambda: click('#tabbar [data-tab="albums"]'), lambda: click(f'[data-album="{made}"]'), lambda: click("#albGrid .t"), lambda: page.keyboard.press("f"),
+        lambda: page.go_back(), lambda: click('#tabbar [data-tab="search"]'), lambda: ask("kit"), lambda: ask("kitten"), lambda: click("#sGrid .t"),
+        lambda: page.keyboard.press("f"), lambda: page.keyboard.press("f"), lambda: page.go_back(), lambda: click("#sAlbum"),
+        lambda: click(".menu form button"), lambda: ask("waterfall"), lambda: click("#chips .chip"), lambda: page.keyboard.press("Escape"),
+        lambda: page.go_back(), lambda: page.go_back(), lambda: page.go_forward(), lambda: click('#tabbar [data-tab="library"]'),
+        lambda: click('#scale [data-s="all"]'), lambda: js("scrollTo(0, 4000)"), lambda: click("#libGrid .t"), lambda: page.keyboard.press("Escape"),
+        lambda: click('#tabbar [data-tab="search"]'), lambda: ask("dog in the snow"),
+    ]
+    for round_ in range(3):
+        for n, step in enumerate(steps):
+            try:
+                step()
+            except Exception as e:                              # a navigation Playwright was still waiting on: the page's errors are what count
+                assert "Timeout" in str(e) or "navigation" in str(e).lower(), e
+            page.wait_for_timeout(15)
+            if (n + round_) % 5 == 4:                           # the server catches up, a few actions late
+                slow.release()
+                page.wait_for_timeout(30)
+                slow = Hold(page, "**/api/**", lambda r: "/api/log" not in r.url)
+    slow.release()
+    page.wait_for_function("document.querySelector('#sHead h1').textContent === '“dog in the snow”' && document.querySelectorAll('#sGrid .t img').length > 0")
+    want = [r["sha"] for r in call(demo_app, "/api/search?q=dog+in+the+snow&dedupe=1&shots=0&limit=150")["results"]]
+    assert tiles(page) == want, "after all that, the grid is the last question's"
+    assert page.url.endswith("?q=dog+in+the+snow")
+    page.locator("#sGrid .t").first.click()                     # and the page still works
+    page.wait_for_function("document.querySelector('#v').classList.contains('on')")
+    page.keyboard.press("Escape")
+    page.wait_for_function("!document.querySelector('#v').classList.contains('on') && !history.state.v")
+    assert not page.warned, page.warned
+    assert not [t for t in page.said if "TransitionError" in t or "no step from" in t]
 
 
 def test_no_test_wrote_to_the_demo_library(demo_dir):

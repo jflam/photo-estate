@@ -97,7 +97,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                               progress and new_assets/catalog_ready, emitted by estate, places, embed, faces and
                               ingest-iphone.sh, read by intake/engine.py and upload.py (issue #84, chapter 16)
 
-  search.html        2,181  the photo app: Library, Albums and Search (HTML + CSS + its own script, a module)
+  search.html        2,190  the photo app: Library, Albums and Search (HTML + CSS + its own script, a module)
   people.html          835  the People page
   changes.html         492  reviewing an album or change set, at /changes
   setup.html           445  bringing photos in, at /setup
@@ -111,12 +111,23 @@ photo-estate/                  the server and the web app (Python run with uv; n
     dom.js              52    $, $$, the one esc() (& < > " '), on, the icon's picture (MARK)
     api.js             149    api(path, body, options): JSON in and out, one ApiError (status, message, body),
                               cancelled by an AbortSignal, an optional timeout
-    fsm.js             246    machine() (a state machine with a table of steps), latest() (one piece of async
-                              work at a time; a stale answer is dropped), poll() (bounded, cancellable)
+    fsm.js             318    machine() (a state machine with a table of steps), flow() (a strict machine whose
+                              states own their data), latest() (one piece of async work at a time; a stale
+                              answer is dropped), poll() (bounded, cancellable); the rule about refused steps
     toast.js            45    the line of text that rises from the bottom of a page, with an optional Undo
     format.js           33    fmt, plural, dateParts
-    query.js            96    search.html's question as a value and as the address: blank, toParams, fromParams
+    query.js           106    search.html's question as a value and as the address: blank, toParams, fromParams
     layout.js           74    the justified grid's arithmetic: packRows, clampShape, shapeFromByte
+                              search.html's state over time (issue #81; chapter 13, "The machines"):
+    grid-flow.js       187    one list of photos: its first page, more at either end, the retry after a page
+                              that did not come; another list aborts the one before
+    library-flow.js    135    the Library: the scale showing with its anchor and trail, and what is known of the
+                              months (unknown, asking, known, failed)
+    albums-flow.js     146    the Albums tab: the list or an album; the list of albums; an album made from a
+                              search, cancellable until the request that makes it is sent
+    viewer-flow.js     193    the photo viewer and its history entry (closed, open, leaving), what the open
+                              viewer owns, and the table of a touch on the photo
+    favourite.js        94    the heart: shown at once, saved one request at a time, put back when a save fails
                               what the secondary pages do over time (issue #80; "The web pages" below):
     loop.js            115    loop(): a page asking the server again and again, one step at a time, paused and
                               stopped from outside; until(): poll() that answers how it ended instead of throwing
@@ -127,8 +138,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                               from the server when one fails)
     people-flow.js      47    people.html: unknownFaces(), the bounded wait for the groups of unnamed faces
     stats-watch.js      92    stats.html's one loop for the figures and the uploads
-    setup-flow.js      151    setup.html's two strict state machines (the page, the source panel) and their tables
-    tests/           1,653    their unit tests, run by Node's own runner: `npm test` (chapter 17)
+    setup-flow.js      111    setup.html's two strict state machines (the page, the source panel) and their tables
+    tests/           2,559    their unit tests, run by Node's own runner: `npm test` (chapter 17)
     package.json              TypeScript, pinned, to check the modules' types (`npm run typecheck`); with
     package-lock.json         tsconfig.json and .npmrc (the lockfile names no registry). Nothing here is
                               shipped: the browser loads the modules as they are
@@ -262,10 +273,11 @@ import { toast } from "/app/toast.js";
 |---|---|
 | [app/dom.js](../../photo-estate/app/dom.js) | `$`, `$$`, `on`, the icon's picture, and the one `esc()`: it escapes `& < > " '`, so text is safe between tags and inside an attribute quoted either way |
 | [app/api.js](../../photo-estate/app/api.js) | `api(path, body, options)`: a GET, or a POST of JSON when there is a body. A request that fails throws one `ApiError` with the HTTP `status` (0 when no answer came), the server's own message (the `error` of a JSON body, as `http_util.py` sends) and the parsed `body`; a request cancelled through `options.signal` throws the `AbortError` itself |
-| [app/fsm.js](../../photo-estate/app/fsm.js) | `machine(name, steps, state)`, the state machines of [chapter 13](13-photo-app.md); `latest()`, which owns the `AbortController` of one piece of async work and drops an answer that arrives after its question was replaced; `poll()`, which asks until done, bounded by tries and time |
+| [app/fsm.js](../../photo-estate/app/fsm.js) | `machine(name, steps, state)` and `flow()`, a strict machine whose states own their data: the state machines of [chapter 13](13-photo-app.md#the-machines) and of the setup page; `latest()`, which owns the `AbortController` of one piece of async work and drops an answer that arrives after its question was replaced; `poll()`, which asks until done, bounded by tries and time |
 | [app/toast.js](../../photo-estate/app/toast.js) | `toast(message, { action })` |
 | [app/format.js](../../photo-estate/app/format.js) | `fmt`, `plural`, `dateParts` |
 | [app/query.js](../../photo-estate/app/query.js), [app/layout.js](../../photo-estate/app/layout.js) | The parts of `search.html` that are pure functions: the question and its address, and the justified grid's rows |
+| [app/grid-flow.js](../../photo-estate/app/grid-flow.js), [app/library-flow.js](../../photo-estate/app/library-flow.js), [app/albums-flow.js](../../photo-estate/app/albums-flow.js), [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js), [app/favourite.js](../../photo-estate/app/favourite.js) | `search.html`'s state over time: its machines, their tables, what each state owns, and the requests they make and cancel ([chapter 13](13-photo-app.md#the-machines), [issue #81](https://github.com/jflam/photo-estate/issues/81)). The page gives them its `fetch`es and is told what to draw |
 | [app/loop.js](../../photo-estate/app/loop.js) | `loop(step)`: asking the server again and again for as long as a page is open. One step at a time (a timer and a click can never both start one), the step says how long to wait, a failing step does not end it, `pause()`/`resume()` for a hidden page, `stop()` aborts the step under way. `until(step, options)`: `poll()` that resolves to `{ state: "done" \| "timeout" \| "error" }` for a page that shows how the wait ended |
 | [app/work.js](../../photo-estate/app/work.js) | `single()`: work that must not overlap itself, not busy any more when it fails; `batch(items, step)`: several requests in a row, and which were done when one failed; `serial({ settle })`: requests one at a time in the order asked, and one call to put the page right after a failure |
 | [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |

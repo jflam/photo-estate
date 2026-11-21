@@ -2,8 +2,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { setupFlow, flow, pageStateOf, askEvery, live, PAGE_STEPS, PANEL_STEPS, ASKING } from "../setup-flow.js";
-import { TransitionError } from "../fsm.js";
+import { setupFlow, pageStateOf, askEvery, live, PAGE_STEPS, PANEL_STEPS, ASKING } from "../setup-flow.js";
+import { flow, TransitionError } from "../fsm.js";
 
 const answer = (/** @type {Partial<{ mode: string, chosen: boolean, jobs: string[] }>} */ o = {}) =>
   ({ mode: o.mode || "setup", library: { chosen: o.chosen ?? true }, jobs: (o.jobs || []).map(state => ({ state })) });

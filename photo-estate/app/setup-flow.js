@@ -1,6 +1,6 @@
 // setup-flow.js: the setup page's workflow, said out loud. setup.html is two things at once, each a
-// strict state machine (fsm.js: a step that is not in the table throws), and what each state needs to
-// know lives with the state: it is handed over at the step into it and gone at the step out.
+// strict state machine (fsm.js's flow(): a step that is not in the table throws), and what each state
+// needs to know lives with the state: it is handed over at the step into it and gone at the step out.
 //
 // The page: where the server is in bringing photos in.
 //
@@ -31,12 +31,11 @@
 //   what is typed); choosing another source goes to open with that source; Not now goes to closed.
 //
 //   setupFlow({ onPage, onPanel })   -> { page, panel, askedWhere }
-//   flow(name, steps, state, onChange)   a strict machine whose states own their data
 //   pageStateOf(answer)              the page state an answer of /api/intake means
 //   askEvery(state)                  ms between asks in that state
 //   PAGE_STEPS, PANEL_STEPS, ASKING
 
-import { machine } from "./fsm.js";
+import { flow } from "./fsm.js";
 
 /** @typedef {"loading" | "place" | "idle" | "watching" | "answering" | "opening" | "stuck" | "app"} PageState */
 /** @typedef {"closed" | "open" | "checking" | "checked" | "starting"} PanelState */
@@ -82,45 +81,6 @@ export function pageStateOf(answer) {
 
 /** ms between asks: often while something is coming in, seldom otherwise. @param {PageState} state */
 export const askEvery = state => state === "watching" || state === "answering" ? 1200 : 8000;
-
-/**
- * @template {string} S
- * @typedef {object} Flow
- * @property {S} state
- * @property {Record<string, any>} data            what the state it is in owns
- * @property {(...names: S[]) => boolean} is
- * @property {(next: S) => boolean} can
- * @property {(next: S, data?: Record<string, any>) => Record<string, any>} to  take the step, with the
- *   data the new state owns (nothing by default: the old state's data is dropped). Returns that data.
- *   A step that is not in the table throws a TransitionError and changes nothing.
- */
-
-/**
- * A strict machine whose states own their data.
- * @template {string} S
- * @param {string} name
- * @param {Record<S, readonly S[]>} steps
- * @param {S} state
- * @param {(to: S, from: S, data: Record<string, any>) => void} [onChange]
- * @returns {Flow<S>}
- */
-export function flow(name, steps, state, onChange) {
-  const m = machine(name, steps, state, { strict: true, onRefuse: () => {} });
-  /** @type {Record<string, any>} */ let data = {};
-  return {
-    get state() { return m.state; },
-    get data() { return data; },
-    is: m.is,
-    can: m.can,
-    to(next, d = {}) {
-      const from = m.state;
-      m.to(next);
-      data = d;
-      onChange?.(next, from, d);
-      return d;
-    },
-  };
-}
 
 /**
  * The setup page's two machines.
