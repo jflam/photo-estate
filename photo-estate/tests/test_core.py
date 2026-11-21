@@ -286,3 +286,33 @@ def test_screen_sizes_match_the_fixture_and_the_iphone_app():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# -- videos ------------------------------------------------------------------------------------------
+
+def test_video_types_cover_every_video_and_send_quicktime_as_mp4():
+    """GET /video/<sha> sends a phone's .mov (and .m4v) as video/mp4, which Chrome plays; the rest as they are."""
+    assert set(media.VIDEO_TYPES) == media.VIDEO_EXT
+    assert media.VIDEO_TYPES[".mov"] == media.VIDEO_TYPES[".m4v"] == media.VIDEO_TYPES[".mp4"] == "video/mp4"
+    assert {e: t for e, t in media.VIDEO_TYPES.items() if e not in (".mov", ".m4v")} == \
+        {e: media.MIME[e] for e in media.VIDEO_EXT - {".mov", ".m4v"}}
+    assert not set(media.VIDEO_TYPES) & set(media.ORIGINAL_TYPES), "a video has no /original"
+
+
+def test_the_video_area(tmp_path):
+    """live_pairs and video_frames are made by estate.connect and embed.connect, and are in CATALOG_AREAS."""
+    import embed
+    import estate
+    assert "video" in schema.CATALOG_AREAS
+    for opener, name in ((estate.connect, "a.db"), (embed.connect, "b.db")):
+        opener(str(tmp_path / name)).close()
+        tables = {r[1] for r in master(tmp_path / name) if r[0] == "table"}
+        assert {"live_pairs", "video_frames"} <= tables, (opener, tables)
+    con = sqlite3.connect(tmp_path / "c.db")
+    schema.ensure(con, "video")
+    cols = {t: [r[1] for r in con.execute(f"PRAGMA table_info({t})")] for t in ("live_pairs", "video_frames")}
+    assert cols == {"live_pairs": ["clip", "still", "how", "paired_at"], "video_frames": ["sha256", "model", "t", "vec"]}
+    con.execute("INSERT INTO live_pairs VALUES ('c', 's', 'id', 'now')")
+    with pytest.raises(sqlite3.IntegrityError):
+        con.execute("INSERT INTO live_pairs VALUES ('c', 's2', 'id', 'now')")     # a clip has one still
+    con.close()

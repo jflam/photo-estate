@@ -272,6 +272,8 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     live: dict[str, str] = {}
     for still, _, clip, _ in pairs:
         live.setdefault(still, clip)
+    if prev is not None and clips.keys() & prev["index"].keys():
+        prev = None    # a video the app was showing has been found to be a clip (its still came later): read everything again
     if prev is None:
         images = {r[0] for r in con.execute("SELECT sha256 FROM assets")} - clips.keys()
         rows = sorted((sha, vec) for rid, sha, vec in con.execute(q_emb + " AND rowid <= ?", (model, marks["emb"])))
@@ -743,7 +745,7 @@ class Catalog:
         while pos < len(order) and len(kept) < limit:
             i = int(order[pos])
             pos += 1
-            if dedupe and kept and float(np.max(M[kept[-8:]] @ M[i])) > 0.97:
+            if dedupe and kept and not self.video[i] and float(np.max(M[kept[-8:]] @ M[i])) > 0.97:   # a video is no photo's copy
                 hidden += 1
                 continue
             kept.append(i)

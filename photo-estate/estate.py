@@ -638,11 +638,11 @@ MVIMG_LONGEST = 4.0
 def live_stems(filename: str) -> list[str]:
     """The names a clip's still could have (lower-case, no extension), likeliest first."""
     stem = os.path.splitext(filename)[0].lower()
-    out = [stem]
-    if stem.endswith("_hevc"):
-        out.append(stem[:-5])
-    if (base := split_dupn(stem)[0]) != stem:
-        out.append(base)
+    out = []
+    for s in (stem, split_dupn(stem)[0]):          # as named, then without Takeout's (1)
+        for t in (s, s[:-5] if s.endswith("_hevc") else s):   # ... each also without _HEVC
+            if t not in out:
+                out.append(t)
     return out
 
 
@@ -695,17 +695,14 @@ def pair_live(con: sqlite3.Connection, redo: bool = False) -> int:
 
     # The still is looked for in the clip's own source first, then in the same folder of every other one: a
     # Takeout comes as many zips, each a source, and a folder's files are spread over them (as `link` knows).
-    sources = [r[0] for r in con.execute("SELECT name FROM sources")] or \
-        [r[0] for r in con.execute("SELECT DISTINCT source FROM occurrences")]
+    # (From occurrences, not the sources table: a source being ingested has no row there until it finishes.)
+    sources = [r[0] for r in con.execute("SELECT DISTINCT source FROM occurrences")]
     used = {r[0] for r in con.execute("SELECT still FROM live_pairs")}
     n = 0
     for clip, how, occ in marked:
         for source, d, fn in occ:
-            cands = None
-            for src in [source] + [s for s in sources if s != source]:
-                here = stills(src, d)
-                if (cands := next((here[s] for s in live_stems(fn) if s in here), None)):
-                    break
+            order = [source] + [s for s in sources if s != source]
+            cands = next((got for stem in live_stems(fn) for src in order if (got := stills(src, d).get(stem))), None)   # the likeliest name first, wherever it is
             if cands:
                 still = next((c for c in cands if c not in used), cands[0])
                 used.add(still)
