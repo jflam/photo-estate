@@ -149,12 +149,18 @@ def test_fresh_databases_match_what_the_old_code_made(tmp_path):
     """schema_baseline.json is sqlite_master as the code before #85 left it, captured from that code's own
     open paths (estate/embed/faces.connect, Changes, Tasks, scores.SCHEMA, set_favorites' CREATE, Feed, Store)."""
     baseline = json.loads((FIXTURES / "schema_baseline.json").read_text())
-    assert every_open_path(tmp_path) == baseline
+    # Tables newer than the baseline: only ever added (the video area: live_pairs and video_frames). They
+    # must be there, and everything else must be as the old code made it.
+    since = {"live_pairs", "video_frames"}
+    old_only = lambda rows: [r for r in rows if r[2] not in since]
+    got = every_open_path(tmp_path)
+    assert since <= {r[1] for r in got["catalog"] if r[0] == "table"}
+    assert {**got, "catalog": old_only(got["catalog"])} == baseline
     one = tmp_path / "one.db"
     con = sqlite3.connect(one)
     schema.ensure(con, *schema.CATALOG_AREAS)
     con.close()
-    assert master(one) == baseline["catalog"]
+    assert old_only(master(one)) == baseline["catalog"]
 
 
 def test_old_change_tables_are_migrated_with_their_data(tmp_path):

@@ -5,10 +5,16 @@ images.py — the photos themselves, as the photo app (`embed.py serve`) sends t
   GET /preview/<sha>    1600 px JPEG, for the viewer
   GET /large/<sha>      4096 px JPEG, for big high-density displays, where a 1600 px preview is visibly soft
   GET /original/<sha>   the file as stored, for Save to Photos / share
+  GET /video/<sha>      a video as stored, or a Live Photo's clip, with Range: photo_app's handler streams it
+                        from Images.video_file (this module only says which file, never reads it)
+
+A video's thumbnail and preview are made from its poster frame (video.poster); everything else is the same.
 
   Images.handle(method, path, qs, body) -> (status, body, content type, Cache-Control[, headers]) or None
   Images.image(sha, kind, side)         (a cached image, its type), made on first use
   Images.pregenerate()                  every missing thumbnail, then every missing preview, in the background
+  Images.video_file(sha)                (the stored file, its content type, its name), or None if it is not a video
+  upright(src, side)                    a photo, or a video's poster frame, as an upright RGB image for a `side` px copy
 
 Made images are cached under <cache>/<kind>/<sha>.webp for thumbnails, <sha>.jpg for the rest. On the Mac mini the estate disk is a USB hard
 disk: a cold thumbnail costs a ~9 ms seek, so a screenful of 150 takes most of a second. With
@@ -30,7 +36,7 @@ import pillow_heif
 from PIL import Image, ImageOps
 
 from catalog import Live
-from core.media import ORIGINAL_TYPES
+from core.media import ORIGINAL_TYPES, VIDEO_TYPES
 
 pillow_heif.register_heif_opener()
 Image.MAX_IMAGE_PIXELS = None
@@ -74,22 +80,33 @@ def write_image(im: Image.Image, dest: Path | str) -> None:
     os.replace(tmp, dest)
 
 
+def upright(src: Path | str, side: int) -> Image.Image:
+    """The picture in `src` the right way up, in RGB, decoded no larger than a `side` px copy needs (a JPEG's
+    draft mode). For a video: its poster frame. Raises what the decoder raises."""
+    if Path(src).suffix.lower() in VIDEO_TYPES:
+        import video
+        im = video.poster(str(src))
+        if im is None:
+            raise ValueError("no frame could be decoded")
+        return im.convert("RGB")
+    with Image.open(src) as im:
+        im.draft("RGB", (side, side))
+        return ImageOps.exif_transpose(im).convert("RGB")
+
+
 def _make(job: tuple[str, str | None, str | None]) -> bool:
     """Worker: (original, thumbnail or None, preview or None) -> both written from one decode of the original.
     Decoding is most of the cost (a 48 MP HEIC takes most of a second), so a photo that needs both is opened
     once. Never raises."""
     src, thumb, preview = job
     try:
-        with Image.open(src) as im:
-            side = 1600 if preview else 360
-            im.draft("RGB", (side, side))
-            im = ImageOps.exif_transpose(im).convert("RGB")
-            if preview:
-                im.thumbnail((1600, 1600))
-                write_image(im, preview)
-            if thumb:
-                im.thumbnail((360, 360))
-                write_image(im, thumb)
+        im = upright(src, 1600 if preview else 360)
+        if preview:
+            im.thumbnail((1600, 1600))
+            write_image(im, preview)
+        if thumb:
+            im.thumbnail((360, 360))
+            write_image(im, thumb)
         return True
     except Exception:
         return False
@@ -123,14 +140,28 @@ class Images:
                         return old.read_bytes(), "image/jpeg"
             m = self.live.cat.meta[sha]
             try:
-                with Image.open(self.original(sha, m["ext"])) as im:
-                    im.draft("RGB", (side, side))
-                    im = ImageOps.exif_transpose(im).convert("RGB")
-                    im.thumbnail((side, side))
-                    write_image(im, dest)
+                im = upright(self.original(sha, m["ext"]), side)
+                im.thumbnail((side, side))
+                write_image(im, dest)
             except Exception:
                 return None
         return dest.read_bytes(), TYPES[dest.suffix]
+
+    def video_file(self, sha: str) -> tuple[Path, str, str] | None:
+        """(the stored file, the type to send it as, its name) for a video in the catalog or a Live Photo's
+        clip; None for anything else, or a file that is not on the disk."""
+        if not sha_re.match(sha):
+            return None
+        cat = self.live.cat
+        m = cat.meta.get(sha)
+        ext = m["ext"] if m and m.get("kind") == "video" else cat.clips.get(sha)
+        if not ext or ext not in VIDEO_TYPES:
+            return None
+        src = self.original(sha, ext)
+        if not src.exists():
+            return None
+        name = ((m["path"] or "") if m else "").rsplit("/", 1)[-1] or f"{sha[:12]}{ext}"
+        return src, VIDEO_TYPES[ext], name
 
     def handle(self, method: str, path: str, qs: dict, body):
         """One request -> (status, body bytes, content type, Cache-Control[, headers]), or None if it isn't ours."""

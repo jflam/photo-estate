@@ -1,13 +1,15 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11,<3.14"
-# dependencies = ["torch", "transformers>=4.49", "pillow>=10.0", "pillow-heif>=0.18", "sentencepiece", "protobuf"]
+# dependencies = ["torch", "transformers>=4.49", "pillow>=10.0", "pillow-heif>=0.18", "sentencepiece", "protobuf", "av>=14"]
 # ///
 """
 embed.py — Tier 1: SigLIP 2 image embeddings for semantic search (kept apart from estate.py so the
 catalog tools don't pull in PyTorch).
 
-  run     embed every image in the catalog that has no embedding for this model yet (resumable)
+  run     embed every image in the catalog that has no embedding for this model yet (resumable), then
+          every video that is not a Live Photo's clip: its frames (video.py), kept in video_frames, and
+          their mean as the video's own vector
   search  text query -> best-matching photos, by cosine similarity
   stats   how many images are embedded per model
   serve   the photo app (http://127.0.0.1:8766/): photo_app.PhotoApp, behind cmd_serve
@@ -61,7 +63,7 @@ def connect(db: str) -> sqlite3.Connection:
     con = sqlite3.connect(db, timeout=60)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
-    schema.ensure(con, "embeddings")
+    schema.ensure(con, "embeddings", "video")
     return con
 
 
@@ -80,6 +82,33 @@ def _decode(job: tuple[str, str, int]):
             return sha, im.tobytes(), None
     except Exception as e:
         return sha, None, f"{type(e).__name__}: {e}"[:300]
+
+
+def _decode_video(job: tuple[str, str, int]):
+    """Worker: the frames a video is searched by (video.frames), each squashed to the model's input size as
+    _decode does a photo. -> (sha, [(seconds, bytes)], error). Never raises."""
+    sha, path, side = job
+    try:
+        from PIL import Image
+        import video
+        got = [(t, im.convert("RGB").resize((side, side), Image.Resampling.BICUBIC).tobytes())
+               for t, im in video.frames(path, side=side * 2)]
+        return sha, got, None if got else "no frame could be decoded"
+    except Exception as e:
+        return sha, [], f"{type(e).__name__}: {e}"[:300]
+
+
+def video_rows(sha: str, model: str, times: list[float], vecs, stamp: str):
+    """What one video's frame vectors (unit, float32, in time order) become: the video_frames rows of the
+    frames worth keeping (video.distinct) and the embeddings row, their mean made unit length again. The mean
+    is what "more like this" and "Best first" see of a video; a typed search goes by its best frame."""
+    import numpy as np
+    import video
+    keep = video.distinct(vecs)
+    mean = vecs[keep].mean(axis=0)
+    mean = (mean / max(float(np.linalg.norm(mean)), 1e-12)).astype(np.float16)
+    frames = [(sha, model, float(times[i]), vecs[i].astype(np.float16).tobytes()) for i in keep]
+    return frames, (sha, model, mean.shape[0], mean.tobytes(), None, stamp)
 
 
 def load_model(mid: str, threads: int, device: str = "auto"):
@@ -102,11 +131,19 @@ def cmd_run(a) -> None:
         (a.after_rowid or 0, a.model)).fetchall()
     skipped = [(s, e) for s, e in todo if e in SKIP_EXT]
     todo = [(s, e) for s, e in todo if e not in SKIP_EXT][: a.limit or None]
+    # Videos, but not a Live Photo's clip: its still is already in the search (estate.py pair_live).
+    videos = [] if a.no_videos else con.execute(
+        "SELECT a.sha256, a.ext FROM assets a WHERE a.kind='video' AND a.rowid > ? AND NOT EXISTS"
+        " (SELECT 1 FROM embeddings e WHERE e.sha256=a.sha256 AND e.model=?) AND NOT EXISTS"
+        " (SELECT 1 FROM live_pairs l WHERE l.clip=a.sha256) ORDER BY a.sha256",
+        (a.after_rowid or 0, a.model)).fetchall()[: a.limit or None]
     done = "" if a.after_rowid is not None else \
         f"{con.execute('SELECT count(*) FROM embeddings WHERE model=?', (a.model,)).fetchone()[0]} already embedded, "
-    print(f"{a.model}: {done}{len(todo)} to do ({len(skipped)} RAW files skipped)", flush=True)
-    events.emit_progress("embed", 0, len(todo))
-    if not todo:
+    print(f"{a.model}: {done}{len(todo)} to do ({len(skipped)} RAW files skipped)"
+          + (f", then {len(videos)} videos" if videos else ""), flush=True)
+    total = len(todo) + len(videos)
+    events.emit_progress("embed", 0, total)
+    if not total:
         return
     torch, model, proc, dev = load_model(a.model, a.threads, a.device)
     print(f"model on {dev}", flush=True)
@@ -114,7 +151,15 @@ def cmd_run(a) -> None:
     import numpy as np
     from PIL import Image
 
-    jobs = [(s, str(store / s[:2] / s[2:4] / f"{s}{e}"), side) for s, e in todo]
+    def embed_images(ims):
+        """Unit vectors (float32, one row per image) for PIL images already at the model's size."""
+        with torch.no_grad():
+            px = proc(images=ims, return_tensors="pt")["pixel_values"].to(dev)
+            v = torch.nn.functional.normalize(_features(torch, model.get_image_features(pixel_values=px)), dim=-1)
+        return v.cpu().numpy()
+
+    path_of = lambda s, e: str(store / s[:2] / s[2:4] / f"{s}{e}")
+    jobs = [(s, path_of(s, e), side) for s, e in todo]
     t0 = last = time.time()
     n = errors = 0
     batch_ims, batch_shas, rows = [], [], []
@@ -122,17 +167,14 @@ def cmd_run(a) -> None:
     def flush():
         nonlocal batch_ims, batch_shas, rows
         if batch_ims:
-            with torch.no_grad():
-                px = proc(images=batch_ims, return_tensors="pt")["pixel_values"].to(dev)
-                v = torch.nn.functional.normalize(_features(torch, model.get_image_features(pixel_values=px)), dim=-1)
-            for s, vec in zip(batch_shas, v.cpu().numpy().astype(np.float16)):
+            for s, vec in zip(batch_shas, embed_images(batch_ims).astype(np.float16)):
                 rows.append((s, a.model, vec.shape[0], vec.tobytes(), None, now()))
         con.executemany("INSERT OR REPLACE INTO embeddings VALUES (?,?,?,?,?,?)", rows)
         con.commit()
         batch_ims, batch_shas, rows = [], [], []
 
     with Pool(a.workers) as pool:
-        for sha, raw, err in pool.imap(_decode, jobs, chunksize=4):
+        for sha, raw, err in pool.imap(_decode, jobs, chunksize=4) if jobs else ():
             n += 1
             if err:
                 errors += 1
@@ -148,11 +190,40 @@ def cmd_run(a) -> None:
                 eta = (len(jobs) - n) / rate / 3600
                 print(f"{datetime.now():%H:%M:%S} {n}/{len(jobs)} {rate:.1f} img/s,"
                       f" {errors} undecodable, ~{eta:.1f} h left", flush=True)
-                events.emit_progress("embed", n, len(jobs))
+                events.emit_progress("embed", n, total)
                 last = time.time()
         flush()
-    dt = time.time() - t0
-    print(f"done: {n} images in {dt / 3600:.2f} h ({n / dt:.1f} img/s), {errors} undecodable", flush=True)
+        if jobs:
+            dt = time.time() - t0
+            print(f"done: {n} images in {dt / 3600:.2f} h ({n / dt:.1f} img/s), {errors} undecodable", flush=True)
+        # Videos: a worker reads each one's frames (seeking, so a long video costs a few dozen frames), the
+        # model embeds them here, and each video is committed whole: a run that is stopped redoes at most one.
+        t1 = last = time.time()
+        nv = bad = nframes = kept = 0
+        for sha, got, err in pool.imap(_decode_video, [(s, path_of(s, e), side) for s, e in videos]) if videos else ():
+            nv += 1
+            if got:
+                ims = [Image.frombytes("RGB", (side, side), raw) for _, raw in got]
+                vecs = np.concatenate([embed_images(ims[i:i + a.batch]) for i in range(0, len(ims), a.batch)])
+                frames, row = video_rows(sha, a.model, [t for t, _ in got], vecs, now())
+                con.execute("DELETE FROM video_frames WHERE sha256=? AND model=?", (sha, a.model))
+                con.executemany("INSERT OR REPLACE INTO video_frames VALUES (?,?,?,?)", frames)
+                con.execute("INSERT OR REPLACE INTO embeddings VALUES (?,?,?,?,?,?)", row)
+                nframes += len(got)
+                kept += len(frames)
+            else:
+                bad += 1
+                con.execute("INSERT OR REPLACE INTO embeddings VALUES (?,?,?,?,?,?)", (sha, a.model, None, None, err, now()))
+            con.commit()
+            if time.time() - last >= 60:
+                rate = nv / (time.time() - t1)
+                print(f"{datetime.now():%H:%M:%S} {nv}/{len(videos)} videos, {rate:.2f} a second, {bad} undecodable,"
+                      f" ~{(len(videos) - nv) / rate / 3600:.1f} h left", flush=True)
+                events.emit_progress("embed", len(jobs) + nv, total)
+                last = time.time()
+        if videos:
+            print(f"done: {nv} videos in {(time.time() - t1) / 60:.1f} min, {kept} of {nframes} frames kept,"
+                  f" {bad} undecodable", flush=True)
 
 
 def now() -> str:
@@ -249,8 +320,12 @@ def cmd_stats(a) -> None:
     con = connect(a.db)
     images = con.execute("SELECT count(*) FROM assets WHERE kind='image'").fetchone()[0]
     print(f"images in catalog: {images}")
+    videos, clips = con.execute("SELECT count(*), count(l.clip) FROM assets a LEFT JOIN live_pairs l ON l.clip=a.sha256"
+                                " WHERE a.kind='video'").fetchone()
+    frames = dict(con.execute("SELECT model, count(*) FROM video_frames GROUP BY model"))
+    print(f"videos in catalog: {videos} ({clips} are Live Photo clips, searched by their stills)")
     for m, ok, bad in con.execute("SELECT model, count(vec), count(error) FROM embeddings GROUP BY model"):
-        print(f"  {m}: {ok} embedded, {bad} undecodable")
+        print(f"  {m}: {ok} embedded, {bad} undecodable" + (f", {frames[m]} video frames" if m in frames else ""))
 
 
 def parser() -> argparse.ArgumentParser:
@@ -268,6 +343,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--batch", type=int, default=16)
     s.add_argument("--after-rowid", type=int, help="only assets added after this rowid (incremental runs: a few index lookups, not a scan)")
     s.add_argument("--limit", type=int, default=0)
+    s.add_argument("--no-videos", action="store_true", help="photos only: leave the videos for a later run")
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("search", help="semantic search")
     s.add_argument("query")

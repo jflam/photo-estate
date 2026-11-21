@@ -3,6 +3,8 @@ browse.py — finding photos in the photo app (`embed.py serve`): the search lan
 browsed lists, and the same searches as an agent's tools (estate_mcp.py) ask them.
 
   GET /api/search    ?q= (words, names, places, key:value filters) and the facet params -> a page of results
+                     (`kind=video|photo` or `is:video` in q: only those; a video found by words carries `at`,
+                     the seconds into it where they match best)
   GET /api/similar   ?sha= -> photos that look like it
   GET /api/facets    counts per facet value under the current filters
   GET /api/periods   the Library's Years and Months: a card each, with its cover
@@ -106,6 +108,8 @@ def parse(c: Catalog, q: str):
             val = (scope or {}).get("title") or val
         elif key == "is" and v in ("fav", "favorite", "favourite"):
             mask &= c.fav
+        elif key == "is" and v in ("video", "videos", "photo", "photos"):
+            mask &= c.video if v.startswith("video") else ~c.video
         else:
             continue
         applied.append(f"{key}:{val}")
@@ -195,6 +199,8 @@ class Browse:
             masks["date"] = (c.ym >= (lo if lo is not None else 0)) & (c.ym <= (hi if hi is not None else c.nmonths))
         if (qs.get("fav") or ["0"])[0] == "1":
             masks["fav"] = c.fav
+        if (kind := (qs.get("kind") or [""])[0]) in ("video", "photo"):
+            masks["kind"] = c.video if kind == "video" else ~c.video
         if (qs.get("hidden") or ["0"])[0] == "1":
             masks["hidden"] = ~c.visible
         member = c.index.get((qs.get("stack") or [""])[0])
@@ -302,7 +308,7 @@ class Browse:
                 vec = self.text_vec(text)
             else:  # nothing to rank by: what the filters select, by time
                 return c.browse_order(mask, sort)
-            sims = np.where(mask, c.M @ vec, -np.inf)
+            sims = np.where(mask, c.sims(vec), -np.inf)
             if path == "/api/similar":
                 sims[c.index[sha]] = -np.inf
             else:  # only what matches the words: near the best match, and above the floor
@@ -315,6 +321,11 @@ class Browse:
 
         order = self.remember(key, ranked)
         results, hidden, nxt = c.take(order, start, limit, one("dedupe", "1") == "1" and not deduped)
+        if text and path != "/api/similar" and any(r.get("kind") == "video" for r in results):
+            vec = self.text_vec(text)     # where in each video the words match best: the viewer starts there
+            for r in results:
+                if r.get("kind") == "video" and (at := c.moment(str(r["sha"]), vec)) is not None:
+                    r["at"] = at
         self.record(headers, "similar" if path == "/api/similar" else "search", qs, sha=one("sha") or None, text=text,
                     filters=applied, people=names, places=places, cursor=start, matching=int(len(order)),
                     ms=round((time.time() - t) * 1000),
@@ -366,10 +377,10 @@ class Browse:
         if like:
             if like not in index:
                 raise ValueError("no photo has that id")
-            sims = M @ M[index[like]]
+            sims = c.sims(M[index[like]])
             mask[index[like]] = False
         elif text:
-            sims = M @ self.text_vec(text)
+            sims = c.sims(self.text_vec(text))
         elif by_best:
             best = c.scored()[0]
             ids = best[mask[best]]

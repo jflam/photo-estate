@@ -126,6 +126,10 @@ class PhotoMeta(PhotoFacts, total=False):
     thumbnail's shape (always, by the time a Catalog is built). Two classes rather than Required[...],
     so the required and optional keys are right at run time too (__required_keys__)."""
     ar: float                            # the thumbnail's width / height (upright)
+    # videos (absent on a photo, so a photo's row is what it was before there were videos)
+    kind: str                            # "video"
+    dur: float | None                    # seconds, as exiftool read it
+    live: str                            # on a still: the sha of its Live Photo clip (GET /video/<that>)
     # exif
     camera: str | None
     lens: str | None
@@ -212,20 +216,30 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
         return [r for c in chunks(shas) for r in con.execute(f"{q} ({','.join('?' * len(c))})", c)]
 
     def read_meta(want) -> tuple[dict[str, PhotoMeta], dict[str, list[str]]]:
-        """Per-photo dicts from assets, occurrences and exif. `want` None: every image, by scanning
+        """Per-photo dicts from assets, occurrences and exif. `want` None: every photo and video, by scanning
         the tables in order (startup: on a hard disk, walking an index turns each row into a seek,
         ~18 s on the Mac mini); else just those photos, by key."""
         got: dict[str, PhotoMeta] = {}
         tagged: dict[str, list[str]] = {}
-        q_assets = "SELECT sha256, ext, taken_at, lat, lon, description, people, favorited, width, height FROM assets"
+        q_assets = "SELECT sha256, ext, taken_at, lat, lon, description, people, favorited, width, height, kind FROM assets"
         q_occ = "SELECT sha256, dir || '/' || filename, album FROM occurrences"
         q_exif = "SELECT sha256, camera, lens, focal, focal35, fnumber, exposure, iso FROM exif"
-        for sha, ext, taken, lat, lon, desc, people, fav, w, h in (
-                con.execute(q_assets + " WHERE kind='image'") if want is None else where_in(q_assets + " WHERE sha256 IN", want)):
+        films = []
+        for sha, ext, taken, lat, lon, desc, people, fav, w, h, kind in (
+                con.execute(q_assets) if want is None else where_in(q_assets + " WHERE sha256 IN", want)):
             if sha in index_of:
                 tagged[sha] = [p.strip() for p in (people or "").split(",") if p.strip()]
                 got[sha] = {"ext": ext, "taken": taken, "lat": lat, "lon": lon, "desc": desc,
                             "people": list(tagged[sha]), "albums": [], "fav": bool(fav), "w": w, "h": h, "path": None}
+                if kind == "video":
+                    got[sha]["kind"] = "video"
+                    got[sha]["dur"] = None
+                    films.append(sha)
+        try:   # by key: a few thousand videos, never a scan of exif
+            for sha, dur in where_in("SELECT sha256, duration FROM exif WHERE sha256 IN", films):
+                got[sha]["dur"] = round(dur, 1) if dur else None
+        except sqlite3.OperationalError:
+            pass
         occ = con.execute(q_occ + " ORDER BY id") if want is None else sorted(
             where_in("SELECT id, sha256, dir || '/' || filename, album FROM occurrences WHERE sha256 IN", got))
         for *_, sha, path, album in occ:
@@ -251,8 +265,15 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     marks = {k: con.execute(q).fetchone()[0] or 0 for k, q in (
         ("emb", "SELECT max(rowid) FROM embeddings"), ("asset", "SELECT max(rowid) FROM assets"),
         ("occ", "SELECT max(id) FROM occurrences"))}
+    # A Live Photo's clip is never a photo of its own: its still carries it (meta[still]["live"]). When a still
+    # has several (Takeout's MP4 and iCloud's MOV of one clip), the .mp4 first: every browser plays it.
+    pairs = sorted(optional("SELECT l.still, a.ext != '.mp4', l.clip, a.ext FROM live_pairs l JOIN assets a ON a.sha256 = l.clip"))
+    clips: dict[str, str] = {clip: ext for _, _, clip, ext in pairs}
+    live: dict[str, str] = {}
+    for still, _, clip, _ in pairs:
+        live.setdefault(still, clip)
     if prev is None:
-        images = {r[0] for r in con.execute("SELECT sha256 FROM assets WHERE kind='image'")}
+        images = {r[0] for r in con.execute("SELECT sha256 FROM assets")} - clips.keys()
         rows = sorted((sha, vec) for rid, sha, vec in con.execute(q_emb + " AND rowid <= ?", (model, marks["emb"])))
         orphans = {sha: vec for sha, vec in rows if sha not in images}   # embedded on upload, not ingested yet
         rows = [r for r in rows if r[0] in images]
@@ -273,7 +294,7 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
                                              (prev["marks"]["asset"], marks["asset"]))}
         touched |= {r[0] for r in con.execute("SELECT sha256 FROM occurrences WHERE id > ? AND id <= ?",
                                               (prev["marks"]["occ"], marks["occ"]))}
-        images = {r[0] for r in where_in("SELECT sha256 FROM assets WHERE kind='image' AND sha256 IN", vecs.keys() | touched)}
+        images = {r[0] for r in where_in("SELECT sha256 FROM assets WHERE sha256 IN", vecs.keys() | touched)} - clips.keys()
         orphans = {sha: v for sha, v in vecs.items() if sha not in images and sha not in old}
         added = sorted(sha for sha in vecs if sha in images and sha not in old)
         replaced = [sha for sha in vecs if sha in old]
@@ -340,6 +361,26 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
         if sha in fresh or face_names.get(sha) != old_names.get(sha):
             own(sha)["people"] = list(dict.fromkeys(tagged[sha] + face_names.get(sha, [])))
     has_faces = bool(optional("SELECT 1 FROM faces LIMIT 1"))
+    old_live = prev["live"] if prev else {}
+    for sha in (live.keys() | old_live.keys()) if prev else live:
+        if sha in meta and (sha in fresh or live.get(sha) != old_live.get(sha)):
+            m = own(sha)
+            if sha in live:
+                m["live"] = live[sha]
+            else:
+                m.pop("live", None)
+    # The frames videos are searched by (embed.py): one matrix, each row owned by a video. Read whole at
+    # startup; afterwards only when the table has grown (a video is written once, all its frames together).
+    frames_mark = (optional("SELECT max(rowid) FROM video_frames") or [(0,)])[0][0] or 0
+    if prev is not None and prev["frames"][0] == frames_mark:
+        _, frame_shas, frame_t, F = prev["frames"]
+    else:
+        rows = optional("SELECT sha256, t, vec FROM video_frames WHERE model=? ORDER BY sha256, t", (model,))
+        rows = [r for r in rows if len(r[2]) == M.shape[1] * 2]
+        frame_shas, frame_t = [r[0] for r in rows], np.array([r[1] for r in rows], np.float32)
+        F = np.frombuffer(b"".join(r[2] for r in rows), dtype=np.float16).reshape(len(rows), -1).astype(np.float32) \
+            if rows else np.zeros((0, M.shape[1]), np.float32)
+        del rows
     # A favourite set in the app (embed.py's set_favorite) takes the place of what the photo's source said.
     for sha, on in optional("SELECT sha256, fav FROM favorites"):
         if sha in meta and meta[sha]["fav"] != bool(on):
@@ -348,7 +389,13 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     scorers = load_scorers(con, model)   # what "Best first" goes by (scores.py); none in a catalog without them
     con.close()
     raw = {"shas": shas, "index": index, "M": M, "meta": meta, "tagged": tagged, "orphans": orphans,
-           "marks": marks, "place_key": place_key, "face_names": face_names}
+           "marks": marks, "place_key": place_key, "face_names": face_names, "live": live,
+           "frames": (frames_mark, frame_shas, frame_t, F)}
+    # A frame whose video is not in this catalog (embedded, then found to be a clip) belongs to nothing.
+    owned = np.array([s in index for s in frame_shas], bool)
+    frame_of = np.array([index[s] for s, ok in zip(frame_shas, owned) if ok], np.int64)
+    if not owned.all():
+        F, frame_t = F[owned], frame_t[owned]
 
     # Thumbnails are upright; the catalog's width/height are not always. The grid needs the real shape.
     # Worked out for the photos this load read or changed, and for those that had no thumbnail last time.
@@ -407,6 +454,7 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     fav = np.array([meta[s]["fav"] for s in shas])
     shot = np.array([is_screenshot(meta[s]) for s in shas], bool)
     visible = np.array([s not in hidden for s in shas], bool)
+    video = np.array([meta[s].get("kind") == "video" for s in shas], bool)
     ars = np.array([meta[s]["ar"] for s in shas], np.float32)   # pyright: ignore[reportTypedDictNotRequiredAccess]  (set above)
     oldest = np.argsort(when, kind="stable")
     oldest = np.concatenate([oldest[when[oldest] != ""], oldest[when[oldest] == ""]])   # undated last, either way
@@ -420,7 +468,8 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     # Near-identical shots taken together are one stack (stacks.py): the best one shows, the rest are behind it.
     # By the instant it was taken (`taken`), not the local time a view sorts by: two shots a second apart
     # must not come out hours apart because only one of them has a place, and so a time zone.
-    stack_of = stack_group(np.array([stack_seconds(meta[x]["taken"]) for x in shas]), M, visible)
+    # Photos only: a video is not another shot of the photo taken beside it.
+    stack_of = stack_group(np.array([stack_seconds(meta[x]["taken"]) for x in shas]), M, visible & ~video)
     top, stack_n = stack_tops(stack_of, rank)
     dup = ~top                      # behind another photo of its stack
 
@@ -482,7 +531,8 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
         shas=shas, N=N, index=index, M=M, meta=meta, events=events, trips=trips, has_faces=has_faces, when=when,
         year=year, ym=ym, m0=m0, nmonths=nmonths, cols=cols, event_of=event_of, trip_of=trip_of, fav=fav, shot=shot,
         ars=ars, oldest=oldest, newest=newest, single=single, multi=multi, trip_list=trip_list, people_ix=people_ix,
-        who=who, where=where, cities=cities, common_place=common_place, word_re=word_re, visible=visible, best=best,
+        who=who, where=where, cities=cities, common_place=common_place, word_re=word_re, visible=visible,
+        video=video, clips=clips, F=F, frame_of=frame_of, frame_t=frame_t, best=best,
         rank=rank, stack_of=stack_of, stack_n=stack_n, dup=dup, score=score, raw=raw, model=model, demo=demo)
 
 
@@ -525,6 +575,11 @@ class Catalog:
     common_place: set[str]               # places that are also everyday words: only when capitalized
     word_re: re.Pattern[str]             # finds `who` and `where` words in a search
     visible: NDArray[np.bool_]           # in no change set that hides it
+    video: NDArray[np.bool_]             # a video (never a Live Photo's clip: those are in `clips`, not in the catalog)
+    clips: dict[str, str]                # a Live Photo clip's sha -> its extension (images.py serves it at /video/)
+    F: NDArray[np.float32]               # the videos' frame vectors, one row per frame kept (embed.py video_rows)
+    frame_of: NDArray[np.int64]          # the place in the catalog of the video each row of F is from
+    frame_t: NDArray[np.float32]         # seconds into its video
     best: NDArray[np.intp] | None        # every photo, best first; None with no scorers
     rank: NDArray[np.int64] | None       # each photo's place in `best` (0 is the best); None with no scorers
     stack_of: NDArray[np.int64]          # the stack a photo is in (its earliest member's place); -1 on its own
@@ -537,7 +592,8 @@ class Catalog:
     info: dict[str, Any] = field(init=False)
 
     def __post_init__(self) -> None:
-        self.info = {"total": int(self.visible.sum()), "model": self.model, "m0": self.m0, "months": self.nmonths,
+        self.info = {"total": int(self.visible.sum()), "videos": int((self.visible & self.video).sum()),
+                     "model": self.model, "m0": self.m0, "months": self.nmonths,
                      "trips": self.trip_list, "demo": bool(self.demo), "faces": self.has_faces, "best": self.best is not None,
                      **self.facet_counts({})}
 
@@ -547,6 +603,19 @@ class Catalog:
         if self.best is None or self.rank is None or self.score is None:
             raise ValueError("this catalog has no scorers: it has no best-first order")
         return self.best, self.rank, self.score
+
+    def sims(self, vec) -> NDArray[np.float32]:
+        """How well each photo matches a unit vector (a query's, or another photo's): its cosine, and for a
+        video the best of its frames or its mean, whichever is closer. A video is found by one moment in it."""
+        s = self.M @ vec
+        if len(self.frame_of):
+            np.maximum.at(s, self.frame_of, self.F @ vec)
+        return s
+
+    def moment(self, sha: str, vec) -> float | None:
+        """Seconds into a video where it best matches `vec`: where to start playing it for a search."""
+        rows = np.flatnonzero(self.frame_of == self.index[sha]) if sha in self.index else []
+        return round(float(self.frame_t[rows[np.argmax(self.F[rows] @ vec)]]), 1) if len(rows) else None
 
     def combine(self, masks: dict, skip: str | None = None):
         # Hidden photos are in no view, unless the hidden ones are what was asked for (`hidden=1`).

@@ -10,7 +10,8 @@ estate.py — proof of concept for repatriating a Google Photos library.
   link    match Takeout JSON sidecars to media across all zips; merge date/GPS/people/albums
           (also iCloud XMP sidecars and Flickr account-data photo_<id>.json)
   exif    full EXIF/XMP/QuickTime metadata of every asset via exiftool; camera, lens and exposure
-          promoted to columns for filtering
+          promoted to columns for filtering; then pairs Live Photo clips with their stills
+  live    pair Live Photo clips with their stills (what `exif` does when it finishes; --redo starts over)
   dupes   report exact duplicates and near-duplicates (perceptual dHash)
   review  local web page to choose which near-duplicates to keep (records choices only)
   tag     caption + tag images with a local vision model (any OpenAI-compatible server)
@@ -76,7 +77,7 @@ def connect(db: str) -> sqlite3.Connection:
     con = sqlite3.connect(db)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
-    schema.ensure(con, "catalog")
+    schema.ensure(con, "catalog", "video")
     return con
 
 
@@ -611,11 +612,109 @@ def cmd_exif(a) -> None:
     reindex(con, [sha for sha, _ in todo] if not a.force else None, report=True)
     con.commit()
     print(f"done: {n} assets in {(time.time() - t0) / 60:.1f} min, {cams} with a camera name")
+    if (live := pair_live(con)):    # here because it reads what exiftool just wrote, and before `embed.py run`
+        print(f"{live} Live Photo clips paired with their stills")
     if a.after_rowid is not None:
         return
     for cam, c in con.execute("SELECT camera, count(*) c FROM exif WHERE camera IS NOT NULL"
                               " GROUP BY camera ORDER BY c DESC LIMIT 25"):
         print(f"  {c:7}  {cam}")
+
+
+# ----------------------------------------------------------------------------- live photos
+
+# A Live Photo is two files: the still (HEIC or JPEG) and a clip of about three seconds, beside it under the
+# same name (IMG_1.HEIC + IMG_1.MOV; Takeout makes the clip IMG_1.MP4, some iCloud mirrors IMG_1_HEVC.MOV).
+# The name alone is not enough: an old camera's IMG_0140.MOV sits next to an unrelated IMG_0140.JPG. What
+# marks a clip is Apple's content identifier, which exiftool reads from the clip (Keys:ContentIdentifier; a
+# real video never has one), or Google's MVIMG name on a short clip (a Pixel's motion photo). Measured on
+# the author's library (docs/notes/VIDEO-PLAN.md): of 19,612 videos, 16,172 had the identifier and a still
+# of their name, and all of those ran four seconds or less; 2 had it and no still.
+LIVE_LONGEST = 6.0   # seconds: no clip is longer; only shorter videos are read for the marks
+MVIMG_LONGEST = 4.0
+
+
+def live_stems(filename: str) -> list[str]:
+    """The names a clip's still could have (lower-case, no extension), likeliest first."""
+    stem = os.path.splitext(filename)[0].lower()
+    out = [stem]
+    if stem.endswith("_hevc"):
+        out.append(stem[:-5])
+    if (base := split_dupn(stem)[0]) != stem:
+        out.append(base)
+    return out
+
+
+def live_mark(filename: str, duration: float | None, data: str | None) -> str | None:
+    """How a short video shows itself to be a Live Photo's clip: 'id', 'mvimg', or None (an ordinary video)."""
+    if data and "ContentIdentifier" in data:
+        try:
+            if any(k.rsplit(":", 1)[-1] == "ContentIdentifier" and v for k, v in json.loads(data).items()):
+                return "id"
+        except ValueError:
+            pass
+    if filename.lower().startswith("mvimg") and duration and duration <= MVIMG_LONGEST:
+        return "mvimg"
+    return None
+
+
+def pair_live(con: sqlite3.Connection, redo: bool = False) -> int:
+    """Fill live_pairs: every marked clip (live_mark) not yet paired, with the still of its name in the same
+    folder of the same source. Returns how many it paired. Run after `exif` (the marks are exiftool's) and
+    before `embed.py run`, which embeds only the videos that are not clips. Safe to run again: a clip whose
+    still has not arrived yet is paired by a later run. `redo` forgets every pair first."""
+    if redo:
+        con.execute("DELETE FROM live_pairs")
+    marked = []
+    for sha, dur, data in con.execute(
+            "SELECT a.sha256, e.duration, e.data FROM assets a JOIN exif e ON e.sha256 = a.sha256"
+            " WHERE a.kind='video' AND e.duration > 0 AND e.duration <= ?"
+            " AND NOT EXISTS (SELECT 1 FROM live_pairs l WHERE l.clip = a.sha256)", (LIVE_LONGEST,)).fetchall():
+        occ = con.execute("SELECT source, dir, filename FROM occurrences WHERE sha256=? ORDER BY id", (sha,)).fetchall()
+        how = next((h for _, _, fn in occ if (h := live_mark(fn, dur, data))), None)
+        if how:
+            marked.append((sha, how, occ))
+    # As in `link`: IMG_1904.MP4 chooses before IMG_1904(1).MP4, so each clip takes the right still when two
+    # stills share a name.
+    marked.sort(key=lambda r: (bool(split_dupn(os.path.splitext(r[2][0][2])[0])[1]), r[2][0][2]))
+    folders: dict[tuple[str, str], dict[str, list[str]]] = {}
+
+    def stills(source: str, d: str) -> dict[str, list[str]]:
+        """stem -> the stills of that name in one folder of one source."""
+        if (source, d) not in folders:
+            q, args = "SELECT filename, sha256 FROM occurrences WHERE source=? AND dir=?", [source, d]
+            if d not in ("", "."):     # by the (source, path) index: path is dir/filename
+                q, args = q + " AND path >= ? AND path < ?", args + [d + "/", d + "0"]
+            got: dict[str, list[str]] = {}
+            for fn, sha in con.execute(q + " ORDER BY filename", args):
+                if kind_of(fn) == "image":
+                    got.setdefault(os.path.splitext(fn)[0].lower(), []).append(sha)
+            folders[(source, d)] = got
+        return folders[(source, d)]
+
+    used = {r[0] for r in con.execute("SELECT still FROM live_pairs")}
+    n = 0
+    for clip, how, occ in marked:
+        for source, d, fn in occ:
+            here = stills(source, d)
+            cands = next((here[s] for s in live_stems(fn) if s in here), None)
+            if cands:
+                still = next((c for c in cands if c not in used), cands[0])
+                used.add(still)
+                con.execute("INSERT OR IGNORE INTO live_pairs VALUES (?,?,?,?)", (clip, still, how, now()))
+                n += 1
+                break
+    con.commit()
+    return n
+
+
+def cmd_live(a) -> None:
+    con = connect(a.db)
+    n = pair_live(con, redo=a.redo)
+    total, stills = con.execute("SELECT count(*), count(DISTINCT still) FROM live_pairs").fetchone()
+    videos = con.execute("SELECT count(*) FROM assets WHERE kind='video'").fetchone()[0]
+    print(f"{n} Live Photo clips paired now; {total} of {videos} videos are clips, of {stills} stills;"
+          f" {videos - total} videos stand on their own")
 
 
 def progress(done: int, total: int, what: str, every: int = 1000, stage: str = "search") -> None:
@@ -1085,6 +1184,10 @@ def main() -> None:
     s.add_argument("--limit", type=int, default=0, help="0 = all")
     s.add_argument("--force", action="store_true", help="re-read assets already done")
     s.set_defaults(fn=cmd_exif)
+
+    s = sub.add_parser("live", help="pair Live Photo clips with their stills (also done at the end of `exif`)")
+    s.add_argument("--redo", action="store_true", help="forget every pair and work them all out again")
+    s.set_defaults(fn=cmd_live)
 
     s = sub.add_parser("dupes", help="exact + near duplicate report")
     s.add_argument("--threshold", type=int, default=5, help="max dHash Hamming distance")

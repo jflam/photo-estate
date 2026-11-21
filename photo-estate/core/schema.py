@@ -12,6 +12,8 @@ Areas, and who opens them (each owner calls ensure when it opens the database, n
     catalog      estate.connect: sources, assets, occurrences, sidecars, albums, xmp, flickr, exif,
                  places, events, trips, tags, and the full-text `search` table
     embeddings   embed.connect: one SigLIP 2 vector per (photo, model)
+    video        estate.connect and embed.connect: live_pairs (a Live Photo's clip and its still) and
+                 video_frames (the frames a video is searched by)
     faces        faces.connect: faces, face_scans, persons, face_not, face_later
     changes      changes.Changes (and tasks.Tasks, which reads change_sets): change_sets, change_items, hidden
     tasks        tasks.Tasks: agent_tasks, agent_events
@@ -83,6 +85,18 @@ EMBEDDINGS = """
 CREATE TABLE IF NOT EXISTS embeddings(
   sha256 TEXT, model TEXT, dim INT, vec BLOB,   -- float16, L2-normalised; NULL when undecodable
   error TEXT, created_at TEXT, PRIMARY KEY(sha256, model));
+"""
+VIDEO = """
+CREATE TABLE IF NOT EXISTS live_pairs(   -- a Live Photo: the short clip taken with a still (estate.py pair_live)
+  clip TEXT PRIMARY KEY,                 -- the clip's sha256: a paired clip is never shown on its own
+  still TEXT NOT NULL,                   -- the still's sha256
+  how TEXT,                              -- 'id' (Apple's content identifier) | 'mvimg' (a Google motion photo)
+  paired_at TEXT);
+CREATE INDEX IF NOT EXISTS live_pairs_still ON live_pairs(still);
+CREATE TABLE IF NOT EXISTS video_frames(  -- embed.py: the frames a video is searched by (its mean is in embeddings)
+  sha256 TEXT, model TEXT, t REAL,        -- t: seconds into the video
+  vec BLOB,                               -- float16, L2-normalised, as embeddings.vec
+  PRIMARY KEY(sha256, model, t));
 """
 FACES = """
 CREATE TABLE IF NOT EXISTS faces(
@@ -161,9 +175,9 @@ CREATE INDEX IF NOT EXISTS events_job ON events(job_id, id);
 # the columns the app reads, so startup scans ~15 MB instead of ~700 MB.
 EXIF_APP_INDEX = "CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)"
 
-AREAS = {"catalog": CATALOG, "embeddings": EMBEDDINGS, "faces": FACES, "changes": CHANGES, "tasks": TASKS,
+AREAS = {"catalog": CATALOG, "embeddings": EMBEDDINGS, "video": VIDEO, "faces": FACES, "changes": CHANGES, "tasks": TASKS,
          "scores": SCORES, "favorites": FAVORITES, "sync": SYNC, "intake": INTAKE}
-CATALOG_AREAS = ("catalog", "embeddings", "faces", "changes", "tasks", "scores", "favorites")
+CATALOG_AREAS = ("catalog", "embeddings", "video", "faces", "changes", "tasks", "scores", "favorites")
 ADDED = {
     "changes": {"change_sets": (("done_at", "TEXT"), ("kind", "TEXT DEFAULT 'list'"), ("query", "TEXT")),
                 "change_items": (("section", "TEXT"), ("position", "INTEGER"))},

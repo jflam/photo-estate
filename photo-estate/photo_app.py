@@ -65,7 +65,7 @@ from core.lifecycle import Lifecycle, Phase, Unavailable
 from embed import connect, now
 from encoder import Encoder
 from estate_mcp import AppFacade, Server as MCPServer
-from http_util import (FORBIDDEN, MAX_BODY, NOT_FOUND, Auth, HTTPError, Request, Response, int_param,
+from http_util import (FORBIDDEN, MAX_BODY, NOT_FOUND, Auth, HTTPError, Request, Response, byte_range, int_param,
                        json_response, parse_json, read_body)
 from images import Images
 from intake.server import is_local
@@ -467,6 +467,9 @@ class PhotoApp:
         one = lambda k, d="": (qs.get(k) or [d])[0]
         if re.fullmatch(r"/api/albums/(\d+)/download", path):
             return Response(501, b"the album download is streamed: ask the HTTP server", "text/plain")
+        if path.startswith("/video/"):    # so a test, or a caller with no socket, can still ask whether it is there
+            got = self.images.video_file(path[len("/video/"):])
+            return Response(501, b"a video is streamed: ask the HTTP server", got[1]) if got else NOT_FOUND
         if self.intake and path.startswith(("/setup", "/api/intake")):
             return Response.of(self.intake.handle("GET", path, qs, None, req.local))
         who = self.who(req.headers)
@@ -641,6 +644,8 @@ def make_handler(app: PhotoApp):
                 return self.upload()
             if method == "GET" and (m := re.fullmatch(r"/api/albums/(\d+)/download", path)):
                 return self.download(int(m[1]))
+            if method == "GET" and path.startswith("/video/"):
+                return self.video(path[len("/video/"):])
             body = b""
             if method == "POST":
                 try:
@@ -672,6 +677,43 @@ def make_handler(app: PhotoApp):
                                            app.who(self.headers), app.can_write(self.headers, is_local(self)))
             self.close_connection = client_closes or unread
             self.send(Response.of(got))
+
+        def video(self, sha: str):
+            """GET /video/<sha>: a video, or a Live Photo's clip, as stored, read from the disk as it is sent
+            (a video can be gigabytes). Answers a Range request with 206 and just those bytes: a player asks
+            for the start, then the index at the end, then wherever it is dragged to, and Safari plays nothing
+            from a server that cannot. An unsatisfiable range is a 416."""
+            with app.live.gate:              # which file: one look at the catalog, then the gate is let go
+                got = app.images.video_file(sha)
+            if got is None:
+                return self.send(NOT_FOUND)
+            src, ctype, name = got
+            size = src.stat().st_size
+            try:
+                span = byte_range(self.headers.get("Range"), size)
+            except ValueError:
+                return self.send(Response(416, b"", "text/plain", "no-store", {"Content-Range": f"bytes */{size}"}))
+            start, end = span or (0, size - 1)
+            self.send_response(206 if span else 200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(end - start + 1))
+            self.send_header("Accept-Ranges", "bytes")
+            if span:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Cache-Control", "private, max-age=2592000, immutable")   # named by its hash, as the images are
+            self.send_header("Content-Disposition", f"inline; filename*=UTF-8''{quote(name)}")
+            self.end_headers()
+            left = end - start + 1
+            try:
+                with open(src, "rb") as f:
+                    f.seek(start)
+                    while left > 0 and (chunk := f.read(min(left, 256 * 1024))):
+                        self.wfile.write(chunk)
+                        left -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):   # the player has what it wanted, or moved on
+                pass
+            if left:
+                self.close_connection = True
 
         def download(self, sid: int):
             """GET /api/albums/<id>/download: the album's original files as one zip, written as it is read
