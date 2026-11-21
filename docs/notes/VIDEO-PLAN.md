@@ -107,8 +107,11 @@ its cosine with the last one kept is under a threshold:
 0.96 it is: 3% of matches lost for a third of the memory. For the whole library that is about 23,000
 frames (6.7 a video), 70 MB in the app as float32 beside the photos' 330 MB.
 
-**Cost.** 1.4 seconds a video on the mini (0.9 reading frames, 0.5 in the model on its GPU): about 80
-minutes for the 3,427 videos, once. Each video is committed whole, so a stopped run loses one.
+**Cost.** In the experiment, one video at a time, 1.4 seconds a video on the mini (0.9 reading frames,
+0.5 in the model on its GPU). The real command reads with three workers beside the model: run on a copy of
+the real catalog, `embed.py run --limit 150` took 78 seconds, half a second a video, none undecodable, and
+kept 859 of 1,399 frames (61%, 5.7 a video). So about 30 minutes for the 3,427 videos, once, and about
+20,000 frames (60 MB). Each video is committed whole, so a stopped run loses one.
 
 **What videos do not get.** No dHash (duplicates of a video are exact copies only), no faces, and they
 never stack with the photos taken beside them.
@@ -146,7 +149,7 @@ cd ~/src/photo-estate/photo-estate
 DB=~/estate/estate.db STORE=/Volumes/estate/store
 sqlite3 "$DB" ".backup '$HOME/photo-estate-lab/estate.db.before-videos'"   # the catalog gains two tables
 uv run estate.py --db "$DB" live                 # 1. pair the 16,185 clips with their stills (5 seconds)
-uv run embed.py --db "$DB" run --store "$STORE"  # 2. the 3,427 videos' frames (about 80 minutes)
+uv run embed.py --db "$DB" run --store "$STORE"  # 2. the 3,427 videos' frames (about 30 minutes)
 launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search   # 3. restart the app
 ```
 
