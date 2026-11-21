@@ -248,26 +248,31 @@ and stays loaded.
 
 ## Open tasks
 
-Each is independent. "Done" means a before/after number on the Mac mini and no change to API answers.
+Reviewed on 2026-11-20, after the catalog moved to the SSD and the GPU memory fix. "Done" means a
+before/after number on the Mac mini and no change to API answers.
 
-1. **Find the floor for a thumbnail burst.** Of the ~150 ms for a warm screenful, roughly
-   80–110 ms is the Python server itself (it takes that long even locally with no proxy). Serve
-   `/thumb/` from a minimal async or Rust static-file server on a side port, behind `tailscale serve`
-   the same way, and compare with `tools/thumb_burst.py`. Only worth pursuing if it saves well over
-   50 ms. Don't change the tailnet policy or publish new ports without asking the owner.
-2. **Cache the embedding matrix on the SSD.** *Mostly overtaken: the mini's catalog has been on its SSD
-   since 2026-11-20, where the whole catalog reads in 4.4 s. Measure again before doing this.* Reading the
-   `embeddings` table off the HDD was ~2.7 s of startup. Save the float32 matrix and sha list as `.npy` in `--fast-cache`, keyed by
-   something cheap that changes when `embed.py run` adds rows (e.g. `count(*)` and `max(rowid)`
-   for the model), and fall back to the table when stale.
-3. **Pregenerate HEIC previews onto the SSD.** Opening a HEIC photo in the viewer the first time
-   takes 0.1–0.5 s. About 46k HEICs × ~0.3 s, ~14 GB at 1600 px. Run it as a low-priority
-   background job, not at server startup.
-4. **Reduce the server's memory.** ~1.7 GB RSS on a 16 GB machine that's swapping. Measure with
-   `footprint <pid>`, not `ps`: the 1.5 GB the app's model holds on the GPU is not in RSS (see the
-   2026-11-20 section above). The per-photo
-   `meta` dicts (~30 keys × 101k) are the obvious target: columns in numpy arrays, or tuples, with
-   the dicts built only for the photos a response returns.
-5. **HTTP/2 to the backend.** Only matters if task 1 shows the proxy's backend connections cost
-   something. `tailscale serve` forwards as HTTP/1.1; check whether it can speak h2c to a backend
-   before rewriting the server for HTTP/2 (e.g. Hypercorn/ASGI).
+1. **Pregenerate previews onto the SSD** ([#26](https://github.com/jflam/photo-estate/issues/26)).
+   Only 2,845 of 113,634 photos have a 1600 px preview cached, so almost every photo opened in the viewer
+   is decoded from its original on the USB hard disk the first time: a seek, plus 0.1–0.5 s to decode a
+   HEIC. This applies to every format, not only HEIC. `Images.pregenerate()` builds only missing
+   thumbnails. All the previews would take about 37 GB (330 KB each); the SSD has 544 GB free. Build them
+   newest first, at low priority, after the thumbnails, and leave `/large/` on demand.
+2. **Smaller grid thumbnails** ([#104](https://github.com/jflam/photo-estate/issues/104)). Grid
+   thumbnails are 360 px JPEGs at quality 82, 24 KB each. Opening a month is now mostly the time to move
+   those bytes: 0.75–1.4 s for a cold 150 on a direct Tailscale path, 2.5–6.3 s relayed or on a phone away
+   from home. WebP or AVIF at the same visible quality would roughly halve that, and halve what the phone
+   keeps offline.
+
+No longer worth doing, with the reason:
+
+- **Cache the embedding matrix on the SSD** ([#24](https://github.com/jflam/photo-estate/issues/24)).
+  The catalog itself is on the SSD now, and the whole catalog loads in 4.4–6.8 s at a restart. The
+  2.7 s this was meant to save was seek time on the hard disk.
+- **Reduce the server's memory** ([#23](https://github.com/jflam/photo-estate/issues/23)). The app is
+  3.4 GB by `footprint` (1.2 GB RSS, 1.5 GB of it the model on the GPU), and the mini now has 69% of its
+  memory free. Look again if the library grows a lot. The per-photo `meta` dictionaries are still the
+  target.
+- **Find the floor for a thumbnail burst** ([#25](https://github.com/jflam/photo-estate/issues/25)) and
+  **HTTP/2 to the backend** ([#27](https://github.com/jflam/photo-estate/issues/27)). The Python server's
+  80–110 ms is small next to the bytes on the wire (task 2) and the relayed Tailscale path that made a
+  burst take 6 s on 2026-11-18. That was a stuck Tailscale app on the laptop, cured by restarting it.

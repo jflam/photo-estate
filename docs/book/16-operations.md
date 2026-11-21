@@ -271,13 +271,16 @@ few milliseconds per request, and what is left of startup is sequential disk rea
 
 ### Open performance tasks
 
-Each is written up independently in PERFORMANCE.md:
+Reviewed on 2026-11-20, and written up in PERFORMANCE.md:
 
-1. A faster static server for `/thumb/` (only worth it if it saves well over 50 ms of a ~150 ms burst).
-2. Cache the embedding matrix as `.npy` on the SSD (saved ~2.7 s of startup off the HDD; mostly overtaken now that the catalog is on the SSD).
-3. Pre-generate HEIC previews onto the SSD (the first open of a HEIC costs 0.1-0.5 s).
-4. Reduce the server's ~1.7 GB RSS: the per-photo `meta` dictionaries are the target. Measure with `footprint <pid>`, which counts GPU memory too.
-5. HTTP/2 to the backend (only if task 1 shows the proxy's connections matter).
+1. Pregenerate the viewer's 1600 px previews onto the SSD: only 2,845 of 113,634 are cached, so nearly
+   every first open decodes the original from the hard disk (#26).
+2. Smaller grid thumbnails (WebP or AVIF): opening a month is now mostly the time to move 24 KB a
+   thumbnail (#104).
+
+Overtaken by the move of the catalog to the SSD and by the GPU memory fix: caching the embedding matrix
+(#24), reducing the server's memory (#23), a faster static server for `/thumb/` (#25) and HTTP/2 to the
+backend (#27).
 
 ### Measuring it yourself
 
