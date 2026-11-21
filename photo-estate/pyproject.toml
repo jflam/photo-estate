@@ -12,7 +12,8 @@
 #   faces   faces.py (onnxruntime); includes core
 #   places  places.py (offline reverse geocoding and time zones); includes core
 #   tools   tools/: the book, the benchmarks, screenshots, the aesthetics experiments
-#   dev     pytest, ruff and pyright, plus core so the fast tests run in this environment (the default group)
+#   dev     pytest, ruff and pyright, plus core so the fast tests run in this environment (the default group),
+#           and Playwright for the browser tests of the slow tier (the package only: no browser is downloaded)
 #
 #   uv sync                          # dev (+ core): enough for `uv run pytest -m "not slow"`, ruff and pyright
 #   uv sync --group ml --group faces --group places   # everything the server can use
@@ -65,6 +66,7 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.15",
     "pyright>=1.1.400",
+    "playwright",          # tests/test_pages_browser.py (slow tier); skipped when it has no Chromium to run
 ]
 
 [tool.uv]

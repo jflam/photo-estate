@@ -147,6 +147,12 @@ A photo is useful when it's *searchable*, not when it's stored. The server runs 
   calls `feed_update()`, which is what makes the new photos appear in `/api/sync` (chapter 20) and so on
   every phone, including the one that took them.
 
+The Library info page (`/stats`) shows the inbox and the run. It asks `/api/ingest` every 2 s while a
+run is going and every 15 s otherwise, in the same loop that asks for the page's figures, one request at
+a time, and not while the tab is hidden ([app/stats-watch.js](../../photo-estate/app/stats-watch.js),
+issue #80). A run or a restart that can not be started says why in the panel; after **Restart to show
+them** the page waits for the app for at most five minutes and reloads when it answers.
+
 A measured example from the project's performance notes (PERFORMANCE.md): from a phone upload to the
 photo showing in the app, **about 9.7 seconds**, once ingest and the reload were made incremental.
 

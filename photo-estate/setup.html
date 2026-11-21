@@ -137,13 +137,17 @@ details.log pre { margin: 8px 0 0; max-height: 260px; overflow: auto; padding: 1
 </main>
 <div class="opening" id="opening" hidden>
   <div><svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>
-  <h3>Your first photos are in</h3><p>Opening your library. Faces are still being found; that carries on by itself.</p></div>
+  <h3 id="openingTitle">Your first photos are in</h3><p id="openingText">Opening your library. Faces are still being found; that carries on by itself.</p>
+  <button class="btn pri" id="openingAgain" hidden style="margin-top:22px">Try again</button></div>
 </div>
 <div class="toast" id="toast"></div>
 
 <script type="module">
 import { $, esc as h } from '/app/dom.js';
-import { createApi } from '/app/api.js';
+import { createApi, api as site, isAbort } from '/app/api.js';
+import { latest, STALE } from '/app/fsm.js';
+import { loop, until } from '/app/loop.js';
+import { setupFlow, askEvery, live, ASKING } from '/app/setup-flow.js';
 import { toast } from '/app/toast.js';
 
 const api = createApi({base: '/api/intake'});      // api('/jobs') asks /api/intake/jobs
@@ -158,22 +162,73 @@ const SOON = [
 ];
 const ORDER = ['practice', 'google', 'apple', 'flickr', 'computer', 'cloud', 'other'];
 
-let S = null, askedWhere = false, chosen = null, config = {}, previewed = null, openLogs = new Set(), logs = {};
+// Where the page is, said out loud (app/setup-flow.js): two strict machines, each state owning its data.
+//   F.page    loading, place, idle, watching, answering (the server is asked how things stand), then
+//             opening (the server is becoming the photo app), stuck (that took too long), app (leaving)
+//   F.panel   the source being added: closed, open, checking, checked, starting; its data is
+//             { id, config, preview }: the source, what is typed into its fields, what its preview said
+// What is asked of the server belongs to a state and stops at the step out of it: `asking` (the loop) to
+// the ASKING states, `opening` (the wait for the photo app) to "opening".
+let S = null;                              // the server's last answer
+const logs = { open: new Set(), lines: {} };   // the job logs the person has opened, and their lines so far
+const F = setupFlow({
+  onPage(to, from) {
+    if (ASKING.includes(to) && !ASKING.includes(from)) asking.now();
+    if (!ASKING.includes(to)) asking.stop();
+    if (to !== "opening") opening.cancel();
+    $('#opening').hidden = !['opening', 'stuck', 'app'].includes(to);
+    $('#openingText').textContent = to === 'stuck' ? 'The library has not opened after ten minutes. It may still be starting.'
+      : 'Opening your library. Faces are still being found; that carries on by itself.';
+    $('#openingTitle').textContent = to === 'stuck' ? 'Still not open' : 'Your first photos are in';
+    $('#openingAgain').hidden = to !== 'stuck';
+    if (to === 'opening') waitForApp();
+  },
+});
 
-async function refresh() {
-  try { S = await api(''); } catch (e) { return starting(); }
-  if (S.mode === 'starting') return starting();
+// Ask the setup server how things stand, and draw it: often while something is coming in, seldom
+// otherwise (askEvery), one request at a time, not while the page is hidden. When the server says it is
+// becoming the photo app, or (in setup mode, where that is what its silence means) stops answering, the
+// page steps to "opening", which stops this loop.
+const asking = loop(async signal => {
+  let answer;
+  try { answer = await api('', undefined, {signal, timeout: 20000}); }
+  catch (e) {
+    if (isAbort(e)) throw e;
+    if (S && S.mode === 'app') return 3000;          // the photo app, not answering just now: ask again
+    F.page.to('opening');
+    return false;
+  }
+  S = answer;
+  if (F.heard(S) === 'opening') return false;
   render();
-  const live = S.jobs.some(j => ['queued', 'running', 'waiting'].includes(j.state));
-  clearTimeout(refresh.t); refresh.t = setTimeout(refresh, live ? 1200 : 8000);
-}
+  return askEvery(F.page.state);
+}, {onError: e => { console.error(e); return 8000; }});
+const refresh = () => { if (F.page.is(...ASKING)) asking.now(); };
 
-// Setup mode: once the first photos are searchable, this server becomes the full app. Wait for it, then open it.
-async function starting() {
-  $('#opening').hidden = false;
-  try { const r = await fetch('/api/info', {cache: 'no-store'}); if (r.ok) return location.replace('/'); } catch (e) {}
-  setTimeout(starting, 1500);
+// Setup mode: once the first photos are searchable, this server becomes the full app. Wait for it (asking
+// every 1.5 s, for at most ten minutes), then open it. If the setup server answers instead, and is not
+// becoming the app after all, go back to where it says the page is.
+const opening = latest();
+async function waitForApp() {
+  const step = async signal => {
+    try { await site('/api/info', undefined, {signal, cache: 'no-store', timeout: 10000}); return {app: true}; }
+    catch (e) { if (isAbort(e)) throw e; }
+    try { const answer = await api('', undefined, {signal, timeout: 10000}); return answer.mode === 'starting' ? null : {answer}; }
+    catch (e) { if (isAbort(e)) throw e; return null; }
+  };
+  const end = await opening.run(signal => until(step, {until: v => v !== null, every: 1500, timeout: 600000, tries: 400, signal}))
+    .catch(error => ({state: 'error', error}));
+  if (end === STALE || !F.page.is('opening')) return;
+  if (end.state !== 'done') return F.page.to('stuck');
+  if (end.value.app) { F.page.to('app'); return location.replace('/'); }
+  S = end.value.answer;
+  F.heard(S);
+  render();
 }
+$('#openingAgain').addEventListener('click', () => F.page.to('opening'));
+document.addEventListener('visibilitychange', () => document.hidden ? asking.pause() : asking.resume());
+addEventListener('pagehide', () => { asking.stop(); opening.cancel(); });
+addEventListener('pageshow', e => { if (e.persisted) F.page.is('opening') ? waitForApp() : F.page.is(...ASKING) && asking.now(); });
 
 function render() {
   const app = S.mode === 'app', lib = S.library;
@@ -182,12 +237,12 @@ function render() {
   $('#crumb').textContent = app ? 'Add photos' : 'Photo Estate';
   if (app) { $('#headline').textContent = 'Add photos'; $('#lede').textContent = 'Bring in more from another service or folder. Photos you already have are recognised and not copied twice.'; }
   $('#libline').innerHTML = lib.chosen ? `<span class="lib"><span><b class="num">${nf.format(lib.media)}</b> in library</span><span class="wide">· ${h(lib.free_label)} free</span>${S.practice ? '<span class="wide">· <b>practice</b></span>' : ''}</span>` : (S.practice ? '<b>practice</b>' : '');
-  $('#jobslabel').textContent = S.jobs.some(j => ['queued', 'running', 'waiting'].includes(j.state)) ? 'Coming in' : 'Brought in';
+  $('#jobslabel').textContent = F.page.is('watching', 'answering') ? 'Coming in' : 'Brought in';
   $('#where').hidden = lib.chosen;
   if (!lib.chosen) renderPlaces(lib.suggestions);
   $('#from').hidden = !lib.chosen;
-  if (!lib.chosen) askedWhere = true;   // number the steps only when there were two
-  $('#fromlabel').innerHTML = app ? 'Where are the photos?' : `${askedWhere ? '<span class="step-n">2</span>' : ''}Where are your photos now?`;
+  // number the steps only when there were two
+  $('#fromlabel').innerHTML = app ? 'Where are the photos?' : `${F.askedWhere ? '<span class="step-n">2</span>' : ''}Where are your photos now?`;
   if (lib.chosen) renderSources();
   $('#jobs').hidden = !S.jobs.length;
   renderJobs();
@@ -218,6 +273,7 @@ $('#useroot').onclick = async () => {
 
 function renderSources() {
   const el = $('#sources');
+  const chosen = F.panel.data.id ?? null;
   const key = S.sources.map(s => s.id).join() + chosen;
   if (el.dataset.key !== key) {
     el.dataset.key = key;
@@ -228,13 +284,16 @@ function renderSources() {
          <span class="tag ${s.practice ? 'sun' : ''}">${h(s.time_hint)}</span></button>`).join('');
     el.querySelectorAll('button.card').forEach(c => c.onclick = () => choose(c.dataset.id));
   }
-  if (!chosen) $('#panel').innerHTML = '';
+  if (F.panel.is('closed')) $('#panel').innerHTML = '';
 }
 
+// Choosing a source opens its panel; choosing it again (or Not now) closes it; choosing another opens that
+// one instead. Whatever was typed and previewed for the one before goes with its state.
 function choose(id) {
-  chosen = chosen === id ? null : id; config = {}; previewed = null;
+  if (F.panel.data.id === id || id == null) { if (!F.panel.is('closed')) F.panel.to('closed'); }
+  else F.panel.to('open', {id, config: {}});
   renderSources();
-  if (!chosen) return;
+  if (F.panel.is('closed')) return;
   const s = S.sources.find(x => x.id === id);
   const guide = s.guide.map(g => `<li><b>${h(g.title)}</b>${g.body ? `<p>${h(g.body)}</p>` : ''}${g.note ? `<p class="note">${h(g.note)}</p>` : ''}
       ${g.link ? `<a class="btn ask" href="${h(g.link)}" target="_blank" rel="noopener">${h(g.link_label || 'Open')} ↗</a>` : ''}</li>`).join('');
@@ -245,12 +304,16 @@ function choose(id) {
   $('#panel').innerHTML = `<div class="panel"><h2>${h(s.name)}</h2><p class="why">${h(s.blurb)}</p>
       <ol class="guide">${guide}</ol>${fields}${checks}<div class="preview" id="pv"></div>
       <div class="actions"><button class="btn" id="cancelsrc">Not now</button><button class="btn pri" id="go">${s.fields.length ? 'Check and bring them in' : 'Start'}</button></div></div>`;
-  $('#panel').querySelectorAll('input[data-key]').forEach(i => i.oninput = () => { config[i.dataset.key] = i.value; previewed = null; $('#pv').innerHTML = ''; $('#go').textContent = 'Check and bring them in'; });
+  // Typing changes what would be brought in: the preview no longer speaks for it, so back to open.
+  $('#panel').querySelectorAll('input[data-key]').forEach(i => i.oninput = () => {
+    F.panel.to('open', {id, config: {...F.panel.data.config, [i.dataset.key]: i.value}});
+    $('#pv').innerHTML = ''; $('#go').textContent = 'Check and bring them in'; $('#go').disabled = false;
+  });
   $('#panel').querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => {
     b.disabled = true;
     try {
       const {path} = await api('/choose', {what: 'folder'});
-      if (path) { const i = $(`input[data-key="${b.dataset.pick}"]`); i.value = path; i.oninput(); go(); }
+      if (path && F.panel.data.id === id) { const i = $(`input[data-key="${b.dataset.pick}"]`); i.value = path; i.oninput(); go(); }
     } catch (e) { toast(e.message); }
     b.disabled = false;
   });
@@ -259,22 +322,37 @@ function choose(id) {
   $('#panel').scrollIntoView({behavior: 'smooth', block: 'nearest'});
 }
 
+// The button of the panel: check what is typed (open -> checking -> checked), then bring it in
+// (checked -> starting -> closed). A source with nothing to type is started as soon as its check says
+// yes. Each answer is acted on only if the panel is still in the state that asked (the same data): one
+// that arrives after a field was edited, or another source chosen, is dropped.
 async function go() {
-  const s = S.sources.find(x => x.id === chosen), btn = $('#go');
+  const btn = $('#go');
+  if (F.panel.is('open')) {
+    const mine = F.panel.to('checking', F.panel.data), s = S.sources.find(x => x.id === mine.id);
+    btn.disabled = true;
+    let p;
+    try { p = await api('/preview', {source: mine.id, config: mine.config}); }
+    catch (e) { p = null; if (F.panel.data === mine) toast(e.message); }
+    if (F.panel.data !== mine) return;
+    btn.disabled = false;
+    if (p) $('#pv').innerHTML = (p.summary ? `<p>${h(p.summary)}</p>` : '') + p.problems.map(x => `<p class="${p.ok ? 'warn' : 'bad'}">${h(x)}</p>`).join('');
+    if (!p || !p.ok) return void F.panel.to('open', {id: mine.id, config: mine.config});
+    F.panel.to('checked', {...mine, preview: p});
+    if (s.fields.length) { btn.textContent = `Bring in ${p.media ? nf.format(p.media) + ' ' : ''}photos`; return; }
+  }
+  if (!F.panel.is('checked')) return;
+  const mine = F.panel.to('starting', F.panel.data);
   btn.disabled = true;
-  try {
-    if (!previewed) {
-      const p = await api('/preview', {source: chosen, config});
-      $('#pv').innerHTML = (p.summary ? `<p>${h(p.summary)}</p>` : '') + p.problems.map(x => `<p class="${p.ok ? 'warn' : 'bad'}">${h(x)}</p>`).join('');
-      if (!p.ok) return;
-      previewed = p;
-      if (s.fields.length) { btn.textContent = `Bring in ${p.media ? nf.format(p.media) + ' ' : ''}photos`; return; }
-    }
-    await api('/jobs', {source: chosen, config});
-    chosen = null; previewed = null; $('#panel').innerHTML = '';
-    toast('Started'); refresh();
-    setTimeout(() => $('#jobs').scrollIntoView({behavior: 'smooth', block: 'center'}), 150);
-  } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+  try { await api('/jobs', {source: mine.id, config: mine.config}); }
+  catch (e) {
+    if (F.panel.data !== mine) return;
+    toast(e.message); btn.disabled = false;
+    return void F.panel.to('checked', mine);
+  }
+  if (F.panel.data === mine) { F.panel.to('closed'); renderSources(); }
+  toast('Started'); refresh();
+  setTimeout(() => $('#jobs').scrollIntoView({behavior: 'smooth', block: 'center'}), 150);
 }
 
 function dur(sec) {
@@ -318,32 +396,32 @@ function renderJobs() {
   // a redraw replaces the field, taking the focus and what was typed with it. Answering clears it.
   if ([...el.querySelectorAll('input[data-typed]')].some(i => i === document.activeElement || i.value)) return;
   const html = S.jobs.map(j => {
-    const live = ['queued', 'running', 'waiting'].includes(j.state);
+    const going = live(j);
     const cur = j.stages.findIndex(s => s.id === j.stage);
     const pct = j.total ? Math.round(100 * (j.done || 0) / j.total) : 25;
     const bars = j.stages.map((s, i) => `<i class="${s.skipped ? 'skip ' : ''}${s.state}" title="${h(s.label)}" ${i === cur ? `style="--p:${pct}%"` : ''}></i>`).join('');
     const added = j.media_after != null && j.media_before != null ? j.media_after - j.media_before : null;
     const status = {queued: 'Waiting its turn', running: '', waiting: 'Needs you', done: 'Done', failed: 'Stopped', cancelled: 'Cancelled'}[j.state];
-    const btns = live ? `<button class="btn" data-cancel="${j.id}">Cancel</button>` : ['failed', 'cancelled'].includes(j.state) ? `<button class="btn ask" data-retry="${j.id}">Try again</button>` : '';
-    return `<div class="job ${live ? 'live' : ''}" id="job-${j.id}"><header><b>${h(j.source_name)}</b><span class="sub">${h(status)}</span><span class="end">${btns}</span></header>
+    const btns = going ? `<button class="btn" data-cancel="${j.id}">Cancel</button>` : ['failed', 'cancelled'].includes(j.state) ? `<button class="btn ask" data-retry="${j.id}">Try again</button>` : '';
+    return `<div class="job ${going ? 'live' : ''}" id="job-${j.id}"><header><b>${h(j.source_name)}</b><span class="sub">${h(status)}</span><span class="end">${btns}</span></header>
       <div class="stages">${bars}</div>
-      ${live && j.state !== 'waiting' ? `<div class="now">${stageText(j)}</div>` : ''}
-      ${live && j.state !== 'waiting' ? stepList(j) : ''}
+      ${going && j.state !== 'waiting' ? `<div class="now">${stageText(j)}</div>` : ''}
+      ${going && j.state !== 'waiting' ? stepList(j) : ''}
       ${promptHtml(j)}
       ${j.state === 'failed' ? `<div class="err">${h(j.error)}</div>` : ''}
       ${j.ready && added != null ? `<div class="done-line">${added > 0 ? `<b>${nf.format(added)}</b> new photos and videos in your library.` : 'Nothing new: you already had all of these.'}
          ${S.mode === 'app' ? ' <a class="link" href="/">See them</a>' : ''}</div>` : ''}
       ${j.warnings.length ? `<div class="warns">${j.warnings.map(h).join('<br>')}</div>` : ''}
-      <details class="log" data-log="${j.id}" ${openLogs.has(j.id) ? 'open' : ''}><summary>Details</summary><pre>…</pre></details></div>`;
+      <details class="log" data-log="${j.id}" ${logs.open.has(j.id) ? 'open' : ''}><summary>Details</summary><pre>…</pre></details></div>`;
   }).join('');
-  if (html === el.dataset.html) return openLogs.forEach(loadLog);   // nothing changed: keep focus, refs and scroll
+  if (html === el.dataset.html) return logs.open.forEach(loadLog);   // nothing changed: keep focus, refs and scroll
   el.innerHTML = el.dataset.html = html;
   el.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => api(`/jobs/${b.dataset.cancel}/cancel`, {}).then(refresh, e => toast(e.message)));
   el.querySelectorAll('[data-retry]').forEach(b => b.onclick = () => api(`/jobs/${b.dataset.retry}/retry`, {}).then(refresh, e => toast(e.message)));
   el.querySelectorAll('[data-answer]').forEach(b => b.onclick = () => answer(b.dataset.answer, b.dataset.v));
   el.querySelectorAll('[data-form]').forEach(f => f.onsubmit = (e) => { e.preventDefault(); const i = f.querySelector('input'); answer(f.dataset.form, i.value); i.value = ''; });
-  el.querySelectorAll('details.log').forEach(d => d.ontoggle = () => { const id = +d.dataset.log; d.open ? (openLogs.add(id), loadLog(id)) : openLogs.delete(id); });
-  openLogs.forEach(loadLog);
+  el.querySelectorAll('details.log').forEach(d => d.ontoggle = () => { const id = +d.dataset.log; d.open ? (logs.open.add(id), loadLog(id)) : logs.open.delete(id); });
+  logs.open.forEach(loadLog);
 }
 
 async function answer(id, value) {
@@ -352,16 +430,16 @@ async function answer(id, value) {
 }
 
 async function loadLog(id) {
-  const have = logs[id] || [];
+  const have = logs.lines[id] || [];
   try {
     const j = await api(`/jobs/${id}?after=${have.length ? have[have.length - 1].id : 0}`);
-    logs[id] = have.concat(j.events).slice(-400);
+    logs.lines[id] = have.concat(j.events).slice(-400);
     if (!j.events.length && have.length && document.querySelector(`details[data-log="${id}"] pre`)?.textContent !== '…') return;
     const pre = document.querySelector(`details[data-log="${id}"] pre`);
-    if (pre) { const end = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8; pre.textContent = logs[id].map(e => e.text).join('\n') || '…'; if (end) pre.scrollTop = pre.scrollHeight; }
+    if (pre) { const end = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8; pre.textContent = logs.lines[id].map(e => e.text).join('\n') || '…'; if (end) pre.scrollTop = pre.scrollHeight; }
   } catch (e) {}
 }
 
-refresh();
+asking.start();
 </script>
 </html>

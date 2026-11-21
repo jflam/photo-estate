@@ -99,6 +99,10 @@ details[open] summary svg { transform: rotate(90deg); }
 <script type="module">
 import { $, esc, MARK } from "/app/dom.js";
 import { fmt, dateParts } from "/app/format.js";
+import { api, isAbort } from "/app/api.js";
+import { latest, STALE } from "/app/fsm.js";
+import { until } from "/app/loop.js";
+import { statsWatch, problem } from "/app/stats-watch.js";
 
 const bytes = n => { if (n == null) return "–"; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; n = +n;
   while (n >= 1000 && i < 4) { n /= 1000; i++; } return (n >= 100 || i === 0 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2)) + " " + u[i]; };
@@ -123,11 +127,10 @@ const panel = (t, h, cls = "") => h ? `<div class="panel well ${cls}"><h3>${t}</
 
 // Photos uploaded from the phone wait in a folder until the catalogue step reads them in. What the step printed
 // is kept out of sight unless it went wrong or you ask.
-let upTimer = null, showLog = false;
-async function uploads() {
-  let d;
-  try { d = await (await fetch("/api/ingest")).json(); } catch { return; }
-  if (!d.enabled) return;
+let showLog = false, lastUp = null, restarting = false, upNote = null;   // upNote: what last went wrong, until the next press
+function showUploads(d) {
+  lastUp = d;
+  if (!d.enabled || restarting) return;
   const up = $("#up"); up.hidden = false;
   const w = d.waiting, failed = d.exit_code != null && d.exit_code !== 0 && !d.running;
   const ago = d.finished_at ? new Date(d.finished_at * 1000).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : null;
@@ -137,26 +140,58 @@ async function uploads() {
   else if (d.restart_needed) t = "New photos are catalogued. The app reads the catalogue when it starts, so restart it to see them in search.";
   else t = w.files ? `${fmt(w.files)} new ${w.files === 1 ? "file" : "files"} (${bytes(w.bytes)}) waiting to be catalogued.` : "Nothing waiting. New photos from your phone show up here.";
   if (ago && !d.running && d.exit_code === 0) t += ` Last run finished ${ago}.`;
-  $("#upText").textContent = t;
-  up.className = "up well" + (d.running ? " live" : failed ? " bad" : w.files || d.restart_needed ? " due" : "");
+  $("#upText").textContent = upNote && !d.running ? upNote : t;
+  up.className = "up well" + (d.running ? " live" : failed || upNote ? " bad" : w.files || d.restart_needed ? " due" : "");
   $("#upRun").disabled = d.running;
   $("#upRun").textContent = d.running ? "Cataloguing…" : failed ? "Try again" : "Catalogue new photos";
   $("#upRun").hidden = !d.running && !failed && !w.files;
   $("#upRestart").hidden = !(d.restart_needed && d.can_restart && !d.running);
+  $("#upRestart").disabled = false;
   const log = $("#upLog"), open = showLog || failed;
   $("#upMore").hidden = !d.log.length || failed;
   $("#upMore").textContent = showLog ? "Hide what it did" : "Show what it did";
   log.hidden = !d.log.length || !open;
   if (!log.hidden) { log.textContent = d.log.join("\n"); log.scrollTop = log.scrollHeight; }
-  clearTimeout(upTimer); upTimer = setTimeout(uploads, d.running ? 2000 : 15000);
 }
-$("#upMore").onclick = () => { showLog = !showLog; uploads(); };
-$("#upRun").onclick = async () => { $("#upRun").disabled = true; await fetch("/api/ingest", { method: "POST" }); uploads(); };
-$("#upRestart").onclick = async () => {
-  $("#upRestart").disabled = true; $("#upText").textContent = "Restarting. The app takes about a minute to load the catalogue.";
-  await fetch("/api/restart", { method: "POST" }).catch(() => {});
-  const wait = setInterval(async () => { try { if ((await fetch("/api/info", { cache: "no-store" })).ok) { clearInterval(wait); location.reload(); } } catch {} }, 4000);
-};
+// Something asked of the uploads did not happen: say so in the panel, in its own words, and let it be asked again.
+function uploadsProblem(text) {
+  upNote = text;
+  $("#up").hidden = false;
+  $("#up").className = "up well bad";
+  $("#upText").textContent = text;
+}
+$("#upMore").addEventListener("click", () => { showLog = !showLog; if (lastUp) showUploads(lastUp); });
+$("#upRun").addEventListener("click", async () => {
+  $("#upRun").disabled = true; upNote = null;
+  try { await api("/api/ingest", {}); }
+  catch (e) { uploadsProblem(`Couldn’t start cataloguing: ${e.message}.`); $("#upRun").disabled = false; $("#upRun").hidden = false; $("#upRun").textContent = "Try again"; return; }
+  watch.now();
+});
+// Restarting: the server goes away and comes back about a minute later. The page stops asking it for
+// anything else, asks whether it is there every 4 s for at most 5 minutes, and reloads when it is.
+const coming = latest();
+$("#upRestart").addEventListener("click", async () => {
+  restarting = true; upNote = null;
+  watch.stop();
+  $("#upRestart").disabled = true; $("#upRun").hidden = true;
+  $("#up").className = "up well live";
+  $("#upText").textContent = "Restarting. The app takes about a minute to load the catalogue.";
+  let back;
+  try {
+    back = await coming.run(async signal => {
+      try { await api("/api/restart", {}, { signal, timeout: 15000 }); }
+      catch (e) { if (isAbort(e) || (e.kind === "http" && !e.retryable)) throw e; }     // no answer: it may be going down already
+      return until(sig => api("/api/info", undefined, { signal: sig, cache: "no-store", timeout: 10000 }).then(() => true, e => { if (isAbort(e)) throw e; return false; }),
+        { until: up => up, every: 4000, timeout: 300000, signal });
+    });
+  } catch (e) { back = { state: "error", error: e }; }
+  if (back === STALE) return;
+  if (back.state === "done") return location.reload();
+  restarting = false;
+  uploadsProblem(back.state === "error" ? `Couldn’t restart the app: ${back.error.message}.` : "The app has not come back after five minutes. It may still be starting.");
+  $("#upRestart").disabled = false;
+  watch.retry();
+});
 
 let drawn = false;
 function render(d) {
@@ -239,23 +274,34 @@ function render(d) {
   if (!drawn) { drawn = true; out.classList.add("rise"); }
   $("#sub").textContent = [`${fmt(total)} ${total === 1 ? "file" : "files"}`, bytes(D.bytes_stored), y0 && y1 ? (y0 === y1 ? y0 : `${y0} – ${y1}`) : ""].filter(Boolean).join("  ·  ");
   $("#hood").ontoggle = e => store.set("estate.hood", e.target.open ? "1" : null);
-  $("#refresh").onclick = () => { $("#sub").textContent = "Measuring the disk…"; load(true); };
+  $("#refresh").onclick = () => { $("#sub").textContent = "Measuring the disk…"; $("#refresh").disabled = true; watch.measure(); };
   $("#debug").onclick = e => { const on = store.get("estate.debug") !== "1"; store.set("estate.debug", on ? "1" : null);
     e.currentTarget.classList.toggle("on", on); e.currentTarget.setAttribute("aria-checked", on); };
 }
 
-let timer = 0;
-async function load(refresh) {
-  clearTimeout(timer);
-  let d;
-  try { d = await (await fetch("/api/stats" + (refresh ? "?refresh=1" : ""))).json(); }
-  catch (e) { $("#sub").textContent = ""; $("#out").innerHTML = `<div class="blank wait">${MARK}<h3>Can’t reach the library</h3><p>The server didn’t answer.</p><button class="btn pri" onclick="location.reload()">Try again</button></div>`; return; }
-  if (d.state === "error") { $("#sub").textContent = ""; $("#out").innerHTML = `<div class="blank wait">${MARK}<h3>Couldn’t take stock</h3><p>${esc(d.error)}</p><button class="btn pri" onclick="location.reload()">Try again</button></div>`; return; }
-  if (d.disk && d.library) render(d);
-  if (d.state === "working") { if (!d.disk) $("#sub").textContent = "Measuring the disk…"; timer = setTimeout(() => load(false), 1500); }
-}
-load(false);
-uploads();
+// One loop asks for the figures (while the server is still measuring) and for the uploads, one request
+// at a time (app/stats-watch.js). It rests while the page is hidden, and stops when the page is left.
+const watch = statsWatch(api, {
+  stats(d) {
+    if (d.disk && d.library) render(d);
+    else if (d.state === "working") $("#sub").textContent = "Measuring the disk…";
+  },
+  statsError(e) {
+    const { title, text } = problem(e);
+    $("#sub").textContent = "";
+    $("#out").innerHTML = `<div class="blank wait">${MARK}<h3>${esc(title)}</h3><p>${esc(text)}</p><button class="btn pri" id="again">Try again</button></div>`;
+    $("#again").addEventListener("click", () => {
+      $("#again").disabled = true; $("#sub").textContent = "Counting…";
+      watch.retry();
+    });
+  },
+  uploads: showUploads,
+  uploadsError() {},        // the panel keeps what it last showed; the loop asks again in 15 s
+});
+document.addEventListener("visibilitychange", () => document.hidden ? watch.pause() : watch.resume());
+addEventListener("pagehide", () => { watch.stop(); coming.cancel(); });
+addEventListener("pageshow", e => { if (e.persisted) watch.retry(); });
+watch.start();
 </script>
 </body>
 </html>

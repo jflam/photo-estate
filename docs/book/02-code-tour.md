@@ -98,12 +98,12 @@ photo-estate/                  the server and the web app (Python run with uv; n
                               ingest-iphone.sh, read by intake/engine.py and upload.py (issue #84, chapter 16)
 
   search.html        2,181  the photo app: Library, Albums and Search (HTML + CSS + its own script, a module)
-  people.html          759  the People page
-  changes.html         445  reviewing an album or change set, at /changes
-  setup.html           367  bringing photos in, at /setup
-  review.html          273  the near-duplicate review page
-  stats.html           261  library info, at /stats
-  compare.html         175  two models' results side by side, unlabelled, and a vote, at /compare
+  people.html          835  the People page
+  changes.html         492  reviewing an album or change set, at /changes
+  setup.html           445  bringing photos in, at /setup
+  stats.html           307  library info, at /stats
+  review.html          275  the near-duplicate review page
+  compare.html         190  two models' results side by side, unlabelled, and a vote, at /compare
   app/estate.css       119  the stylesheet every page shares
   app/sw.js             46  service worker: the "can't reach your photos" page
   app/                      the script every page shares: native ES modules with JSDoc types, imported by
@@ -117,7 +117,18 @@ photo-estate/                  the server and the web app (Python run with uv; n
     format.js           33    fmt, plural, dateParts
     query.js            96    search.html's question as a value and as the address: blank, toParams, fromParams
     layout.js           74    the justified grid's arithmetic: packRows, clampShape, shapeFromByte
-    tests/             835    their unit tests, run by Node's own runner: `npm test` (chapter 17)
+                              what the secondary pages do over time (issue #80; "The web pages" below):
+    loop.js            115    loop(): a page asking the server again and again, one step at a time, paused and
+                              stopped from outside; until(): poll() that answers how it ended instead of throwing
+    work.js            119    single() (a save that can not overlap itself, free again when it fails), batch()
+                              (which of several requests were done when one failed), serial() (one at a time, in order)
+    save-queue.js      115    review.html's saves: one request at a time, a failed one retried under newer choices
+    changes-flow.js     63    changes.html: settle() (the bounded wait for the library), edits() (marks put right
+                              from the server when one fails)
+    people-flow.js      47    people.html: unknownFaces(), the bounded wait for the groups of unnamed faces
+    stats-watch.js      92    stats.html's one loop for the figures and the uploads
+    setup-flow.js      151    setup.html's two strict state machines (the page, the source panel) and their tables
+    tests/           1,653    their unit tests, run by Node's own runner: `npm test` (chapter 17)
     package.json              TypeScript, pinned, to check the modules' types (`npm run typecheck`); with
     package-lock.json         tsconfig.json and .npmrc (the lockfile names no registry). Nothing here is
                               shipped: the browser loads the modules as they are
@@ -135,7 +146,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_job_lifecycles.py races the ingest job, tasks, intake jobs and the sync cursor (issue #86);
                             test_events.py checks the steps' event lines at both ends (issue #84);
                             test_pages.py checks that every page imports only script modules and names that exist,
-                            and that the servers send the modules as JavaScript (issue #89)
+                            and that the servers send the modules as JavaScript (issue #89);
+                            test_pages_browser.py (426 lines, slow tier) drives the secondary pages in a real
+                            browser with Playwright and makes their requests fail or never end (issue #80)
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)
@@ -253,6 +266,9 @@ import { toast } from "/app/toast.js";
 | [app/toast.js](../../photo-estate/app/toast.js) | `toast(message, { action })` |
 | [app/format.js](../../photo-estate/app/format.js) | `fmt`, `plural`, `dateParts` |
 | [app/query.js](../../photo-estate/app/query.js), [app/layout.js](../../photo-estate/app/layout.js) | The parts of `search.html` that are pure functions: the question and its address, and the justified grid's rows |
+| [app/loop.js](../../photo-estate/app/loop.js) | `loop(step)`: asking the server again and again for as long as a page is open. One step at a time (a timer and a click can never both start one), the step says how long to wait, a failing step does not end it, `pause()`/`resume()` for a hidden page, `stop()` aborts the step under way. `until(step, options)`: `poll()` that resolves to `{ state: "done" \| "timeout" \| "error" }` for a page that shows how the wait ended |
+| [app/work.js](../../photo-estate/app/work.js) | `single()`: work that must not overlap itself, not busy any more when it fails; `batch(items, step)`: several requests in a row, and which were done when one failed; `serial({ settle })`: requests one at a time in the order asked, and one call to put the page right after a failure |
+| [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |
 
 The browser fetches each module as it is, from `/app/<name>.js`: [pages.py](../../photo-estate/pages.py)'s
 `module()` says which files those are (the modules, not their tests or `package.json`), and every server
@@ -263,6 +279,27 @@ handlers are attached in the script.
 
 The modules carry JSDoc types, which TypeScript checks without compiling anything, and unit tests that
 run under Node with no browser ([chapter 17](17-testing-and-demo.md)).
+
+#### What a page does when a request fails or never ends
+
+A page that saves as you go, or waits for the server to finish something, is a small program in time,
+and the ways it goes wrong are all of one kind: a flag set before an `await` and never cleared when the
+request fails, a timer that calls itself for ever, a failed save put back on top of a newer choice
+([issue #80](https://github.com/jflam/photo-estate/issues/80)). The five secondary pages therefore keep
+that behaviour in the modules above, where each rule is a unit test, and ask the server only through
+`api.js` (so an answer that is not 2xx is an error, never drawn as data; `tests/test_pages.py` refuses a
+`fetch()` in them). What each page now keeps true:
+
+| Page | What holds | Bounds |
+|---|---|---|
+| `review.html` | `saveQueue`: one save in flight, the rest gathered into the next. A save that fails goes back in the queue *under* what was chosen since (`{ ...failed, ...pending }`), so the retry sends the newer choice. The status line says so, with **Try now** | sent 400 ms after the last click; retried after 3, 6, 12, 24, then every 30 s |
+| `people.html` | Saving a page of faces is one request under `single()`: when it fails the toast says why, the choices stay and Save works again. Taking faces off a person is several requests under `batch()`: the ones that were done leave the page, the rest keep their marks, and the button sends only what is left. Every other change (naming a group, renaming, the photo's buttons) says so in a toast when it fails. A view that can not be loaded says so, with **Try again** | the wait for the groups of unnamed faces (`unknownFaces`): asked after 1.5 s, then half as long again each time up to 10 s, for at most 10 minutes; ends on `ready` or `failed`; cancelled when the view changes |
+| `changes.html` | Marks, apply, revert, commit and reopen go one at a time in the order made (`edits`, over `serial()`). If one fails, the set is read again from the server once nothing more is on its way and the page shows that; if it can not be read either, the page says it may be wrong, with **Read it again**. After apply or revert, `settle` asks the set's check until the app has taken the change in | `settle`: every 700 ms for at most 2 minutes, then "Still updating" with **Check again**; cancelled by a newer change, by leaving, and while the page is hidden |
+| `stats.html` | `statsWatch`: one `loop()` asks for the uploads and the figures in turn, so two requests are never in flight. A failed `/api/stats` is "Couldn't take stock" or "Can't reach the library" with **Try again**; a catalogue run or a restart that can not be started says why in the uploads panel | figures every 1.5 s while the server is measuring; uploads every 2 s during a run, else every 15 s; after a restart `/api/info` every 4 s for at most 5 minutes; paused while the page is hidden |
+| `setup.html` | Two strict machines from `setup-flow.js`, each state owning its data. The page: `loading`, `place`, `idle`, `watching`, `answering` (the states in which `/api/intake` is asked), `opening` (waiting for the photo app), `stuck`, `app`. The source panel: `closed`, `open`, `checking`, `checked`, `starting`, with `{ id, config, preview }` handed from state to state, so a preview never outlives the text it was made for and an answer for a panel that has moved on is dropped | asked every 1.2 s while a job is live, else every 8 s; `opening` asks `/api/info` every 1.5 s for at most 10 minutes, then "Still not open" with **Try again** |
+
+`compare.html` asks through `api.js` as well: only the latest search's answer is drawn (`latest()`), a
+vote counts once, and the wait for the second model's text side ends after five minutes.
 
 ## How the pieces depend on each other
 

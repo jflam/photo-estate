@@ -78,10 +78,14 @@ form .btn { height: 44px; }
 </div>
 <script type="module">
 import { $, esc } from "/app/dom.js";
+import { api } from "/app/api.js";
+import { latest, STALE } from "/app/fsm.js";
+import { until } from "/app/loop.js";
 
 const EXAMPLES = ["kids at the lake", "birthday cake with candles", "snowy mountains", "a dog on the beach",
   "fireworks at night", "a crowded city street", "grandparents with a baby", "food on a plate"];
 let info = null, cur = null, voted = false;
+const searching = latest();
 const short = m => (m || "").replace(/^google\//, "");
 
 function tally() {
@@ -91,12 +95,21 @@ function tally() {
                            : "No votes yet.";
 }
 
+// The second model's text side loads after the page is up: ask every 3 s until it is ready, for at most
+// five minutes, and say so if it is not by then or the server can not be asked.
 async function loadInfo() {
-  info = await (await fetch("/api/compare/info")).json();
-  $("#status").innerHTML = `<b>${info.both.toLocaleString()}</b> photos have vectors from both models` +
-    (info.b.ready ? "" : ` · the second model's text side is still loading`);
-  tally();
-  if (!info.b.ready) setTimeout(loadInfo, 3000);
+  const end = await until(signal => api("/api/compare/info", undefined, { signal }), {
+    until(i) {
+      info = i;
+      if (!searching.busy && !cur) $("#status").innerHTML = `<b>${i.both.toLocaleString()}</b> photos have vectors from both models` +
+        (i.b.ready ? "" : ` · the second model's text side is still loading`);
+      tally();
+      return i.b.ready;
+    },
+    every: 3000, timeout: 300000, retries: 2 });
+  if (end.state === "done" || cur || searching.busy) return;
+  $("#status").textContent = end.state === "timeout" ? "The second model's text side has not loaded after five minutes. Reload the page to look again."
+    : `Couldn't ask the server about the two models: ${end.error.message}`;
 }
 
 function column(side, label) {
@@ -126,9 +139,10 @@ async function run(q) {
   $("#q").value = q;
   history.replaceState(null, "", "?q=" + encodeURIComponent(q));
   $("#status").textContent = "Searching…";
-  const res = await fetch("/api/compare?k=48&q=" + encodeURIComponent(q));
-  const body = await res.json();
-  if (!res.ok) { $("#status").textContent = body.error || "Something went wrong"; $("#out").innerHTML = ""; $("#vote").hidden = true; return; }
+  let body;                          // the answer to the latest search only: an older one is dropped
+  try { body = await searching.run(signal => api("/api/compare?k=48&q=" + encodeURIComponent(q), undefined, { signal })); }
+  catch (e) { $("#status").textContent = e.message || "Something went wrong"; $("#out").innerHTML = ""; $("#vote").hidden = true; cur = null; return; }
+  if (body === STALE) return;
   cur = body;
   cur.order = Math.random() < .5 ? ["a", "b"] : ["b", "a"];
   voted = false;
@@ -140,15 +154,16 @@ async function run(q) {
 async function vote(which) {
   if (!cur || voted) return;
   const winner = which === "same" ? "same" : which === "left" ? cur.order[0] : cur.order[1];
-  const res = await fetch("/api/compare/vote", {method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({q: cur.q, winner, left: cur.order[0], k: cur.a.results.length})});
-  const body = await res.json();
-  if (res.ok) { info.votes = body.votes; tally(); }
+  const asked = cur;
+  voted = true;                      // at once, so a second press is not a second vote
+  let saved = true;
+  try { const body = await api("/api/compare/vote", { q: cur.q, winner, left: cur.order[0], k: cur.a.results.length }); if (info) { info.votes = body.votes; tally(); } }
+  catch (e) { saved = false; }
+  if (cur !== asked) return;         // another search was made meanwhile
   cur.winner = winner;
-  voted = true;
   render();
   const name = winner === "same" ? "Same" : `${which === "left" ? "Left" : "Right"} was ${short(cur[winner].model)}`;
-  $("#status").innerHTML += ` · <b>${esc(name)}</b>`;
+  $("#status").innerHTML += ` · <b>${esc(name)}</b>` + (saved ? "" : ` · the vote could not be saved`);
 }
 
 $("#f").onsubmit = e => { e.preventDefault(); run($("#q").value); };

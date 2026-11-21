@@ -16,6 +16,7 @@ h1 { font-size: 32px; line-height: 1.1; font-weight: 700; letter-spacing: -.03em
 .top .sub { margin-top: 4px; font-size: 14px; }
 .status { font-size: 13.5px; color: var(--muted); padding-bottom: 2px; }
 .status.err { color: var(--no); font-weight: 600; }
+.status .link { margin-left: 10px; }
 .bar { height: 4px; background: var(--well-2); border-radius: 2px; margin: 16px 0 0; overflow: hidden; }
 .bar > i { display: block; height: 100%; background: var(--sun); border-radius: 2px; width: 0; transition: width .4s var(--ease); }
 nav { display: flex; gap: 6px; overflow-x: auto; padding: 14px 0 10px; scrollbar-width: none; }
@@ -76,7 +77,7 @@ figcaption .dim { color: var(--muted); font-variant-numeric: tabular-nums; }
       <h1>Duplicate review</h1>
       <div class="sub num" id="summary">Loading…</div>
     </div>
-    <div class="status" id="status"></div>
+    <div class="status" role="status"><span id="status"></span><button class="link" id="retry" hidden>Try now</button></div>
   </div>
   <div class="bar"><i id="progress"></i></div>
   <nav id="tabs"></nav>
@@ -97,9 +98,13 @@ figcaption .dim { color: var(--muted); font-variant-numeric: tabular-nums; }
 <div id="overlay"><img alt=""><div class="cap"></div></div>
 <script type="module">
 import { $, esc } from "./app/dom.js";
+import { createApi } from "./app/api.js";
+import { saveQueue } from "./app/save-queue.js";
+
+const api = createApi({ base: "./" });          // estate.py review serves everything next to its page
 
 const PAGE = 30;
-let groups = [], cats = {}, decisions = {}, cat = null, page = 0, focus = 0, pending = {}, saveTimer = null;
+let groups = [], cats = {}, decisions = {}, cat = null, page = 0, focus = 0;
 const fmtSize = b => b >= 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.round(b / 1e3) + " KB";
 const fmtDate = s => s ? s.replace("T", " ").slice(0, 16) + " UTC" : "no date";
 const fmtSpan = s => s < 1 ? "same second" : s < 120 ? Math.round(s) + " s apart" : s < 7200 ? Math.round(s / 60) + " min apart"
@@ -116,27 +121,24 @@ function visible() {
 function setDecision(g, keep, markReviewed = true) {
   if (keep.size === 0) { status("A group must keep at least one photo.", true); return false; }
   decisions[g.id] = { keep: [...keep], reviewed: markReviewed || reviewed(g), category: g.category };
-  pending[g.id] = decisions[g.id];
-  clearTimeout(saveTimer); saveTimer = setTimeout(save, 400);
-  status("Saving…");
+  saves.put(g.id, decisions[g.id]);
   return true;
 }
 
-async function save() {
-  const body = pending; pending = {};
-  try {
-    const r = await fetch("decisions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!r.ok) throw new Error(r.status);
-    status("All changes saved");
-  } catch (e) {
-    Object.assign(pending, body);
-    status("Couldn't save. Is estate.py review still running? Retrying…", true);
-    clearTimeout(saveTimer); saveTimer = setTimeout(save, 3000);
-  }
-  summary();
-}
+// Choices are saved as they are made: one request at a time, a moment after the last click. A save that
+// fails is sent again by itself (later each time, or at once with "Try now"), carrying whatever has been
+// chosen since: a newer choice is never replaced by the older one that failed (app/save-queue.js).
+const saves = saveQueue(body => api("decisions", body, { timeout: 30000 }), {
+  onState(state) {
+    if (state === "saved") status("All changes saved");
+    else if (state === "failed") status("Couldn’t save. Is estate.py review still running? Retrying…", true);
+    else status("Saving…");
+    $("#retry").hidden = state !== "failed";
+  },
+});
+$("#retry").addEventListener("click", () => saves.flush());
 
-function status(t, err = false) { const s = $("#status"); s.textContent = t; s.classList.toggle("err", err); }
+function status(t, err = false) { $("#status").textContent = t; $("#status").parentElement.classList.toggle("err", err); }
 
 function summary() {
   const done = groups.filter(reviewed).length;
@@ -259,8 +261,8 @@ document.addEventListener("keydown", e => {
 
 (async () => {
   try {
-    const [r1, r2] = await Promise.all([fetch("groups.json"), fetch("decisions.json")]);
-    const data = await r1.json(); decisions = await r2.json();
+    const [data, saved] = await Promise.all([api("groups.json"), api("decisions.json")]);
+    decisions = saved;
     groups = data.groups; cats = data.categories;
     cat = Object.keys(cats).find(k => groups.some(g => g.category === k));
     render(); summary(); status("All changes saved");

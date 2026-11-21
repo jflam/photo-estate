@@ -67,6 +67,16 @@ The rules that make this safe:
 4. **A set is undone as one unit.** `revert` takes back everything it did, and keeps your marks.
    `commit` says it is finished; nothing about it changes until it is `reopen`ed.
 
+The page keeps itself honest about what the server has
+([app/changes-flow.js](../../photo-estate/app/changes-flow.js), issue #80). A mark shows at once and is
+saved behind it; marks, apply, revert, commit and reopen are sent one at a time in the order made, so an
+apply never overtakes the mark made just before it. If one of them fails, the page reads the set again
+once nothing more is on its way and shows that, with a toast saying what could not be saved; if the set
+can not be read either, it says the page may not show the set as it is and offers **Read it again**.
+After an apply or a revert the app re-reads the library, and the page asks the set's `check` every 700 ms
+until it has; after two minutes it stops, says "Still updating" (the change itself is saved) and offers
+**Check again**, instead of asking for ever.
+
 The first (and so far only) operation is **hide**: the photo stays in the store and the catalog and is
 left out of every view (search, the Library, People, and the copy a phone keeps). Files are never
 touched. The `hidden` table is keyed by photo *and* set, so a photo two sets hide stays hidden until

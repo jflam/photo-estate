@@ -72,6 +72,9 @@ Each script is marked with what it needs (`pyproject.toml` declares the markers)
 | `slow`, `server` | `test_changes`, `test_favorite`, `test_layout`, `test_tasks`, `test_mcp` | Start the real app (`uv run embed.py serve --demo`), whose environment has torch and transformers: gigabytes on a fresh Linux machine. `test_mcp` waits two minutes for a search without the model |
 | `slow`, `server`, `model` | `test_albums`, `test_connections` | Also need the SigLIP 2 model in the Hugging Face cache: a text search, and uploads embedded as they arrive |
 
+`tests/test_pages_browser.py` is `slow` and `server` too, but an ordinary pytest file, not a script: it
+needs a browser as well, and skips without one (see "The pages' script modules" below).
+
 By default pytest runs each script with its own Python, the environment `uv sync` builds from
 [`pyproject.toml`](../../photo-estate/pyproject.toml) and its lockfile
 [`uv.lock`](../../photo-estate/uv.lock), so the fast tier uses exactly the pinned versions. The
@@ -146,15 +149,47 @@ which needs a browser or builds anything:
   without, no answer, a timeout, a cancellation); the state machine's legal and refused steps;
   `latest()` dropping the answer to a question that was replaced; `poll()` stopping at its bounds, when
   cancelled, and riding out as many failures as it is told to; the toast against a stand-in element; the
-  search question to its address and back; and the grid's rows.
+  search question to its address and back; and the grid's rows. The modules behind the secondary pages
+  ([issue #80](https://github.com/jflam/photo-estate/issues/80)) are tested the same way, with requests
+  the test settles and timers it fires by hand (`tests/helpers.js`): a newer review choice survives a
+  failed save and is what the retry sends, and saves never overlap or reorder (`save-queue.test.js`); a
+  busy flag is cleared by a failed save, and a batch that fails midway says what was applied
+  (`work.test.js`); the wait for the unnamed faces stops on `failed`, at its bound and when cancelled
+  (`people-flow.test.js`); `settle` stops at its bound and on abort, and a failed mark is put right from
+  the server (`changes-flow.test.js`); the stats loop never has two requests in flight and shows a 500
+  as an error (`stats-watch.test.js`); `loop()` under every interleaving of start, stop, pause and now
+  (`loop.test.js`); and the setup machines take every step in their tables and refuse every other
+  (`setup-flow.test.js`).
 
 On the Python side, `tests/test_pages.py` (fast tier) holds the two together: every page imports only
 modules that are served and names they export, no page has grown its own copy of `esc` or `api` again,
 and the photo app and the setup server send the modules as `text/javascript`.
 
-What none of this covers is the pages running in a browser. For a change to a page, drive the real
-page on the demo library with Playwright, in light and dark, and read the console: a module that fails
-to load, or a name a page's script no longer has, shows there and nowhere else.
+`tests/test_pages.py` also refuses a `fetch()` or a `setInterval()` in the secondary pages: they ask
+the server through `api.js`, `loop()` and `poll()`.
+
+**In a browser.** [`tests/test_pages_browser.py`](../../photo-estate/tests/test_pages_browser.py)
+(slow tier) drives the secondary pages with Playwright and makes their requests fail or never end with
+request interception (`page.route`), moving the page's own clock forward (`page.clock`) where a bound is
+minutes away: on `review.html` a choice made while a save is failing is the one saved; on `people.html`
+Save works again after a 500, a batch that fails midway leaves the page in step with the server, and
+the wait for the unnamed faces ends on `failed`, on a change of view and after ten minutes; on
+`changes.html` a library that never settles is given up on after two minutes with a way to check again,
+and a refused mark is put back from the server; on `stats.html` a 500 is an error and the page never has
+two polls in flight. Each test starts a real server (`embed.py serve --demo`, `estate.py review`,
+`faces.py serve`) on the demo library or a scratch copy of its catalog (the People page's copy is given
+synthetic faces, since the demo has none), and fails on any uncaught error or console error in the page.
+Playwright is in the dev group; the tests use its own Chromium if it has one
+(`uv run playwright install chromium-headless-shell`), else any Chromium already in Playwright's cache,
+and are skipped when there is none. CI does not run them (they are slow, and it has no browser).
+
+```bash
+uv run pytest tests/test_pages_browser.py     # about 15 s once the servers' environments exist
+```
+
+Those tests cover the regressions; they do not look at the pages. For a change to a page, still drive
+the real page on the demo library with Playwright, in light and dark, and read the console: a module
+that fails to load, or a name a page's script no longer has, shows there and nowhere else.
 
 The iPhone app has no unit tests of its own. It was checked in the iOS Simulator against the demo
 library (104 photos), with the server up and then stopped; `ios/project-sim.yml` builds it for a

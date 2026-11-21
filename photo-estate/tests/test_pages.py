@@ -6,7 +6,8 @@ page imports by address (/app/dom.js); nothing is bundled. Checked here, without
 - the photo app and the setup server send them as JavaScript (a browser refuses a module sent as
   anything else), the photo app revalidated like a page;
 - every page imports only modules that exist, and only names those modules export;
-- no page has its own copy of a shared helper again (esc, $, api, toast, machine).
+- no page has its own copy of a shared helper again (esc, $, api, toast, machine);
+- the secondary pages ask the server only through api.js: no fetch() or setInterval() of their own (issue #80).
 
 The modules' own unit tests are in app/tests/ (`npm test` in photo-estate/app).
 
@@ -106,6 +107,17 @@ def test_no_page_has_its_own_copy_of_a_shared_helper(page):
                           ("MARK", r"(?:const|let|var)\s+MARK\b")):
         assert not re.search(pattern, src), f"{page} defines {what} itself: import it from app/"
     assert '"use strict"' not in src, f"{page}: a module is strict already"
+
+
+@pytest.mark.parametrize("page", [p for p in PAGES if p != "search.html"])
+def test_the_secondary_pages_ask_the_server_only_through_api_js(page):
+    """Issue #80: fetch() by hand is how a page came to draw an error as if it were data (no `r.ok`),
+    and a timer that calls itself is how it came to ask for ever. api.js checks every answer; loop.js
+    and fsm.js's poll() are the bounded, cancellable ways to ask again. (search.html: issue #81.)"""
+    src = script(page)
+    assert not re.search(r"\bfetch\(", src), f"{page} calls fetch() itself: use api() from app/api.js"
+    assert not re.search(r"\bsetInterval\(", src), f"{page} polls with setInterval: use loop() or poll()"
+    assert "/app/api.js" in src
 
 
 def test_esc_escapes_both_quotes():

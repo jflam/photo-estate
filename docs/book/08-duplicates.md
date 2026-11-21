@@ -141,7 +141,7 @@ and the biggest groups with each member's distance from the centre, dimensions, 
 uv run estate.py --db estate.db review --store STORE     # http://127.0.0.1:8765/
 ```
 
-A small local web app ([review.html](../../photo-estate/review.html), 273 lines, served by a
+A small local web app ([review.html](../../photo-estate/review.html), 275 lines, served by a
 `ThreadingHTTPServer` inside `cmd_review`) for going through the groups:
 
 ```mermaid
@@ -177,6 +177,11 @@ How it behaves:
   first, and any thumbnail requested before it exists is rendered on demand.
 - **Decisions** are merged into `review/decisions.json` under a lock and written atomically. A
   decision is accepted only if its `keep` list is non-empty: a group can never be "keep nothing".
+- **Saving** is one request at a time, 400 ms after the last click
+  ([app/save-queue.js](../../photo-estate/app/save-queue.js)). If a save fails (the server was stopped,
+  the disk is full) the page says so and tries again by itself, after 3 s, then 6, 12, 24 and every 30 s,
+  or at once with **Try now**. What the failed save carried is sent again *under* whatever has been
+  chosen since, so a choice made while it was failing is never replaced by the older one (issue #80).
 
 > **Important:** the review page only *records* decisions. Nothing in the repository reads
 > `decisions.json` and removes files; the page, like the rest of the system, never deletes a photo.

@@ -4,7 +4,7 @@ A face vector says *what a face looks like*, never *whose face it is*. Turning v
 takes ground truth, and the only ground truth available is Google's people tags and **you**. This
 chapter is about the system built to get the most out of both while asking you for as little as
 possible: [faces.py](../../photo-estate/faces.py)'s `People` class (about 560 lines) and the page
-[people.html](../../photo-estate/people.html) (774 lines).
+[people.html](../../photo-estate/people.html) (835 lines).
 
 The README's three-sentence version: *start from Google's people tags, find the same faces everywhere
 else, follow children from baby to adult a couple of years at a time, and let you confirm in bulk and
@@ -222,8 +222,12 @@ a known person.
 The job's state (`clusters_state`: `waiting`, `working`, `ready`, or `failed`) changes under the
 People lock, and the new groups are swapped in with it, so a reader sees the old groups or the new ones,
 never half of them. If the grouping raises, the state is `failed` with the error (`clusters_error`);
-`/api/people/unknown` reports both, and the page stops asking every 1.5 s and says the unnamed faces
-could not be grouped, while naming everyone else still works (issue #82).
+`/api/people/unknown` reports both, and the page stops asking and says the unnamed faces
+could not be grouped, while naming everyone else still works (issue #82). The grouping runs once, when
+`People` is made, so only a restart runs it again; the page says that too. While the state is `waiting`
+or `working` the page asks again after 1.5 s, then half as long again each time up to 10 s, and for at
+most ten minutes, after which it says it is still grouping and offers **Check again**; the asking stops
+the moment you go to another view ([app/people-flow.js](../../photo-estate/app/people-flow.js), issue #80).
 
 ## The corrections you can make
 
@@ -306,6 +310,15 @@ each face is, to show they are enough.
 
 [people.html](../../photo-estate/people.html) is a single-page app with hash routes. It talks only to
 the `/api/people/*` endpoints.
+
+A save that fails never leaves the page pretending (issue #80). Saving a page of faces
+(`label-many`, one request, all or nothing) runs under `single()` from
+[app/work.js](../../photo-estate/app/work.js): on a failure the toast says why, the choices are still
+there, and Save works again. Taking faces off a person in **Find mistakes** is several requests (one for
+each face given to someone else, one for the rest), run by `batch()`: if one fails, the faces already
+taken off leave the page, as they have left the person on the server, the others keep their marks, and
+the button counts and sends only what is left. A view whose data can not be loaded shows "Could not open
+this" with **Try again**.
 
 ```mermaid
 flowchart LR
