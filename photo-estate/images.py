@@ -263,6 +263,8 @@ class Images:
         import video
         c, d = self.live.cat, self.cache / "streams"
         d.mkdir(parents=True, exist_ok=True)
+        for part in d.glob("*.tmp"):          # a copy the app was stopped in the middle of (one run at a time: none is in use)
+            part.unlink(missing_ok=True)
         have = {p.name[:64] for p in d.iterdir() if p.suffix in (".mp4", ".failed")}
         todo = []
         for s in (c.shas[i] for i in c.newest):

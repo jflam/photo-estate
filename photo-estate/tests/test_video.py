@@ -711,8 +711,10 @@ def test_copies_are_made_in_the_background(clips, tmp_path, monkeypatch):
         broken: {"ext": ".mp4", "kind": "video", "path": "a/broken.mp4", "dur": 5.0}})
     im = Images(SimpleNamespace(cat=cat), store, tmp_path / "cache", tmp_path / "cache")
     monkeypatch.setattr(video, "COPY_OVER", 1)
-    im._streams()
     d = tmp_path / "cache" / "streams"
+    d.mkdir(parents=True)
+    (d / f"{light}.mp4.123.tmp").write_bytes(b"half a copy, from a run that was stopped")
+    im._streams()
     assert sorted(p.name for p in d.iterdir()) == sorted([f"{heavy}.mp4", f"{broken}.failed"])
     assert im.video_file(heavy)[0] == d / f"{heavy}.mp4" and im.video_file(broken)[0].parent != d
     made = (d / f"{heavy}.mp4").stat().st_mtime_ns
