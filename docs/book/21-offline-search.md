@@ -127,7 +127,7 @@ GET /api/search?q=dog+in+the+snow&names=0&limit=300&cursor=0&dedupe=1
 GET /api/similar?sha=...
 ```
 
-(`Remote.search` in [Query.swift](../../ios/PhotoEstate/Catalog/Query.swift).) With the Videos chip on,
+(`Remote.search` in [Query.swift](../../ios/PhotoEstate/Catalog/Query.swift).) With Videos chosen in the scope bar,
 `kind=video` goes too, so "a birthday cake" among the videos is ranked by the server by each video's
 best frame, and each row says where in its video that frame is (`at`), which the viewer starts from.
 The response has the same

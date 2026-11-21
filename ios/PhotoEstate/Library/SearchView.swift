@@ -16,6 +16,7 @@ struct SearchView: View {
     @State private var albumTitle = ""
     @State private var making = false
     @State private var problem: String?        // why the album could not be made
+    @State private var hasVideos = false       // the library has videos: the scope bar (All, Photos, Videos) is offered
 
     /// Typing something that is not yet the question: offer filters for it instead of the page behind.
     private var suggesting: Bool {
@@ -50,6 +51,9 @@ struct SearchView: View {
             Button("OK", role: .cancel) {}
         } message: { Text(problem ?? "") }
         .onAppear { model.reload(reset: false) }
+        .task(id: sync.revision) {
+            hasVideos = (try? await Catalog.shared.store.read { try $0.one("SELECT 1 FROM photos WHERE kind='video' LIMIT 1") { _ in true } ?? false }) ?? false
+        }
         .onChange(of: sync.revision) { _, _ in model.catalogChanged() }
         .onChange(of: LocalPhotos.shared.revision) { _, _ in model.catalogChanged() }
     }
@@ -132,6 +136,20 @@ struct SearchView: View {
             .padding(.horizontal, 14)
             .animation(.snappy(duration: 0.2), value: typing)
 
+            // The scope bar, as under a search field in Mail or Files: what kind of thing is looked for. It is there
+            // from the moment the field is tapped, so the kind can be chosen before the words are typed.
+            if hasVideos && (typing || !model.query.isEmpty) && model.query.similar == nil {
+                Picker("Search in", selection: Binding(get: { model.query.scope }, set: { new in
+                    Haptics.tick()
+                    var q = model.query
+                    q.scope = new
+                    model.query = q
+                })) {
+                    ForEach(Query.Scope.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 14)
+            }
             if !model.query.isEmpty && !suggesting {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) { ForEach(Pill.allCases.sorted { a, b in (a.value(model.query, trips: model.trips) != nil ? 0 : 1) < (b.value(model.query, trips: model.trips) != nil ? 0 : 1) }) { chip($0) } }
@@ -448,7 +466,7 @@ struct Cover: View {
 
 /// The filter chips above the grid.
 enum Pill: String, CaseIterable, Identifiable {
-    case videos, place, people, albums, trips, dates, camera, fav      // (in the order the chips stand)
+    case place, people, albums, trips, dates, camera, fav      // (in the order the chips stand)
     var id: String { rawValue }
 
     var title: String {
@@ -460,18 +478,17 @@ enum Pill: String, CaseIterable, Identifiable {
         case .dates: "When"
         case .camera: "Camera"
         case .fav: "Favourites"
-        case .videos: "Videos"
         }
     }
 
-    var symbol: String? { self == .fav ? "heart" : self == .videos ? "play.rectangle" : nil }
+    var symbol: String? { self == .fav ? "heart" : nil }
 
     /// A chip that is on or off, with no sheet behind it.
-    var isToggle: Bool { self == .fav || self == .videos }
+    var isToggle: Bool { self == .fav }
 
     func toggled(_ q: Query) -> Query {
         var q = q
-        if self == .fav { q.fav.toggle() } else if self == .videos { q.videos.toggle() }
+        if self == .fav { q.fav.toggle() }
         return q
     }
 
@@ -482,7 +499,7 @@ enum Pill: String, CaseIterable, Identifiable {
         case .albums: [.album]
         case .trips: [.trip]
         case .camera: [.camera, .lens]
-        case .dates, .fav, .videos: []
+        case .dates, .fav: []
         }
     }
 
@@ -500,7 +517,6 @@ enum Pill: String, CaseIterable, Identifiable {
     func value(_ q: Query, trips: [Trip]) -> String? {
         switch self {
         case .fav: return q.fav ? "Favourites" : nil
-        case .videos: return q.videos ? "Videos" : nil
         case .dates: return q.from == nil && q.to == nil ? nil : Dates.range(q.from, q.to)
         default:
             var picked = facets.flatMap { q.picked($0) }
@@ -515,7 +531,6 @@ enum Pill: String, CaseIterable, Identifiable {
         var q = q
         switch self {
         case .fav: q.fav = false
-        case .videos: q.videos = false
         case .dates: q.from = nil; q.to = nil
         default: for f in facets { q.picks[f] = nil }
         }

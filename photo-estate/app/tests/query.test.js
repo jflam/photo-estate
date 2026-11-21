@@ -95,7 +95,12 @@ test("videos only: kind=video in the address, and a filter", () => {
   assert.equal(filtered(s), true);
   assert.equal(isEmpty(s), false, "every video is a question by itself");
   assert.equal(fromParams(new URLSearchParams("q=waterfall&kind=video")).video, true);
-  assert.equal(fromParams(new URLSearchParams("kind=photo")).video, false, "only videos are a filter of the page's");
+  const stills = fromParams(new URLSearchParams("kind=photo"));
+  assert.deepEqual([stills.video, stills.photo], [false, true]);
+  assert.equal(String(toParams(stills)), "kind=photo");
+  assert.equal(filtered(stills), true);
+  assert.equal(isEmpty(stills), false);
+  assert.equal(fromParams(new URLSearchParams("kind=video")).photo, false);
   const c = copy(s); c.video = false;
   assert.equal(s.video, true);
 });

@@ -36,9 +36,21 @@ struct Query: Equatable {
     var to: Int?
     var fav = false
     var videos = false                // videos only
+    var stills = false                // photos only (never with `videos`: `scope` sets one, the other or neither)
     var order: Order?
 
-    var isFiltered: Bool { picks.values.contains { !$0.isEmpty } || event != nil || stack != nil || from != nil || to != nil || fav || videos }
+    var isFiltered: Bool { picks.values.contains { !$0.isEmpty } || event != nil || stack != nil || from != nil || to != nil || fav || videos || stills }
+
+    /// What kind of thing is looked for: the search field's scope bar (All, Photos, Videos).
+    enum Scope: String, CaseIterable, Identifiable {
+        case all = "All", photos = "Photos", videos = "Videos"
+        var id: String { rawValue }
+    }
+
+    var scope: Scope {
+        get { videos ? .videos : stills ? .photos : .all }
+        set { videos = newValue == .videos; stills = newValue == .photos }
+    }
     var isEmpty: Bool { text.isEmpty && similar == nil && !isFiltered }
 
     func picked(_ f: Facet) -> [String] { picks[f] ?? [] }
@@ -63,6 +75,7 @@ struct Query: Equatable {
         if let to { out.append(.init(name: "to", value: Query.month(to))) }
         if fav { out.append(.init(name: "fav", value: "1")) }
         if videos { out.append(.init(name: "kind", value: "video")) }
+        if stills { out.append(.init(name: "kind", value: "photo")) }
         if let stack { out.append(.init(name: "stack", value: stack)) }
         if let order { out.append(.init(name: "sort", value: order.rawValue)) }
         out += [.init(name: "limit", value: String(limit)), .init(name: "cursor", value: String(cursor)),
@@ -255,6 +268,7 @@ enum Reader {
         }
         if q.fav { p.clauses.append(Clause(key: "fav", sql: "p.fav=1", args: [])) }
         if q.videos { p.clauses.append(Clause(key: "videos", sql: "p.kind='video'", args: [])) }
+        if q.stills { p.clauses.append(Clause(key: "stills", sql: "p.kind IS NOT 'video'", args: [])) }
         if let s = q.stack { p.clauses.append(Clause(key: "stack", sql: "p.stack=?", args: [s])) }
         if let e = q.event {
             p.clauses.append(Clause(key: "event", sql: "p.event=?", args: [e]))

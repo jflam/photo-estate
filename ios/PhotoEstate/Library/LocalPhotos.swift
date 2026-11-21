@@ -266,6 +266,7 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
         return pending.filter { t in
             if q.fav && !t.fav { return false }
             if q.videos && !t.video { return false }
+            if q.stills && t.video { return false }
             if hideShots && screenshots.contains(t.sha) { return false }
             if q.from != nil || q.to != nil {
                 let ym = Catalog.monthNumber(t.when)

@@ -171,7 +171,7 @@ def test_videos_chip_tiles_and_playing(app, page):
     p.goto(app + "/?kind=video")
     p.wait_for_selector("#sGrid .t img.in")
     assert p.inner_text("#sHead h1") == "Videos"
-    assert p.locator('#chips .chip.on[data-pill="video"]').count() == 1
+    assert p.get_attribute('#chips .scope [data-scope="video"]', "aria-checked") == "true"
     badges = p.eval_on_selector_all("#sGrid .t", "ts => ts.map(t => t.querySelector('.dur')?.textContent)")
     assert sorted(badges) == ["0:05", "0:12"], badges
 
@@ -296,3 +296,28 @@ def test_a_live_tile_plays_while_held_and_does_not_open(app, page):
 
     p.mouse.click(x, y)
     p.wait_for_selector("#v.on")
+
+
+def test_the_scope_control_is_there_before_a_search_and_narrows_one(app, page):
+    """All, Photos, Videos: offered on Search's first page, before anything is typed; Videos shows the videos,
+    a search typed then looks only in them, Photos has no video in it, and All is everything again."""
+    p = page
+    p.goto(app + "/?search")
+    p.wait_for_selector("#chips .scope")
+    assert p.eval_on_selector_all("#chips .scope button", "bs => bs.map(b => [b.textContent, b.getAttribute('aria-checked')])") == [
+        ["All", "true"], ["Photos", "false"], ["Videos", "false"]]
+    assert p.locator("#chips .chip").count() == 0, "the filter chips wait for something to filter"
+    p.click('#chips [data-scope="video"]')
+    p.wait_for_selector("#sGrid .t .dur")
+    assert "kind=video" in p.url and p.inner_text("#sHead h1") == "Videos"
+    assert p.locator("#sGrid .t").count() == 2 and p.locator("#chips .chip").count() > 0
+    p.fill("#q", "snow")
+    p.keyboard.press("Enter")
+    p.wait_for_function("() => document.querySelector('#sHead h1').textContent.includes('snow')")
+    assert "kind=video" in p.url and p.get_attribute('#chips [data-scope="video"]', "aria-checked") == "true"
+    assert p.locator("#sGrid .t").count() == p.locator("#sGrid .t .dur").count() >= 1
+    p.click('#chips [data-scope="photo"]')
+    p.wait_for_function("() => location.search.includes('kind=photo')")
+    p.wait_for_function("() => document.querySelectorAll('#sGrid .t img.in').length > 0 && !document.querySelector('#sGrid .t .dur')")
+    p.click('#chips [data-scope="all"]')
+    p.wait_for_function("() => !location.search.includes('kind=')")

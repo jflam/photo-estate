@@ -175,6 +175,10 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .chip { flex: none; height: 36px; padding: 0 14px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; background: var(--well);
   font-weight: 500; font-size: 14.5px; white-space: nowrap; max-width: 260px; transition: background .15s, transform .2s var(--ease); }
 .chip > span { overflow: hidden; text-overflow: ellipsis; }
+/* ahead of the chips: what kind of thing is looked for, as a segmented control (All, Photos, Videos) */
+.scope { flex: none; display: inline-flex; height: 36px; padding: 3px; border-radius: 999px; background: var(--well); }
+.scope button { height: 30px; padding: 0 14px; border-radius: 999px; font-weight: 500; font-size: 14.5px; color: var(--ink); transition: background .15s; }
+.scope button[aria-checked="true"] { background: var(--paper); color: inherit; box-shadow: 0 1px 3px rgba(0,0,0,.16); }
 .chip:hover { background: var(--well-2); }
 .chip:active { transform: scale(.97); }
 .chip.on { background: var(--sun-lit); color: var(--on-sun); }
@@ -1398,8 +1402,8 @@ function searchShow(quiet) {                          // which of the three show
   $("#sView").hidden = typing() || empty;
   $("#sAlbum").hidden = typing() || !albumable();
   $("#qClear").hidden = !$("#q").value;
-  $("#chips").hidden = empty || suggesting;
-  if (!$("#chips").hidden) drawChips();
+  $("#chips").hidden = suggesting || (empty && !INFO?.videos);
+  if (!$("#chips").hidden) drawChips(empty);
   drawNotice(suggesting);
   if ($("#q").value !== S.q && !typing()) $("#q").value = S.q;
   titleDoc();
@@ -1462,7 +1466,6 @@ function drawNotice(suggesting) {
 
 /* the filter chips under the field: what is chosen comes first */
 const PILLS = [
-  { id: "video", label: "Videos" },                 // first: what kind of thing is looked for. Only in a library that has any (INFO.videos)
   { id: "where", label: "Where", tabs: [["country", "Countries"], ["region", "Regions"], ["city", "Places"]] },
   { id: "people", label: "People", tabs: [["person", "People"]] },
   { id: "albums", label: "Albums", tabs: [["album", "Albums"]] },
@@ -1471,10 +1474,9 @@ const PILLS = [
   { id: "camera", label: "Camera", tabs: [["camera", "Cameras"], ["lens", "Lenses"]] },
   { id: "fav", label: "Favourites" },
 ];
-const toggles = { fav: I.heart, video: I.play };    // a chip that is on or off, with no sheet behind it
+const toggles = { fav: I.heart };    // a chip that is on or off, with no sheet behind it
 function pillValue(p, s = S) {
   if (p.id === "fav") return s.fav ? "Favourites" : null;
-  if (p.id === "video") return s.video ? "Videos" : null;
   if (p.id === "when") return s.from || s.to ? rangeLabel(s) : null;
   let v = p.tabs.flatMap(([k]) => s.f[k]);
   if (p.id === "trips") v = v.map(id => tripTitle(tripById(id)));
@@ -1484,23 +1486,29 @@ function pillValue(p, s = S) {
 }
 function clearPill(p, s = S) {
   if (p.id === "fav") s.fav = false;
-  else if (p.id === "video") s.video = false;
   else if (p.id === "when") s.from = s.to = "";
   else for (const [k] of p.tabs) s.f[k] = [];
 }
-function drawChips() {
-  const order = PILLS.filter(p => p.id !== "video" || INFO?.videos || S.video).sort((a, b) => (pillValue(a) ? 0 : 1) - (pillValue(b) ? 0 : 1));
-  $("#chips").innerHTML = order.map(p => {
+// What kind of thing is looked for: All, Photos or Videos, one control ahead of the chips (a library with
+// no videos has none). It is there before anything is asked, so the kind can be chosen before the words.
+const scopeOf = (s = S) => s.video ? "video" : s.photo ? "photo" : "all";
+const scopeBar = () => !INFO?.videos && scopeOf() === "all" ? "" : `<div class="scope" role="radiogroup" aria-label="Search in">${
+  [["all", "All"], ["photo", "Photos"], ["video", "Videos"]].map(([k, label]) =>
+    `<button role="radio" aria-checked="${scopeOf() === k}" data-scope="${k}">${label}</button>`).join("")}</div>`;
+function drawChips(empty) {
+  const order = empty ? [] : [...PILLS].sort((a, b) => (pillValue(a) ? 0 : 1) - (pillValue(b) ? 0 : 1));
+  $("#chips").innerHTML = scopeBar() + order.map(p => {
     const v = pillValue(p);
     return `<button class="chip${v ? " on" : ""}" data-pill="${p.id}"${toggles[p.id] ? ` aria-pressed="${!!v}"` : ""}>${toggles[p.id] || ""}<span>${esc(v || p.label)}</span>${v && !toggles[p.id] ? `<i class="x" data-x aria-label="Clear ${p.label}">${I.x}</i>` : ""}</button>`;
   }).join("");
 }
 $("#chips").onclick = e => {
+  const sc = e.target.closest("[data-scope]");
+  if (sc) { S.video = sc.dataset.scope === "video"; S.photo = sc.dataset.scope === "photo"; return refine(); }
   const b = e.target.closest(".chip"); if (!b) return;
   const p = PILLS.find(p => p.id === b.dataset.pill);
   if (e.target.closest("[data-x]")) { clearPill(p); return refine(); }
   if (p.id === "fav") { S.fav = !S.fav; return refine(); }
-  if (p.id === "video") { S.video = !S.video; return refine(); }
   openSheet(p, b);
 };
 

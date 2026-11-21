@@ -230,7 +230,7 @@ uv run pytest tests/test_pages_browser.py     # about 45 s once the servers' env
 ```
 
 **Videos in a browser.** [`tests/test_video_browser.py`](../../photo-estate/tests/test_video_browser.py)
-(slow tier) plays them on `search.html`, on `tools/video_demo.py`'s library: the Videos chip shows only
+(slow tier) plays them on `search.html`, on `tools/video_demo.py`'s library: the scope control's Videos shows only
 the videos, each tile with its length and a Live Photo's with LIVE; a video opens playing, Space pauses
 and plays it, the next video takes its place with no second stream, and closing leaves nothing playing;
 a typed search ("waterfall") opens "Coast to mountains" at the moment the words match, 8 to 12 seconds

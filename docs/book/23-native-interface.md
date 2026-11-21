@@ -221,7 +221,10 @@ what is on this iPhone" in the sun's colour.
 
 ### Filters
 
-The chips under the field are **Where, People, Albums, Trips, When, Camera, Favourites, Videos**. Each opens a
+Under the field, from the moment it is tapped, is a scope bar as in Mail or Files: **All, Photos, Videos**
+(a segmented `Picker` on `Query.scope`; only in a library with videos). Choosing one is a question by
+itself, and a search typed then looks only in that kind. The chips under it are **Where, People, Albums,
+Trips, When, Camera, Favourites**. Each opens a
 system sheet (`FilterSheet`) whose content comes from the replica: the values of the facet with live
 counts (and a count of zero when a value would give nothing, rather than vanishing); a list of trips with
 their dates; or a year-and-month picker with a bar of photos per month. A chosen filter's chip shows its

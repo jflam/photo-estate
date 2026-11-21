@@ -74,7 +74,8 @@ S = { q: "", plain: false, sha: "", event: "", fav: false, from: "", to: "", sor
 | `event` | `event=` | Scope to an event |
 | `from`, `to` | `from=2019-06&to=2019-08` | A range of months, from the When chip |
 | `fav` | `fav=1` | Favourites only |
-| `video` | `kind=video` | Videos only (the Videos chip) |
+| `video` | `kind=video` | Videos only (the scope control's Videos) |
+| `photo` | `kind=photo` | Photos only (the scope control's Photos); never with `video` |
 | `sort` | `sort=old` | Oldest first |
 
 The Library's position is a second, smaller thing: its `scale` (`years`, `months`, `all`, or `month` for
@@ -245,8 +246,8 @@ the month's total count (from `/api/periods` in the Library, `/api/facets` in Se
 loaded so far. Favourites show a small filled heart on the tile. A video's tile says how long it is in
 a dark pill at its bottom right, with a play mark (`0:12`; `duration()` in
 [app/format.js](../../photo-estate/app/format.js) writes it, never `0:00` for a video with any length);
-a Live Photo's still says LIVE in the same place, in small white letters. In Search, with the Videos
-chip on, a section's count is in videos. A favourite set in the app (`POST /api/favorite`) shows at once in every
+a Live Photo's still says LIVE in the same place, in small white letters. In Search, with Videos
+chosen, a section's count is in videos. A favourite set in the app (`POST /api/favorite`) shows at once in every
 view and count: the server changes the catalog it serves with no request reading it, and a reload under way
 keeps it ([chapter 11](11-server.md#concurrency)).
 
@@ -370,7 +371,7 @@ flowchart LR
 `searchHead` says what the answer is, in words. A search that read names and places ("anna in paris") is
 titled with what it read; a described search is the words in quotes, "N photos, best match first"; More
 like this is "Closest in look and subject"; a trip is its title and dates; filters alone are their values
-joined; the Videos chip alone is "Videos", and its count is "N videos". When names or places were read from the words, a line under the field offers the other reading:
+joined; Videos alone in the scope control is "Videos", and its count is "N videos". When names or places were read from the words, a line under the field offers the other reading:
 "Search for the words instead" (or back again), as a new search.
 
 An empty answer explains itself ("No photo looks like “kangaroo” with these filters") with a Start again
@@ -526,7 +527,11 @@ press, not a menu.
 Live Photo anywhere in it (the row's `stack_live`, in a list that stacks). The tile held for a quarter of
 a second, or its mark pointed at with a mouse, plays the clip over the tile with the same second `<video>`
 and the same `VIDEO` state; let go, moved off to scroll, or at the clip's end, the still is back. A hold
-that played is not a click, so the photo does not open. The **Videos** chip is the first of the chips.
+that played is not a click, so the photo does not open. 
+
+**All, Photos, Videos** is a segmented control ahead of the chips (`scopeBar`), in a library that has
+videos. It is on Search's first page too, before anything is asked, so the kind can be chosen before the
+words; the chips come once there is something to filter.
 
 ### Fly in, fly out
 
