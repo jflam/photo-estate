@@ -1,6 +1,6 @@
 # Photo app performance
 
-How fast the photo app (`embed.py serve` + `search.html`) is, why, what was changed on 2026-11-11,
+How fast the photo app (`embed.py serve` + `search.html`) is, why, what was changed (from 2026-11-11 on),
 and what is left to try. The open tasks at the end are written so you can hand one to an agent as-is.
 
 ## Where the time went
@@ -171,25 +171,108 @@ the last finished run (`--after-rowid`, kept in `<inbox>.partial/catalogued-rowi
 Where the hard disk's 16 s goes: ~3 s upload workers catching up (the benchmark sends all 9 at once),
 ~1-2 s ingest, link and exif, ~5 s places, ~5 s catalog reload, the rest process starts.
 
+## People, the catalog's disk, and GPU memory (2026-11-20)
+
+Three problems on the Mac mini, found together and fixed in PR 101 and PR 102. Measured on the real
+library (113,634 photos, 110,020 faces).
+
+### People took 50–68 s to load after every restart
+
+Profiled with the catalog opened read-only:
+
+| | Wall | CPU |
+|---|---|---|
+| The whole faces load | 41 s | 2.3 s |
+| One query, `faces JOIN assets` | 38 s | 1.3 s |
+| `faces` alone, with the vectors | 2.2 s | 0.5 s |
+| `assets` alone | 1.3 s | 0.2 s |
+
+The join looked up each face's photo by `sha256` somewhere else in `assets`, which meant 120,000 random
+reads from the USB hard disk through SQLite's 2 MB page cache. CPU time was small, so almost all of the
+wall time was waiting for the disk. Two fixes:
+
+- `face_rows()` in `faces.py` reads `faces`, `assets` and `hidden` front to back and joins them in Python.
+  A test checks that it returns the same rows as the join.
+- A load writes only what changed. Before the fix, every start rewrote 20 face rows with the name they
+  already had and a new `labeled_at`. The cause was `seed()`, which sent a mis-tagged lone face to
+  "unknown" instead of to its real label, so `rescore()` treated it as a change. A test now loads an
+  unchanged catalog twice and checks that the second load writes nothing.
+
+### The catalog moved to the mini's internal SSD
+
+`estate.db`, `sync-feed.db`, `intake.db` and the small files next to them are now in `~/estate/`. The
+photos, uploads, thumbnails and backups stay on the USB disk. A hard disk reads big files front to back
+well and small pieces from all over a file badly, and the catalog is read the second way.
+[MAC-MINI.md](../../photo-estate/deploy/MAC-MINI.md#the-catalog-is-on-the-internal-ssd) explains how it
+was moved and how to move it back. `ingest-iphone.sh` now takes `CACHE`, and the app passes its own
+`--cache`, because with the catalog on another disk `faces.py run` would otherwise have started a second
+thumbnail cache beside the catalog.
+
+| Loading the faces | Old code | New code |
+|---|---|---|
+| Catalog on the USB disk | 50–68 s in the app, 41 s alone | 4.7 s the first time, 1.7 s after |
+| Catalog on the SSD | 4.1 s | 2.4 s the first time, 1.7 s after; 3.8 s inside the app, where it runs while the search model loads |
+
+At a restart, the page now answers in 7 s (was 22 s) and the catalog reads in 4.4 s (was 18.9 s). The
+faces load now spends about 1.4 s of CPU building arrays, so the disk is no longer the limit. Grouping
+the unnamed faces takes 3.3–3.9 s in its own thread and was left alone.
+
+### The photo app used 7.8 GB of the mini's 16 GB
+
+The photo app was the biggest user of memory on the mini:
+a 7.8 GB footprint, 5.6 GB of which was GPU memory. Since PR 94, both SigLIP models (the app's own and
+`/compare`'s large one) had been loaded whole onto the GPU at every start and held there. It went
+unnoticed because **GPU memory does not show in a process's RSS on a Mac**: `ps` said 0.5 GB, while
+`footprint <pid>` shows the real figure under "IOAccelerator". Two fixes, both in `encoder.py`:
+
+- `/compare`'s model is loaded on demand (`Encoder.ensure`) and let go when it is not needed
+  (`Encoder.let_go`). Since PR 102, that means when a run starts and when it finishes, or after
+  `--compare-idle` minutes without use (default 15).
+- A model used only for text has its image half removed before it goes to the GPU (`drop_image_side`).
+  Measured with the base model on an M2 Max laptop, it takes 1,464 MB whole and 1,112 MB without the image
+  half, and the query vectors are identical bit for bit. The app's own model keeps its image half, because
+  it embeds phone uploads as they arrive.
+
+Measured on the mini after the deploy:
+
+| | Before | After |
+|---|---|---|
+| App footprint, `/compare` not in use | 7.8 GB | 3.3 GB (3.4 GB after PR 102) |
+| GPU memory | 5.6 GB | 1.5 GB |
+| GPU memory with `/compare`'s model loaded | 5.6 GB | 4.6 GB |
+| GPU memory 15 idle minutes after `/compare` was used | 5.6 GB | 1,465 MB: the model was let go |
+| Loading `/compare`'s model when a run starts | at every start of the app | about 6 s |
+
+Typed searches are not affected. The app's own model still loads at startup (about 10 s after a restart)
+and stays loaded.
+
 ## Open tasks
 
-Each is independent. "Done" means a before/after number on the Mac mini and no change to API answers.
+Reviewed on 2026-11-20, after the catalog moved to the SSD and the GPU memory fix. "Done" means a
+before/after number on the Mac mini and no change to API answers.
 
-1. **Find the floor for a thumbnail burst.** Of the ~150 ms for a warm screenful, roughly
-   80–110 ms is the Python server itself (it takes that long even locally with no proxy). Serve
-   `/thumb/` from a minimal async or Rust static-file server on a side port, behind `tailscale serve`
-   the same way, and compare with `tools/thumb_burst.py`. Only worth pursuing if it saves well over
-   50 ms. Don't change the tailnet policy or publish new ports without asking the owner.
-2. **Cache the embedding matrix on the SSD.** Reading the `embeddings` table off the HDD is ~2.7 s
-   of startup. Save the float32 matrix and sha list as `.npy` in `--fast-cache`, keyed by
-   something cheap that changes when `embed.py run` adds rows (e.g. `count(*)` and `max(rowid)`
-   for the model), and fall back to the table when stale.
-3. **Pregenerate HEIC previews onto the SSD.** Opening a HEIC photo in the viewer the first time
-   takes 0.1–0.5 s. About 46k HEICs × ~0.3 s, ~14 GB at 1600 px. Run it as a low-priority
-   background job, not at server startup.
-4. **Reduce the server's memory.** ~1.7 GB RSS on a 16 GB machine that's swapping. The per-photo
-   `meta` dicts (~30 keys × 101k) are the obvious target: columns in numpy arrays, or tuples, with
-   the dicts built only for the photos a response returns.
-5. **HTTP/2 to the backend.** Only matters if task 1 shows the proxy's backend connections cost
-   something. `tailscale serve` forwards as HTTP/1.1; check whether it can speak h2c to a backend
-   before rewriting the server for HTTP/2 (e.g. Hypercorn/ASGI).
+1. **Pregenerate previews onto the SSD** ([#26](https://github.com/jflam/photo-estate/issues/26)).
+   Only 2,845 of 113,634 photos have a 1600 px preview cached, so almost every photo opened in the viewer
+   is decoded from its original on the USB hard disk the first time: a seek, plus 0.1–0.5 s to decode a
+   HEIC. This applies to every format, not only HEIC. `Images.pregenerate()` builds only missing
+   thumbnails. All the previews would take about 37 GB (330 KB each); the SSD has 544 GB free. Build them
+   newest first, at low priority, after the thumbnails, and leave `/large/` on demand.
+2. **Smaller grid thumbnails** ([#104](https://github.com/jflam/photo-estate/issues/104)). Grid
+   thumbnails are 360 px JPEGs at quality 82, 24 KB each. Opening a month is now mostly the time to move
+   those bytes: 0.75–1.4 s for a cold 150 on a direct Tailscale path, 2.5–6.3 s relayed or on a phone away
+   from home. WebP or AVIF at the same visible quality would roughly halve that, and halve what the phone
+   keeps offline.
+
+No longer worth doing, with the reason:
+
+- **Cache the embedding matrix on the SSD** ([#24](https://github.com/jflam/photo-estate/issues/24)).
+  The catalog itself is on the SSD now, and the whole catalog loads in 4.4–6.8 s at a restart. The
+  2.7 s this was meant to save was seek time on the hard disk.
+- **Reduce the server's memory** ([#23](https://github.com/jflam/photo-estate/issues/23)). The app is
+  3.4 GB by `footprint` (1.2 GB RSS, 1.5 GB of it the model on the GPU), and the mini now has 69% of its
+  memory free. Look again if the library grows a lot. The per-photo `meta` dictionaries are still the
+  target.
+- **Find the floor for a thumbnail burst** ([#25](https://github.com/jflam/photo-estate/issues/25)) and
+  **HTTP/2 to the backend** ([#27](https://github.com/jflam/photo-estate/issues/27)). The Python server's
+  80–110 ms is small next to the bytes on the wire (task 2) and the relayed Tailscale path that made a
+  burst take 6 s on 2026-11-18. That was a stuck Tailscale app on the laptop, cured by restarting it.
