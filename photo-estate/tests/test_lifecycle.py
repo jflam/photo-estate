@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +25,7 @@ from admin import Admin  # noqa: E402
 from catalog import Live  # noqa: E402
 from core.lifecycle import MOVES, IllegalMove, Lifecycle, LoadFailed, Phase, StillLoading  # noqa: E402
 from core.states import ClusterState  # noqa: E402
-from encoder import Encoder, ModelFailed, ModelLoading  # noqa: E402
+from encoder import Encoder, ModelFailed, ModelLoading, drop_image_side  # noqa: E402
 from photo_app import PhotoApp  # noqa: E402
 
 GUARD = 10   # seconds: only so that a hang fails the test instead of the run
@@ -87,6 +88,13 @@ def test_lifecycle_moves():
     s.begin()
     s.succeed("v2")
     assert s.snapshot().error is None and s.require(0) == "v2"
+    s.release()                                       # let go: idle again, nothing to wait for, loadable again
+    assert s.snapshot().phase is Phase.IDLE and s.snapshot().value is None and s.wait(None) is Phase.IDLE
+    with pytest.raises(IllegalMove):
+        s.release()
+    s.begin()
+    s.succeed("v3")
+    assert s.require(0) == "v3"
     assert set(MOVES) == set(Phase) and all(MOVES[p] for p in Phase)
 
 
@@ -138,6 +146,84 @@ def test_encoder_still_loading_is_a_bounded_wait():
     assert enc.state.wait(GUARD) is Phase.FAILED
     with pytest.raises(ModelFailed):
         bounded(enc.text, "a dog")
+
+
+class KeptWhileUsed(Encoder):
+    """An encoder with no model in it: _open counts, and text() only does what the real one does first."""
+    def __init__(self, idle=None):
+        super().__init__("fake/model", 1, idle=idle)
+        self.opened = 0
+
+    def _open(self):
+        self.opened += 1
+        return {"model": object(), "dev": "cpu"}
+
+    def text(self, q):
+        self.wait(self.patience)
+        with self.lock:
+            self._held()
+        return q
+
+
+def until(what, seconds=GUARD):
+    end = time.time() + seconds
+    while time.time() < end:
+        if what():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_encoder_is_loaded_when_first_asked_for_and_once():
+    enc = KeptWhileUsed()
+    assert enc.state.snapshot().phase is Phase.IDLE and enc.opened == 0        # made, not loaded
+    with pytest.raises(ModelLoading, match="not started"):
+        bounded(enc.text, "a dog")                                              # and a use of it does not wait
+    assert enc.ensure() is True and enc.ensure() is False                       # two requests: one load
+    assert enc.state.wait(GUARD) is Phase.READY and enc.opened == 1
+    assert enc.ensure() is False and bounded(enc.text, "a dog") == "a dog"
+    failed = FailingEncoder("fake/model", 1)
+    failed.start()
+    assert failed.state.wait(GUARD) is Phase.FAILED and failed.ensure() is False   # a failure is not retried by asking
+
+
+def test_encoder_is_let_go_when_unused_and_loads_again():
+    enc = KeptWhileUsed(idle=0.3)
+    enc.ensure()
+    assert enc.state.wait(GUARD) is Phase.READY
+    for _ in range(12):                                # in use for twice the idle time: kept
+        assert bounded(enc.text, "a dog") == "a dog"
+        time.sleep(0.05)
+    assert enc.state.snapshot().phase is Phase.READY and enc.opened == 1
+    assert until(lambda: enc.state.snapshot().phase is Phase.IDLE), "not let go after its idle time"
+    assert enc.parts == {}
+    with pytest.raises(ModelLoading):
+        bounded(enc.text, "a dog")
+    assert enc.ensure() is True and enc.state.wait(GUARD) is Phase.READY and enc.opened == 2
+    assert bounded(enc.text, "a dog") == "a dog"
+    kept = KeptWhileUsed()                             # no idle time: never let go by itself
+    kept.ensure()
+    assert kept.state.wait(GUARD) is Phase.READY
+    time.sleep(0.4)
+    assert kept.state.snapshot().phase is Phase.READY and kept.let_go(3600) is False and kept.let_go() is True
+
+
+def test_a_use_that_meets_a_model_just_let_go_is_a_503_not_a_crash():
+    enc = KeptWhileUsed()
+    enc.ensure()
+    assert enc.state.wait(GUARD) is Phase.READY
+    with enc.lock:                                     # as let_go() leaves it, seen by a text() that had already waited
+        enc.parts = {}
+    with pytest.raises(ModelLoading, match="not loaded just now"):
+        bounded(enc.text, "a dog")
+
+
+def test_image_side_is_dropped_only_from_a_model_that_has_one():
+    class Two:
+        vision_model, text_model = object(), object()
+    m = Two()
+    assert drop_image_side(m) is True and m.vision_model is None and m.text_model is not None
+    assert drop_image_side(m) is False and drop_image_side(object()) is False
 
 
 @pytest.fixture(scope="module")

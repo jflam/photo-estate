@@ -39,7 +39,7 @@ class Phase(StrEnum):
 MOVES: dict[Phase, frozenset[Phase]] = {
     Phase.IDLE: frozenset({Phase.LOADING}),
     Phase.LOADING: frozenset({Phase.READY, Phase.FAILED}),
-    Phase.READY: frozenset({Phase.LOADING}),
+    Phase.READY: frozenset({Phase.LOADING, Phase.IDLE}),   # idle again: what was loaded has been let go (release)
     Phase.FAILED: frozenset({Phase.LOADING}),
 }
 
@@ -89,6 +89,13 @@ class Lifecycle:
             self._move(Phase.FAILED)
             self.error, self.at = f"{type(exc).__name__}: {exc}", time.time()
             self.done.set()
+
+    def release(self) -> None:
+        """Ready -> idle: what was loaded has been let go, and is loaded again when next asked for."""
+        with self.lock:
+            self._move(Phase.IDLE)
+            self.value = None
+            self.done.clear()
 
     def snapshot(self) -> Snapshot:
         with self.lock:

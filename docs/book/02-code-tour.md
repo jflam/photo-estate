@@ -66,7 +66,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   browse.py            366  search, similar, facets, Years and Months, layout; an agent's searches
   images.py            135  thumbnails, previews, large images and originals
   admin.py             256  phone uploads, the ingest, restart, /stats, backups
-  encoder.py            60  SigLIP's text (and image) side, for the photo app
+  encoder.py           204  SigLIP's text (and image) side, for the photo app: loaded when asked for, let go when idle
   compare.py           134  an experiment: each search ranked by a second model beside the app's own, at /compare (chapter 10)
   estate.py          1,005  ingest, link, exif, dupes, review, tag, search, stats
   faces.py           1,072  faces: run, serve, and the People class (who is who)

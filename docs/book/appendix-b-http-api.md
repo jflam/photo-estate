@@ -227,6 +227,8 @@ All four validate `<sha>` as 64 lowercase hex characters of a known photo (else 
 
 `DIR` holds a second model's vectors as `tools/embed_squares.py` writes them: `shard-NNNN.npy` (float16,
 unit rows), `shard-NNNN.shas.txt` and `meta.json` (`model`). Without the option these routes are 404.
+The second model is loaded by the first `GET /api/compare/info` (or search) and let go after
+`--compare-idle` minutes unused; while it loads, `info` says `b.ready: false` and a search is a 503.
 
 | Path | Returns |
 |---|---|

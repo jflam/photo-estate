@@ -173,7 +173,10 @@ class PhotoApp:
             from compare import Compare
             vec_dir = Path(a.compare_vectors).expanduser()
             try:
-                self.encoder_b = Encoder(json.loads((vec_dir / "meta.json").read_text())["model"], a.threads, device=a.device)
+                # Loaded when /compare is first asked for and let go when it has not been used for a while:
+                # the larger model was 3 GB or more of the mini's 16 GB, held all day for an experiment.
+                self.encoder_b = Encoder(json.loads((vec_dir / "meta.json").read_text())["model"], a.threads,
+                                         device=a.device, idle=a.compare_idle * 60 if a.compare_idle > 0 else None)
                 self.compare = Compare(live, browse, vec_dir, self.encoder_b,
                                        Path(a.compare_votes).expanduser() if a.compare_votes else vec_dir / "votes.jsonl")
             except (OSError, ValueError, KeyError) as e:
@@ -259,10 +262,7 @@ class PhotoApp:
         a = self.a
         if self.live.cat.has_faces:
             threading.Thread(target=self.load_people, daemon=True).start()
-        self.encoder.start()
-        if self.compare:   # after the app's own: importing transformers from two threads at once fails,
-            threading.Thread(target=lambda: (self.encoder.state.wait(None), self.encoder_b.load()),   # and typed
-                             daemon=True).start()                                                 # searches come first
+        self.encoder.start()   # (/compare's second model is not loaded here: Compare asks for it when it is used)
         threading.Thread(target=self.feed_update, daemon=True).start()
         if self.ingest:
             threading.Thread(target=self.ingest.sweep, daemon=True).start()   # uploads left from before this start
