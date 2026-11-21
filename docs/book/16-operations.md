@@ -13,7 +13,7 @@ requirements, by component:
 |---|---|
 | **Store** (`--store`) | Any directory you can read and write: USB disk, internal drive, SMB/NFS share on a NAS, an `rclone mount` of a bucket. Files are only ever added |
 | **Catalog** (`--db`) | One SQLite file on a **local** disk (never a network share: SQLite's locking is unreliable there). About 1 GB for 120k photos |
-| **Thumbnail cache** | `review/` next to the catalog by default (`--cache`); about 2.5 GB for 100k photos. Add `--fast-cache` on an SSD when the catalog's disk is a hard disk |
+| **Thumbnail cache** | `review/` next to the catalog by default (`--cache`). For 100k photos: about 1.7 GB of grid thumbnails (WebP), and about 33 GB of 1600 px previews, made in the background and stopped while the disk has under 20 GB free. Add `--fast-cache` on an SSD when the catalog's disk is a hard disk |
 | **A machine** | Anything that runs Python through `uv`: macOS or Linux, Intel or ARM. 16 GB of RAM serves 100k photos. **No GPU** |
 | **Remote access** (optional) | The app listens on `127.0.0.1` only; put Tailscale `serve`, Caddy, nginx, or nothing in front |
 
@@ -41,7 +41,7 @@ ROOT/                                  e.g. /Volumes/estate
   estate.db                            the catalog (+ estate.db-wal, -shm while open)
   estate.db.bak-YYYYMMDD               snapshots made by the pull scripts
   review/                              the cache (disposable)
-    thumbs/<sha>.jpg   previews/<sha>.jpg   large/<sha>.jpg
+    thumbs/<sha>.webp  previews/<sha>.jpg   large/<sha>.jpg   (thumbs/<sha>.jpg: made before 2026-11-20)
     faces/<ab>/<sha>-<idx>.jpg
     thumb-dims.json
     decisions.json                     your near-duplicate choices
@@ -271,12 +271,12 @@ few milliseconds per request, and what is left of startup is sequential disk rea
 
 ### Open performance tasks
 
-Reviewed on 2026-11-20, and written up in PERFORMANCE.md:
+None at the moment. The two left after the 2026-11-20 review were done the same day (PERFORMANCE.md):
 
-1. Pregenerate the viewer's 1600 px previews onto the SSD: only 2,845 of 113,634 are cached, so nearly
-   every first open decodes the original from the hard disk (#26).
-2. Smaller grid thumbnails (WebP or AVIF): opening a month is now mostly the time to move 24 KB a
-   thumbnail (#104).
+| Change | Measured |
+|---|---|
+| Viewer previews made in the background, newest first (#26) | First open of a photo: 148 ms median, 339 ms at the 90th percentile, to decode its original from the hard disk → 0.3 ms to read the preview from the SSD |
+| Grid thumbnails as WebP 78 in place of JPEG 82 (#104) | 70% of the bytes (median 24.5 KB → 16.3 KB) at the same closeness to the original |
 
 Overtaken by the move of the catalog to the SSD and by the GPU memory fix: caching the embedding matrix
 (#24), reducing the server's memory (#23), a faster static server for `/thumb/` (#25) and HTTP/2 to the

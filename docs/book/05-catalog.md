@@ -296,8 +296,8 @@ Per-row sizes that explain where the bytes go:
 | `exif.data` JSON | several KB | the largest table by far: 705 MB for the author's 120k assets |
 | dHash | 8 bytes | under 1 MB |
 
-The README's rule of thumb is about 1 GB of catalog per 120k photos, and 2.5 GB of thumbnail cache
-per 100k photos.
+The README's rule of thumb is about 1 GB of catalog per 120k photos, and, per 100k photos, 1.7 GB of
+thumbnails and about 33 GB of the viewer's previews in the cache.
 
 ## Reading the catalog yourself
 

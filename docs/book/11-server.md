@@ -151,7 +151,7 @@ There is no framework. The handler is a `BaseHTTPRequestHandler` subclass with `
 `do_POST`, the server a `ThreadingHTTPServer`. A library for one household does not need more, and a
 standard-library server is one less dependency. (PERFORMANCE.md records the one place this costs:
 about 80-110 ms of a warm 150-thumbnail burst is the Python server itself; a faster static server for
-`/thumb/` is an open task.)
+`/thumb/` was judged not worth it, issue #25.)
 
 ## Startup, step by step
 
@@ -216,8 +216,9 @@ Three small decisions in there:
 
 The grid needs each photo's true aspect ratio *as displayed*, but the catalog's `width`/`height` are
 not always upright (a portrait phone photo may be stored as landscape with an EXIF rotation). The
-thumbnails are always upright, so their real shape is read from the JPEG header by `jpeg_size`,
-which scans the first 8 KB for a start-of-frame marker (`FFC0`/`C1`/`C2`) without decoding. Results
+thumbnails are always upright, so their real shape is read from the thumbnail's header by `image_size`,
+without decoding: a WebP's size is in the first 30 bytes, and for a JPEG made before 2026-11-20 it scans
+the first 8 KB for a start-of-frame marker (`FFC0`/`C1`/`C2`). Results
 are cached in `thumb-dims.json`, so only new photos are read next time. This is where the layout
 engine's `ar` (aspect ratio) per photo comes from.
 
@@ -311,7 +312,7 @@ Four things start in threads *after* the arrays are built, so the page and filte
 |---|---|---|
 | People | `from faces import People; People(...)` | Loading all faces and scoring them takes seconds; only `/people` needs it. Until it is ready, `/people` answers 503 "Faces are still loading"; if the load raises, 500 with the error (see below) |
 | Text encoder | `import torch`, load SigLIP, then one `"warm-up"` encode | Importing PyTorch is **most of startup time** and only typed queries need it. The warm-up takes the ~1 s first-forward-pass penalty away from the first real query |
-| Thumbnail pre-generation | Make every missing 360 px thumbnail | So scrolling never waits for HEIC decoding |
+| Thumbnail and preview pre-generation | Make every missing 360 px thumbnail, then every missing 1600 px preview | So scrolling and opening a photo never wait for decoding an original |
 | Sync feed | `Feed(...)`, then `feed_update()` | Compares the loaded catalog with the change feed the iPhone app syncs from (chapter 20); until it finishes, `/api/sync` answers 503 |
 
 A typed search that arrives before the encoder is ready waits for it, but only `encoder.WAIT` (90 s): the
@@ -405,12 +406,27 @@ another round trip, and the JSON is gzipped (150 results: 120 KB → 14 KB on th
 
 Three renditions of every photo, plus the original, all named by the photo's hash:
 
-| URL | Side | JPEG quality | Purpose |
-|---|---:|---:|---|
-| `/thumb/<sha>` | 360 px | 82 | The grid |
-| `/preview/<sha>` | 1600 px | 82 | The viewer |
-| `/large/<sha>` | 4096 px | 90 | The viewer when zoomed or on a big dense display |
-| `/original/<sha>` | as stored | n/a | Save / share (the file itself, with its metadata) |
+| URL | Side | Format | Purpose |
+|---|---:|---|---|
+| `/thumb/<sha>` | 360 px | WebP, quality 78 | The grid |
+| `/preview/<sha>` | 1600 px | JPEG, quality 82 | The viewer |
+| `/large/<sha>` | 4096 px | JPEG, quality 90 | The viewer when zoomed or on a big dense display |
+| `/original/<sha>` | as stored | as stored | Save / share (the file itself, with its metadata) |
+
+**Why the thumbnails are WebP** (since 2026-11-20, issue #104). Opening a month moves 150 thumbnails, and
+once the server answers in milliseconds that transfer is most of the wait, especially through a Tailscale
+relay or on a phone away from home. `tools/thumb_formats.py` measured 300 of the library's photos at
+360 px. Each was encoded as the old JPEG 82 and as WebP and AVIF at several qualities, and compared with
+the uncompressed thumbnail by SSIM and by the worst 1% of SSIM windows. WebP 78 is the lowest quality at
+least as close as the JPEG on both, at 70% of the bytes (median 16.3 KB, was 24.5 KB). AVIF needed
+quality 70 to match, at 76%, and took 2-3 times longer to make. Lossless changes to the JPEG saved 2-6%.
+Zoomed in 3 times, WebP is a little softer on fine texture and the JPEG a little blockier; at grid size
+they look the same ([a side by side](../screenshots/thumb-jpeg-vs-webp.png), from the demo photos).
+
+A thumbnail made before is a JPEG. It is still served (as `image/jpeg`) until the background job has made
+the WebP, so the grid never waits on decoding an original during the changeover. Browsers and phones that
+already hold a JPEG thumbnail keep it, since thumbnails are cached as immutable. Both are decoded the same
+way: every current browser reads WebP, and so does the iPhone's ImageIO.
 
 ```mermaid
 flowchart TD
@@ -421,6 +437,7 @@ flowchart TD
     F -->|no| S{"in the seed cache<br/>(the disk's review/)?"}
     S -->|yes| CP["copy to fast cache atomically, return"]
     S -->|no| DEC["decode the original:<br/>draft, upright, RGB, thumbnail(side)"]
+    S -->|"no, but an old JPEG thumbnail is there"| OLD["return the JPEG<br/>(the background job makes the WebP)"]
     DEC --> W["write temp file, os.replace"]
     W --> OUT
 ```
@@ -441,10 +458,21 @@ flowchart TD
   answered 404 for photos the catalog holds.
 - **Hash validation.** Every image route first matches `^[0-9a-f]{64}$` and a known photo: there is
   no way to ask the server for an arbitrary path. The same applies to `/original/`.
-- **Pre-generation.** At startup a background pool (`forkserver` start method, so it does not
-  `fork()` a process that holds PyTorch threads, `cpu_count - 2` workers) renders every missing
-  thumbnail, and first copies what the seed has, newest first. It says "making N thumbnails in the
-  background". `--no-pregenerate` turns it off.
+- **Pre-generation.** At startup, and after each catalog reload, a background job makes what is
+  missing, in two passes (`Images.pregenerate`):
+  1. **Thumbnails.** It first copies what the seed has, newest first, then makes the rest in a pool of
+     `cpu_count - 2` workers. The pool uses the `forkserver` start method, so it never `fork()`s a
+     process that holds PyTorch threads. It logs "making N thumbnails in the background".
+  2. **The viewer's 1600 px previews**, newest photos first (since 2026-11-20, issue #26). Before
+     this, a preview was made the first time a photo was opened, and on the Mac mini that meant
+     decoding the original from the USB hard disk while the viewer waited. This pass uses a third of
+     the cores at low priority (`nice 10`), in batches of 2,000. Between batches it stops if the cache's
+     disk has less than 20 GB free (`PREVIEW_ROOM`). It also gives way if the job was asked to run again,
+     for example after a reload brought new photos, so their thumbnails never wait hours behind it. It
+     leaves out previews the seed already has; those are copied on first use. `/large/` (4096 px) is
+     still made on first use. All the previews for 113,000 photos take about 37 GB.
+
+  `--no-pregenerate` turns off both passes.
 
 ## HTTP engineering
 
@@ -597,7 +625,7 @@ follows has nothing left to do for it.
 | Mask building | `Browse.select`, `parse`, `read_words`, `view_masks`, `Browse.place_mask` in [browse.py](../../photo-estate/browse.py); `Catalog.person_mask` |
 | Ranking and paging | `Browse.search` (its `ranked`), `Browse.remember`, `Catalog.take`, `Catalog.browse_order` |
 | Text encoder | `Encoder` in [encoder.py](../../photo-estate/encoder.py) |
-| Images and caches | `Images.image`, `Images.pregenerate`, `_thumb` in [images.py](../../photo-estate/images.py); `jpeg_size` in catalog.py |
+| Images and caches | `Images.image`, `Images.pregenerate` (`_thumbs`, `_previews`), `write_image`, `THUMB_QUALITY` in [images.py](../../photo-estate/images.py); `image_size` in catalog.py |
 | Uploads, ingest, restart, `/stats`, backups | `Admin` and `backups` in [admin.py](../../photo-estate/admin.py) |
 | HTTP | `make_handler` (`Handler.send`, `answer`, `upload`, `download`), `Server` in photo_app.py; `Response`, `read_body`, `int_param`, `Auth` in [http_util.py](../../photo-estate/http_util.py) |
 | Query log | `Browse.record`, `unlogged` in browse.py |

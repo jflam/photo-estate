@@ -39,6 +39,7 @@ import pages
 from core.media import DECODABLE_EXT
 from catalog import Live
 from estate import facts_of as estate_facts
+from images import THUMB_EXT, write_image
 from upload import save_upload, staging_dir
 
 
@@ -162,7 +163,7 @@ class Admin:
         while True:
             sha, path = self.arrivals.get()
             try:
-                dest = self.cache / "thumbs" / f"{sha}.jpg"
+                dest = self.cache / "thumbs" / f"{sha}{THUMB_EXT}"
                 facts = staging_dir(inbox) / "facts" / f"{sha}.json"
                 con = con or self.connect(self.db)
                 embedded = con.execute("SELECT 1 FROM embeddings WHERE sha256=? AND model=?", (sha, self.model)).fetchone()
@@ -186,9 +187,7 @@ class Admin:
                     if not dest.exists():
                         dest.parent.mkdir(parents=True, exist_ok=True)
                         im.thumbnail((360, 360))
-                        tmp = dest.with_suffix(f".{threading.get_ident()}.tmp")
-                        im.save(tmp, "JPEG", quality=82)
-                        os.replace(tmp, dest)
+                        write_image(im, dest)
             except Exception as e:     # `embed.py run` and the page cope without it
                 print(f"upload: could not prepare {path.name}: {type(e).__name__}: {e}", flush=True)
             finally:
