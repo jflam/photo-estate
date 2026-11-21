@@ -163,7 +163,7 @@ flowchart TD
     S1["1\. embeddings -> sorted by sha -> shas[], index{}, M (N x 768 float32)"] --> S2
     S2["2\. assets + occurrences -> meta[sha]<br/>(first path, albums, people, favourite, size)"] --> S3
     S3["3\. optional tables: exif, places, events, trips, faces<br/>-> more meta fields"] --> S4
-    S4["4\. real thumbnail shapes: thumb-dims.json,<br/>else read JPEG headers (16 threads)"] --> S5
+    S4["4\. real thumbnail shapes: thumb-dims.json,<br/>else read WebP or JPEG headers (16 threads)"] --> S5
     S5["5\. NumPy columns: when, year, month index, lowercase text, fav,<br/>time orders (oldest, newest)"] --> S6
     S6["6\. facets: integer-code every categorical field"] --> S7
     S7["7\. trips list with a cover photo; the /api/info document"] --> S8
@@ -422,6 +422,10 @@ least as close as the JPEG on both, at 70% of the bytes (median 16.3 KB, was 24.
 quality 70 to match, at 76%, and took 2-3 times longer to make. Lossless changes to the JPEG saved 2-6%.
 Zoomed in 3 times, WebP is a little softer on fine texture and the JPEG a little blockier; at grid size
 they look the same ([a side by side](../screenshots/thumb-jpeg-vs-webp.png), from the demo photos).
+Measured on the mini after the deploy, 5 months' thumbnails went from 16.5 MB to 11.0 MB, and a month's
+150 arrived in 163 ms where they took 210 ms, over the home network (PERFORMANCE.md).
+
+![JPEG 82 and WebP 78 side by side, zoomed 3 times](../screenshots/thumb-jpeg-vs-webp.png)
 
 A thumbnail made before is a JPEG. It is still served (as `image/jpeg`) until the background job has made
 the WebP, so the grid never waits on decoding an original during the changeover. Browsers and phones that

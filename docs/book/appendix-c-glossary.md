@@ -83,6 +83,9 @@ is waiting for your yes or no.
 **Perceptual hash.** A fingerprint that stays similar when an image is resized, recompressed or lightly
 edited.
 
+**Preview.** The 1600 px JPEG of a photo the viewer shows (`/preview/<sha>`), made in the background
+ahead of time so opening a photo never waits on its original. Chapter 11.
+
 **PWA.** Progressive Web App: a web page that can be installed on a phone's home screen.
 
 **Quality (score).** A photo's score from the general aesthetic scorer, about 1 to 7; at least 5.0 counts as a good photo ([25](25-best-photos.md)).
@@ -115,6 +118,9 @@ edited.
 
 **Teacher (scorer).** Aesthetic Predictor V2.5, used only as a local tool to label photos for the quality scorer; never shipped ([25](25-best-photos.md)).
 
+**Thumbnail.** The 360 px image of a photo in a grid (`/thumb/<sha>`), a WebP at quality 78 since
+2026-11-20 (a JPEG before). Chapter 11.
+
 **Tile.** What the iPhone grid needs to draw a photo and nothing else: its hash, aspect ratio, local time, city and favourite flag ([21](21-offline-search.md)).
 
 **Trip.** A run of events more than 100 km (configurable) from home, spanning at least two dates.
@@ -128,6 +134,9 @@ faces everything else is compared with.
 server used by `estate.py tag`.
 
 **WAL (write-ahead log).** SQLite's journal mode that lets readers and a writer work at once.
+
+**WebP.** An image format from Google, read by every current browser and by iOS. Grid thumbnails use it:
+70% of a JPEG's bytes at the same closeness to the original.
 
 **Window (years).** For faces, the 2 years either side of a photo whose named faces a person's mean
 face may come from.
