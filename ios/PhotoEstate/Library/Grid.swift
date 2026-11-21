@@ -69,6 +69,7 @@ private struct SectionLayout {
     let key: String
     let places: String
     let count: Int
+    let videos: Bool          // every one of them is a video: the heading counts videos, as the list's own title does
     var rows: [RowLayout]
 }
 
@@ -324,7 +325,7 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
                 sum = 0
             }
             let top = cities.sorted { ($0.value, $1.key) > ($1.value, $0.key) }.prefix(3).map { String($0.key) }.joined(separator: " · ")
-            out.append(SectionLayout(key: key, places: top, count: j - i, rows: rows))
+            out.append(SectionLayout(key: key, places: top, count: j - i, videos: tiles[i..<j].allSatisfy { $0.video }, rows: rows))
             i = j
         }
         sections = out
@@ -468,7 +469,7 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
     func collectionView(_ collectionView: UICollectionView, viewForSupplementaryElementOfKind kind: String, at indexPath: IndexPath) -> UICollectionReusableView {
         let head = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "head", for: indexPath) as! HeaderView
         let sec = sections[indexPath.section]
-        head.show(title: caption(sec.key), places: sec.places, count: sec.count)
+        head.show(title: caption(sec.key), places: sec.places, count: sec.count, videos: sec.videos)
         return head
     }
 }
@@ -594,9 +595,10 @@ private final class HeaderView: UICollectionReusableView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(title t: String, places: String, count: Int) {
+    func show(title t: String, places: String, count: Int, videos: Bool = false) {
         title.text = t
-        detail.text = [places, "\(count.formatted()) \(count == 1 ? "photo" : "photos")"].filter { !$0.isEmpty }.joined(separator: "  ·  ")
+        let noun = videos ? (count == 1 ? "video" : "videos") : count == 1 ? "photo" : "photos"
+        detail.text = [places, "\(count.formatted()) \(noun)"].filter { !$0.isEmpty }.joined(separator: "  ·  ")
     }
 }
 
