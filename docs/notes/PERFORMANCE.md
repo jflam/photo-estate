@@ -219,7 +219,7 @@ the unnamed faces takes 3.3–3.9 s in its own thread and was left alone.
 
 ### The photo app used 7.8 GB of the mini's 16 GB
 
-Once agentboss and openclaw were removed from the mini, the photo app was its biggest user of memory:
+The photo app was the biggest user of memory on the mini:
 a 7.8 GB footprint, 5.6 GB of which was GPU memory. Since PR 94, both SigLIP models (the app's own and
 `/compare`'s large one) had been loaded whole onto the GPU at every start and held there. It went
 unnoticed because **GPU memory does not show in a process's RSS on a Mac**: `ps` said 0.5 GB, while
