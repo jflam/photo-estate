@@ -29,7 +29,9 @@ tools in `tools/`.
 | `tests/test_faces_consistency.py` | `faces.People` keeping memory, SQLite and the face journal in agreement (issue #87), on a five-face synthetic faces DB with the real schema, no model: a merge moves `face_later` and `face_not` rows to the kept person, deduped, in the database and in memory, and a fresh load reads what memory holds; a write SQLite refuses (a trigger that raises "disk is full") in a name, a forget, an undo, a page of `label-many`, a rename, a birth month or a merge leaves memory, the tables and the journal as they were and closes every connection; rename, merge and born records are journalled and folding the journal by name gives the names in the database; a request for a person that a merge deletes while the request waits for the lock (`threading.Event`) is a 404, not a `KeyError` |
 | `tests/test_job_lifecycles.py` | The background jobs' lifecycles (issue #86), with hooks, `threading.Event`s and small child processes, no model and no app: an `IngestJob` step not in `MOVES` raises, `start()` is refused while a run is being followed and cancels an armed quiet timer, and `status()` copying the log while a line is appended is safe; a task cancelled between the worker's `SELECT` and its claim, or between the claim and the agent's start, never runs, and one cancelled as it completes (or while running) stays cancelled; a failed task's error has the whole of stderr (the reader is joined); the timeout kills an agent that ignores SIGTERM, as `core.procs.stop` does; `Tasks.update` refuses unknown columns; an intake job cancelled while queued is never claimed, `Store.move` refuses moves `JOB_MOVES` does not list, and a cancel kills a stage that ignores SIGTERM; the sync feed sends a current device no deletions, each deletion once over a many-page sync, and every missed one to a device that is behind |
 | `tests/test_events.py` | The steps' event lines (issue #84, [chapter 16](16-operations.md)), no model: `core.events` round-trips progress and events with the version, reads a newer `1.x`, and returns `None` (without raising) for another major version, an unknown type and malformed lines; `IngestJob._follow` on a fake child reloads the catalog at `catalog_ready` before the run ends, also when the human lines are reworded, and does nothing for the old wording without the events, keeping event lines out of the page's log; the intake engine's bar follows a stage's `progress` events (through `Store.set`) and not its human lines, which go in the job's log; and the emitters on a tiny catalog in `tmp_path`: `estate.py` ingest/link (and exif with exiftool), `places.py`, `embed.py` and `faces.py` with nothing to do, and `ingest-iphone.sh` with faked `uv` and `sqlite3`, both alone and run by a real `IngestJob`; none of them prints a `@@pe` line unless asked |
-| `tests/test_http_util.py` | `http_util.py`: `Response` can't be changed, `int_param`, bounded bodies, the auth rule; months outside 1-12; intake's `job` and `after`; the setup server's 400 and 413 |
+| `tests/test_video.py` | Videos and Live Photos with no app and no model (fast tier), on small videos it makes with PyAV: which frames are read and that they come out upright, posters, which frames are kept, a video's rows, the Live Photo pairing rule (what marks a clip, which still it takes, what must not pair, running it again), and videos in a loaded catalog (best-frame scoring, no stacks, an incremental load) |
+| `tests/test_video_app.py` | Videos in the running app over real HTTP (slow tier, needs the search model), on the library `tools/video_demo.py` builds: a search finding a video at the right scene, Live Photos, posters, `/video` with `Range`, "more like this" from a video, `kind` for an agent, `embed.py stats` |
+| `tests/test_http_util.py` | `http_util.py`: `Response` can't be changed, `int_param`, `byte_range` (what a `Range` header asks for, and when it is a 416), bounded bodies, the auth rule; months outside 1-12; intake's `job` and `after`; the setup server's 400 and 413 |
 | `tests/test_core.py` | `core/` (issue #85): every module's file types are what they were, from one list; `GET /original/<sha>` answers 200 with the right `Content-Type` for `.heif`, `.tif`, `.tiff` and `.avif`; fresh databases from every open path match `tests/fixtures/schema_baseline.json` (captured from the code before), an old `change_sets`/`change_items` gains its columns with its rows kept, a copy of the demo catalog only gains tables, and `favorites` exists once the app opens; the default ports are distinct and the task agent's MCP URL follows the app's port; the screenshot cases in `tests/fixtures/screenshot_rules.json`, and that `Screenshots.swift` lists the same screen sizes |
 
 Every test is a script that runs on its own (`uv run tests/<file>` from `photo-estate/`), needs no
@@ -86,11 +88,11 @@ the headers:
 | Group | For | Packages |
 |---|---|---|
 | `core` | `estate.py`, `scores.py`, the fast tests | numpy, Pillow, pillow-heif |
-| `ml` | `embed.py` and the search model | core, torch, transformers, sentencepiece, protobuf |
+| `ml` | `embed.py` and the search model | core, torch, transformers, sentencepiece, protobuf, av (PyAV: a video's frames) |
 | `faces` | `faces.py` | core, onnxruntime |
 | `places` | `places.py` | core, reverse_geocode, timezonefinder, pycountry |
 | `tools` | `tools/` (the book, benchmarks, screenshots, the aesthetics experiments) | markdown-it-py, mdit-py-plugins, Pygments, httpx, requests, Playwright, SciPy, scikit-learn |
-| `dev` (installed by default) | pytest, ruff and pyright | core, pytest, ruff, pyright |
+| `dev` (installed by default) | pytest, ruff and pyright | core, av (`tests/test_video.py` makes its own small videos), pytest, ruff, pyright |
 
 `uv sync --group ml --group faces --group places` installs everything the server can use. After
 changing a group, run `uv lock` and commit `uv.lock`; `uv lock --check` says whether it is current.
@@ -283,8 +285,9 @@ images are deterministic, distinct, and tiny, and no real photo is needed.
 
 ### What it does not cover
 
-Honest limits: nothing here tests `embed.py` (needs a multi-GB model), `faces.py` (ditto), the web pages,
-or `serve`'s query reading. Those are validated through the demo library and by eye: the README's
+Honest limits: nothing in the fast tier runs the search model, so `embed.py`'s embedding is tested only
+in pieces (a video's frames and rows in `tests/test_video.py`) and by the slow tier; `faces.py` (a
+multi-GB model too), the web pages, and `serve`'s query reading are not covered here either. Those are validated through the demo library and by eye: the README's
 "searches that work" list and `tools/screenshots.py`. A small page to *score search on real queries*
 (from the query log) is item 2 of the roadmap, precisely because there is no automated relevance test.
 
@@ -302,6 +305,9 @@ The repository contains a complete, ready-to-use library in `photo-estate/demo/`
 | `demo/estate.db` | The catalog after the full pipeline (about 1 MB): assets, occurrences, sidecars, exif, places, events, trips, embeddings |
 | `demo/photos.json` | The list of photos, grouped by what they show |
 | `demo/CREDITS.md` | Author, source page and licence of every photo |
+
+The demo has no videos. It is checked in and must not change, so videos and Live Photos are tried on
+a copy of it instead (`tools/video_demo.py`, below).
 
 ### The design of the demo
 
@@ -364,6 +370,7 @@ one-time download of PyTorch and the SigLIP 2 weights; browsing works immediatel
 | [tools/sigbench.py](../../photo-estate/tools/sigbench.py) (42 lines) | Times SigLIP 2 image embedding on CPU over a folder of photos (`T=8` threads, any model id, `DT` for the data type). The source of the numbers in TAGGING-RESEARCH.md |
 | [tools/bench_server.py](../../photo-estate/tools/bench_server.py) (152 lines) | Latency of every endpoint of the running server, optionally over HTTP/2 through a proxy (`--h2`) |
 | [tools/thumb_burst.py](../../photo-estate/tools/thumb_burst.py) (28 lines) | Cold thumbnail bursts, the cost that dominated on a USB hard disk |
+| [tools/video_demo.py](../../photo-estate/tools/video_demo.py) (148 lines) | A copy of the demo library with videos in it, to try the app on: `demo/estate.db` and `demo/store` copied, then a small "phone" folder made from the demo's own photos (a three-scene `.mp4` of the sea, snow and a waterfall, a portrait `.mov`, two Live Photos) and run through ingest, link, the pairing `exif` ends with and `embed.py run`. It writes the duration and the content identifier exiftool would have, so exiftool is not needed. About a minute; needs the search model. `uv run tools/video_demo.py /tmp/video-demo`, then `uv run embed.py --db /tmp/video-demo/estate.db serve --store /tmp/video-demo/store --port 8767`. The slow video tests build the same library |
 | [tools/thumb_formats.py](../../photo-estate/tools/thumb_formats.py) (152 lines) | What a thumbnail or preview costs in each image format on a sample of the library: bytes, time to make and to decode, SSIM against the uncompressed image. How WebP 78 was chosen (chapter 11). Opens the catalog read-only |
 
 ## Contributing

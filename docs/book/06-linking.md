@@ -127,9 +127,37 @@ sidecar, and gives the video that sidecar. Two details keep this right:
 - **A used sidecar is not reused** if another candidate is free (`used` set), so two clips do not
   both claim one still.
 
-The count of rescued clips is printed: `... (N Live Photo clips via their still ...)`. On the
-author's library about 16,500 of the roughly 18,900 videos were motion clips, not real videos
-(BENCHMARK.md).
+The count of rescued clips is printed: `... (N Live Photo clips via their still ...)`.
+
+Lending a sidecar is all `link` does for a clip, and it goes by name alone. That is not enough to
+say a video *is* a clip: an old camera's `IMG_1370.MOV` can sit next to an unrelated `IMG_1370.JPG`.
+Which clip belongs to which still is recorded separately, in `live_pairs`, by `pair_live`. It runs
+when `estate.py exif` finishes (it reads what exiftool just wrote, and runs before `embed.py run`,
+which leaves clips out), and on its own as `estate.py live` (`--redo` forgets every pair first). The
+rule:
+
+- **A clip is marked**, not guessed from its name: by Apple's content identifier, which exiftool
+  reads from the clip (`Keys:ContentIdentifier`; `how='id'`), or by a Google `MVIMG` name on a video
+  of four seconds or less (a Pixel's motion photo; `how='mvimg'`). Only videos of six seconds or
+  less are looked at (`LIVE_LONGEST`). `live_mark` decides.
+- **Its still is the image of the same name in the same folder.** The names tried, likeliest first,
+  are the clip's own, then without Takeout's `(1)`, each also without `_HEVC` (some iCloud mirrors)
+  (`live_stems`). Each name is looked for in the same folder of the clip's own source first, then of
+  every other source, before the next name is tried: a Takeout is many zips, each a source, and one
+  folder's files are spread over them. Sources are taken from `occurrences`, so a source still being
+  ingested counts too.
+- Plain names go first and a still already taken is not reused while another is free, as above.
+- A marked clip with no still yet stays an ordinary short video; a later run pairs it when its
+  still arrives.
+
+On a copy of the author's catalog ([VIDEO-PLAN.md](../notes/VIDEO-PLAN.md)), of 19,612 videos,
+`pair_live` paired 16,185 clips with 16,095 stills in 5 seconds: 16,172 by the content identifier,
+13 by an `MVIMG` name. 90 stills have two clips (Takeout's `.mp4` and iCloud's `.mov` of the same
+moment). 3,427 videos stand on their own. Going by names alone would have paired 588 real videos
+of more than ten seconds with a photo that happens to share their number.
+
+A paired clip is never an item of its own: it is not embedded, has no thumbnail and is in no list
+or count. Its still carries it, and the app plays it ([chapter 11](11-server.md)).
 
 Anything still unmatched after this is printed (up to 20) with the hint that its sidecar may be in
 a zip not yet ingested.
@@ -238,6 +266,7 @@ All in [estate.py](../../photo-estate/estate.py):
 | The matching algorithm | `match_sidecar`, `_lookup` |
 | Album naming | `default_album`, `YEAR_DIR`, `DATE_DIR` |
 | The command | `cmd_link` |
+| Live Photo pairs | `live_mark`, `live_stems`, `pair_live`, `cmd_live` |
 | iCloud XMP | `parse_xmp`, `XMP_FIELDS` |
 | Flickr | `flickr_for`, `flickr_text`, `FLICKR_FILE`, `FILENAME_TITLE` |
 | Test | `build_takeout` in [tests/test_poc.py](../../photo-estate/tests/test_poc.py): every quirk above is built synthetically and asserted |

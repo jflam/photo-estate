@@ -53,6 +53,12 @@ Library hides as **near-identical shots** (`dup`). That needs the image vectors 
 newest-first, comparing each photo against the last 8 kept (cosine above 0.97), so the feed sends it as
 a flag on the row, and the phone's "Hide near-identical shots" is a `WHERE dup = 0`.
 
+The rows are the catalog's, so they include its videos: a video's row has `kind: "video"` and `dur`
+(seconds), and a Live Photo's still has `live`, the sha of its clip, served at `/video/<sha>`
+([chapter 11](11-server.md)). A clip has no row of its own. A photo's row has none of
+these keys, so the first load after videos came in changed only the rows of the videos (all new) and
+of the stills that gained `live`: on the author's library, 16,095 stills and 3,427 videos.
+
 ### The endpoint
 
 ```

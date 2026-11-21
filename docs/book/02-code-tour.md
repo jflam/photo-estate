@@ -35,8 +35,8 @@ A few things stand out:
 - **Most of the code is interface.** The web pages and the iPhone app are 9,560 lines, 56% of what
   you run. A justified grid, a viewer that grows out of its tile, pinch zoom and a filter sheet with
   live counts take more code than any model.
-- **The AI models are a small fraction of the code.** The embedding job is under 100 lines in
-  `embed.py` (`_decode` plus `cmd_run`); face detection, alignment and recognition (`Models`) are
+- **The AI models are a small fraction of the code.** The embedding job is about 150 lines in
+  `embed.py` (`_decode`, `_decode_video` and `cmd_run`, videos included); face detection, alignment and recognition (`Models`) are
   about 80 lines in `faces.py`; the two "best photo" scorers are applied in under 100 lines of
   `scores.py`. The rest deals with the unglamorous parts: reconciling metadata from three services,
   laying out a grid, keeping a phone's copy in step, and making it fast.
@@ -55,25 +55,30 @@ A few things stand out:
 
 ## File by file
 
-Code lines, measured as above.
+Code lines, measured as above; the files the videos changed (and the two they added) were measured
+again on 2026-11-21, on the `videos` branch.
 
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
-  embed.py             258  image embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
-  photo_app.py         526  the photo app as an object: PhotoApp (wiring, who may write, favourites, reloads) and its HTTP handler
-  http_util.py         132  what the servers share: Response, bounded JSON bodies, int_param (400s), the Auth rules
-  catalog.py           519  the photo app's library in memory: load(), Catalog, Live (chapter 11)
-  browse.py            366  search, similar, facets, Years and Months, layout; an agent's searches
-  images.py            210  thumbnails (WebP), previews, large images and originals; making them in the background
+  embed.py             351  image and video embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
+  photo_app.py         631  the photo app as an object: PhotoApp (wiring, who may write, favourites, reloads) and its HTTP
+                            handler, which streams uploads, album downloads and videos (/video/, with Range)
+  http_util.py         177  what the servers share: Response, bounded JSON bodies, int_param (400s), byte_range, the Auth rules
+  catalog.py           749  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
+                            clips), Live (chapter 11)
+  browse.py            389  search, similar, facets, Years and Months, layout; an agent's searches; kind and is:video
+  images.py            251  thumbnails (WebP), previews, large images and originals, a video's from its poster;
+                            making them in the background; which file /video/ sends
+  video.py             112  still frames out of a video with PyAV: when to look, frames, the poster, which to keep (chapter 10)
   admin.py             256  phone uploads, the ingest, restart, /stats, backups
   encoder.py           204  SigLIP's text (and image) side, for the photo app: loaded when asked for, let go when idle
   compare.py           374  an experiment: a fixed list of searches ranked by a second model beside the app's own, voted on, and a report, at /compare (chapter 10)
   compare-terms.txt     30  the searches a comparison asks, one a line
-  estate.py          1,005  ingest, link, exif, dupes, review, tag, search, stats
+  estate.py          1,046  ingest, link, exif, live (Live Photo pairs), dupes, review, tag, search, stats
   faces.py           1,072  faces: run, serve, and the People class (who is who)
   changes.py           455  albums and change sets: proposed, reviewed, applied, reverted (chapter 26)
   places.py            388  place names, local time, events, trips
-  estate_mcp.py        383  the library as MCP tools for an agent, at /mcp (chapter 26)
+  estate_mcp.py        417  the library as MCP tools for an agent, at /mcp (chapter 26)
   upload.py            312  receives phone uploads into an inbox (chapter 24)
   tasks.py             273  a request in words, worked on by Claude Code on the library's computer (chapter 26)
   stats.py             181  the numbers behind the /stats page
@@ -84,7 +89,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             script modules (app/*.js) a server sends at /app/<name>.js
   intake/            1,169  the setup page's engine: sources, jobs, the pipeline every source feeds (chapter 16)
   core/                     what several parts must agree on, standard library only (issue #85):
-    media.py                  file types: extension -> MIME, the image/video/RAW/upload sets, what each decoder skips
+    media.py                  file types: extension -> MIME, the image/video/RAW/upload sets, what each decoder skips,
+                              what /video/ sends each video as (VIDEO_TYPES)
     schema.py                 every SQLite table of every database, and the additive migrations: ensure(con, area)
     config.py                 the default ports (8766 real, 8767 demo, 8768 preview, 8769 sandbox, 8765 review, 8764 faces)
     states.py                 the finite string domains as StrEnums (change set op/status/state, decisions, task,
@@ -159,6 +165,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_job_lifecycles.py races the ingest job, tasks, intake jobs and the sync cursor (issue #86);
                             test_events.py checks the steps' event lines at both ends (issue #84);
                             test_pregenerate.py checks the WebP thumbnails and the background thumbnails and previews (#26, #104);
+                            test_video.py checks video.py, the Live Photo pairing and videos in the catalog, on small
+                            videos it makes (fast tier); test_video_app.py (slow tier) tries videos in the running app
+                            over HTTP, on the library tools/video_demo.py builds;
                             test_pages.py checks that every page imports only script modules and names that exist,
                             and that the servers send the modules as JavaScript (issue #89);
                             test_pages_browser.py (426 lines, slow tier) drives the secondary pages in a real
@@ -167,7 +176,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)
   uv.lock                   every dependency of those groups, pinned; CI installs from it (chapter 17)
-  tools/             3,365  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh,
+  tools/             3,506  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh,
+                            video_demo.py (a copy of the demo library with videos and Live Photos, chapter 17),
                             export_squares.py (the Library as square JPEGs in tar shards, for embedding experiments),
                             embed_squares.py (a second model's vectors for those shards, for /compare),
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
@@ -197,6 +207,7 @@ This is where a library becomes a catalog. Its sections (marked by comment banne
 | `ingest` | Stream files out of zips or folders, hash, store, record | [4](04-store-and-ingest.md) |
 | `link` | Match sidecars to media; merge Google, iCloud and Flickr metadata onto assets | [6](06-linking.md) |
 | `exif` | Run `exiftool`, keep the dump, promote camera/lens/exposure | [7](07-places-events-trips.md) |
+| `live` | Pair Live Photo clips with their stills (`pair_live`, also run at the end of `exif`) | [6](06-linking.md) |
 | `reindex` | Rebuild the full-text index | [9](09-text-search-and-tags.md) |
 | `dupes` | Near-duplicate clustering and the report | [8](08-duplicates.md) |
 | `review` | The local web server for the review page | [8](08-duplicates.md) |
@@ -214,7 +225,7 @@ that is the main product. Its parts:
 | Part | What it does |
 |---|---|
 | Constants | Model name, the match floor and windows, `SKIP_EXT` |
-| `_decode`, `load_model`, `cmd_run` | Compute and store an embedding for every image |
+| `_decode`, `_decode_video`, `video_rows`, `load_model`, `cmd_run` | Compute and store an embedding for every image, then every video's frames and their mean |
 | `cmd_search` | Command-line semantic search |
 | `_library_or_setup` | No library yet: serve the setup page instead (intake/) |
 | `cmd_serve` | **The photo server**: finds the library (or serves the setup page), builds a `PhotoApp` (photo_app.py), starts it and serves it |
@@ -231,7 +242,7 @@ reading one shared state object instead of closing over variables.
 |---|---|
 | `catalog.py` | `load()`: the catalog read into a `Catalog`, a slotted dataclass with every field typed (vectors, per-photo `PhotoMeta` dicts, columns, facets, stacks, the name and place vocabulary), its shared questions (`combine`, `facet_counts`, `take`, `periods`, `scored`, ...), and `Live`, the catalog being served, swapped under a gate after an ingest and changed under it for a favourite, with a `generation` that counts both |
 | `browse.py` | `Browse`: the search language and `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log`, plus the same searches for an agent (`/mcp`) |
-| `images.py` | `Images`: `/thumb/` (WebP), `/preview/`, `/large/`, `/original/`, and pre-generating thumbnails and previews |
+| `images.py` | `Images`: `/thumb/` (WebP), `/preview/`, `/large/`, `/original/`, and pre-generating thumbnails and previews; a video's are made from its poster frame, and `video_file` says which file `/video/` streams |
 | `admin.py` | `Admin`: phone uploads, the ingest, restart, the `/stats` page, preparing arrivals; catalog backups |
 | `encoder.py` | `Encoder`: the model's text side for typed searches, and its image side for uploads |
 
@@ -331,7 +342,7 @@ flowchart TD
       FAC["faces.py<br/>onnxruntime"]
     end
     subgraph server["embed.py serve: one process"]
-      EMB["embed.py<br/>torch, transformers, numpy"]
+      EMB["embed.py<br/>torch, transformers, numpy, av"]
       MODS["mounted modules:<br/>faces.People, changes, estate_mcp,<br/>tasks, intake.api, sync, upload"]
       LOAD["worked out at load:<br/>scores, stacks, stats"]
     end
@@ -434,6 +445,7 @@ and embedded still works in the app; each later stage adds capability.
 | [BENCHMARK.md](../notes/BENCHMARK.md) | Library statistics and the benchmark album for comparing models |
 | [TAGGING-RESEARCH.md](../notes/TAGGING-RESEARCH.md) | The tiered tagging pipeline and model comparison |
 | [INTAKE-PLAN.md](../notes/INTAKE-PLAN.md) | The plan for bringing photos in from the app, by phases |
+| [VIDEO-PLAN.md](../notes/VIDEO-PLAN.md) | Videos and Live Photos: the plan, what was measured, what is left |
 | [deploy/MAC-MINI.md](../../photo-estate/deploy/MAC-MINI.md) | Running as an always-on service |
 | [deploy/CLOUD-SESSIONS.md](../../photo-estate/deploy/CLOUD-SESSIONS.md) | Working on the app from a phone: cloud sessions and the preview |
 | [demo/CREDITS.md](../../photo-estate/demo/CREDITS.md) | Author and source of every demo photo |

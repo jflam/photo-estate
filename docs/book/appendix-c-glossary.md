@@ -19,11 +19,15 @@ exactly on at least one piece; used to find near-duplicates without comparing al
 
 **Batch (upload).** The files a phone sends together, named in an `X-Batch: <id>/<count>` header; when the last arrives, the server starts cataloguing at once ([24](24-uploading.md)).
 
+**Best frame.** Of a video's kept frames, the one closest to a search. A video's score in a search is its best frame's, or its mean's when that is higher (`Catalog.sims`), and `at` on its row says where that frame is, in seconds ([10](10-embeddings.md#videos)).
+
 **Bradley–Terry model.** A model of pairwise choices: each item has a score, and the chance A is picked over B is `sigmoid(score A − score B)`. The taste scorer is one ([25](25-best-photos.md)).
 
 **Catalog.** The SQLite file `estate.db`.
 
 **Centroid.** The mean (normalised sum) of a person's trusted face vectors for one year.
+
+**Clip (Live Photo).** The short video, a few seconds long, taken with a Live Photo's still and stored as a file of its own. Told by Apple's content identifier, or a Google `MVIMG` name, plus a still of its name in the same folder (of its own source first, then of any other); recorded in `live_pairs`. A paired clip is never an item of its own: its still carries it (`live`) ([6](06-linking.md#step-2-live-photos-and-motion-photos)).
 
 **Content-addressed.** Stored under a name derived from the content (its SHA-256), so identical bytes
 share one file.
@@ -52,6 +56,8 @@ trip.
 
 **FTS5.** SQLite's built-in full-text search engine.
 
+**Frame vectors.** The SigLIP 2 vectors of the frames a video is searched by: one frame every three seconds, at most 30, and of those only each that is under 0.96 cosine of the last one kept. Kept in `video_frames`; their mean is the video's own vector in `embeddings` ([10](10-embeddings.md#videos)).
+
 **Google (source).** A face name from a Google people tag, matched to a face by `seed()`. Trusted.
 
 **Hamming distance.** The number of bits in which two bit strings differ.
@@ -66,6 +72,8 @@ trip.
 hash and box.
 
 **Replica.** The phone's read-only copy of the catalog, in `catalog.db`; the server is the only writer ([20](20-sync.md)).
+
+**Live Photo.** A still and a clip taken together by an iPhone (or a Pixel's motion photo). Here the still is the photo and the clip is part of it: one item, searched, scored and counted by its still ([6](06-linking.md#step-2-live-photos-and-motion-photos)).
 
 **Locality.** The nearer suburb or neighbourhood when a big city was chosen as a photo's `city`.
 
@@ -82,6 +90,8 @@ is waiting for your yes or no.
 
 **Perceptual hash.** A fingerprint that stays similar when an image is resized, recompressed or lightly
 edited.
+
+**Poster.** The frame that stands for a video: about one second in (the first is often black), or the first frame of a video of two seconds or less (`video.poster`). A video's thumbnail, preview and large image are made from it ([11](11-server.md)).
 
 **Preview.** The 1600 px JPEG of a photo the viewer shows (`/preview/<sha>`), made in the background
 ahead of time so opening a photo never waits on its original. Chapter 11.

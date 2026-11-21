@@ -27,7 +27,7 @@ content type, Cache-Control[, headers])` or `None` when the path is not its own.
 |---|---|---|
 | [catalog.py](../../photo-estate/catalog.py) | `load()` → `Catalog`; `Live`, `Gate` | No routes: the library in memory (everything below), and the catalog being served |
 | [browse.py](../../photo-estate/browse.py) | `Browse` | `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log`; and an agent's searches (`find`, `row`, `faces`, `overview`) for `/mcp` |
-| [images.py](../../photo-estate/images.py) | `Images` | `/thumb/`, `/preview/`, `/large/`, `/original/`; thumbnail pre-generation |
+| [images.py](../../photo-estate/images.py) | `Images` | `/thumb/`, `/preview/`, `/large/`, `/original/`; thumbnail pre-generation; which file `/video/` sends (`video_file`) |
 | [admin.py](../../photo-estate/admin.py) | `Admin` | `/api/upload/...`, `/api/ingest`, `/api/restart`, `/stats`, `/api/stats`; preparing photos that arrive from the phone; backups |
 | [encoder.py](../../photo-estate/encoder.py) | `Encoder` | No routes: SigLIP's text side (and image side, for uploads), loaded in the background |
 | [faces.py](../../photo-estate/faces.py) | `People` | `/people`, `/face/`, `/api/people*` ([chapter 14](14-faces.md)) |
@@ -47,9 +47,9 @@ sweep, backups). `PhotoApp.handle(Request) -> Response` answers one request in p
 builds a `PhotoApp` on the demo library and calls it directly, with no subprocess and no PyTorch
 ([tests/test_photo_app.py](../../photo-estate/tests/test_photo_app.py)); `make_server(host, 0)` puts the
 real HTTP layer in front of it on a free port. The HTTP layer (`make_handler`) only reads the request,
-with a bounded body, and writes the `Response`: the 304 for a matching `ETag`, gzip, the headers. Two
-routes stream and stay in it: phone uploads (into the inbox as they arrive) and album downloads (a
-zip written as it is read). A `Response` is a frozen dataclass (`status, body, content_type, cache,
+with a bounded body, and writes the `Response`: the 304 for a matching `ETag`, gzip, the headers. Three
+routes stream and stay in it: phone uploads (into the inbox as they arrive), album downloads (a
+zip written as it is read) and videos (`/video/`, read from the disk as they are sent; below). A `Response` is a frozen dataclass (`status, body, content_type, cache,
 headers`); the extra headers it carries (`Retry-After`, `Content-Disposition`, `ETag`) replaced the
 handler's old mutable `extra_headers`.
 
@@ -189,13 +189,23 @@ The query is `SELECT` without an `ORDER BY`, and the sort happens in Python. The
 explains why: on a spinning disk, walking an index to produce sorted output turns each row into a
 seek. Reading the table in storage order and sorting in memory was 2.7 s → 0.15 s.
 
+A video is a row of `M` like a photo: its vector there is the mean of its frames (chapter 10). A Live
+Photo's clip is not: every sha in `live_pairs.clip` is left out, so a clip is in no list, count or
+search. The videos' frames are a second matrix, `F` (one row per kept frame in `video_frames`, float32),
+with `frame_of` (the row in `M` of the video each frame is from) and `frame_t` (seconds into it). `F` is
+read whole at startup and again only when `video_frames` has grown; a frame whose video is not in the
+catalog (embedded, then found to be a clip) is dropped. When a reload finds that a video it was showing
+has since been paired as a clip (its still came later), it reads everything again rather than only
+what changed, so the clip leaves every list at once.
+
 ### 2-3. The metadata
 
 `meta[sha]` is a dictionary per photo, filled from several tables:
 
 | Source | Fields added |
 |---|---|
-| `assets` (images only) | `ext`, `taken`, `lat`, `lon`, `desc`, `people` (split), `fav`, `w`, `h` |
+| `assets` (photos and videos) | `ext`, `taken`, `lat`, `lon`, `desc`, `people` (split), `fav`, `w`, `h`; for a video `kind: "video"` and `dur` (seconds, from `exif.duration`, read by key for the videos only) |
+| `live_pairs` | on a still, `live`: the sha of its Live Photo clip. When a still has two clips (Takeout's `.mp4` and iCloud's `.mov`), the `.mp4`, which every browser plays |
 | `occurrences`, in id order | `path` (the first path seen), `albums` (de-duplicated) |
 | `exif` (via covering index) | `camera`, `lens`, `focal`, `focal35`, `fnumber`, `exposure`, `iso` |
 | `places` + `events` + `trips` | `local`, `tz`, `place`, `country`, `region`, `city`, `county`, `place_inferred`, `event`, `event_title`, `trip`, `trip_title` |
@@ -235,6 +245,7 @@ filter is one vectorised operation over all photos instead of a Python loop.
 | `cols["place" / "camera" / "album" / "person"]` | lower-cased text per photo | Typed `key:value` substring filters |
 | `event_of`, `trip_of` | the id or `None` | Scoping to an event or trip |
 | `fav` | boolean | Favourites |
+| `video` | boolean | `kind=video\|photo` and `is:video` (chapter 12); a video is never put in a stack with the photos taken beside it |
 | `oldest`, `newest` | photo numbers sorted by time, **undated last either way** | Unranked results |
 
 ### 6. Facets
@@ -300,7 +311,7 @@ a 100k-photo catalog.
 
 The trips list orders trips by start (newest first) and picks each a **cover**: the middle favourite
 photo of the trip, or the middle photo if there are no favourites. `/api/info` is one JSON document:
-total, model, the first month (`m0`, as `year*12 + month - 1`), trips, whether faces exist, whether this is
+total, `videos` (how many of the total are videos), model, the first month (`m0`, as `year*12 + month - 1`), trips, whether faces exist, whether this is
 the demo, and the unfiltered facet counts including the per-month histogram (which also serve as the
 page's first facet state; the number of months is the histogram's length).
 
@@ -385,7 +396,7 @@ Points worth knowing:
   stops requesting when it is null.
 - **`take` implements "hide near-identical shots".** It walks the order from `start`, skipping any
   candidate whose similarity to one of the last 8 kept exceeds 0.97, until `limit` photos are kept,
-  and reports how many it hid. It is turned off by `dedupe=0`.
+  and reports how many it hid. A video is never skipped this way: it is no photo's copy. It is turned off by `dedupe=0`.
 - **The response carries how the query was read** (`people`, `places`, `filters`, `scope`, `text`),
   which the page uses to write the title ("Ben & Matthew", "in San Diego") and offer "Search the words
   instead".
@@ -399,7 +410,10 @@ Points worth knowing:
 Every result is the photo's `meta` plus its `sha`: `ext`, `taken`, `local`, `tz`, `lat`, `lon`,
 `desc`, `people`, `albums`, `fav`, `w`, `h`, `ar`, `path`, `camera`, `lens`, `focal`, `focal35`,
 `fnumber`, `exposure`, `iso`, `place`, `city`, `region`, `country`, `county`, `place_inferred`,
-`event`, `event_title`, `trip`, `trip_title`. The page needs all of it for the details panel without
+`event`, `event_title`, `trip`, `trip_title`. A video's row also has `kind: "video"` and `dur`; a
+Live Photo's still has `live`, its clip's sha; a photo's row has none of the three, so it is what it
+was before there were videos. A search with words adds `at` to a video's row: the seconds into it
+where they match best (`Catalog.moment`), so a player can start there. The page needs all of it for the details panel without
 another round trip, and the JSON is gzipped (150 results: 120 KB → 14 KB on the wire).
 
 ## Serving images
@@ -412,6 +426,35 @@ Three renditions of every photo, plus the original, all named by the photo's has
 | `/preview/<sha>` | 1600 px | JPEG, quality 82 | The viewer |
 | `/large/<sha>` | 4096 px | JPEG, quality 90 | The viewer when zoomed or on a big dense display |
 | `/original/<sha>` | as stored | as stored | Save / share (the file itself, with its metadata) |
+| `/video/<sha>` | as stored | as stored | Playing a video, or a Live Photo's clip |
+
+**A video's renditions are its poster frame.** `upright()` in images.py, which every rendition is
+made from, hands a video to `video.poster`: the frame about one second in (the first is often black,
+or a blur as the phone comes up), or the first frame of a video of two seconds or less. From there a
+video's thumbnail, preview and large image are made, cached and pre-generated exactly as a photo's. A
+Live Photo's clip has none: its still is what is shown.
+
+**Playing a video.** `GET /video/<sha>` sends the stored file of a video in the catalog, or of a Live
+Photo's clip by the clip's own sha (`Images.video_file` says which file, under the gate, and lets the
+gate go). The handler (`Handler.video` in photo_app.py) reads it from the disk in 256 KB pieces as it
+sends them, since a video can be gigabytes. It answers `Range`: a player asks for the start, then the
+index at the end, then wherever it is dragged to, and Safari and AVPlayer play nothing from a server
+that cannot. `http_util.byte_range` reads the header:
+
+| Request | Answer |
+|---|---|
+| No `Range`, or one this server does not handle (not `bytes=`, several ranges, not numbers) | 200, the whole file (RFC 9110 lets a server ignore a `Range`) |
+| `bytes=a-b`, `bytes=a-`, `bytes=-n` inside the file | 206, those bytes, with `Content-Range` |
+| A range that starts at or after the end, or `bytes=-0` | 416, with `Content-Range: bytes */<size>` |
+| Not a video or a clip, or the file is not on the disk | 404 |
+
+Every answer says `Accept-Ranges: bytes`, a `Content-Disposition` with the file's own name, and
+`Cache-Control: private, max-age=2592000, immutable`. The type is `VIDEO_TYPES` in core/media.py: a
+`.mov` or `.m4v` goes out as `video/mp4`, because a phone's `.mov` holds H.264 or HEVC in the same boxes
+an `.mp4` does, and Chrome refuses `video/quicktime` while it plays the same bytes as `video/mp4`. A
+client that goes away mid-file is not an error. `PhotoApp.handle`, with no socket, answers 501 for a
+video it has (or 404), so a test can still ask whether one is there. `/original/<sha>` stays a 404 for a
+video.
 
 **Why the thumbnails are WebP** (since 2026-11-20, issue #104). Opening a month moves 150 thumbnails, and
 once the server answers in milliseconds that transfer is most of the wait, especially through a Tailscale
@@ -457,7 +500,8 @@ flowchart TD
 - **Original files** are served for the stills a phone can save (`.jpg`, `.jpeg`, `.png`, `.heic`,
   `.heif`, `.gif`, `.webp`, `.tif`, `.tiff`, `.avif`: `ORIGINAL_TYPES` in `core/media.py`, with each
   one's MIME type), with a `Content-Disposition` carrying the original file name, so "Save Image"
-  yields the real name. RAW, BMP and video are shared as a large JPEG instead (chapter 13). Until
+  yields the real name. RAW and BMP are shared as a large JPEG instead (chapter 13); a video's file is at
+  `/video/`. Until
   issue #85 the list was kept by hand here and left out `.heif`, `.tif`, `.tiff` and `.avif`, which
   answered 404 for photos the catalog holds.
 - **Hash validation.** Every image route first matches `^[0-9a-f]{64}$` and a known photo: there is
@@ -605,7 +649,7 @@ On the author's Mac mini, serving about 100k photos, the process uses about **1.
 
 ## Serving the phone
 
-Beyond what the web page uses, the server has four routes that exist for the iPhone app
+Beyond what the web page uses, the server has five routes that exist for the iPhone app
 ([chapter 19](19-iphone-app.md)); each is a few lines in the handler because the real work is in
 modules of their own:
 
@@ -615,6 +659,7 @@ modules of their own:
 | `PUT` or `POST /api/upload/...` | Saves a photo into the inbox (`upload.py`); each arrival can start the ingest | [24](24-uploading.md) |
 | `GET /api/ingest`, `POST /api/ingest` | The state of, and a manual start of, `ingest-iphone.sh` | [16](16-operations.md) |
 | `GET /original/<sha>` | The file as stored: what the web page and the phone share | [13](13-photo-app.md) |
+| `GET /video/<sha>` | A video, or a Live Photo's clip, with `Range`, for playing it | above |
 
 Two more things exist only for phone uploads. **Hot reload** (`PhotoApp.reload_catalog`):
 after an ingest the server re-reads what changed *in the background* (`catalog.load` with the last
@@ -635,6 +680,7 @@ follows has nothing left to do for it.
 | Mask building | `Browse.select`, `parse`, `read_words`, `view_masks`, `Browse.place_mask` in [browse.py](../../photo-estate/browse.py); `Catalog.person_mask` |
 | Ranking and paging | `Browse.search` (its `ranked`), `Browse.remember`, `Catalog.take`, `Catalog.browse_order` |
 | Text encoder | `Encoder` in [encoder.py](../../photo-estate/encoder.py) |
+| Videos | `Handler.video` in photo_app.py; `Images.video_file`, `upright` in images.py; `byte_range` in http_util.py; `poster` in [video.py](../../photo-estate/video.py); `VIDEO_TYPES` in core/media.py; `Catalog.sims`, `moment`, `F`, `frame_of`, `clips` in catalog.py |
 | Images and caches | `Images.image`, `Images.pregenerate` (`_thumbs`, `_previews`, `_make_all`, `_make`), `write_image`, `THUMB_QUALITY` in [images.py](../../photo-estate/images.py); `image_size` in catalog.py |
 | Uploads, ingest, restart, `/stats`, backups | `Admin` and `backups` in [admin.py](../../photo-estate/admin.py) |
 | HTTP | `make_handler` (`Handler.send`, `answer`, `upload`, `download`), `Server` in photo_app.py; `Response`, `read_body`, `int_param`, `Auth` in [http_util.py](../../photo-estate/http_util.py) |

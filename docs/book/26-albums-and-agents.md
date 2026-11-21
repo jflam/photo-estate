@@ -113,6 +113,11 @@ person in them), because SigLIP scores fall smoothly with no gap and the agent h
 stop. The tool descriptions say what a score means (a photo of the thing described scores about
 0.085-0.16, an unrelated one under about 0.07) so that choice is made on numbers.
 
+Videos are found by the same searches, by what their frames show (a video's score is its best frame's,
+[chapter 10](10-embeddings.md#videos)). `search_photos` takes `kind` (`photo` or `video`) to keep to one
+or the other, and a row says `kind: "video"` and `seconds` for a video, and `live_photo: true` for a
+Live Photo's still. The agent still sees no frame.
+
 And because a person reviews a change set, `get_change_set` reports which photos they kept: those are
 the agent's mistakes, and the best guide it has to doing better next time.
 
