@@ -104,9 +104,14 @@ launchctl bootout gui/$(id -u)/com.jflam.photo-search
 The estate disk is a USB *hard* disk. A thumbnail that isn't in memory costs a seek of about 9 ms,
 and seeks don't overlap, so the first screenful of 150 took about a second however many requests
 ran at once. `--fast-cache ~/Library/Caches/photo-estate` keeps thumbnails, previews and large
-views on the internal SSD (about 2.5 GB). Anything missing there is copied from
+views on the internal SSD. Anything missing there is copied from
 `/Volumes/estate/review` on first use, or decoded from the original if neither has it. At startup
-the server copies any thumbnails the SSD is missing, newest first. To fill it by hand:
+the server copies any thumbnails the SSD is missing, newest first, then makes every missing thumbnail
+and, at low priority, every missing 1600 px preview. For 113,000 photos that is about 1.9 GB of WebP
+thumbnails and 37 GB of previews; the previews stop while the SSD has under 20 GB free. The JPEG
+thumbnails made before 2026-11-20 (2.75 GB) are no longer read once each photo's WebP exists; to
+reclaim the space, `find ~/Library/Caches/photo-estate/thumbs -name '*.jpg' -delete` after the log says
+the thumbnails are made. To fill it by hand:
 
 ```bash
 rsync -a /Volumes/estate/review/ ~/Library/Caches/photo-estate/

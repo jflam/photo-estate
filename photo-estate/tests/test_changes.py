@@ -139,7 +139,7 @@ try:
     assert c["ok"] and (c["hidden"], c["visible"]) == (45, 5), c
     now_hidden = set(fifty) - set(keep)
     views_agree(now_hidden, everything, phone, sid)
-    assert call(f"/thumb/{hide[0]}")[:2] == b"\xff\xd8", "a hidden photo can still be looked at by the review page"
+    assert call(f"/thumb/{hide[0]}")[8:12] == b"WEBP", "a hidden photo can still be looked at by the review page"
 
     # changing one's mind after applying: three are kept after all
     call(f"/api/changes/{sid}/decide", {"shas": hide[:3], "decision": "reject"})

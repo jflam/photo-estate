@@ -64,7 +64,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   http_util.py         132  what the servers share: Response, bounded JSON bodies, int_param (400s), the Auth rules
   catalog.py           519  the photo app's library in memory: load(), Catalog, Live (chapter 11)
   browse.py            366  search, similar, facets, Years and Months, layout; an agent's searches
-  images.py            135  thumbnails, previews, large images and originals
+  images.py            210  thumbnails (WebP), previews, large images and originals; making them in the background
   admin.py             256  phone uploads, the ingest, restart, /stats, backups
   encoder.py           204  SigLIP's text (and image) side, for the photo app: loaded when asked for, let go when idle
   compare.py           374  an experiment: a fixed list of searches ranked by a second model beside the app's own, voted on, and a report, at /compare (chapter 10)
@@ -149,7 +149,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      45  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             2,436  16 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it;
+  tests/             2,548  17 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_core.py checks core/ against what the code before it did;
                             test_types.py checks the typed contracts (Catalog's fields, the enums) and runs pyright;
@@ -158,6 +158,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_faces_consistency.py keeps People's memory, SQLite and the face journal agreeing (issue #87);
                             test_job_lifecycles.py races the ingest job, tasks, intake jobs and the sync cursor (issue #86);
                             test_events.py checks the steps' event lines at both ends (issue #84);
+                            test_pregenerate.py checks the WebP thumbnails and the background thumbnails and previews (#26, #104);
                             test_pages.py checks that every page imports only script modules and names that exist,
                             and that the servers send the modules as JavaScript (issue #89);
                             test_pages_browser.py (426 lines, slow tier) drives the secondary pages in a real
@@ -166,9 +167,10 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)
   uv.lock                   every dependency of those groups, pinned; CI installs from it (chapter 17)
-  tools/             3,213  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh,
+  tools/             3,365  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh,
                             export_squares.py (the Library as square JPEGs in tar shards, for embedding experiments),
-                            embed_squares.py (a second model's vectors for those shards, for /compare)
+                            embed_squares.py (a second model's vectors for those shards, for /compare),
+                            thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
   deploy/              330  launchd plists, the cloud preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
   demo/                     104 CC0 photos, their catalog, and credits
 
@@ -229,7 +231,7 @@ reading one shared state object instead of closing over variables.
 |---|---|
 | `catalog.py` | `load()`: the catalog read into a `Catalog`, a slotted dataclass with every field typed (vectors, per-photo `PhotoMeta` dicts, columns, facets, stacks, the name and place vocabulary), its shared questions (`combine`, `facet_counts`, `take`, `periods`, `scored`, ...), and `Live`, the catalog being served, swapped under a gate after an ingest and changed under it for a favourite, with a `generation` that counts both |
 | `browse.py` | `Browse`: the search language and `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log`, plus the same searches for an agent (`/mcp`) |
-| `images.py` | `Images`: `/thumb/`, `/preview/`, `/large/`, `/original/`, and pre-generating thumbnails |
+| `images.py` | `Images`: `/thumb/` (WebP), `/preview/`, `/large/`, `/original/`, and pre-generating thumbnails and previews |
 | `admin.py` | `Admin`: phone uploads, the ingest, restart, the `/stats` page, preparing arrivals; catalog backups |
 | `encoder.py` | `Encoder`: the model's text side for typed searches, and its image side for uploads |
 

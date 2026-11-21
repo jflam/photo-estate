@@ -86,8 +86,10 @@ What changed:
   started every thumbnail within ~1250–2500 px of the screen together, and `tailscale serve` shares the
   link between them equally, so the screenful finished with the rest.
 
-Not done: the thumbnails are 360 px JPEGs at quality 82, 24 KB each; a format half that size would halve
-what is left. Month and year cards load a 1600 px preview each on top of the thumbnail.
+Not done then: the thumbnails are 360 px JPEGs at quality 82, 24 KB each; a format half that size would halve
+what is left. Month and year cards load a 1600 px preview each on top of the thumbnail. (On 2026-11-20
+the thumbnails became WebP, 30% smaller, and the previews are made ahead; see "Previews made ahead and
+thumbnails as WebP" below.)
 
 ## Reproducing
 
@@ -246,22 +248,76 @@ Measured on the mini after the deploy:
 Typed searches are not affected. The app's own model still loads at startup (about 10 s after a restart)
 and stays loaded.
 
+## Previews made ahead and thumbnails as WebP (2026-11-20)
+
+The two tasks left after the review of the open tasks (#26 and #104), done the same day. Measured on the
+Mac mini against the real library with `tools/thumb_formats.py`, which opens the catalog read-only and
+writes nothing to the store or the caches.
+
+### Opening a photo: previews made in the background (#26)
+
+Only 2,845 of 113,634 photos had a 1600 px preview cached on the SSD, so the first open of almost any
+photo waited while the server decoded its original from the USB hard disk. 80 photos, chosen at random:
+
+| | Median | 90th percentile |
+|---|---:|---|
+| Decoding the original to 1600 px (before, on a first open) | 148 ms | 339 ms |
+| Reading the cached preview from the SSD (after) | 0.3 ms | |
+
+These are the server's times only; the preview's 300 KB still has to cross the network. `Images.pregenerate`
+now has a second pass after the thumbnails: every missing preview, newest photos first. It runs in a third
+of the cores (2 on the mini) at `nice 10`, in batches of 2,000. It stops while the cache's disk has less
+than 20 GB free, and it gives way between batches when the job is asked to run again (after a reload), so
+new photos' thumbnails never wait behind it. Expected on the mini: about 37 GB (330 KB a preview), and
+3-5 hours for the first full pass. `/large/` (4096 px) is still made on first use.
+
+### Opening a month: WebP thumbnails (#104)
+
+300 photos chosen at random (113 HEIC, 181 JPEG, 5 PNG), each decoded as the app decodes it, thumbnailed to
+360 px, kept uncompressed as the reference, and then encoded several ways. "Closeness" is SSIM on luminance,
+and the mean of the worst 1% of its windows, which catches an artefact in a small part of a photo that the
+average hides:
+
+| Encoding | Median bytes | All bytes vs JPEG 82 | SSIM | Worst 1% | Encode | Decode |
+|---|---:|---:|---:|---:|---:|---:|
+| JPEG 82 (before) | 24,546 | 100% | 0.9686 | 0.829 | 0.3 ms | 0.36 ms |
+| JPEG 82, optimised Huffman tables | 24,028 | 98% | 0.9686 | 0.829 | 0.7 ms | 0.35 ms |
+| JPEG 82, progressive | 23,164 | 94% | 0.9686 | 0.829 | 1.7 ms | 0.83 ms |
+| **WebP 78 (after)** | **16,344** | **70%** | **0.9697** | **0.834** | 16 ms | 1.18 ms |
+| WebP 80 | 17,772 | 75% | 0.9731 | 0.855 | 17 ms | 1.24 ms |
+| WebP 75 | 14,614 | 63% | 0.9633 | 0.803 | 15 ms | 1.09 ms |
+| AVIF 70 | 18,136 | 76% | 0.9782 | 0.889 | 39 ms | 1.88 ms |
+| AVIF 65 | 15,046 | 63% | 0.9680 | 0.837 | 40 ms | 1.70 ms |
+
+WebP 78 is the lowest quality at least as close as the JPEG on both measures. AVIF 65 is as small but a
+shade less close by SSIM, and AVIF is 2-3 times slower to make. The issue hoped for half the bytes; at the
+same closeness the saving is 30%. A side by side, from the demo photos zoomed 3 times, is
+[docs/screenshots/thumb-jpeg-vs-webp.png](../screenshots/thumb-jpeg-vs-webp.png). WebP is a little
+softer on fine texture, and the JPEG a little blockier; at grid size they look the same.
+
+What 30% fewer bytes comes to:
+
+| | Before (JPEG 82) | After (WebP 78) |
+|---|---:|---:|
+| A month's 150 thumbnails | 3.6 MB | about 2.5 MB |
+| The mini's thumbnail cache, 113,777 photos | 2.75 GB | about 1.9 GB |
+| The phone's offline thumbnails, the whole library | about 2.8 GB | about 2.0 GB |
+
+The time to open a month moves with the bytes when the link is the limit, which it was on 2026-11-18
+(2.5-6.3 s through a Tailscale relay). Over a direct link a cold month took 0.75-1.4 s, part of it the
+server. Not yet measured on the mini, because it needs the deploy: a cold month opened from the laptop
+and from the phone, before and after.
+
+Costs: a browser decodes a WebP thumbnail in about 1.2 ms where a JPEG took 0.4 ms, so 150 thumbnails
+cost about 0.1 s more decoding, off the main thread (`decoding="async"`). Making one takes 16 ms in place of
+under 1 ms, which only the background job and uploads pay. The 113,777 JPEG thumbnails are redone from the
+originals once, in the background at `nice 10`. Until each photo's WebP exists its JPEG is still served,
+so the grid never waits during the changeover. Browsers and phones that already hold a JPEG thumbnail keep
+it.
+
 ## Open tasks
 
-Reviewed on 2026-11-20, after the catalog moved to the SSD and the GPU memory fix. "Done" means a
-before/after number on the Mac mini and no change to API answers.
-
-1. **Pregenerate previews onto the SSD** ([#26](https://github.com/jflam/photo-estate/issues/26)).
-   Only 2,845 of 113,634 photos have a 1600 px preview cached, so almost every photo opened in the viewer
-   is decoded from its original on the USB hard disk the first time: a seek, plus 0.1–0.5 s to decode a
-   HEIC. This applies to every format, not only HEIC. `Images.pregenerate()` builds only missing
-   thumbnails. All the previews would take about 37 GB (330 KB each); the SSD has 544 GB free. Build them
-   newest first, at low priority, after the thumbnails, and leave `/large/` on demand.
-2. **Smaller grid thumbnails** ([#104](https://github.com/jflam/photo-estate/issues/104)). Grid
-   thumbnails are 360 px JPEGs at quality 82, 24 KB each. Opening a month is now mostly the time to move
-   those bytes: 0.75–1.4 s for a cold 150 on a direct Tailscale path, 2.5–6.3 s relayed or on a phone away
-   from home. WebP or AVIF at the same visible quality would roughly halve that, and halve what the phone
-   keeps offline.
+None at the moment. Reviewed on 2026-11-20: the two left were done the same day (above).
 
 No longer worth doing, with the reason:
 
@@ -274,5 +330,5 @@ No longer worth doing, with the reason:
   target.
 - **Find the floor for a thumbnail burst** ([#25](https://github.com/jflam/photo-estate/issues/25)) and
   **HTTP/2 to the backend** ([#27](https://github.com/jflam/photo-estate/issues/27)). The Python server's
-  80–110 ms is small next to the bytes on the wire (task 2) and the relayed Tailscale path that made a
-  burst take 6 s on 2026-11-18. That was a stuck Tailscale app on the laptop, cured by restarting it.
+  80–110 ms is small next to the bytes on the wire and the relayed Tailscale path that made a burst take
+  6 s on 2026-11-18. That was a stuck Tailscale app on the laptop, cured by restarting it.

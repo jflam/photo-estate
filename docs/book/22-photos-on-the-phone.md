@@ -14,7 +14,7 @@ phone asks for the same three, from the same routes, and keeps each differently:
 
 | Kind | Size | Route | Used for | Kept as |
 |---|---|---|---|---|
-| `thumb` | 360 px | `/thumb/<sha>` | The grid, the search page, the viewer's first frame | One **row** in `thumbs.db`: `(sha, JPEG blob)` |
+| `thumb` | 360 px | `/thumb/<sha>` | The grid, the search page, the viewer's first frame | One **row** in `thumbs.db`: `(sha, image blob)`, WebP since 2026-11-20 (older rows are JPEG; `UIImage` reads both) |
 | `preview` | 1600 px | `/preview/<sha>` | The viewer, full screen | A **file**, `full/preview/<sha>.jpg` |
 | `large` | 4096 px | `/large/<sha>` | When zoomed in past 1.6 times | A file, `full/large/<sha>.jpg` |
 

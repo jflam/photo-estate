@@ -152,6 +152,7 @@ Needs `icloudpd`, `sqlite3`, `uv`. First run `icloudpd --username "$ICLOUD_USER"
 | `T=8 uv run tools/sigbench.py STORE [MODEL]` | Time SigLIP 2 image embedding on CPU |
 | `uv run tools/bench_server.py URL [--h2] [--quick] [--store DIR]` | Endpoint latency |
 | `uv run tools/thumb_burst.py URL DB` | Cold thumbnail bursts |
+| `uv run tools/thumb_formats.py --db DB --store STORE [--sample 300] [--side 360] [--try WEBP:78,AVIF:70] [--cache DIR] [--out DIR]` | What a thumbnail (or, with `--side 1600`, a preview) costs in each image format on a sample of the library: bytes, encode and decode time, SSIM against the uncompressed image; and how long a first open waits to decode an original. Read-only |
 | `nice -n 10 uv run tools/export_squares.py --db DB --store STORE [--out DIR] [--side 512] [--sample N] [--with-stacked] [--count]` | Every photo the Library shows as a square JPEG (preprocessed as `embed.py` does), in resumable tar shards of 2,000 with a `manifest.csv` |
 | `uv run tools/embed_squares.py --squares DIR --out DIR [--model M] [--wait] [--limit N]` | A second model's vectors (SigLIP 2 large, 384 px, by default) for `export_squares.py`'s shards, one `.npy` per shard, resumable; for `serve --compare-vectors` |
 | `uv run tests/test_poc.py` | End-to-end test |

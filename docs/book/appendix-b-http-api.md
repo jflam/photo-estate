@@ -215,7 +215,7 @@ protect, has no rule of its own.
 
 | Path | Returns |
 |---|---|
-| `GET /thumb/<sha>` | 360 px JPEG |
+| `GET /thumb/<sha>` | 360 px WebP (`image/webp`); a JPEG if it was made before 2026-11-20 and not yet redone |
 | `GET /preview/<sha>` | 1600 px JPEG |
 | `GET /large/<sha>` | 4096 px JPEG |
 | `GET /original/<sha>` | The stored file, for the stills a phone can save (`.jpg`, `.jpeg`, `.png`, `.heic`, `.heif`, `.gif`, `.webp`, `.tif`, `.tiff`, `.avif`; `ORIGINAL_TYPES` in [core/media.py](../../photo-estate/core/media.py)), with that type's `Content-Type` and `Content-Disposition: inline; filename*=UTF-8''<original name>`; 404 for RAW, BMP and video |
@@ -282,7 +282,7 @@ Returns `{"ok": true, "pending": N}`.
 | Request | Returns |
 |---|---|
 | `GET /` | 302 to `/people` |
-| `GET /preview/<sha>` | A 1600 px preview (rendered on demand into `review/previews/`) |
+| `GET /preview/<sha>` | A 1600 px JPEG preview, from `review/previews/` (made in the background, newest first, or on demand) |
 
 ## The duplicate review server (`estate.py review`)
 
@@ -291,7 +291,7 @@ Returns `{"ok": true, "pending": N}`.
 | `GET /` | `review.html` |
 | `GET /groups.json` | `{"groups": [...], "categories": {key: {label, policy, short}}}` |
 | `GET /decisions.json` | Choices saved so far |
-| `GET /thumb/<sha>`, `/preview/<sha>` | 360 px and 1600 px JPEGs |
+| `GET /thumb/<sha>`, `/preview/<sha>` | A 360 px WebP and a 1600 px JPEG |
 | `POST /decisions` | `{groupId: {keep: [shas], reviewed: bool, category}}`; merged into `decisions.json`; groups with an empty `keep` are ignored |
 
 ## Status codes

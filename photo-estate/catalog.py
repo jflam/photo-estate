@@ -71,21 +71,31 @@ def is_screenshot(m: Mapping[str, Any]) -> bool:
     return (a, b) in SCREEN_SIZES and ((m.get("ext") or "").lower() == ".png" or (a * 4 != b * 3 and a * 16 != b * 9))
 
 
-def jpeg_size(path: str):
-    """(width, height) from a JPEG's header, or None. Never raises."""
+def image_size(path: str):
+    """(width, height) from a JPEG's or a WebP's header, or None. Never raises."""
     try:
         with open(path, "rb") as f:
             d = f.read(8192)
-        i = 2
-        while i < len(d) - 9:
-            if d[i] != 0xFF or d[i + 1] == 0xFF:
-                i += 1
-                continue
-            if d[i + 1] in (0xC0, 0xC1, 0xC2):
-                return int.from_bytes(d[i + 7:i + 9], "big"), int.from_bytes(d[i + 5:i + 7], "big")
-            i += 2 + int.from_bytes(d[i + 2:i + 4], "big")
     except OSError:
-        pass
+        return None
+    if d[:4] == b"RIFF" and d[8:12] == b"WEBP" and len(d) >= 30:
+        kind = d[12:16]
+        if kind == b"VP8 ":       # lossy: 14-bit sizes after the frame's start code
+            return int.from_bytes(d[26:28], "little") & 0x3FFF, int.from_bytes(d[28:30], "little") & 0x3FFF
+        if kind == b"VP8L":       # lossless: 14 bits each, less one, after a signature byte
+            b = int.from_bytes(d[21:25], "little")
+            return (b & 0x3FFF) + 1, ((b >> 14) & 0x3FFF) + 1
+        if kind == b"VP8X":       # extended: 24 bits each, less one
+            return int.from_bytes(d[24:27], "little") + 1, int.from_bytes(d[27:30], "little") + 1
+        return None
+    i = 2
+    while i < len(d) - 9:
+        if d[i] != 0xFF or d[i + 1] == 0xFF:
+            i += 1
+            continue
+        if d[i + 1] in (0xC0, 0xC1, 0xC2):
+            return int.from_bytes(d[i + 7:i + 9], "big"), int.from_bytes(d[i + 5:i + 7], "big")
+        i += 2 + int.from_bytes(d[i + 2:i + 4], "big")
     return None
 
 
@@ -352,8 +362,8 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
             pass
     missing = [s for s in need if s not in dims]
     if missing:
-        def size_of(s):
-            return jpeg_size(str(cache / "thumbs" / f"{s}.jpg")) or jpeg_size(str(seed / "thumbs" / f"{s}.jpg"))
+        def size_of(s):   # the WebP thumbnail, or the JPEG one made before it
+            return next((d for f in (cache, seed) for e in (".webp", ".jpg") if (d := image_size(str(f / "thumbs" / f"{s}{e}")))), None)
         with ThreadPoolExecutor(16) as ex:
             for s, d in zip(missing, ex.map(size_of, missing)):
                 if d and d[0] and d[1]:
