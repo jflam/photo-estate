@@ -13,12 +13,38 @@
 main { max-width: 1400px; margin: 0 auto; padding: 18px calc(var(--pad) + env(safe-area-inset-right)) calc(120px + env(safe-area-inset-bottom)) calc(var(--pad) + env(safe-area-inset-left)); }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .lead { margin-top: 6px; color: var(--ink-2); max-width: 760px; }
-form { display: flex; gap: 8px; margin-top: 22px; }
-form input { flex: 1; height: 44px !important; font-size: 17px; padding: 0 18px !important; }
-form .btn { height: 44px; }
-.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
-.chips button { height: 30px; padding: 0 12px; border-radius: 999px; background: var(--well); font-size: 13px; font-weight: 600; color: var(--ink-2); }
-.chips button:hover { background: var(--well-2); color: var(--ink); }
+.card { margin-top: 22px; padding: 20px 22px; }
+.card dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; }
+.card dt { color: var(--muted); }
+.card dd { font-weight: 600; overflow-wrap: anywhere; }
+.acts { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 20px; }
+.acts .btn { height: 44px; padding: 0 22px; font-size: 16px; }
+h2.sec { margin: 34px 0 10px; font-size: 20px; font-weight: 700; letter-spacing: -.015em; }
+.past { display: grid; gap: 8px; }
+.past button { text-align: left; padding: 12px 16px; border-radius: var(--r); background: var(--well); display: block; width: 100%; }
+.past button:hover { background: var(--well-2); }
+.past small { display: block; color: var(--muted); margin-top: 2px; }
+details { margin-top: 22px; color: var(--ink-2); }
+details summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+details ol { margin: 10px 0 0 22px; columns: 3 220px; }
+.bar { height: 6px; border-radius: 3px; background: var(--well); margin-top: 22px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--sun-lit); border-radius: 3px; transition: width .25s var(--ease); }
+.term { margin-top: 14px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.term span { color: var(--muted); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.term h2 { font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
+.term .link { margin-left: auto; font-size: 13.5px; }
+.verdict { margin-top: 22px; font-size: 22px; line-height: 1.3; font-weight: 700; letter-spacing: -.015em; max-width: 860px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 18px; }
+.tiles div { padding: 14px 16px; border-radius: var(--r); background: var(--well); min-width: 0; }
+.tiles b { display: block; font-size: 30px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.tiles span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.tiles .won b { color: var(--sun); }
+.facts { margin-top: 16px; color: var(--ink-2); max-width: 860px; }
+table { width: 100%; border-collapse: collapse; margin-top: 12px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; font-weight: 600; color: var(--muted); }
+td.n, th.n { text-align: right; padding-right: 0; padding-left: 10px; }
+td.b { font-weight: 600; } td.b.win { color: var(--sun); } td.b.none { color: var(--muted); font-weight: 400; }
 .status { margin-top: 18px; color: var(--muted); font-size: 13.5px; min-height: 20px; font-variant-numeric: tabular-nums; }
 .status b { color: var(--ink); font-weight: 600; }
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 14px; }
@@ -47,8 +73,10 @@ form .btn { height: 44px; }
   .cols { gap: 10px; }
   .grid { grid-template-columns: repeat(2, 1fr); }
   .col h2 small { display: none; }
-  .vote .btn { padding: 0 12px; }
-  .vote kbd { display: none; }
+  .vote .btn { padding: 0 14px; }
+  .vote kbd, .vote .wide { display: none; }
+  .term h2 { font-size: 22px; }
+  .verdict { font-size: 19px; }
 }
 </style>
 </head>
@@ -57,134 +85,148 @@ form .btn { height: 44px; }
   <header>
     <div>
       <h1 class="display">Compare models</h1>
-      <p class="lead">Each search is ranked twice, by the model the app uses now and by a second one. The two columns
-        come in random order with no names, so judge the photos, then say which side found them better.</p>
+      <p class="lead">An experiment: the same searches, ranked by the model the app uses now and by another one. For each
+        search the two columns come in random order with no names. Say which side found the better photos; which
+        model was which is in the report at the end.</p>
     </div>
     <a class="link" href="/">Back to the Library</a>
   </header>
-  <form id="f">
-    <input type="text" id="q" placeholder="Describe a photo: kids at the lake, a birthday cake, snow in the mountains" autocomplete="off" enterkeyhint="search">
-    <button class="btn pri">Compare</button>
-  </form>
-  <div class="chips" id="chips"></div>
   <div class="status" id="status"></div>
-  <div id="out"></div>
-  <div class="tally" id="tally"></div>
+  <section id="home" hidden></section>
+  <section id="run" hidden>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="term"><span id="count"></span><h2 id="term"></h2><button class="link" id="finish" hidden title="Stop here and make the report from the searches answered so far">Finish now</button></div>
+    <div id="out"></div>
+  </section>
+  <section id="report" hidden></section>
 </main>
 <div class="vote" id="vote" hidden>
-  <button class="btn" data-w="left"><kbd>1</kbd> Left is better</button>
+  <button class="btn" data-w="left"><kbd>1</kbd> Left<span class="wide">is better</span></button>
   <button class="btn" data-w="same"><kbd>2</kbd> Same</button>
-  <button class="btn" data-w="right"><kbd>3</kbd> Right is better</button>
+  <button class="btn" data-w="right"><kbd>3</kbd> Right<span class="wide">is better</span></button>
+  <button class="btn" data-w="skip" title="Can't tell, or the search doesn't suit this library"><kbd>S</kbd> Skip</button>
 </div>
 <script type="module">
 import { $, esc } from "/app/dom.js";
 import { api } from "/app/api.js";
-import { latest, STALE } from "/app/fsm.js";
 import { until } from "/app/loop.js";
+import { compareRun } from "/app/compare-flow.js";
 
-const EXAMPLES = ["kids at the lake", "birthday cake with candles", "snowy mountains", "a dog on the beach",
-  "fireworks at night", "a crowded city street", "grandparents with a baby", "food on a plate"];
-let info = null, cur = null, voted = false;
-const searching = latest();
-const short = m => (m || "").replace(/^google\//, "");
+let info = null;
+const short = m => (m || "").replace(/^[^/]*\//, "");
+const show = which => {
+  for (const id of ["home", "run", "report"]) $("#" + id).hidden = id !== which;
+  $("#vote").hidden = $("#finish").hidden = true;
+  $(".lead").hidden = which !== "home";                       // the photos get the room once a run is under way
+};
+const judging = on => { $("#vote").hidden = $("#finish").hidden = !on; };
+const status = html => { $("#status").innerHTML = html; };
+const when = t => t ? new Date(t).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "";
 
-function tally() {
-  if (!info) return;
-  const v = info.votes, n = v.a + v.b + v.same;
-  $("#tally").innerHTML = n ? `Votes so far: <b>${v.a}</b> for ${esc(short(info.a.model))}, <b>${v.b}</b> for ${esc(short(info.b.model))}, <b>${v.same}</b> the same.`
-                           : "No votes yet.";
+// The second model is loaded for a run (POST /api/compare/run asks for it): ask every 1.5 s until it is
+// ready, for at most five minutes; a load that failed ends the wait at once.
+async function ready() {
+  const end = await until(signal => api("/api/compare/info", undefined, { signal }),
+    { until: i => (info = i, i.b.ready || !!i.b.failed), every: 1500, timeout: 300000, retries: 2 });
+  if (end.state === "done" && info.b.failed) return { state: "error", error: new Error(`The second model failed to load: ${info.b.failed}`) };
+  if (end.state === "timeout") return { state: "timeout", error: new Error("The second model has not loaded after five minutes.") };
+  return end;
 }
 
-// The second model's text side loads after the page is up: ask every 3 s until it is ready, for at most
-// five minutes, and say so if it is not by then or the server can not be asked.
-async function loadInfo() {
-  const end = await until(signal => api("/api/compare/info", undefined, { signal }), {
-    until(i) {
-      info = i;
-      if (!searching.busy && !cur) $("#status").innerHTML = `<b>${i.both.toLocaleString()}</b> photos have vectors from both models` +
-        (i.b.ready ? "" : ` · the second model's text side is still loading`);
-      tally();
-      return i.b.ready;
-    },
-    every: 3000, timeout: 300000, retries: 2 });
-  if (end.state === "done" || cur || searching.busy) return;
-  $("#status").textContent = end.state === "timeout" ? "The second model's text side has not loaded after five minutes. Reload the page to look again."
-    : `Couldn't ask the server about the two models: ${end.error.message}`;
+const run = compareRun({ api, ready, view: {
+  waiting(r) {
+    show("run"); $("#out").innerHTML = ""; $("#term").textContent = ""; $("#count").textContent = "";
+    $("#bar").style.width = `${100 * Object.keys(r.answers).length / r.terms.length}%`;
+    status(`Loading ${esc(short(info?.b.model))}…`);
+  },
+  asking(term, i, n) {
+    show("run");
+    $("#count").textContent = `Search ${i + 1} of ${n}`; $("#term").textContent = `“${term}”`;
+    $("#bar").style.width = `${100 * i / n}%`;
+    status("Searching…");
+  },
+  judge({ term, i, n, body, order }) {
+    const column = (side, label) => {
+      const other = new Set(body[side === "a" ? "b" : "a"].results.map(x => x.id));
+      return `<section class="col"><h2><span>${label}</span><small></small></h2><div class="grid">` +
+        body[side].results.map((x, k) => `<div class="tile${other.has(x.id) ? "" : " only"}" data-id="${esc(x.id)}">` +
+          `<img loading="lazy" src="/thumb/${esc(x.id)}" alt=""><i>${k + 1}</i></div>`).join("") + `</div></section>`;
+    };
+    $("#out").innerHTML = `<div class="cols">${column(order[0], "Left")}${column(order[1], "Right")}</div>` +
+      `<p class="key"><u></u> only in this column's top ${body.a.results.length} · ${body.overlap} photos are in both</p>`;
+    status(`<b>${body.candidates.toLocaleString()}</b> photos to choose from`);
+    judging(true);
+    scrollTo(0, 0);
+  },
+  note(text) { status(`<b>${esc(text)}</b>`); judging(true); },
+  report(r) {
+    show("report"); status("");
+    const c = r.count, a = short(r.a), b = short(r.b);
+    const who = { a, b, same: "The same", skip: "Skipped" };
+    const tile = (n, label, won) => `<div${won ? ' class="won"' : ""}><b>${n}</b><span>${esc(label)}</span></div>`;
+    $("#report").innerHTML =
+      `<p class="verdict">${esc(r.verdict)}</p>` +
+      `<div class="tiles">${tile(c.b, `better with ${b}`, c.b > c.a)}${tile(c.a, `better with ${a} (the app's)`, c.a > c.b)}` +
+        `${tile(c.same, "the same")}${tile(c.skip + r.unanswered, "skipped or not asked")}</div>` +
+      `<p class="facts">${r.terms} searches, the top ${r.k} photos of each, over ${(r.photos ?? 0).toLocaleString()} photos both models have vectors for. ` +
+        `On average ${r.overlap ?? "–"} of the ${r.k} photos were in both columns. Reading a search's words took ${r.a_ms ?? "–"} ms with ${esc(a)} and ${r.b_ms ?? "–"} ms with ${esc(b)}. ` +
+        `Sign test over the ${c.a + c.b} searches with a winner: p = ${r.p}. Finished ${esc(when(r.finished))}.</p>` +
+      `<p class="facts">${esc(b)} has been unloaded: it is in memory only while a comparison is under way.</p>` +
+      `<div class="acts"><button class="btn" id="back">All comparisons</button></div>` +
+      `<h2 class="sec">Each search</h2><table><thead><tr><th>Search</th><th>Better</th><th class="n">In both</th><th class="n" title="${esc(a)}: reading the search's words">The app's, ms</th><th class="n" title="${esc(b)}: reading the search's words">Compared, ms</th></tr></thead><tbody>` +
+      r.rows.map(x => `<tr><td>${esc(x.term)}</td><td class="b${x.winner === "a" || x.winner === "b" ? " win" : x.winner ? "" : " none"}">${esc(who[x.winner] ?? "Not asked")}</td>` +
+        `<td class="n">${x.overlap ?? ""}</td><td class="n">${x.a_ms ?? ""}</td><td class="n">${x.b_ms ?? ""}</td></tr>`).join("") + `</tbody></table>`;
+    scrollTo(0, 0);
+  },
+  failed(message) { home(message); },
+} });
+
+// The first page: the two models, the run to start or carry on, and the reports of the runs before.
+async function home(problem = "") {
+  show("home");
+  try { info = await api("/api/compare/info"); }
+  catch (e) { status(`Couldn't ask the server about the two models: ${esc(e.message)}`); $("#home").innerHTML = `<div class="acts"><button class="btn" id="again">Try again</button></div>`; return; }
+  status(problem ? `<b>${esc(problem)}</b>` : "");
+  const r = info.run, done = r ? Object.keys(r.answers).length : 0;
+  $("#home").innerHTML =
+    `<div class="well card"><dl><dt>The app's model</dt><dd>${esc(short(info.a.model))}</dd><dt>Compared with</dt><dd>${esc(short(info.b.model))}</dd>` +
+      `<dt>Photos</dt><dd>${info.both.toLocaleString()} have vectors from both</dd><dt>Searches</dt><dd>${info.terms.length}, the top ${info.k} photos of each</dd></dl></div>` +
+    `<div class="acts">` + (r ? `<button class="btn pri" id="go">Carry on: ${done} of ${r.terms.length} answered</button><button class="btn" id="fresh">Start over</button>`
+                              : `<button class="btn pri" id="go">${info.reports.length ? "Run it again" : "Start the comparison"}</button>`) +
+      `<span class="sub">About ${Math.max(1, Math.round((r ? r.terms.length - done : info.terms.length) / 4))} minutes. ${esc(short(info.b.model))} is loaded for the run and unloaded when it ends.</span></div>` +
+    (info.reports.length ? `<h2 class="sec">Earlier comparisons</h2><div class="past">` + info.reports.map(p =>
+      `<button data-run="${esc(p.id)}">${esc(when(p.finished))} · ${esc(short(p.b))}<small>${esc(p.verdict)}</small></button>`).join("") + `</div>` : "") +
+    `<details><summary>The ${info.terms.length} searches</summary><ol>${info.terms.map(t => `<li>${esc(t)}</li>`).join("")}</ol></details>`;
 }
 
-function column(side, label) {
-  const r = cur[side], other = new Set(cur[side === "a" ? "b" : "a"].results.map(x => x.id));
-  const name = voted ? `<small title="reading the words · ranking the photos">${esc(short(r.model))} · ${r.text_ms} + ${r.rank_ms} ms</small>` : `<small></small>`;
-  return `<section class="col" data-side="${side}"><h2><span>${label}</span>${name}</h2><div class="grid">` +
-    r.results.map((x, i) => `<div class="tile${other.has(x.id) ? "" : " only"}" data-id="${x.id}">` +
-      `<img loading="lazy" src="/thumb/${x.id}" alt=""><i>${i + 1}</i>${voted ? `<b>${x.score.toFixed(3)}</b>` : ""}</div>`).join("") +
-    `</div></section>`;
-}
-
-function render() {
-  if (!cur) return;
-  const [L, R] = cur.order;
-  $("#out").innerHTML = `<div class="cols">${column(L, "Left")}${column(R, "Right")}</div>` +
-    `<p class="key"><u></u> in this column's top ${cur.a.results.length} only · ${cur.overlap} photos are in both</p>`;
-  $("#vote").hidden = voted;
-  if (voted) {
-    const w = cur.winner;
-    document.querySelectorAll(".col").forEach(c => c.classList.toggle("won", c.dataset.side === w));
-  }
-}
-
-async function run(q) {
-  q = q.trim();
-  if (!q) return;
-  $("#q").value = q;
-  history.replaceState(null, "", "?q=" + encodeURIComponent(q));
-  $("#status").textContent = "Searching…";
-  let body;                          // the answer to the latest search only: an older one is dropped
-  try { body = await searching.run(signal => api("/api/compare?k=48&q=" + encodeURIComponent(q), undefined, { signal })); }
-  catch (e) { $("#status").textContent = e.message || "Something went wrong"; $("#out").innerHTML = ""; $("#vote").hidden = true; cur = null; return; }
-  if (body === STALE) return;
-  cur = body;
-  cur.order = Math.random() < .5 ? ["a", "b"] : ["b", "a"];
-  voted = false;
-  const filt = body.applied.length ? ` · filters: ${body.applied.map(esc).join(", ")} · ranking “${esc(body.text)}”` : "";
-  $("#status").innerHTML = `<b>${body.candidates.toLocaleString()}</b> photos to choose from${filt}`;
-  render();
-}
-
-async function vote(which) {
-  if (!cur || voted) return;
-  const winner = which === "same" ? "same" : which === "left" ? cur.order[0] : cur.order[1];
-  const asked = cur;
-  voted = true;                      // at once, so a second press is not a second vote
-  let saved = true;
-  try { const body = await api("/api/compare/vote", { q: cur.q, winner, left: cur.order[0], k: cur.a.results.length }); if (info) { info.votes = body.votes; tally(); } }
-  catch (e) { saved = false; }
-  if (cur !== asked) return;         // another search was made meanwhile
-  cur.winner = winner;
-  render();
-  const name = winner === "same" ? "Same" : `${which === "left" ? "Left" : "Right"} was ${short(cur[winner].model)}`;
-  $("#status").innerHTML += ` · <b>${esc(name)}</b>` + (saved ? "" : ` · the vote could not be saved`);
-}
-
-$("#f").onsubmit = e => { e.preventDefault(); run($("#q").value); };
-$("#vote").onclick = e => { const b = e.target.closest("button"); if (b) vote(b.dataset.w); };
-$("#chips").innerHTML = EXAMPLES.map(x => `<button type="button">${esc(x)}</button>`).join("");
-$("#chips").onclick = e => { const b = e.target.closest("button"); if (b) run(b.textContent); };
-$("#out").onclick = e => {
+$("#home").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.id === "again") home();
+  else if (b.id === "go") run.start();
+  else if (b.id === "fresh") { if (confirm("Give up the comparison under way and start a new one?")) run.start(true); }
+  else if (b.dataset.run) run.show(b.dataset.run);
+});
+$("#report").addEventListener("click", e => { if (e.target.closest("#back")) home(); });
+$("#vote").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  judging(false);                                             // back when there is something to judge again
+  run.vote(b.dataset.w);
+});
+$("#finish").addEventListener("click", () => {
+  if (run.state === "judging" && confirm("Stop here and make the report from the searches answered so far?")) { judging(false); run.finish(true); }
+});
+$("#out").addEventListener("click", e => {
   const t = e.target.closest(".tile"); if (!t) return;
   const lb = document.createElement("div");
-  lb.className = "lightbox"; lb.innerHTML = `<img src="/preview/${t.dataset.id}" alt="">`;
-  lb.onclick = () => lb.remove(); document.body.append(lb);
-};
-document.addEventListener("keydown", e => {
-  if (e.target.tagName === "INPUT") return;
-  if (e.key === "Escape") document.querySelector(".lightbox")?.remove();
-  const w = {"1": "left", "2": "same", "3": "right"}[e.key];
-  if (w) vote(w);
+  lb.className = "lightbox"; lb.innerHTML = `<img src="/preview/${esc(t.dataset.id)}" alt="">`;
+  lb.addEventListener("click", () => lb.remove()); document.body.append(lb);
 });
-loadInfo();
-const q0 = new URLSearchParams(location.search).get("q");
-if (q0) run(q0);
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") document.querySelector(".lightbox")?.remove();
+  const w = { "1": "left", "2": "same", "3": "right", s: "skip" }[e.key.toLowerCase()];
+  if (w && run.state === "judging" && !document.querySelector(".lightbox")) { judging(false); run.vote(w); }
+});
+home();
 </script>
 </body>
 </html>

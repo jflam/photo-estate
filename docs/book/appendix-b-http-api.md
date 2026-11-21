@@ -227,15 +227,19 @@ All four validate `<sha>` as 64 lowercase hex characters of a known photo (else 
 
 `DIR` holds a second model's vectors as `tools/embed_squares.py` writes them: `shard-NNNN.npy` (float16,
 unit rows), `shard-NNNN.shas.txt` and `meta.json` (`model`). Without the option these routes are 404.
-The second model is loaded by the first `GET /api/compare/info` (or search) and let go after
-`--compare-idle` minutes unused; while it loads, `info` says `b.ready: false` and a search is a 503.
+The second model is loaded by starting a run (`POST /api/compare/run`, or a search) and let go when the run
+is finished, or after `--compare-idle` minutes unused; while it loads, `info` says `b.ready: false` and a
+search is a 503. `GET /api/info` says `compare: true` when these routes exist.
 
 | Path | Returns |
 |---|---|
-| `GET /compare` | `compare.html`: a search, the two models' results in unlabelled columns in random order, and a vote |
-| `GET /api/compare/info` | `{a: {model, photos, dim}, b: {model, photos, dim, ready, meta}, both, votes: {a, b, same}}`; `b.ready` is false while the second model's text side loads |
+| `GET /compare` | `compare.html`: start or carry on a run of the fixed searches, vote on each, read the report |
+| `GET /api/compare/info` | `{a: {model, photos, dim}, b: {model, photos, dim, ready, failed, meta}, both, votes: {a, b, same}, terms, k, run, reports}`. `terms` are the searches a run asks and `k` the photos a column; `run` is the run under way (`{id, started, terms, k, answers: {search: winner}}`) or null; `reports` the finished runs, newest first (`{id, finished, a, b, count, terms, verdict}`). Looking loads no model |
+| `POST /api/compare/run {fresh?}` | The run under way, or a new one (`fresh: true` gives up the one under way), as `info.run`; starts loading the second model. The write rule |
+| `POST /api/compare/run/finish {run, early?}` | Ends the run: its report `{id, started, finished, a, b, k, photos, terms, count: {a, b, same, skip}, unanswered, p, verdict, overlap, a_ms, b_ms, rows: [{term, winner, left, overlap, a_ms, b_ms}]}`, also written to `runs/<id>.md`; the second model is let go. 409 with `left` if searches are unanswered and `early` is not true; 404 if that run is not under way |
+| `GET /api/compare/report?run=ID` | A finished run's report (404 if there is none, 409 if it is not finished) |
 | `GET /api/compare?q=&k=48` | `{q, text, applied, candidates, a, b, overlap}`. `q` is read as `/api/search` reads it: names, places and `key:value` filters choose the photos, the words left over (`text`) are ranked. Both sides rank the same photos (those with a vector from both models), and each of `a` and `b` is `{model, text_ms, rank_ms, results: [{id, score}]}`, the top `k` (at most 200) with no match floor. 400 when there are no words to rank by; 503 while the second model loads |
-| `POST /api/compare/vote {q, winner: a\|b\|same, left, k}` | Appends a line to the votes file (`--compare-votes`, default `DIR/votes.jsonl`) and returns `{ok, votes}`. Takes the write rule (a `--upload-user` login or this computer, else 403), though it writes only that file |
+| `POST /api/compare/vote {q, winner: a\|b\|same, left, k, run?, overlap?, a_ms?, b_ms?}` | With `run`, that run's answer to one of its searches (`winner` may also be `skip`; answered again, it replaces the answer; 404 for a run not under way, 400 for a search not in it). Appends a line to the votes file (`--compare-votes`, default `DIR/votes.jsonl`) and returns `{ok, votes}`. Takes the write rule (a `--upload-user` login or this computer, else 403), though it writes only that file |
 
 ### The People API (also on `faces.py serve`)
 

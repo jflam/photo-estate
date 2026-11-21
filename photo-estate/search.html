@@ -526,6 +526,7 @@ const I = {
   plus: svg('<path d="M8 3v10M3 8h10"/>', 18),
   changes: svg('<path d="M3 4.5h10M3 8h6M3 11.5h4"/><path d="m10 11 1.6 1.6L14 9.6"/>', 18),
   stats: svg('<path d="M3 13V8M8 13V3M13 13V6"/>', 18),
+  compare: svg('<rect x="2.500" y="3" width="4.500" height="10" rx="1"/><rect x="9" y="3" width="4.500" height="10" rx="1"/>', 18),
 };
 const DEBUG = (() => { try { return localStorage.getItem("estate.debug") === "1"; } catch (e) { return false; } })();   // set on the Library info page
 const IDEAS = ["sunset over water", "dog on the beach", "birthday cake", "snowy mountains", "city at night", "a child laughing"];
@@ -1287,7 +1288,8 @@ $("#sView").onclick = e => viewMenu(e.currentTarget, "search");
 $("#libMore").onclick = e => openMenu(e.currentTarget, el => {
   const ln = (href, icon, label) => `<a class="mi ln" href="${href}">${icon}<span>${label}</span></a>`;
   el.innerHTML = (INFO?.faces ? ln("/people", I.people, "Name people") : "") + (INFO && !INFO.demo ? ln("/setup", I.plus, "Add photos") : "")
-    + ln("/changes", I.changes, "Changes") + ln("/stats", I.stats, "Library info");
+    + ln("/changes", I.changes, "Changes") + ln("/stats", I.stats, "Library info")
+    + (INFO?.compare ? ln("/compare", I.compare, "Compare models") : "");   // the experiment, when the app has a second model's vectors
 });
 // Pinch a grid to make the photos bigger or smaller, a step at a time, as on the iPhone.
 let pinch = null;

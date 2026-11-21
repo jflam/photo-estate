@@ -155,6 +155,29 @@ def demo_app(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def compare_app(tmp_path_factory, demo_dir):
+    """The photo app on the demo library with a "second model" to compare: the demo's own vectors, written
+    out as tools/embed_squares.py writes them, and four searches of its own. (base url, the vectors folder)"""
+    import sqlite3
+
+    import numpy as np
+    vec = tmp_path_factory.mktemp("compare") / "vectors"
+    vec.mkdir()
+    con = sqlite3.connect(f"file:{demo_dir / 'estate.db'}?mode=ro", uri=True)
+    rows = sorted(con.execute("SELECT sha256, vec FROM embeddings WHERE vec IS NOT NULL"))
+    con.close()
+    np.save(vec / "shard-0000.npy", np.stack([np.frombuffer(v, np.float16) for _, v in rows]))
+    (vec / "shard-0000.shas.txt").write_text("".join(f"{s}\n" for s, _ in rows))
+    (vec / "meta.json").write_text(json.dumps({"model": "google/siglip2-base-patch16-256"}))
+    (vec / "terms.txt").write_text("a kitten\na waterfall\nlatte art\na hot air balloon\n")
+    port = free_port()
+    proc, base = serve(["embed.py", "serve", "--demo", "--port", str(port), "--no-pregenerate", "--compare-vectors", str(vec)],
+                       port, "/api/info", vec.parent / "server.log")
+    yield base, vec
+    stop(proc)
+
+
+@pytest.fixture(scope="module")
 def review_app(tmp_path_factory, demo_dir):
     """`estate.py review` on a scratch copy of the demo catalog; choices go to a scratch folder."""
     tmp = tmp_path_factory.mktemp("review")
@@ -735,6 +758,87 @@ def test_search_a_rapid_navigation_session_throws_nothing(page, demo_app):
     page.wait_for_function("!document.querySelector('#v').classList.contains('on') && !history.state.v")
     assert not page.warned, page.warned
     assert not [t for t in page.said if "TransitionError" in t or "no step from" in t]
+
+
+# ── compare.html: a run of the model comparison ─────────────────────────────────────────────────
+
+def test_compare_is_in_the_library_menu_only_when_the_experiment_is_on(page, compare_app, demo_app):
+    base, _ = compare_app
+    page.goto(base + "/")
+    page.locator("#libMore").click()
+    link = page.locator('.menu a[href="/compare"]')
+    assert link.inner_text().strip() == "Compare models"
+    link.click()
+    page.wait_for_url(base + "/compare")
+    page.locator("#go").wait_for()
+    page.goto(demo_app + "/")                                   # no second model: no such row
+    page.locator("#libMore").click()
+    page.locator('.menu a[href="/stats"]').wait_for()
+    assert page.locator('.menu a[href="/compare"]').count() == 0
+
+
+def test_compare_a_run_from_the_first_search_to_the_report(page, compare_app):
+    """The whole experiment on the real page with the real model: every search once, the sides unnamed, a
+    vote that fails given again, the report at the end, and the second model unloaded when it is over."""
+    base, vec = compare_app
+    info = lambda: call(base, "/api/compare/info")
+    sent = []
+    page.on("request", lambda r: sent.append(r.post_data_json) if r.url.endswith("/api/compare/vote") else None)
+    page.goto(base + "/compare")
+    go = page.locator("#go")
+    go.wait_for()
+    assert go.inner_text() == "Start the comparison" and not info()["b"]["ready"], "looking at the page loads no model"
+    assert page.locator("#home details li").count() == 4
+    go.click()
+    term = page.locator("#term")
+    page.wait_for_function("document.querySelector('#term').textContent === '“a kitten”'", timeout=120000)   # the model loads first
+    assert info()["b"]["ready"] and page.locator("#count").inner_text() == "Search 1 of 4"
+    page.locator("#vote:not([hidden])").wait_for()
+    assert page.locator(".col").count() == 2 and page.locator(".col").first.locator(".tile").count() == 24
+    assert "siglip" not in page.locator("#run").inner_text().lower(), "which model is which is not said during the run"
+
+    page.route("**/api/compare/vote", refuse(500, "database is locked"))      # a vote the server refuses: said, and given again
+    page.locator('#vote [data-w="left"]').click()
+    page.wait_for_function("document.querySelector('#status').textContent.includes('not saved')")
+    assert term.inner_text() == "“a kitten”" and page.locator("#vote").is_visible()
+    page.unroute("**/api/compare/vote")
+    page.locator('#vote [data-w="left"]').click()
+    page.wait_for_function("document.querySelector('#term').textContent === '“a waterfall”'")
+    page.locator("#vote:not([hidden])").wait_for()
+    page.keyboard.press("2")                                                    # the same
+    page.wait_for_function("document.querySelector('#term').textContent === '“latte art”'")
+
+    page.reload()                                                               # left and come back to: carried on
+    go.wait_for()
+    assert go.inner_text() == "Carry on: 2 of 4 answered"
+    go.click()
+    page.wait_for_function("document.querySelector('#term').textContent === '“latte art”'")
+    page.locator("#vote:not([hidden])").wait_for()
+    page.keyboard.press("s")                                                    # skipped
+    page.wait_for_function("document.querySelector('#term').textContent === '“a hot air balloon”'")
+    page.locator("#vote:not([hidden])").wait_for()
+    page.locator('#vote [data-w="right"]').click()
+
+    page.locator("#report .verdict").wait_for()
+    text = page.locator("#report").inner_text()
+    assert "siglip2-base-patch16-256" in text and "has been unloaded" in text
+    assert page.locator("#report tbody tr").count() == 4
+    saved = [s for s in sent if s]
+    assert [s["q"] for s in saved] == ["a kitten", "a kitten", "a waterfall", "latte art", "a hot air balloon"]
+    assert saved[2]["winner"] == "same" and saved[3]["winner"] == "skip" and {saved[1]["winner"], saved[4]["winner"]} <= {"a", "b"}
+    assert saved[1]["winner"] == saved[1]["left"] and saved[4]["winner"] != saved[4]["left"], "left and right are sent as the models they were"
+    after = info()
+    assert after["b"]["ready"] is False and after["run"] is None and len(after["reports"]) == 1, "the model is unloaded at the end"
+    rid = after["reports"][0]["id"]
+    assert (vec / "runs" / f"{rid}.md").read_text().startswith(f"# Model comparison {rid}")
+
+    page.locator("#back").click()                                               # and the report can be read again later
+    past = page.locator(f'#home .past button[data-run="{rid}"]')
+    past.wait_for()
+    assert page.locator("#go").inner_text() == "Run it again"
+    past.click()
+    page.locator("#report .verdict").wait_for()
+    assert not call(base, "/api/compare/info")["b"]["ready"], "reading a report loads no model"
 
 
 def test_no_test_wrote_to_the_demo_library(demo_dir):
