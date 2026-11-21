@@ -42,6 +42,12 @@ final class MovieView: UIView {
 
     func load(_ item: AVPlayerItem) {
         release()
+        // A video is something asked to play, so it sounds even with the phone's ring switch on silent, as
+        // in Photos: an app's default audio session is silenced by that switch. A Live Photo's clip (`fill`)
+        // leaves the session as it is.
+        if playerLayer.videoGravity == .resizeAspect {
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        }
         let p = AVPlayer(playerItem: item)
         p.actionAtItemEnd = .pause
         player = p
