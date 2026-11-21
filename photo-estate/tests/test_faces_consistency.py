@@ -208,3 +208,73 @@ def test_request_during_merge_is_a_404(db, path):
     assert box["value"] is None and Response.of(box["value"]).status == 404
     assert pe.handle("GET", "/api/people/photo", {"face": ["999"]}, None) is None
     assert pe.handle("GET", path, {"person": [str(ALICE)]}, None)[0] == 200
+
+
+# -- loading: the same faces as the join it replaced, and a second load that writes nothing ----------
+
+JOIN = ("SELECT f.id, f.sha256, f.idx, f.x, f.y, f.w, f.h, f.score, f.px, f.vec, f.person_id, f.source,"
+        " a.taken_at, a.people, a.ext FROM faces f JOIN assets a USING(sha256) WHERE f.model=?{shown} ORDER BY f.id")
+
+
+def test_face_rows_are_what_the_join_gave(db):
+    """face_rows() reads faces, assets and hidden one after the other and puts them together itself (the
+    join took 38 s on the real catalog): the rows must be the join's, with and without a hidden table,
+    without a face of another model, of a hidden photo, or of a photo the catalog no longer has."""
+    con = faces.connect(db)
+    try:
+        con.execute("INSERT INTO faces(id, sha256, idx, model, score, px, vec) VALUES (900, 'a', 1, 'another-model', 0.9, 100, x'00')")
+        con.execute("INSERT INTO faces(id, sha256, idx, model, score, px, vec) VALUES (901, 'gone', 0, ?, 0.9, 100, x'00')", (faces.MODEL,))
+        con.execute("UPDATE assets SET people='Alice, Bob' WHERE sha256='b'")
+        con.commit()
+        got = faces.face_rows(con)
+        assert got == con.execute(JOIN.format(shown=""), (faces.MODEL,)).fetchall()
+        assert [r[0] for r in got] == [F1, F2, F3, F4, F5]
+        schema.ensure(con, "changes")
+        con.execute("INSERT INTO hidden(sha256) VALUES ('c')")
+        con.commit()
+        got = faces.face_rows(con)
+        assert got == con.execute(JOIN.format(shown=" AND f.sha256 NOT IN (SELECT sha256 FROM hidden)"), (faces.MODEL,)).fetchall()
+        assert [r[0] for r in got] == [F1, F2, F4, F5]
+    finally:
+        con.close()
+
+
+def test_a_second_load_of_an_unchanged_catalog_writes_nothing(tmp_path, monkeypatch):
+    """A lone face in a photo tagged with one name is tried as that person and, when it is plainly not
+    them, let go again. Let go as "unknown", a face the catalog already names (auto) was written back
+    with the same name and a new labeled_at at every start: 20 rows on the real library."""
+    monkeypatch.setattr(faces.People, "cluster", lambda self: None)
+    clock = iter(f"t{i}" for i in range(10**6))
+    monkeypatch.setattr(faces, "now", lambda: next(clock))
+    path = str(tmp_path / "estate.db")
+    con = faces.connect(path)
+    schema.ensure(con, "catalog")
+    rng = np.random.default_rng(95)
+    a, b = np.eye(512, dtype=np.float32)[0], np.eye(512, dtype=np.float32)[1]
+
+    def face(fid, sha, base, people, person=None, source=None):
+        v = base + 0.05 * rng.standard_normal(512).astype(np.float32)
+        v /= np.linalg.norm(v)
+        con.execute("INSERT INTO assets(sha256, ext, kind, taken_at, people) VALUES (?,?,?,?,?)", (sha, ".jpg", "image", "2020-06-01", people))
+        con.execute("INSERT INTO faces(id, sha256, idx, model, x, y, w, h, score, px, vec, person_id, source)"
+                    " VALUES (?,?,0,?,0.1,0.2,0.1,0.1,0.9,100,?,?,?)", (fid, sha, faces.MODEL, v.astype(np.float16).tobytes(), person, source))
+
+    con.execute("INSERT INTO persons(id, name, created_at) VALUES (?,?,'')", (ALICE, "Alice"))
+    for i in range(4):
+        face(10 + i, f"alice{i}", a, None, ALICE, "you")          # Alice, as you named her
+    for i in range(8):
+        face(20 + i, f"bob{i}", b, "Bob")                         # Bob, as Google tagged him: one face, one tag
+    face(30, "taken-by-bob", a, "Bob")                            # tagged Bob, and plainly Alice
+    con.commit()
+    con.close()
+
+    people(path)
+    first = sqlite3.connect(path).execute("SELECT id, person_id, source, labeled_at FROM faces ORDER BY id").fetchall()
+    bob = sqlite3.connect(path).execute("SELECT id FROM persons WHERE name='Bob'").fetchone()[0]
+    named = {i: (p, s) for i, p, s, _ in first}
+    assert named[30] == (ALICE, "auto"), "the face tagged Bob is not Bob's: it is named by likeness"
+    assert all(named[20 + i] == (bob, "google") for i in range(8))
+
+    pe = people(path)
+    assert sqlite3.connect(path).execute("SELECT id, person_id, source, labeled_at FROM faces ORDER BY id").fetchall() == first
+    assert int(pe.pid[pe.row[30]]) == ALICE and int(pe.src[pe.row[30]]) == faces.AUTO_SRC

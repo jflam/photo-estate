@@ -69,7 +69,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   encoder.py            60  SigLIP's text (and image) side, for the photo app
   compare.py           134  an experiment: each search ranked by a second model beside the app's own, at /compare (chapter 10)
   estate.py          1,005  ingest, link, exif, dupes, review, tag, search, stats
-  faces.py           1,053  faces: run, serve, and the People class (who is who)
+  faces.py           1,072  faces: run, serve, and the People class (who is who)
   changes.py           455  albums and change sets: proposed, reviewed, applied, reverted (chapter 26)
   places.py            388  place names, local time, events, trips
   estate_mcp.py        383  the library as MCP tools for an agent, at /mcp (chapter 26)
