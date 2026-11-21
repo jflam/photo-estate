@@ -315,16 +315,50 @@ What 30% fewer bytes comes to:
 | The phone's offline thumbnails, the whole library | about 2.8 GB | about 2.0 GB |
 
 The time to open a month moves with the bytes when the link is the limit, which it was on 2026-11-18
-(2.5-6.3 s through a Tailscale relay). Over a direct link a cold month took 0.75-1.4 s, part of it the
-server. Not yet measured on the mini, because it needs the deploy: a cold month opened from the laptop
-and from the phone, before and after.
+(2.5-6.3 s through a Tailscale relay).
+
+### Measured after the deploy (2026-11-21)
+
+From the laptop to the mini over a direct Tailscale path (1-2 ms ping, the same home network), with the
+same photos before and after. A month is its first 150 photos; all their thumbnails were fetched over one
+HTTP/2 connection, as the page asks for them, 3 times each for 5 months (2026-08, 2026-07, 2026-05,
+2026-04, 2025-12).
+
+| | Before (JPEG 82) | After (WebP 78) |
+|---|---:|---:|
+| The 5 months' 750 thumbnails | 16.54 MB | 10.95 MB (66%) |
+| A month's 150 thumbnails, median time | 210 ms | 163 ms |
+
+The "after" times were taken while the background job was redoing the library's thumbnails at low
+priority, so they are if anything slow. On this fast link the server's own work is a good part of the
+time. Over a slower link (a relay, or a phone away from home) the time saved should follow the bytes, about
+a third, but that has not been measured.
+
+| Opening a photo, from the laptop | Median | 90th percentile |
+|---|---:|---:|
+| Before: no preview yet, made from the original on the USB disk (30 recent photos) | 451 ms | 551 ms |
+| After: its preview already made (30 photos) | 18 ms | 32 ms |
+
+The "after" photos are ones whose preview was already in the cache; a preview the background job makes is
+served the same way.
 
 Costs: a browser decodes a WebP thumbnail in about 1.2 ms where a JPEG took 0.4 ms, so 150 thumbnails
 cost about 0.1 s more decoding, off the main thread (`decoding="async"`). Making one takes 16 ms in place of
-under 1 ms, which only the background job and uploads pay. The 113,777 JPEG thumbnails are redone from the
-originals once, in the background at `nice 10`. Until each photo's WebP exists its JPEG is still served,
-so the grid never waits during the changeover. Browsers and phones that already hold a JPEG thumbnail keep
-it.
+under 1 ms, which only the background job and uploads pay.
+
+**The changeover on the mini.** Every thumbnail is redone from its original once, in the background at
+`nice 10`, together with the photo's preview (one decode for both, below). Until a photo's WebP exists its
+old JPEG is still served, so the grid never waits. Browsers and phones that already hold a JPEG thumbnail
+keep it. The rebuild:
+
+- **First deploy (3f1d06f):** thumbnails only, at 7-10 photos a second. It started with the newest photos,
+  large HEICs. About 20,000 photos were done before the next deploy.
+- **After 5bc2326:** thumbnails and previews together, at 12-13 photos a second, for the remaining 90,898.
+  That is about 2 hours, then a preview-only pass for the photos done first. It was under way on
+  2026-11-21. Searches stayed at 0.06 s while it ran.
+
+The old JPEG thumbnails (2.75 GB on the SSD) are no longer read once a photo's WebP exists, and can be
+deleted after the rebuild (MAC-MINI.md).
 
 ## Open tasks
 

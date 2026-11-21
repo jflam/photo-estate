@@ -61,7 +61,7 @@ flowchart LR
     subgraph Disk["Your disk"]
       ST[("store/ab/cd/sha256.ext<br/>every unique file, once")]
       DB[("estate.db<br/>SQLite catalog")]
-      CA["review/<br/>thumbnails, face crops"]
+      CA["review/<br/>thumbnails, previews, face crops"]
       LG["query-log.jsonl<br/>face-labels.jsonl"]
     end
     P -->|"inbox"| ING
@@ -92,7 +92,8 @@ them is the central idea of the whole design:
 - **The catalog**: what the services told us (dates, places, albums, people), plus what the
   scripts derived (embeddings, faces, events). Part of it is irreplaceable (what Google's sidecars
   said, what you told the app about faces); part is cheap to recompute (places, events, trips).
-- **The cache**: thumbnails and face crops. Disposable. Delete it and it refills.
+- **The cache**: thumbnails (WebP), the viewer's previews and face crops. Disposable. Delete it and it
+  refills, in the background.
 
 ## About the numbers in this book
 

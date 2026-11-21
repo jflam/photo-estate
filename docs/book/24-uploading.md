@@ -138,7 +138,7 @@ A photo is useful when it's *searchable*, not when it's stored. The server runs 
   written and read under the same lock.
 - **Incremental all the way down.** `ingest-iphone.sh` only touches what is new: `link` is limited to the
   inbox, `exif`, `embed` and `faces` skip finished photos, and `places` reuses names and zones it has
-  already worked out. The app even prepares the arrival while it is still receiving: the grid thumbnail is
+  already worked out. The app even prepares the arrival while it is still receiving: the grid thumbnail (a WebP, chapter 11) is
   made on upload, the embedding is computed in the server's own process using the model it already holds,
   and a HEIC's size, date and perceptual hash are left in a "facts" file so ingest need not decode it a
   second time.

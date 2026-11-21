@@ -275,8 +275,8 @@ None at the moment. The two left after the 2026-11-20 review were done the same 
 
 | Change | Measured |
 |---|---|
-| Viewer previews made in the background, newest first (#26) | First open of a photo: 148 ms median, 339 ms at the 90th percentile, to decode its original from the hard disk → 0.3 ms to read the preview from the SSD |
-| Grid thumbnails as WebP 78 in place of JPEG 82 (#104) | 70% of the bytes (median 24.5 KB → 16.3 KB) at the same closeness to the original |
+| Viewer previews made in the background, newest first, from the same decode as the thumbnail (#26) | Opening a photo from the laptop: 451 ms median (551 ms at the 90th percentile) when the server decoded the original from the hard disk → 18 ms (32 ms) with the preview made |
+| Grid thumbnails as WebP 78 in place of JPEG 82 (#104) | 70% of the bytes (median 24.5 KB → 16.3 KB) at the same closeness to the original. After the deploy, 5 months' thumbnails 16.5 MB → 11.0 MB, and a month's 150 in 163 ms instead of 210 ms on the home network |
 
 Overtaken by the move of the catalog to the SSD and by the GPU memory fix: caching the embedding matrix
 (#24), reducing the server's memory (#23), a faster static server for `/thumb/` (#25) and HTTP/2 to the
