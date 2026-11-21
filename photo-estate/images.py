@@ -48,9 +48,9 @@ THUMB_EXT, THUMB_QUALITY = ".webp", 78
 TYPES = {".webp": "image/webp", ".jpg": "image/jpeg"}
 
 
-PREVIEW_WORKERS = max(1, min(3, (os.cpu_count() or 4) // 3))   # a third of the cores: the app stays quick
-PREVIEW_BATCH = 2000             # previews made between checks for free space and for a newer run
-PREVIEW_ROOM = 20 << 30          # stop making previews while the cache's disk has less than this free
+WORKERS = max(1, (os.cpu_count() or 4) - 2)   # at nice 10: the app's own work comes first
+BATCH = 2000                     # photos done between checks for free space and for a newer run
+PREVIEW_ROOM = 20 << 30          # make no previews while the cache's disk has less than this free
 
 
 def _lower_priority() -> None:
@@ -74,15 +74,22 @@ def write_image(im: Image.Image, dest: Path | str) -> None:
     os.replace(tmp, dest)
 
 
-def _thumb(job: tuple[str, str, int]) -> bool:
-    """Worker: write one thumbnail or preview, by its side and the name it is given. Never raises."""
-    src, dest, side = job
+def _make(job: tuple[str, str | None, str | None]) -> bool:
+    """Worker: (original, thumbnail or None, preview or None) -> both written from one decode of the original.
+    Decoding is most of the cost (a 48 MP HEIC takes most of a second), so a photo that needs both is opened
+    once. Never raises."""
+    src, thumb, preview = job
     try:
         with Image.open(src) as im:
+            side = 1600 if preview else 360
             im.draft("RGB", (side, side))
             im = ImageOps.exif_transpose(im).convert("RGB")
-            im.thumbnail((side, side))
-            write_image(im, dest)
+            if preview:
+                im.thumbnail((1600, 1600))
+                write_image(im, preview)
+            if thumb:
+                im.thumbnail((360, 360))
+                write_image(im, thumb)
         return True
     except Exception:
         return False
@@ -148,9 +155,9 @@ class Images:
         return None
 
     def pregenerate(self) -> None:
-        """Every missing thumbnail, then every missing preview, in the background. One run at a time: a call
-        while one is under way makes it start again once it can (the preview pass gives way between batches,
-        so a new photo's thumbnail never waits hours behind it)."""
+        """Every missing thumbnail and preview, in the background. One run at a time: a call while one is under
+        way makes it start again once it can, and the run gives way between batches, so a new photo never waits
+        hours behind it (the next run starts from the newest photos)."""
         with self.pregen_lock:
             if self.pregen_running:
                 self.pregen_again = True
@@ -168,9 +175,20 @@ class Images:
                     return
                 self.pregen_again = False
 
+    def _have(self, kind: str) -> set[str]:
+        """The photos with an image of this kind in the cache or the seed (which is copied on first use)."""
+        ext, out = ext_of(kind), set()
+        for d in {self.cache / kind, self.seed / kind}:
+            if d.is_dir():
+                out |= {p.name[:64] for p in d.iterdir() if p.suffix == ext}
+        return out
+
     def _thumbs(self) -> None:
+        """Every missing thumbnail, newest photos first, with its preview from the same decode when that is
+        missing too. The seed's thumbnails are copied to a separate fast cache first."""
         cache, seed, c = self.cache, self.seed, self.live.cat
         (cache / "thumbs").mkdir(parents=True, exist_ok=True)
+        (cache / "previews").mkdir(parents=True, exist_ok=True)
         have = {p.name[:64] for p in (cache / "thumbs").iterdir() if p.suffix == THUMB_EXT}
         if cache != seed and (seed / "thumbs").is_dir():  # copy what the disk's cache has, newest first
             seeded = {p.name[:64] for p in (seed / "thumbs").iterdir() if p.suffix == THUMB_EXT} - have
@@ -182,57 +200,54 @@ class Images:
                     self.image(s, "thumbs", 360)
                 print(f"thumbnails: {len(copy)} copied in {time.time() - t:.0f}s", flush=True)
             have |= seeded
-        todo = [(str(self.original(s, c.meta[s]["ext"])), str(cache / "thumbs" / f"{s}{THUMB_EXT}"), 360)
-                for s in (c.shas[i] for i in c.newest) if s not in have]
-        if not todo:
-            return
-        print(f"making {len(todo)} thumbnails in the background", flush=True)
-        t = time.time()
-        if len(todo) <= 64:   # a few new photos: not worth starting worker processes
-            ok = sum(_thumb(job) for job in todo)
-            print(f"thumbnails: {ok} made in {time.time() - t:.0f}s", flush=True)
-            return
-        import multiprocessing as mp  # forkserver: no fork() of a process that holds torch threads
-        with mp.get_context("forkserver").Pool(max(1, (os.cpu_count() or 4) - 2), initializer=_lower_priority) as pool:
-            ok = sum(pool.imap_unordered(_thumb, todo, chunksize=32))
-        print(f"thumbnails: {ok} made in {(time.time() - t) / 60:.0f} min", flush=True)
+        previews = self._have("previews")
+        self._make_all("thumbnails", [
+            (str(self.original(s, c.meta[s]["ext"])), str(cache / "thumbs" / f"{s}{THUMB_EXT}"),
+             None if s in previews else str(cache / "previews" / f"{s}.jpg"))
+            for s in (c.shas[i] for i in c.newest) if s not in have])
 
     def _previews(self) -> None:
-        """The viewer's 1600 px previews, newest photos first, so opening a photo never waits on decoding its
-        original from the store (on the Mac mini, a USB hard disk). In a few low-priority worker processes,
-        in batches; it stops while the cache's disk has less than PREVIEW_ROOM free, and gives way to a new
-        run (pregen_again) between batches. /large/ is left to be made on first use."""
-        cache, seed, c = self.cache, self.seed, self.live.cat
-        (cache / "previews").mkdir(parents=True, exist_ok=True)
-        have = {p.name[:64] for p in (cache / "previews").iterdir() if p.suffix == ".jpg"}
-        if cache != seed and (seed / "previews").is_dir():   # copied on first use, a read and no decode
-            have |= {p.name[:64] for p in (seed / "previews").iterdir() if p.suffix == ".jpg"}
-        todo = [(str(self.original(s, c.meta[s]["ext"])), str(cache / "previews" / f"{s}.jpg"), 1600)
-                for s in (c.shas[i] for i in c.newest) if s not in have]
+        """The viewer's 1600 px previews the thumbnail pass did not make (the photo had a thumbnail already),
+        newest first, so opening a photo never waits on decoding its original from the store (on the Mac mini,
+        a USB hard disk). /large/ is left to be made on first use."""
+        c, previews = self.live.cat, self._have("previews")
+        (self.cache / "previews").mkdir(parents=True, exist_ok=True)
+        self._make_all("previews", [(str(self.original(s, c.meta[s]["ext"])), None, str(self.cache / "previews" / f"{s}.jpg"))
+                                    for s in (c.shas[i] for i in c.newest) if s not in previews])
+
+    def _make_all(self, what: str, todo: list[tuple[str, str | None, str | None]]) -> None:
+        """Run _make over todo in batches of BATCH, in WORKERS low-priority processes (forkserver: no fork() of
+        a process that holds torch threads). Before each batch: give way to a newer run (pregen_again), and
+        leave the previews out while the cache's disk has less than PREVIEW_ROOM free."""
         if not todo:
             return
-        print(f"making {len(todo)} previews in the background", flush=True)
-        t, ok, pool = time.time(), 0, None
+        print(f"making {len(todo)} {what} in the background", flush=True)
+        t, ok, pool, full = time.time(), 0, None, False
         try:
-            for i in range(0, len(todo), PREVIEW_BATCH):
+            for i in range(0, len(todo), BATCH):
                 if self.pregen_again:
-                    print(f"previews: {ok} made; stopping for a newer run", flush=True)
+                    print(f"{what}: {ok} made; stopping for a newer run", flush=True)
                     return
-                if shutil.disk_usage(cache).free < PREVIEW_ROOM:
-                    print(f"previews: {ok} made; stopped, under {PREVIEW_ROOM >> 30} GB free on {cache}", flush=True)
-                    return
-                batch = todo[i:i + PREVIEW_BATCH]
-                if len(todo) <= 64:
-                    ok += sum(_thumb(job) for job in batch)
+                if shutil.disk_usage(self.cache).free < PREVIEW_ROOM:
+                    if not full:
+                        print(f"{what}: no previews while under {PREVIEW_ROOM >> 30} GB is free on {self.cache}", flush=True)
+                    full = True
+                    batch = [(src, th, None) for src, th, _ in todo[i:i + BATCH] if th]
+                    if not batch:
+                        return
+                else:
+                    batch = todo[i:i + BATCH]
+                if len(todo) <= 64:    # a few new photos: not worth starting worker processes
+                    ok += sum(_make(job) for job in batch)
                     continue
                 if pool is None:
                     import multiprocessing as mp
-                    pool = mp.get_context("forkserver").Pool(PREVIEW_WORKERS, initializer=_lower_priority)
-                ok += sum(pool.imap_unordered(_thumb, batch, chunksize=8))
-                if i + PREVIEW_BATCH < len(todo):
-                    print(f"previews: {ok} of {len(todo)} made, {ok / (time.time() - t):.1f} a second", flush=True)
+                    pool = mp.get_context("forkserver").Pool(WORKERS, initializer=_lower_priority)
+                ok += sum(pool.imap_unordered(_make, batch, chunksize=8))
+                if i + BATCH < len(todo):
+                    print(f"{what}: {ok} of {len(todo)} done, {ok / (time.time() - t):.1f} a second", flush=True)
         finally:
             if pool is not None:
                 pool.close()
                 pool.join()
-        print(f"previews: {ok} made in {(time.time() - t) / 60:.0f} min", flush=True)
+        print(f"{what}: {ok} made in {(time.time() - t) / 60:.0f} min", flush=True)

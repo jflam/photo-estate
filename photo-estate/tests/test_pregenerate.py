@@ -121,6 +121,38 @@ def test_a_call_during_a_run_runs_again_with_the_new_catalog(tmp_path, monkeypat
     assert not im.pregen_running and not im.pregen_again
 
 
+def test_a_photo_needing_both_is_decoded_once(tmp_path, monkeypatch):
+    """Before, the thumbnail pass and the preview pass each decoded every original: on the Mac mini, where a
+    48 MP HEIC takes most of a second, that was about twice the hours."""
+    live, store, shas = library(tmp_path, 4)
+    opened = []
+    real_open = images.Image.open
+    monkeypatch.setattr(images.Image, "open", lambda f, *a, **k: (opened.append(str(f)), real_open(f, *a, **k))[1])
+    Images(live, store, tmp_path / "cache", tmp_path / "cache").pregenerate()
+    assert sorted(opened) == sorted(str(store / s[:2] / s[2:4] / f"{s}.jpg") for s in shas)
+    for s in shas:
+        assert (tmp_path / "cache" / "thumbs" / f"{s}.webp").exists() and (tmp_path / "cache" / "previews" / f"{s}.jpg").exists()
+
+
+def test_a_photo_with_a_thumbnail_gets_only_its_preview(tmp_path, monkeypatch):
+    live, store, shas = library(tmp_path, 2)
+    (tmp_path / "cache" / "thumbs").mkdir(parents=True)
+    (tmp_path / "cache" / "thumbs" / f"{shas[0]}.webp").write_bytes(b"made before")
+    Images(live, store, tmp_path / "cache", tmp_path / "cache").pregenerate()
+    assert (tmp_path / "cache" / "thumbs" / f"{shas[0]}.webp").read_bytes() == b"made before"
+    assert all((tmp_path / "cache" / "previews" / f"{s}.jpg").exists() for s in shas)
+
+
+def test_the_thumbnail_pass_gives_way_to_a_newer_run(tmp_path, monkeypatch):
+    """A reload during the hours of redoing every thumbnail: the next run starts again from the newest photos."""
+    live, store, shas = library(tmp_path, 3)
+    monkeypatch.setattr(images, "BATCH", 1)
+    im = Images(live, store, tmp_path / "cache", tmp_path / "cache")
+    im.pregen_again = True
+    im._thumbs()
+    assert not list((tmp_path / "cache" / "thumbs").iterdir())
+
+
 def test_a_failing_pass_does_not_leave_it_marked_running(tmp_path, monkeypatch):
     live, store, _ = library(tmp_path, 1)
     im = Images(live, store, tmp_path / "cache", tmp_path / "cache")

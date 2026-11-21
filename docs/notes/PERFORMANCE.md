@@ -265,11 +265,22 @@ photo waited while the server decoded its original from the USB hard disk. 80 ph
 | Reading the cached preview from the SSD (after) | 0.3 ms | |
 
 These are the server's times only; the preview's 300 KB still has to cross the network. `Images.pregenerate`
-now has a second pass after the thumbnails: every missing preview, newest photos first. It runs in a third
-of the cores (2 on the mini) at `nice 10`, in batches of 2,000. It stops while the cache's disk has less
-than 20 GB free, and it gives way between batches when the job is asked to run again (after a reload), so
-new photos' thumbnails never wait behind it. Expected on the mini: about 37 GB (330 KB a preview), and
-3-5 hours for the first full pass. `/large/` (4096 px) is still made on first use.
+now makes every missing preview as well as every missing thumbnail, newest photos first. It uses
+`cpu_count - 2` processes at `nice 10`, in batches of 2,000. It makes no previews while the cache's disk
+has less than 20 GB free. Between batches it gives way when the job is asked to run again (after a
+reload), so new photos never wait behind it. About 37 GB on the mini (330 KB a preview). `/large/`
+(4096 px) is still made on first use.
+
+**One decode for both (2026-11-21).** As first deployed, the thumbnail pass and a later preview pass each
+decoded every original. On the mini the thumbnail pass alone ran at 7-10 photos a second, about 3-4 hours,
+and previews on 2 workers would have taken about 14 more. Now a photo that needs both gets both from one
+decode, and previews use the same workers as thumbnails. Timed in one process on the mini, on 30 recent
+photos (26 HEIC):
+
+| | Per photo |
+|---|---:|
+| A decode for the thumbnail, another for the preview | 675 ms |
+| One decode for both | 424 ms |
 
 ### Opening a month: WebP thumbnails (#104)
 
