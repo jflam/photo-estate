@@ -26,7 +26,7 @@ Videos were stored, de-duplicated and read by exiftool like photos, and then not
 | Have Apple's content identifier | 16,174 |
 | ... and a still of the same name in the same folder | 16,172, every one four seconds or shorter |
 | Share a name with a still but have no identifier | 889: 588 run over ten seconds (old `IMG_1370.MOV` next to an unrelated `IMG_1370.JPG`), 146 are Google `MVIMG_` motion photos |
-| Stand on their own | about 3,400 videos, 56 hours, 233 GB |
+| Stand on their own, once the clips are paired | 3,427 videos, about 56 hours and 233 GB |
 
 Two things follow. A Live Photo's clip cannot be told by its name alone: 588 real videos would have been
 swallowed by a photo that happens to share their number. And the content identifier is an exact mark: no
@@ -47,8 +47,12 @@ the photo and the clip is part of it**, never an item of its own.
 - `live_pairs(clip, still, how)` records the pair. `estate.py live` fills it, and so does `estate.py exif`
   when it finishes (the marks are exiftool's, and it runs before `embed.py run` in every pipeline).
 - A clip is marked by the content identifier (`how='id'`), or by an `MVIMG` name on a video of four seconds
-  or less (`how='mvimg'`). Its still is the image of the same name in the same folder of the same source,
-  also trying the name without `_HEVC` and without Takeout's `(1)`.
+  or less (`how='mvimg'`). Its still is the image of the same name in the same folder, also trying the name
+  without `_HEVC` and without Takeout's `(1)`. The folder is looked for in the clip's own source first, then
+  in every other: a Takeout is many zips, each a source, and a folder's files are spread over them. (The
+  first version asked for the same source and paired 15,084; without it, 16,185.)
+- Run on a copy of the real catalog: 16,185 clips paired with 16,095 stills in 5 seconds (16,172 by the
+  identifier, 13 `MVIMG`); 90 stills have two clips.
 - A paired clip is not embedded, has no thumbnail and is in no list or count. Its still's row carries
   `live: <clip sha>`, and `GET /video/<clip sha>` plays it.
 - A marked clip with no still stays an ordinary short video until a later run finds its still.
@@ -101,10 +105,10 @@ its cosine with the last one kept is under a threshold:
 | **0.96** | **63%** | **190** |
 
 0.96 it is: 3% of matches lost for a third of the memory. For the whole library that is about 23,000
-frames, 70 MB in the app as float32 beside the photos' 330 MB.
+frames (6.7 a video), 70 MB in the app as float32 beside the photos' 330 MB.
 
 **Cost.** 1.4 seconds a video on the mini (0.9 reading frames, 0.5 in the model on its GPU): about 80
-minutes for the 3,400 videos, once. Each video is committed whole, so a stopped run loses one.
+minutes for the 3,427 videos, once. Each video is committed whole, so a stopped run loses one.
 
 **What videos do not get.** No dHash (duplicates of a video are exact copies only), no faces, and they
 never stack with the photos taken beside them.
@@ -141,8 +145,8 @@ Nothing changes for anyone until step 3 has run; each step can be run again.
 cd ~/src/photo-estate/photo-estate
 DB=~/estate/estate.db STORE=/Volumes/estate/store
 sqlite3 "$DB" ".backup '$HOME/photo-estate-lab/estate.db.before-videos'"   # the catalog gains two tables
-uv run estate.py --db "$DB" live                 # 1. pair the ~16,300 clips with their stills (seconds)
-uv run embed.py --db "$DB" run --store "$STORE"  # 2. the ~3,400 videos' frames (about 80 minutes)
+uv run estate.py --db "$DB" live                 # 1. pair the 16,185 clips with their stills (5 seconds)
+uv run embed.py --db "$DB" run --store "$STORE"  # 2. the 3,427 videos' frames (about 80 minutes)
 launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search   # 3. restart the app
 ```
 

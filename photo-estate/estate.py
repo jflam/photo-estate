@@ -627,7 +627,8 @@ def cmd_exif(a) -> None:
 # same name (IMG_1.HEIC + IMG_1.MOV; Takeout makes the clip IMG_1.MP4, some iCloud mirrors IMG_1_HEVC.MOV).
 # The name alone is not enough: an old camera's IMG_0140.MOV sits next to an unrelated IMG_0140.JPG. What
 # marks a clip is Apple's content identifier, which exiftool reads from the clip (Keys:ContentIdentifier; a
-# real video never has one), or Google's MVIMG name on a short clip (a Pixel's motion photo). Measured on
+# real video never has one), or Google's MVIMG name on a short clip (a Pixel's motion photo). The still is the image of the clip's name
+# in the same folder, in any source. Measured on
 # the author's library (docs/notes/VIDEO-PLAN.md): of 19,612 videos, 16,172 had the identifier and a still
 # of their name, and all of those ran four seconds or less; 2 had it and no still.
 LIVE_LONGEST = 6.0   # seconds: no clip is longer; only shorter videos are read for the marks
@@ -660,7 +661,7 @@ def live_mark(filename: str, duration: float | None, data: str | None) -> str | 
 
 def pair_live(con: sqlite3.Connection, redo: bool = False) -> int:
     """Fill live_pairs: every marked clip (live_mark) not yet paired, with the still of its name in the same
-    folder of the same source. Returns how many it paired. Run after `exif` (the marks are exiftool's) and
+    folder (of its own source, else of another). Returns how many it paired. Run after `exif` (the marks are exiftool's) and
     before `embed.py run`, which embeds only the videos that are not clips. Safe to run again: a clip whose
     still has not arrived yet is paired by a later run. `redo` forgets every pair first."""
     if redo:
@@ -692,12 +693,19 @@ def pair_live(con: sqlite3.Connection, redo: bool = False) -> int:
             folders[(source, d)] = got
         return folders[(source, d)]
 
+    # The still is looked for in the clip's own source first, then in the same folder of every other one: a
+    # Takeout comes as many zips, each a source, and a folder's files are spread over them (as `link` knows).
+    sources = [r[0] for r in con.execute("SELECT name FROM sources")] or \
+        [r[0] for r in con.execute("SELECT DISTINCT source FROM occurrences")]
     used = {r[0] for r in con.execute("SELECT still FROM live_pairs")}
     n = 0
     for clip, how, occ in marked:
         for source, d, fn in occ:
-            here = stills(source, d)
-            cands = next((here[s] for s in live_stems(fn) if s in here), None)
+            cands = None
+            for src in [source] + [s for s in sources if s != source]:
+                here = stills(src, d)
+                if (cands := next((here[s] for s in live_stems(fn) if s in here), None)):
+                    break
             if cands:
                 still = next((c for c in cands if c not in used), cands[0])
                 used.add(still)
