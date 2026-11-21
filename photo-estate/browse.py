@@ -367,6 +367,8 @@ class Browse:
             mask &= c.fav
         if args.get("screenshots") is False:
             mask &= ~c.shot
+        if args.get("kind") in ("video", "photo"):
+            mask &= c.video if args["kind"] == "video" else ~c.video
         if args.get("distinct"):         # the top photo of each stack of near-identical shots, not the others
             mask &= ~c.dup
         by_best = args.get("order") == "best"
@@ -409,6 +411,7 @@ class Browse:
                "albums": m["albums"], "event": m.get("event_title"), "event_id": m.get("event"), "trip": m.get("trip_title"),
                "camera": m.get("camera"), "favorite": m["fav"] or None, "screenshot": is_screenshot(m) or None,
                "source_path": m["path"], "hidden": (not c.visible[i]) or None,
+               "kind": m.get("kind"), "seconds": m.get("dur"), "live_photo": bool(m.get("live")) or None,
                "quality": round(float(c.score[i]), 3) if c.score is not None else None,
                "shots_alike": int(c.stack_n[i]) if c.stack_n[i] > 1 else None}
         return {k: v for k, v in row.items() if v not in (None, [], "")}

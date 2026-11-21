@@ -86,16 +86,21 @@ def _decode(job: tuple[str, str, int]):
 
 def _decode_video(job: tuple[str, str, int]):
     """Worker: the frames a video is searched by (video.frames), each squashed to the model's input size as
-    _decode does a photo. -> (sha, [(seconds, bytes)], error). Never raises."""
+    _decode does a photo. -> (sha, [(seconds, bytes)], (width, height) upright or None, error). Never raises."""
     sha, path, side = job
     try:
         from PIL import Image
         import video
-        got = [(t, im.convert("RGB").resize((side, side), Image.Resampling.BICUBIC).tobytes())
-               for t, im in video.frames(path, side=side * 2)]
-        return sha, got, None if got else "no frame could be decoded"
+        frames = video.frames(path, side=side * 2)
+        got = [(t, im.convert("RGB").resize((side, side), Image.Resampling.BICUBIC).tobytes()) for t, im in frames]
+        size = None
+        if frames:   # the stored size, turned the way the frames came out (a phone's portrait video is stored on its side)
+            p, im = video.probe(path), frames[0][1]
+            w, h = p["width"], p["height"]
+            size = (w, h) if (w >= h) == (im.width >= im.height) else (h, w)
+        return sha, got, size, None if got else "no frame could be decoded"
     except Exception as e:
-        return sha, [], f"{type(e).__name__}: {e}"[:300]
+        return sha, [], None, f"{type(e).__name__}: {e}"[:300]
 
 
 def video_rows(sha: str, model: str, times: list[float], vecs, stamp: str):
@@ -200,7 +205,7 @@ def cmd_run(a) -> None:
         # model embeds them here, and each video is committed whole: a run that is stopped redoes at most one.
         t1 = last = time.time()
         nv = bad = nframes = kept = 0
-        for sha, got, err in pool.imap(_decode_video, [(s, path_of(s, e), side) for s, e in videos]) if videos else ():
+        for sha, got, size, err in pool.imap(_decode_video, [(s, path_of(s, e), side) for s, e in videos]) if videos else ():
             nv += 1
             if got:
                 ims = [Image.frombytes("RGB", (side, side), raw) for _, raw in got]
@@ -209,6 +214,8 @@ def cmd_run(a) -> None:
                 con.execute("DELETE FROM video_frames WHERE sha256=? AND model=?", (sha, a.model))
                 con.executemany("INSERT OR REPLACE INTO video_frames VALUES (?,?,?,?)", frames)
                 con.execute("INSERT OR REPLACE INTO embeddings VALUES (?,?,?,?,?,?)", row)
+                if size:   # ingest reads no size from a video; the grid lays a photo out by it until its thumbnail is made
+                    con.execute("UPDATE assets SET width=?, height=? WHERE sha256=? AND width IS NULL", (*size, sha))
                 nframes += len(got)
                 kept += len(frames)
             else:
