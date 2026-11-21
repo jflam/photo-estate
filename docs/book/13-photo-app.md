@@ -143,7 +143,12 @@ them its `fetch`es and is told what to draw.
 
 A favourite is not a machine but a record per photo with a save under way
 ([favourite.js](../../photo-estate/app/favourite.js)): what the server was last known to hold, and what
-was last asked for.
+was last asked for. An album's **Make all favourites** and **Take all out of favourites** are one request
+for every photo of the album, and go through the same module (`FAV.all`): it is shown at once on the
+photos the page has, it waits for a heart's save that is under way, a heart pressed while it is being
+sent is sent after it and is what stands, two of them go one after the other, and one that fails puts
+back only the photos it changed. Its answer is drawn only on the album it was asked for, never on the
+one the page has gone to since.
 
 Not in a machine, and why: the tab showing (`TAB`), the question as it stands and as it was asked (`S`,
 `Q`), the answer and its counts (`D`, `F`), the view options (`V`) and the open menu or sheet are plain

@@ -119,3 +119,118 @@ test("asking for what is already so sends nothing", async () => {
   assert.equal(await p.favs.set("a", false, false, { sha: "a" }), true);
   assert.equal(p.sent.length, 0);
 });
+
+// ── every photo of an album at once ("Make all favourites"): one request, in step with the hearts ──
+
+/** An album on the page: `bulk` are the album requests asked for; `make(want)` asks for one. */
+function albumOn(/** @type {ReturnType<typeof page>} */ p, /** @type {string[]} */ shas) {
+  /** @type {{ want: boolean, d: ReturnType<typeof deferred> }[]} */ const bulk = [];
+  const view = { shas };                               // what the page has of the album; [] once it shows another
+  const photos = () => view.shas.map(sha => /** @type {[string, boolean, { sha: string }]} */ ([sha, !!p.heart[sha], { sha }]));
+  const make = (/** @type {boolean} */ want) => p.favs.all(photos, want, w => { const d = deferred(); bulk.push({ want: w, d }); return d.promise; });
+  return { bulk, view, make };
+}
+
+test("all of an album: shown at once on the photos the page has, one request, and its answer is the caller's", async () => {
+  const p = page(), a = albumOn(p, ["a", "b", "c"]);
+  p.heart.b = true;
+  const done = a.make(true);
+  await settled();
+  assert.deepEqual([p.heart.a, p.heart.b, p.heart.c], [true, true, true], "before the server has answered");
+  assert.deepEqual([a.bulk.map(b => b.want), p.sent.length], [[true], 0], "one request for the album, none for a photo");
+  a.bulk[0].d.resolve({ fav: true, changed: 2 });
+  assert.deepEqual(await done, { ok: true, answer: { fav: true, changed: 2 } });
+  assert.deepEqual(p.counts, [], "the count is not taken from it as from a heart's answer");
+});
+
+test("all of an album fails: only the photos it changed are put back", async () => {
+  const p = page(), a = albumOn(p, ["a", "b"]);
+  p.heart.b = true;
+  const done = a.make(true);
+  await settled();
+  a.bulk[0].d.reject(new Error("not allowed"));
+  const got = await done;
+  assert.equal(got.ok, false);
+  assert.equal(/** @type {any} */ (got).error.message, "not allowed");
+  assert.deepEqual([p.heart.a, p.heart.b], [false, true], "a is put back; b was a favourite before and still is");
+});
+
+test("a heart pressed while the album is being saved is sent after it, and is what stands", async () => {
+  const p = page(), a = albumOn(p, ["a", "b"]);
+  const all = a.make(true);
+  await settled();
+  const press = p.press("a");                          // off again, while "all on" is on its way
+  await settled();
+  assert.deepEqual([p.heart.a, p.sent.length], [false, 0], "shown at once, and not sent past the album's request");
+  a.bulk[0].d.resolve({ fav: true, changed: 2 });
+  await all; await settled();
+  assert.deepEqual([p.heart.a, p.heart.b], [false, true], "the album's answer did not put the heart back on");
+  assert.deepEqual(p.sent.map(s => [s.sha, s.fav]), [["a", false]], "then the press is sent");
+  p.answer(0, 1);
+  assert.equal(await press, true);
+});
+
+test("a heart pressed while the album is being saved, and the album fails: the press stands against what the server has", async () => {
+  const p = page(), a = albumOn(p, ["a", "b"]);
+  const all = a.make(true);
+  await settled();
+  const off = p.press("a");                            // back to what the server has always had
+  p.press("b"); const on = p.press("b");               // off, and on again: wants what the album wanted
+  a.bulk[0].d.reject(new Error("offline"));
+  await all;
+  assert.equal(await off, true);
+  await settled();
+  assert.deepEqual(p.sent.map(s => [s.sha, s.fav]), [["b", true]], "a needs no request; b's wish is sent by itself");
+  p.answer(0, 1);
+  assert.equal(await on, true);
+  assert.deepEqual([p.heart.a, p.heart.b, p.failures], [false, true, []]);
+});
+
+test("the album waits for a heart's save under way, so the two cannot cross", async () => {
+  const p = page(), a = albumOn(p, ["a", "b"]);
+  p.press("a");                                        // on, being saved
+  const all = a.make(false);                           // then: take all out
+  await settled();
+  assert.deepEqual([p.heart.a, a.bulk.length], [false, 0], "shown at once; not sent while a's save is out");
+  p.answer(0, 1);
+  await settled();
+  assert.deepEqual(p.sent.map(s => s.fav), [true, false], "a's own save takes it to what was last asked for");
+  p.answer(1, 0);
+  await settled();
+  assert.deepEqual(a.bulk.map(b => b.want), [false], "and then the album's request goes");
+  a.bulk[0].d.resolve({ fav: false, changed: 0 });
+  assert.equal((await all).ok, true);
+  assert.deepEqual([p.heart.a, p.server.a, p.favs.pending], [false, false, 0]);
+});
+
+test("make all, then take all out, at once: sent one after the other, and the last is what shows", async () => {
+  const p = page(), a = albumOn(p, ["a", "b"]);
+  const on = a.make(true), off = a.make(false);
+  await settled();
+  assert.deepEqual(a.bulk.map(b => b.want), [true], "the second waits for the first");
+  a.bulk[0].d.resolve({ fav: true, changed: 2 });
+  await on; await settled();
+  assert.deepEqual([a.bulk.map(b => b.want), p.heart.a, p.heart.b], [[true, false], false, false]);
+  a.bulk[1].d.resolve({ fav: false, changed: 2 });
+  assert.equal((await off).ok, true);
+  assert.deepEqual([p.heart.a, p.heart.b], [false, false]);
+});
+
+test("the page left the album before the answer: no photo of another album is touched; ones loaded since are shown", async () => {
+  const p = page(), a = albumOn(p, ["a"]);
+  const one = a.make(true);
+  await settled();
+  a.view.shas = ["a", "b"];                            // another page of the album arrived
+  a.bulk[0].d.resolve({ fav: true, changed: 2 });
+  await one;
+  assert.deepEqual([p.heart.a, p.heart.b], [true, true]);
+
+  const q = page(), other = albumOn(q, ["a"]);
+  const two = other.make(true);
+  await settled();
+  other.view.shas = [];                                // the page shows another album now
+  q.heart.z = false;
+  other.bulk[0].d.resolve({ fav: true, changed: 1 });
+  await two;
+  assert.deepEqual([q.heart.a, q.heart.z], [true, false], "what it showed at the start is kept right; nothing else is drawn");
+});

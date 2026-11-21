@@ -11,7 +11,9 @@ or never ends, provoked with request interception (page.route) against the real 
 - search.html (issue #81): a question edited while its answer is on its way shows only the new
   question's photos; an album being made from a search is not made once the person has moved on, and
   left to finish takes its name from the moment it was asked for; a double click on the heart ends as
-  last asked, on the page and on the server, and a save that fails is put back; the viewer opened and
+  last asked, on the page and on the server, and a save that fails is put back; an album's "Make all
+  favourites" is shown at once, a heart pressed while it is being saved is sent after it and stands,
+  and one that fails is put back; the viewer opened and
   closed quickly, with Back and Forward, leaves the page usable and the address right; a session of
   every view switched faster than the server answers throws nothing.
 
@@ -593,6 +595,58 @@ def test_search_a_double_click_on_the_heart_ends_as_last_asked(page, demo_app):
     page.wait_for_function("document.querySelectorAll('#sGrid .t')[2].querySelector('.fv') === null")
     page.wait_for_timeout(300)
     assert not truth() and not page.warned
+
+
+def test_search_all_of_an_album_made_favourites_keeps_in_step_with_the_hearts(page, demo_app):
+    watch_search(page)
+    shas = [r["sha"] for r in call(demo_app, "/api/search?q=waterfall&dedupe=1&shots=0&limit=5")["results"]]
+    sid = call(demo_app, "/api/albums", {"title": "Waterfalls, all at once", "prompt": "a test of the page", "items": [{"sha": s} for s in shas]})["id"]
+    favs = lambda: {r["sha"] for r in call(demo_app, f"/api/albums/{sid}/photos?limit=150&cursor=0")["results"] if r.get("fav")}
+    hearts = lambda: page.evaluate("() => [...document.querySelectorAll('#albGrid .t')].map(t => !!t.querySelector('.fv'))")
+    assert not favs()
+    sent = []
+    page.on("request", lambda r: sent.append((r.url.split("/api/")[1], r.post_data_json["fav"])) if r.method == "POST" and r.url.endswith("/favorite") else None)
+    said = []
+    page.on("dialog", lambda d: (said.append(d.message), d.accept()))
+    page.goto(f"{demo_app}/?album={sid}")
+    page.locator("#albGrid .t").nth(len(shas) - 1).wait_for()
+    order = tiles(page, "#albGrid")
+
+    slow = Hold(page, f"**/api/albums/{sid}/favorite")
+    page.locator("#albMore").click()
+    page.locator('.menu button[data-fav="1"]').click()
+    slow.wait()
+    assert hearts() == [True] * len(shas), "shown at once, before the server has answered"
+    page.locator("#albGrid .t").first.click()                   # and one of them is taken out again meanwhile
+    heart = page.locator("#vFavBtn")
+    heart.wait_for()
+    assert heart.get_attribute("aria-pressed") == "true"
+    heart.click()
+    page.wait_for_timeout(300)
+    assert heart.get_attribute("aria-pressed") == "false"
+    assert sent == [(f"albums/{sid}/favorite", True)], "the heart is not sent past the album's request"
+    slow.release()
+    for _ in range(200):
+        if len(sent) == 2:
+            break
+        page.wait_for_timeout(25)
+    page.wait_for_timeout(300)
+    assert sent == [(f"albums/{sid}/favorite", True), ("favorite", False)], "it is sent after it"
+    assert heart.get_attribute("aria-pressed") == "false", "and the album's answer did not put it back on"
+    page.locator("#vClose").click()
+    assert hearts() == [False] + [True] * (len(shas) - 1)
+    assert favs() == set(order[1:]), "and the page and the server agree"
+
+    page.route(f"**/api/albums/{sid}/favorite", refuse(500, "database is locked"))     # one that fails is put back, and said
+    page.locator("#albMore").click()
+    page.locator('.menu button[data-fav="0"]').click()
+    for _ in range(200):
+        if said:
+            break
+        page.wait_for_timeout(25)
+    assert said == ["database is locked"]
+    assert hearts() == [False] + [True] * (len(shas) - 1) and favs() == set(order[1:])
+    assert not page.warned
 
 
 def test_search_the_viewer_opened_and_closed_quickly_with_back_and_forward(page, demo_app):

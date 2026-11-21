@@ -172,7 +172,9 @@ which needs a browser or builds anything:
   superseded aborted, and no machine throwing. `albums-flow.test.js`: an album from a search that is
   cancelled by moving on asks for no further page and makes no album, and one left to finish has the
   name and note given at the start. `favourite.test.js`: a double toggle, a toggle during a save,
-  answers out of order and a failed save all end on what was last asked for, or put back.
+  answers out of order and a failed save all end on what was last asked for, or put back; an album's
+  "make all favourites" waits for a heart's save, is followed by a heart pressed meanwhile, and puts
+  back only what it changed when it fails.
   `viewer-flow.test.js`, on a model of the browser's history: open, next and previous, close; close
   while still opening; the close button against the Back button; the one-second fallback when the
   browser never reports the entry gone; and that nothing the viewer knew survives `closed`.
@@ -199,7 +201,8 @@ moved on: a question edited while its answer is on its way shows only the new qu
 album being made from a search is not made (no `POST`, no further page of the search) after a change of
 tab or of question, and left to finish takes its note from the moment it was asked for; a double click
 on the heart ends off, with `fav: true` then `fav: false` sent, and a save that fails is put back and
-said; the viewer opened and closed quickly with Escape, Back and Forward leaves the address right and
+said; an album's "Make all favourites" shows at once, a heart pressed while it is held is sent after it
+and stands, and one the server refuses is put back; the viewer opened and closed quickly with Escape, Back and Forward leaves the address right and
 the page usable; and a hundred actions across every view, each answered a few actions late, throw
 nothing. The page under test has no service worker (`service_workers="block"`): a request that passes
 through one is not seen by `page.route`. Each test starts a real server (`embed.py serve --demo`, `estate.py review`,

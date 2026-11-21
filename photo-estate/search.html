@@ -1179,9 +1179,11 @@ $("#albMore").onclick = e => openMenu(e.currentTarget, el => {
     closeMenus();
     try {
       if (b.dataset.fav) {
-        const got = await api(`/api/albums/${a.id}/favorite`, { fav: b.dataset.fav === "1" });
-        INFO.fav += (got.fav ? 1 : -1) * got.changed; $("#browse").innerHTML = "";
-        for (const r of agrid.items) if (r) favShow(r, got.fav);          // the ones loaded: every tile of theirs, wherever it shows
+        // (app/favourite.js: one request, in step with the hearts; the photos of this album the page has, and none once it shows another)
+        const here = () => album()?.id === a.id ? agrid.items.filter(Boolean).map(r => [r.sha, !!r.fav, r]) : [];
+        const done = await FAV.all(here, b.dataset.fav === "1", fav => api(`/api/albums/${a.id}/favorite`, { fav }));
+        if (!done.ok) throw done.error;
+        INFO.fav += (done.answer.fav ? 1 : -1) * done.answer.changed; $("#browse").innerHTML = "";
         libCovers();
       } else if (b.hasAttribute("data-hide")) {
         await api(`/api/albums/${a.id}/hide`, {});

@@ -97,7 +97,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                               progress and new_assets/catalog_ready, emitted by estate, places, embed, faces and
                               ingest-iphone.sh, read by intake/engine.py and upload.py (issue #84, chapter 16)
 
-  search.html        2,190  the photo app: Library, Albums and Search (HTML + CSS + its own script, a module)
+  search.html        2,192  the photo app: Library, Albums and Search (HTML + CSS + its own script, a module)
   people.html          835  the People page
   changes.html         492  reviewing an album or change set, at /changes
   setup.html           445  bringing photos in, at /setup
@@ -127,7 +127,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                               search, cancellable until the request that makes it is sent
     viewer-flow.js     193    the photo viewer and its history entry (closed, open, leaving), what the open
                               viewer owns, and the table of a touch on the photo
-    favourite.js        94    the heart: shown at once, saved one request at a time, put back when a save fails
+    favourite.js       160    the heart, and an album's "make all favourites": shown at once, saved one request at a time, put back when a save fails
                               what the secondary pages do over time (issue #80; "The web pages" below):
     loop.js            115    loop(): a page asking the server again and again, one step at a time, paused and
                               stopped from outside; until(): poll() that answers how it ended instead of throwing
