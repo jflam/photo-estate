@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { $, $$, esc, on, MARK } from "../dom.js";
-import { fmt, plural, dateParts } from "../format.js";
+import { fmt, plural, dateParts, duration } from "../format.js";
 
 test("esc escapes the five characters that end text or an attribute", () => {
   assert.equal(esc(`<b a="1" c='2'>&</b>`), "&lt;b a=&quot;1&quot; c=&#39;2&#39;&gt;&amp;&lt;/b&gt;");
@@ -75,4 +75,19 @@ test("dateParts reads a timestamp as wall-clock time, whatever zone it carries",
 
 test("dateParts: what is not a date is null", () => {
   for (const bad of ["", null, undefined, "2016", "undated", "07/04/2016"]) assert.equal(dateParts(bad), null, String(bad));
+});
+
+test("duration: a video's length as a clock writes it", () => {
+  assert.equal(duration(12), "0:12");
+  assert.equal(duration(12.4), "0:12");
+  assert.equal(duration(59.6), "1:00");
+  assert.equal(duration(754.4), "12:34");
+  assert.equal(duration(3723), "1:02:03");
+  assert.equal(duration(36000), "10:00:00");
+  assert.equal(duration(0.3), "0:01", "a video with any length is never 0:00");
+  assert.equal(duration(0), "0:00");
+});
+
+test("duration: a length not known is empty", () => {
+  for (const x of [null, undefined, NaN, Infinity, -1]) assert.equal(duration(x), "", String(x));
 });

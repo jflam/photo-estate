@@ -35,6 +35,8 @@ erDiagram
     TRIPS ||--o{ EVENTS : "groups"
     ASSETS ||--o{ TAGS : "per model"
     ASSETS ||--o{ EMBEDDINGS : "per model"
+    ASSETS ||--o{ VIDEO_FRAMES : "a video's frames"
+    ASSETS ||--o| LIVE_PAIRS : "a clip, of its still"
 
     ASSETS {
         text sha256 PK
@@ -99,6 +101,18 @@ erDiagram
         text model PK
         int dim
         blob vec "float16"
+    }
+    VIDEO_FRAMES {
+        text sha256 PK
+        text model PK
+        real t PK "seconds in"
+        blob vec "float16"
+    }
+    LIVE_PAIRS {
+        text clip PK
+        text still
+        text how "id or mvimg"
+        text paired_at
     }
 ```
 
@@ -188,7 +202,9 @@ ever consumed whole, by the full-text index and by the server's startup load, wh
 | `events` | `id` = start time as UTC epoch seconds | A burst of photos: `start_local`, `end_local`, `n`, `title`, `place`, `lat`, `lon`, `km_from_home`, `trip_id` | `places run` | app, `reindex` |
 | `trips` | `id` = first event's id | A run of away-from-home events: `start_local`, `end_local`, `n`, `n_events`, `title`, `place` | `places run` | app, `reindex` |
 | `tags` | `(sha256, model)` | Caption and tags *per model*: the pseudo-model `flickr` (Flickr's own tags) or the name of a local vision model | `link` (flickr), `tag` | `reindex`, `search` |
-| `embeddings` | `(sha256, model)` | `vec` BLOB: L2-normalised **float16** vector; `dim` records its length; `error` records an undecodable file | `embed run` | app, `embed search` |
+| `embeddings` | `(sha256, model)` | `vec` BLOB: L2-normalised **float16** vector; `dim` records its length; `error` records an undecodable file. A video's row is the mean of its kept frames, made unit length again | `embed run` | app, `embed search` |
+| `video_frames` | `(sha256, model, t)` | The frames a video is searched by: `t` is seconds into it, `vec` a vector as in `embeddings`. Only the frames worth keeping (`video.distinct`) | `embed run` | app (`Catalog.sims`, `Catalog.moment`) |
+| `live_pairs` | `clip`; index on `still` | A Live Photo: the clip's sha, its still's sha, `how` it was told to be a clip (`id`: Apple's content identifier; `mvimg`: a Google motion photo's name), `paired_at` | `estate.py live`, and `exif` when it finishes (`pair_live`) | `embed run` (leaves clips out), app (the still's `live`), `embed stats` |
 
 Two conventions here are worth highlighting.
 
@@ -230,16 +246,18 @@ flowchart LR
     LNK --> search
     EXF[exif] --> exif
     EXF --> search
+    EXF -->|"pair_live"| live_pairs
     PLC[places run] --> places & events & trips
     PLC --> search
     TAG[tag] --> tags
     TAG --> search
-    EMB[embed run] --> embeddings
+    EMB[embed run] --> embeddings & video_frames
     FAC[faces run] --> faces & face_scans
     PPL["People page"] --> persons & faces & face_not & face_later
 ```
 
-Reading the picture: **`link` is the only stage that rewrites columns of `assets` after ingest**, and
+Reading the picture: **`link` is the only stage that rewrites columns of `assets` after ingest** (but
+for one small exception: `embed run` fills in a video's `width` and `height`, which ingest cannot read), and
 `search` is rebuilt by four different stages because it indexes data from `assets`, `occurrences`,
 `tags`, `exif` and `places`.
 
@@ -266,9 +284,9 @@ USB hard disk, reading the `exif` table was 8.7 s of startup, a correlated subqu
 ### One schema, and catalogs made by older code
 
 Every table of every database (the catalog, `sync-feed.db` beside it, the setup page's `intake.db`) is
-defined in [core/schema.py](../../photo-estate/core/schema.py), as areas: `catalog`, `embeddings`, `faces`,
-`changes`, `tasks`, `scores`, `favorites`, `sync`, `intake`. Each owner calls `schema.ensure(con, area)`
-when it opens its database (`estate.connect`, `embed.connect`, `faces.connect`, `Changes`, `Tasks`,
+defined in [core/schema.py](../../photo-estate/core/schema.py), as areas: `catalog`, `embeddings`, `video`,
+`faces`, `changes`, `tasks`, `scores`, `favorites`, `sync`, `intake`. Each owner calls `schema.ensure(con, area)`
+when it opens its database (`estate.connect` and `embed.connect`, which both open `video`, `faces.connect`, `Changes`, `Tasks`,
 `PhotoApp` for `favorites`, `Feed`, the intake `Store`), never per request. `ensure` runs the area's
 `CREATE ... IF NOT EXISTS` statements and then adds any column listed in `ADDED` that an older table lacks
 (`change_sets.done_at`, `kind`, `query`; `change_items.section`, `position`).
@@ -277,7 +295,9 @@ The Mac mini's catalog was made by older code, so the rules are: additive only (
 renamed or rewritten; only `places.py` rebuilds the three tables it derives), idempotent, and no table
 scans on open. The DDL is the text the owners ran before, character for character:
 `tests/test_core.py` builds fresh databases through every open path and compares `sqlite_master` with
-`tests/fixtures/schema_baseline.json`, captured from the code before the move. There is no
+`tests/fixtures/schema_baseline.json`, captured from the code before the move. The two tables of the
+`video` area are newer than the baseline: the test checks that they are there and that everything else is
+as the old code made it. There is no
 `PRAGMA user_version`: every change so far has been an added table or column, which `ensure` detects
 directly.
 
@@ -292,6 +312,7 @@ Per-row sizes that explain where the bytes go:
 | Data | Per row | For 100,000 photos |
 |---|---|---|
 | Embedding (768 × float16) | 1,536 bytes | about 150 MB |
+| A video's frame (768 × float16) | 1,536 bytes | about 30 MB for the author's 3,427 videos (about 20,000 kept frames) |
 | Face vector (512 × float16) | 1,024 bytes, plus the box | about 1 KB × number of faces |
 | `exif.data` JSON | several KB | the largest table by far: 705 MB for the author's 120k assets |
 | dHash | 8 bytes | under 1 MB |
@@ -332,7 +353,7 @@ WHERE f.source = 'you' GROUP BY p.name ORDER BY 2 DESC;
 
 | Topic | Code |
 |---|---|
-| Every table, of every database, and the additive migrations | [core/schema.py](../../photo-estate/core/schema.py): `CATALOG` (ingest, enrichment, tags, search; `estate.SCHEMA`), `EMBEDDINGS`, `FACES`, `CHANGES`, `TASKS`, `SCORES`, `FAVORITES`, `SYNC`, `INTAKE`, `ADDED` |
+| Every table, of every database, and the additive migrations | [core/schema.py](../../photo-estate/core/schema.py): `CATALOG` (ingest, enrichment, tags, search; `estate.SCHEMA`), `EMBEDDINGS`, `VIDEO`, `FACES`, `CHANGES`, `TASKS`, `SCORES`, `FAVORITES`, `SYNC`, `INTAKE`, `ADDED` |
 | Which file types are photos and videos | [core/media.py](../../photo-estate/core/media.py) |
 | That a fresh catalog is the same as older code made | `tests/test_core.py`, against `tests/fixtures/schema_baseline.json` |
 | The strings the status columns hold (`change_sets.op`, `.status`, `.kind`, `change_items.decision`, `agent_tasks.status`, intake's `jobs.state`) | [core/states.py](../../photo-estate/core/states.py): a `StrEnum` each, values unchanged; `tests/test_types.py` checks them |

@@ -7,7 +7,8 @@
 Photo Estate gathers every photo and video from Google Photos, iCloud Photos, Flickr and your
 iPhone onto one disk, removes the duplicates, keeps each service's metadata (dates, places, albums, people,
 favourites), and gives you a fast local app to browse and search it all. Type "latte art" or "dog
-in the snow" and it finds those photos, with no tags and nothing sent to the cloud. Name the people
+in the snow" and it finds those photos, and the videos with that moment in them, with no tags and
+nothing sent to the cloud. Name the people
 in your photos once, and "ben and matthew on a beach" or "ben san diego" finds exactly them, there.
 
 ![Searching the demo library for "latte art"](docs/screenshots/search-latte-art.jpg)
@@ -151,13 +152,23 @@ lighthouses first, then the sea and sunsets around them.
 
 ![More like this, starting from a lighthouse](docs/screenshots/more-like-this.jpg)
 
+**Videos and Live Photos.** A video is searched by stills taken from it every few seconds, through
+the same model as the photos, so "birthday cake" finds the ten seconds of cake in a party video, and
+it opens playing at that moment. A Live Photo is one item, its still: hold its LIVE control (on the
+iPhone, the photo) and the short clip plays over it. The clips are not counted or shown as videos of
+their own. Videos stream from your own disk, with nothing to install: frames are read with PyAV, which
+carries its own FFmpeg. The Videos filter, `is:video` in a search, or `kind=video` for an agent keeps
+to videos.
+
+![A video playing in the viewer, with its details](docs/screenshots/videos-viewer.jpg)
+
 **Every photo's story.** The viewer shows local time and timezone, place (worked out offline from
 GPS), the event and trip it belongs to, camera, lens and exposure. Each of those is a link to the
 photos that share it.
 
 ![The photo viewer with its details panel](docs/screenshots/viewer-details.jpg)
 
-**Filters with live counts.** Where, People, Albums, Trips, When, Camera and Favourites narrow
+**Filters with live counts.** Where, People, Albums, Trips, When, Camera, Favourites and Videos narrow
 whatever is showing, and combine with a description. The web app is laid out as the iPhone app is:
 a Library tab (every photo, or a card a year or a month) and a Search tab, with the same view
 options (order, five photo sizes, stack near-identical shots, hide screenshots).
@@ -208,6 +219,9 @@ and full-screen copies of favourites and anything you've opened, within a size c
 - **Offline.** Everything above works on a plane. Describing a photo ("dog in the snow", "More like
   this") needs the image model, so online it asks your server; offline it falls back to matching
   words in names, places, albums and captions, and says so.
+- **Videos and Live Photos.** A video's tile shows its length and its page plays it, streamed from your
+  server with its own play bar; touch and hold a Live Photo to see it move. Videos are not kept on the
+  phone, so with no network a video shows its poster and says why.
 - **Uploads.** An optional upload extension sends new photos from the phone to your server in the
   background (see [Bring your own photos](#bring-your-own-photos)).
 
@@ -243,9 +257,9 @@ E="uv run estate.py --db $DB"
 
 $E ingest --store $STORE takeout-*.zip          # Takeout zips, Flickr zips, or any folder
 $E link                                         # attach each service's metadata
-$E exif --store $STORE                          # camera, lens, exposure (needs exiftool)
+$E exif --store $STORE                          # camera, lens, exposure; pairs Live Photos (needs exiftool)
 uv run places.py --db $DB run                   # places, local time, events, trips (offline)
-uv run embed.py --db $DB run --store $STORE     # SigLIP 2 embeddings for search
+uv run embed.py --db $DB run --store $STORE     # SigLIP 2 embeddings for search, photos then videos
 uv run embed.py --db $DB serve --store $STORE   # the app: http://127.0.0.1:8766/
 uv run faces.py --db $DB run --store $STORE     # optional: find every face, then name people at /people
 ```
@@ -288,7 +302,7 @@ Linux the same thing is a systemd user service.
         estate.py exif ────────┤  every file's EXIF/XMP/QuickTime tags (exiftool); camera, lens, exposure
         places.py run ─────────┤  place names, local time, events, trips (offline, seconds)
         estate.py dupes/review ┤  exact + near-duplicate report, local review page
-        embed.py run ──────────┤  SigLIP 2 image embeddings
+        embed.py run ──────────┤  SigLIP 2 embeddings: every photo, every video's frames
         faces.py run ──────────┤  every face, embedded; named from Google's tags and by you at /people
         embed.py serve ────────┘  the photo app at http://127.0.0.1:8766/
 ```
@@ -327,8 +341,8 @@ different devices. Ingest and embedding read every original, so they run at the 
 USB hard disk does about 150–200 MB/s); browsing and search only touch the catalog and thumbnail
 cache, which is why those should stay local.
 
-**At scale:** the author's own library is about 102k photos and 19k videos (485 GB) from all three
-services, with ~10k duplicates collapsed and ~130 trips found, served from an M1 Mac mini with
+**At scale:** the author's own library is about 102k photos and 19.6k videos (485 GB) from all three
+services (16,185 of the videos are Live Photo clips, leaving 3,427 videos of their own), with ~10k duplicates collapsed and ~130 trips found, served from an M1 Mac mini with
 16 GB of RAM and a USB hard disk.
 
 ## How it's built: Claude Code, often from a phone
@@ -363,8 +377,8 @@ phone yet: building the iPhone app (it needs Xcode on a Mac), touching the real 
 - **[docs/README.md](docs/README.md)**: every other document (guides, plans, research and
   measurements) and where it lives.
 
-In round numbers the project is 22,000 lines of code: a 7,100-line Python server, 4,300 lines of web
-pages, a 5,300-line iPhone app, and 5,000 lines of tests and tools.
+In round numbers the project is 35,000 lines of code: a 9,700-line Python server, 5,800 lines of web
+pages and their script modules, a 5,700-line iPhone app, and 13,000 lines of tests and tools.
 
 ## What's next
 
@@ -378,8 +392,10 @@ Roughly in order, the larger ones:
    ([#18](https://github.com/jflam/photo-estate/issues/18)).
 3. **Text in photos** ([#19](https://github.com/jflam/photo-estate/issues/19)): OCR on documents,
    receipts, signs and screenshots.
-4. **Videos** ([#20](https://github.com/jflam/photo-estate/issues/20)): in search, with faces, and in the
-   iPhone app, which shows no videos at all yet.
+4. **The rest of videos** ([#20](https://github.com/jflam/photo-estate/issues/20)): videos are searched,
+   played and in the iPhone app; left are trying them on a real iPhone, a 720p copy for playing away from home, faces in videos, saving
+   a true Live Photo back to the phone, and keeping videos on the phone for offline use
+   ([VIDEO-PLAN.md](docs/notes/VIDEO-PLAN.md)).
 5. **Event captions** ([#21](https://github.com/jflam/photo-estate/issues/21)) from a local
    vision-language model.
 6. **Backups of the store** ([#22](https://github.com/jflam/photo-estate/issues/22)) and **less memory**
@@ -401,9 +417,9 @@ Good places to start:
 - **Anything in [What's next](#whats-next)**, or any [open issue](https://github.com/jflam/photo-estate/issues). Dates in a search is the smallest.
 - **Open performance tasks** in [PERFORMANCE.md](docs/notes/PERFORMANCE.md), each written up
   so it can be picked up as-is.
-- **Not yet supported:** RAW files and videos aren't embedded yet, and faces in them aren't found
+- **Not yet supported:** RAW files aren't embedded yet, and faces aren't found in RAW files or videos
   ([#34](https://github.com/jflam/photo-estate/issues/34), [#20](https://github.com/jflam/photo-estate/issues/20));
-  the iPhone app doesn't show videos.
+  videos are streamed as stored, with no smaller copy for a slow connection.
 - **The next tagging tiers** (captions, objects, OCR) are designed in
   [TAGGING-RESEARCH.md](docs/notes/TAGGING-RESEARCH.md).
 - **More sources:** Google Drive, Dropbox, OneDrive and iCloud from the setup page are each a new

@@ -186,8 +186,18 @@ Chapter 8 shows how these hashes are turned into groups.
 ### Videos
 
 Videos (`.mp4`, `.mov`, `.m4v`, `.3gp`, ...) are hashed and stored exactly like images but get no
-`image_facts` (no dHash, no dimensions) and no embedding. The roadmap lists video support
-(keyframes for search) as future work.
+`image_facts`: no dHash, so a video's duplicates are exact copies only, and no dimensions. What a
+video gets later comes from other steps:
+
+| What | From |
+|---|---|
+| Duration, frame rate, Apple's content identifier | `estate.py exif`: exiftool reads them (`exif.duration`, `exif.fps`, `Keys:ContentIdentifier` in `exif.data`) |
+| Whether it is a Live Photo's clip | `pair_live`, when `exif` finishes ([chapter 6](06-linking.md#step-2-live-photos-and-motion-photos)) |
+| Its frames' vectors, its own vector, its upright `width` and `height` | `embed.py run` ([chapter 10](10-embeddings.md#videos)) |
+| Its thumbnail and preview | the app, from its poster frame ([chapter 11](11-server.md)) |
+
+A Live Photo's clip is stored like any other video, as its own asset; it is the still it belongs
+to that is shown.
 
 ## Resumability and the `sources` table
 

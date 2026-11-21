@@ -180,3 +180,43 @@ def test_setup_server_bounds_bodies(setup_server):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# -- byte_range: GET /video/<sha>'s Range header ------------------------------------------------------
+
+@pytest.mark.parametrize("header,size,want", [
+    (None, 1000, None),                       # no header: the whole file
+    ("", 1000, None),
+    ("items=0-1", 1000, None),                # not bytes=: ignored (RFC 9110)
+    ("bytes=0-1", 1000, (0, 1)),
+    ("Bytes= 0-1 ", 1000, (0, 1)),
+    ("bytes=0-0", 1000, (0, 0)),
+    ("bytes=5-", 1000, (5, 999)),
+    ("bytes=999-", 1000, (999, 999)),
+    ("bytes=-500", 1000, (500, 999)),         # the last 500 bytes
+    ("bytes=-5000", 1000, (0, 999)),          # a suffix longer than the file: all of it
+    ("bytes=900-5000", 1000, (900, 999)),     # an end beyond the file is clamped
+    ("bytes=0-1,5-6", 1000, None),            # several ranges: the whole file
+    ("bytes=-", 1000, None),
+    ("bytes=a-b", 1000, None),
+    ("bytes=1", 1000, None),
+    ("bytes=٣-٥", 1000, None),                # digits, but not ASCII ones
+    ("bytes=+1-2", 1000, None),
+    ("bytes=5-3", 1000, None),                # last before first: not a valid range, so ignored
+    (None, 0, None),
+    ("bytes=0-", 1, (0, 0)),
+])
+def test_byte_range(header, size, want):
+    assert http_util.byte_range(header, size) == want
+
+
+@pytest.mark.parametrize("header,size", [
+    ("bytes=1000-", 1000),                    # starts at the end
+    ("bytes=2000-3000", 1000),                # starts after it
+    ("bytes=-0", 1000),                       # the last 0 bytes
+    ("bytes=0-", 0),                          # an empty file has no byte 0
+    ("bytes=-5", 0),
+])
+def test_byte_range_unsatisfiable(header, size):
+    with pytest.raises(ValueError):
+        http_util.byte_range(header, size)

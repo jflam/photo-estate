@@ -57,8 +57,19 @@ Stated plainly so nobody has to discover them.
 **Coverage**
 - **RAW files** (`.dng`, `.cr2`, `.nef`, ...) are stored and catalogued but not embedded, scanned for
   faces, or thumbnailed (Pillow cannot decode them).
-- **Videos** are stored and de-duplicated but not embedded; Live Photo clips are linked to their still.
-  Faces are not found in videos.
+- **Videos** are searched by stills: one frame every three seconds, at most 30 a video, through the
+  same model as the photos ([chapter 10](10-embeddings.md#videos)). Nothing a video says is heard, no
+  face is found in one, and a video's duplicates are exact copies only (no dHash). A Live Photo's clip
+  is part of its still, never an item of its own; telling one needs exiftool.
+- **Videos are streamed as they are stored.** A 4K HEVC file from a phone is about 50 Mbit/s, which a
+  phone away from home may not keep up with, and the two dozen `.avi`, `.wmv` and `.3gp` files of the
+  author's library play in no browser. The phone streams them too and keeps none for offline use.
+- **Videos have been tried less than photos.** The iPhone app's videos and Live Photos ran in the iOS
+  Simulator (iOS 27.0, iPhone 18 Pro), not yet on a real iPhone, and their sound, **Save Video** into
+  Photos and dragging the playhead were not exercised. On the page, sharing a video from a phone's
+  browser was not exercised, and a video the browser cannot play was simulated (the element's `error`
+  event), not tried with a real HEVC or `.avi` file. `HEAD /video/<sha>` answers 501, like every `HEAD`
+  on this server, so a client that asks for the headers first gets nothing.
 - **Photos Google or iCloud edited** are only as good as the export: Takeout "Storage saver" copies are
   compressed forever.
 - **Sources:** Google, iCloud, Flickr and the iPhone app's uploads. Amazon Photos, OneDrive, Dropbox and
@@ -123,7 +134,7 @@ The README's roadmap, in its order, with where each would land in the code:
 | 2 | **Score search on real queries** | A page that replays the top results of queries from `query-log.jsonl` and lets you mark the wrong ones, giving a score to compare every later change against |
 | 3 | **A bigger image model** (SigLIP 2 so400m) | `embed.py run --model ...` already stores per model; the work is re-embedding and re-measuring `MATCH_FLOOR` and `MATCH_WINDOW` |
 | 4 | **Text in photos** (OCR) | A new batch job writing text into `tags`; `reindex` already includes tag text |
-| 5 | **Videos** | Keyframes through the same embedding path; faces in keyframes. On the phone: videos in the sync feed (`sync.py` serves stills only today), playback in the viewer, and videos in `LocalPhotos`' list of what is not yet uploaded, which skips them for now |
+| 5 | **Videos: what is left** ([VIDEO-PLAN.md](../notes/VIDEO-PLAN.md)) | Videos are found by their frames, played from `/video` on the page and on the phone, with Live Photos played while held, and carried by the sync feed. Left: trying them on a real iPhone; a 720p H.264 proxy made into the cache by a background job, as previews are (it needs a transcoder; PyAV can, slowly); faces in videos, over the same frames (`faces` would need a time column, and one person in thirty frames must count once); saving a true Live Photo back to the phone's Photos (both files, with matching identifiers, which Takeout's re-encoded MP4s have lost); keeping videos on the phone for offline use; motion photos stored inside a JPEG |
 | 6 | **Event captions** | `estate.py tag` on one photo per event, applied to all its photos; shows up in the full-text index |
 | 7 | **Backups of the store** | The catalog is already copied on a schedule (`--backup-dir`). A command that configures and verifies `rsync` or `restic` for the store; the append-only store makes it simple |
 | 8 | **Less memory** | The open tasks in PERFORMANCE.md: columns instead of dictionaries; the `.npy` embedding cache |

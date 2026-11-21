@@ -14,6 +14,7 @@ bounded JSON bodies, query parameters that answer 400 instead of failing, and wh
   parse_json(raw) -> object                              an empty body is {}; HTTPError 400 when it is not JSON
   read_json(rfile, headers, limit=MAX_BODY) -> object    read_body, then parse_json
   int_param(qs, name, default, min=, max=) -> int        a whole number, clamped to [min, max]; 400 on garbage
+  byte_range(header, size) -> (first, last) | None       a Range header's one range, for a file of `size` bytes
   Auth.PUBLIC | Auth.WRITER | Auth.LOCAL_OR_WRITER       who may make a request; Auth.allows(writer=, local=)
 
 Who may write. `--upload-user` names the Tailscale logins that may change the library (`writer`: every
@@ -175,6 +176,33 @@ def int_param(qs: Mapping, name: str, default: int, *, min: int | None = None, m
     if max is not None and n > max:
         n = max
     return n
+
+
+def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
+    """The bytes a `Range` header asks for, as (first, last), both inclusive and inside the file. None when
+    there is no header, or it is one this server answers with the whole file (not `bytes=`, several ranges,
+    or not numbers: RFC 9110 lets a server ignore a Range it does not understand). ValueError when it is
+    well formed and cannot be satisfied (it starts at or after the end, or asks for the last 0 bytes): a 416."""
+    if not header or not header.strip().lower().startswith("bytes="):
+        return None
+    spec = header.strip()[6:].strip()
+    first, dash, last = spec.partition("-")
+    first, last = first.strip(), last.strip()
+    if "," in spec or not dash or not ((first == "" or first.isascii() and first.isdigit())
+                                       and (last == "" or last.isascii() and last.isdigit())) or (first == last == ""):
+        return None
+    if first == "":                      # the last N bytes
+        n = int(last)
+        if n == 0 or size == 0:
+            raise ValueError("unsatisfiable")
+        return max(0, size - n), size - 1
+    start = int(first)
+    if start >= size:
+        raise ValueError("unsatisfiable")
+    end = min(int(last), size - 1) if last else size - 1
+    if end < start:
+        return None
+    return start, end
 
 
 class Auth(enum.Enum):

@@ -15,6 +15,7 @@ requirements, by component:
 | **Catalog** (`--db`) | One SQLite file on a **local** disk (never a network share: SQLite's locking is unreliable there). About 1 GB for 120k photos |
 | **Thumbnail cache** | `review/` next to the catalog by default (`--cache`). For 100k photos: about 1.7 GB of grid thumbnails (WebP), and about 33 GB of 1600 px previews, made in the background and stopped while the disk has under 20 GB free. Add `--fast-cache` on an SSD when the catalog's disk is a hard disk |
 | **A machine** | Anything that runs Python through `uv`: macOS or Linux, Intel or ARM. 16 GB of RAM serves 100k photos. **No GPU** |
+| **Videos** | Nothing more: frames and posters are read with PyAV, an inline dependency that carries its own FFmpeg, so no `ffmpeg` is installed. Telling a Live Photo's clip from a video needs exiftool, as `exif` does |
 | **Remote access** (optional) | The app listens on `127.0.0.1` only; put Tailscale `serve`, Caddy, nginx, or nothing in front |
 
 `--db` and `--store` are **separate arguments everywhere**, so the catalog and the photos can live on
@@ -27,7 +28,7 @@ those should be local and fast.
 
 | | |
 |---|---|
-| Library | About 102,000 photos and 19,000 videos (485 GB) from all three services; about 10,000 duplicates collapsed; about 130 trips found |
+| Library | About 102,000 photos and 19,600 videos (485 GB) from all three services, 16,185 of the videos Live Photo clips; about 10,000 duplicates collapsed; about 130 trips found |
 | Machine | An M1 Mac mini, 16 GB RAM, running the app as a launchd agent |
 | Disk | An 8 TB USB hard disk formatted APFS, mounted `/Volumes/estate`, for the photos; the catalog is on the mini's internal SSD (`~/estate`) since 2026-11-20 |
 | Network | `tailscale serve` publishing `https://<host>.<tailnet>.ts.net:8766` to the author's own devices |
@@ -42,6 +43,7 @@ ROOT/                                  e.g. /Volumes/estate
   estate.db.bak-YYYYMMDD               snapshots made by the pull scripts
   review/                              the cache (disposable)
     thumbs/<sha>.webp  previews/<sha>.jpg   large/<sha>.jpg   (thumbs/<sha>.jpg: made before 2026-11-20)
+    streams/<sha>.mp4  a heavy video's 1080p copy to play from (<sha>.failed: could not be made; delete to try again)
     faces/<ab>/<sha>-<idx>.jpg
     thumb-dims.json
     decisions.json                     your near-duplicate choices
@@ -155,7 +157,7 @@ timezone offsets exif extracts). Every stage can be run again at any time and do
 | `link` | The catalog's disk | Minutes on an SSD. On the Mac mini's USB hard disk a whole-library `link` took 42 min at 135k photos; with `--source` it follows the size of the import |
 | `exif` | `exiftool` | Per-file; progress and ETA are printed |
 | `places run` | CPU, then the catalog's disk | Seconds on a laptop for a small library; about 10 min on the Mac mini at 135k photos |
-| `embed run` | CPU (the model) | About 6.8 img/s measured on a laptop: roughly 4-6 hours (PLAN.md says ~4 h for ~99k images; TAGGING-RESEARCH.md measured ~6 h) |
+| `embed run` | CPU (the model) | About 6.8 img/s measured on a laptop: roughly 4-6 hours (PLAN.md says ~4 h for ~99k images; TAGGING-RESEARCH.md measured ~6 h). Then the videos: half a second a video on the Mac mini, about 30 minutes for its 3,427 ([VIDEO-PLAN.md](../notes/VIDEO-PLAN.md)) |
 | `faces run` | CPU | "About as fast as the SigLIP pass" |
 | `serve` startup | Disk reads of the catalog | 9-19 s on the Mac mini with the catalog on a USB HDD, 4.4 s with it on the mini's SSD; 2.4-2.8 s on a laptop SSD |
 | People (`faces.py`) loading | Disk reads of `faces` and `assets` | 110,020 faces: 50-68 s as one join on the USB HDD (120,000 lookups of a photo by its hash); 4.1 s as that join on the SSD; 4.7 s first time and 1.7 s after as three front-to-back reads, even on the USB HDD |
@@ -183,6 +185,29 @@ page reloads when they finish. A failed run is retried after
 `IngestJob` (upload.py) is one state at a time (idle, quiet, starting, running, backoff) and a step its
 `MOVES` table does not list raises, rather than being logged and taken anyway; a run started by hand
 cancels the quiet-period timer, since that run catalogues whatever the timer was waiting for (issue #86).
+
+### Adding videos to a library catalogued before them
+
+A library catalogued before videos were shown has its videos in the store and the catalog, but no
+Live Photo pairs and no frames. Two commands, each safe to run again, then a restart
+([VIDEO-PLAN.md](../notes/VIDEO-PLAN.md) has the Mac mini's exact steps):
+
+```bash
+sqlite3 "$DB" ".backup 'estate.db.before-videos'"   # the catalog gains two tables
+uv run estate.py --db "$DB" live                     # pair the clips with their stills
+uv run embed.py --db "$DB" run --store "$STORE"      # every video that is not a clip
+```
+
+On a copy of the author's catalog, `live` paired 16,185 clips in 5 seconds, and `embed.py run` takes
+about 30 minutes for the 3,427 videos left. Nothing changes in the app until it is restarted; the
+background job then makes the videos' thumbnails and previews from their poster frames (about a second
+each), and the phones are sent the new rows: the videos, and the stills that now carry `live`. Run
+`live` before `embed.py run`, so no clip is embedded as a video first.
+
+After that nothing more is needed. `exif` pairs new clips when it finishes, in every pipeline
+(`ingest-iphone.sh`, the setup page's jobs, by hand), and `embed.py run` embeds new videos after the
+photos; `--no-videos` leaves them for a later run. Without exiftool no clip is marked, so each would
+be embedded and shown as a short video of its own.
 
 ## Running it as a service (macOS)
 

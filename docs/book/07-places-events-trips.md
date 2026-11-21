@@ -53,6 +53,12 @@ placeholder. A set of fields is also **promoted to columns** so they can be filt
 | `software` | `Software` |
 | `duration`, `fps` | `Duration`, `VideoFrameRate` (for video) |
 
+Two of these are what the app takes from exiftool for a video: `duration` is its length in the app
+(`dur` on its row), and the full dump holds Apple's `Keys:ContentIdentifier`, which marks a Live
+Photo's clip. When `exif` finishes it pairs the clips with their stills (`pair_live`,
+[chapter 6](06-linking.md#step-2-live-photos-and-motion-photos)). The still's copy of the identifier is in
+Apple's MakerNotes, which are left out, so the pair is matched by name, not by the identifier's value.
+
 Keeping the full dump costs a lot of space (it is the biggest table, 705 MB for the author's
 library), but it means a later question ("which photos have `OffsetTimeOriginal`?") needs no re-read of
 120,000 files. The app avoids paying for it at startup with a covering index (chapter 5).

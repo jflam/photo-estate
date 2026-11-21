@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import UIKit
 
@@ -68,6 +69,7 @@ private struct SectionLayout {
     let key: String
     let places: String
     let count: Int
+    let videos: Bool          // every one of them is a video: the heading counts videos, as the list's own title does
     var rows: [RowLayout]
 }
 
@@ -323,7 +325,7 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
                 sum = 0
             }
             let top = cities.sorted { ($0.value, $1.key) > ($1.value, $0.key) }.prefix(3).map { String($0.key) }.joined(separator: " · ")
-            out.append(SectionLayout(key: key, places: top, count: j - i, rows: rows))
+            out.append(SectionLayout(key: key, places: top, count: j - i, videos: tiles[i..<j].allSatisfy { $0.video }, rows: rows))
             i = j
         }
         sections = out
@@ -467,7 +469,7 @@ final class GridController: UIViewController, UICollectionViewDataSource, UIColl
     func collectionView(_ collectionView: UICollectionView, viewForSupplementaryElementOfKind kind: String, at indexPath: IndexPath) -> UICollectionReusableView {
         let head = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "head", for: indexPath) as! HeaderView
         let sec = sections[indexPath.section]
-        head.show(title: caption(sec.key), places: sec.places, count: sec.count)
+        head.show(title: caption(sec.key), places: sec.places, count: sec.count, videos: sec.videos)
         return head
     }
 }
@@ -593,9 +595,10 @@ private final class HeaderView: UICollectionReusableView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(title t: String, places: String, count: Int) {
+    func show(title t: String, places: String, count: Int, videos: Bool = false) {
         title.text = t
-        detail.text = [places, "\(count.formatted()) \(count == 1 ? "photo" : "photos")"].filter { !$0.isEmpty }.joined(separator: "  ·  ")
+        let noun = videos ? (count == 1 ? "video" : "videos") : count == 1 ? "photo" : "photos"
+        detail.text = [places, "\(count.formatted()) \(noun)"].filter { !$0.isEmpty }.joined(separator: "  ·  ")
     }
 }
 
@@ -651,15 +654,16 @@ private final class Scrubber: UIView {
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { bounds.insetBy(dx: -14, dy: -10).contains(point) }
 }
 
-/// The count on the top photo of a stack.
-private final class StackBadge: UIView {
-    private let icon = UIImageView(image: UIImage(systemName: "square.stack.fill",
-                                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .semibold)))
+/// A small dark pill on a photo, a symbol and a few characters: the count on the top photo of a stack,
+/// a video's length.
+private final class Badge: UIView {
+    private let icon: UIImageView
     private let label = UILabel()
-    var count = 0 { didSet { label.text = String(count) } }
+    var text = "" { didSet { label.text = text } }
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    init(_ symbol: String) {
+        icon = UIImageView(image: UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .semibold)))
+        super.init(frame: .zero)
         backgroundColor = UIColor.black.withAlphaComponent(0.55)
         isUserInteractionEnabled = false
         icon.tintColor = .white
@@ -689,11 +693,22 @@ private final class TileView: UIImageView {
     private var task: Task<Void, Never>?
     private let heart = UIImageView(image: UIImage(systemName: "heart.fill"))
     private let mine = UIImageView(image: UIImage(systemName: "arrow.up.circle.fill"))   // on this iPhone, not yet on the server
-    private let stack = StackBadge()      // the top of a stack: how many shots it holds
+    private let stack = Badge("square.stack.fill")      // the top of a stack: how many shots it holds
+    private let length = Badge("play.fill")             // a video: how long it runs
+    private let live = UIImageView(image: UIImage(systemName: "livephoto",
+                                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)))
     var index = 0
+    // a Live Photo (or a stack with one in it), held: its clip plays over the tile until it is let go
+    private var clip: String?? = nil          // the clip to play, once looked up (.some(nil): it has none)
+    private var marked = false, stacked = false, held = false
+    private var movie: MovieView?
+    private lazy var hold = UILongPressGestureRecognizer(target: self, action: #selector(holding(_:)))
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        hold.minimumPressDuration = 0.3
+        hold.isEnabled = false
+        addGestureRecognizer(hold)
         contentMode = .scaleAspectFill
         clipsToBounds = true
         backgroundColor = Estate.well
@@ -713,6 +728,14 @@ private final class TileView: UIImageView {
         mine.contentMode = .scaleAspectFit
         addSubview(mine)
         addSubview(stack)
+        addSubview(length)
+        live.tintColor = .white
+        live.alpha = 0.9
+        live.layer.shadowOpacity = 0.5
+        live.layer.shadowRadius = 2
+        live.layer.shadowOffset = .zero
+        live.contentMode = .center
+        addSubview(live)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -723,6 +746,9 @@ private final class TileView: UIImageView {
         mine.frame = CGRect(x: bounds.width - 20, y: bounds.height - 20, width: 15, height: 15)
         let s = stack.sizeThatFits(.zero)
         stack.frame = CGRect(x: 5, y: 5, width: s.width, height: s.height)
+        let l = length.sizeThatFits(.zero)
+        length.frame = CGRect(x: bounds.width - 5 - l.width, y: 5, width: l.width, height: l.height)
+        live.frame = CGRect(x: bounds.width - 23, y: 5, width: 18, height: 18)
     }
 
     func show(_ tile: Tile, index i: Int) {
@@ -730,8 +756,17 @@ private final class TileView: UIImageView {
         heart.isHidden = !tile.fav
         mine.isHidden = !tile.isLocal
         stack.isHidden = tile.stack < 2
-        if !stack.isHidden { stack.count = Int(tile.stack); setNeedsLayout() }
-        accessibilityLabel = [Dates.long(tile.when), tile.city?.split(separator: ",").first.map(String.init), tile.fav ? "favourite" : nil,
+        if !stack.isHidden { stack.text = String(tile.stack) }
+        length.isHidden = !tile.video
+        if tile.video { length.text = Tile.clock(tile.dur) }
+        if tile.sha != sha { letGo(); clip = nil }
+        marked = (tile.live || tile.stackLive) && !tile.video && !tile.isLocal
+        stacked = tile.stack > 1
+        live.isHidden = !marked
+        hold.isEnabled = marked
+        setNeedsLayout()
+        accessibilityLabel = [tile.video ? "video, \(Tile.clock(tile.dur))" : nil, marked ? "Live Photo" : nil,
+                              Dates.long(tile.when), tile.city?.split(separator: ",").first.map(String.init), tile.fav ? "favourite" : nil,
                               stack.isHidden ? nil : "stack of \(tile.stack)", tile.isLocal ? "not yet on the server" : nil]
             .compactMap { $0 }.joined(separator: ", ")
         guard tile.sha != sha || image == nil else { return }
@@ -750,7 +785,52 @@ private final class TileView: UIImageView {
         }
     }
 
-    func clear() { task?.cancel() }
+    func clear() { task?.cancel(); letGo() }
+
+    @objc private func holding(_ g: UILongPressGestureRecognizer) {
+        switch g.state {
+        case .began:
+            held = true
+            let want = sha, stacked = stacked
+            Task { [weak self] in
+                guard let self else { return }
+                let found: String?
+                if case .some(let known) = self.clip { found = known } else { found = await Catalog.shared.liveClip(want, stack: stacked) }
+                guard self.sha == want else { return }
+                self.clip = .some(found)
+                guard self.held, let found else { return }
+                let m = MovieView(fill: true)
+                m.frame = self.bounds
+                m.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                m.alpha = 0
+                self.insertSubview(m, at: 0)
+                self.movie = m
+                m.onReady = { [weak self, weak m] in
+                    guard let self, let m, self.held, self.movie === m else { return }
+                    Haptics.tap()
+                    m.player?.isMuted = true
+                    m.player?.play()
+                    UIView.animate(withDuration: 0.12) { m.alpha = 1 }
+                }
+                m.onEnd = { [weak self] in self?.letGo() }
+                m.onFailed = { [weak self] in self?.letGo() }
+                m.load(AVPlayerItem(url: Server.video(found)))
+            }
+        case .ended, .cancelled, .failed:
+            letGo()
+        default: break
+        }
+    }
+
+    /// Back to the still: the hold ended, the clip did, or the tile is another photo's now.
+    private func letGo() {
+        held = false
+        guard let m = movie else { return }
+        movie = nil
+        m.release()
+        UIView.animate(withDuration: 0.12, animations: { m.alpha = 0 }, completion: { _ in m.removeFromSuperview() })
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState]) { self.alpha = 1 }
+    }
 
     // a photo gives a little under the finger
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {

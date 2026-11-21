@@ -23,6 +23,7 @@ each request to the module that answers it ([chapter 11](11-server.md)):
 | `/`, the app files, `/api/info`, `/api/sync`, `/api/favorite`, `/api/albums/<id>/download` | `PhotoApp` in [photo_app.py](../../photo-estate/photo_app.py) |
 | `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log` | `Browse` in [browse.py](../../photo-estate/browse.py) |
 | `/thumb/`, `/preview/`, `/large/`, `/original/` | `Images` in [images.py](../../photo-estate/images.py) |
+| `/video/` | The HTTP handler in photo_app.py (`Handler.video`), which streams the file `Images.video_file` names |
 | `/api/upload/...`, `/api/ingest`, `/api/restart`, `/stats`, `/api/stats` | `Admin` in [admin.py](../../photo-estate/admin.py) |
 | `/people`, `/face/`, `/api/people*` | `People` in [faces.py](../../photo-estate/faces.py) |
 | `/changes`, `/api/changes*`, `/api/albums*`, `/api/tasks*` | `Changes` in [changes.py](../../photo-estate/changes.py), `Tasks` in [tasks.py](../../photo-estate/tasks.py) |
@@ -110,6 +111,7 @@ requires `sha` and ranks by that photo's vector (404 `{"error":"unknown photo"}`
 | `event` | | An event id (filter and scope) |
 | `from`, `to` | | `YYYY` or `YYYY-MM` month bounds, inclusive |
 | `fav` | | `1` = favourites only |
+| `kind` | | `video` = videos only, `photo` = no videos (the same as `is:video` and `is:photo` in `q`). A Live Photo is a photo |
 | `sort` | | `old` or `new` (default `old` when scoped to an event or trip, else `new`); only for unranked results |
 | `cursor` | | Position to continue from (the previous response's `next`) |
 | `limit` | | 1-500, default 120 |
@@ -141,7 +143,12 @@ Response:
 }
 ```
 
-(`results[*]` fields are present when known.)
+(`results[*]` fields are present when known.) A video's row also has `"kind": "video"` and `"dur"`
+(seconds, from exiftool; `null` when it did not say), and, when a search with words found it, `"at"`:
+the seconds into it where its best frame for those words is, where a player should start. A Live
+Photo's still has `"live"`: the sha of its clip, to play from `/video/<that sha>`. A photo's row has
+none of these. A video's score in a ranking is its best frame's or its mean's, whichever is higher
+([chapter 10](10-embeddings.md#videos)); a Live Photo's clip is never a result.
 
 ### Facets and info
 
@@ -150,7 +157,7 @@ Response:
 | `GET /api/facets?...` (same filter parameters) | `{"facets": {country, region, city, camera, lens, trip, album, person: [[label, count], ...]}, "months": [counts], "fav": N, "matching": N}` (each facet's counts ignore its own selection; `person` counts include it) |
 | `GET /api/periods?...` (same filter parameters, plus `dedupe`, `shots`, `sort`) | The Library's Years and Months: `{"years": [...], "months": [...], "matching": N, "total": N}`, each card `{"key": "2019" or "2019-07", "n", "at", "cover", "ar", "places": [...]}`; `at` is where the card's photos start in `/api/search` with the same parameters (a `cursor`) |
 | `GET /api/layout?...` (same filter parameters, plus `sort`) | One byte per photo, in `/api/search`'s order with the same parameters: its aspect ratio between 0.5 and 2.6 in 255 steps, so the page can lay a month out before fetching it. `application/octet-stream` with an `ETag` |
-| `GET /api/info` | `{"total", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
+| `GET /api/info` | `{"total", "videos", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `videos` is how many of `total` are videos. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
 | `GET /stats` | The library info page ([stats.html](../../photo-estate/stats.html)) |
 | `GET /api/stats[?refresh=1]` | `{state: working\|ready\|error, library, disk, app}`: library figures from memory, disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
 | `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. `deleted` holds the deletions between the cursor sent and the one returned (each is sent once; none to a device that is up to date; apply them from every page). `limit` counts rows. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start |
@@ -186,7 +193,7 @@ also answers under `/api/albums`; `/api/changes` lists only the albums that are 
 
 | Request | Does |
 |---|---|
-| `POST /mcp` | The [MCP](https://modelcontextprotocol.io/) endpoint ([estate_mcp.py](../../photo-estate/estate_mcp.py)): streamable HTTP in its simplest form, one JSON-RPC message (or a batch) per POST, answered with JSON, no stream and no session. Tools: `library_overview`, `search_photos`, `similar_photos`, `get_photos`, `list_albums`, `get_album`, `create_album`, `amend_album`, `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set`, `submit_task`, `get_task`, `cancel_task` |
+| `POST /mcp` | The [MCP](https://modelcontextprotocol.io/) endpoint ([estate_mcp.py](../../photo-estate/estate_mcp.py)): streamable HTTP in its simplest form, one JSON-RPC message (or a batch) per POST, answered with JSON, no stream and no session. Tools: `library_overview`, `search_photos`, `similar_photos`, `get_photos`, `list_albums`, `get_album`, `create_album`, `amend_album`, `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set`, `submit_task`, `get_task`, `cancel_task`. `search_photos` takes `kind` (`photo` or `video`), and its rows carry `kind`, `seconds` and `live_photo` |
 | `GET /api/tasks` | Whether an agent can run on this computer, and every task, newest first ([tasks.py](../../photo-estate/tasks.py)) |
 | `GET /api/tasks/<id>?after=N` | One task, its events after event N, and the change set it made |
 | `POST /api/tasks {prompt}` | Start one: Claude Code, run headless with only the library's MCP tools |
@@ -219,9 +226,11 @@ protect, has no rule of its own.
 | `GET /preview/<sha>` | 1600 px JPEG |
 | `GET /large/<sha>` | 4096 px JPEG |
 | `GET /original/<sha>` | The stored file, for the stills a phone can save (`.jpg`, `.jpeg`, `.png`, `.heic`, `.heif`, `.gif`, `.webp`, `.tif`, `.tiff`, `.avif`; `ORIGINAL_TYPES` in [core/media.py](../../photo-estate/core/media.py)), with that type's `Content-Type` and `Content-Disposition: inline; filename*=UTF-8''<original name>`; 404 for RAW, BMP and video |
+| `GET /video/<sha>` | A video in the catalog, or a Live Photo's clip by the clip's sha, as stored, read from the disk as it is sent. `Range: bytes=a-b` (or `a-`, or `-n`) answers `206` with those bytes and `Content-Range`; no `Range`, or one it does not handle (several ranges, not `bytes=`), answers `200` with the whole file; a range that starts at or after the end, or `bytes=-0`, answers `416` with `Content-Range: bytes */<size>`. `Content-Type` from `VIDEO_TYPES` in core/media.py (`.mov` and `.m4v` as `video/mp4`), `Accept-Ranges: bytes`, `Content-Disposition: inline; filename*=UTF-8''<original name>`, `Cache-Control: private, max-age=2592000, immutable`. 404 for anything that is not a video or a clip, or a file not on the disk. Anyone who can reach the app may ask, as for the images. `HEAD` is a 501, as for every route of this server |
 
-All four validate `<sha>` as 64 lowercase hex characters of a known photo (else 404) and are served
-`public, max-age=2592000, immutable`.
+For a video, `/thumb/`, `/preview/` and `/large/` are made from its poster frame (about a second in).
+The first four validate `<sha>` as 64 lowercase hex characters of a known photo (else 404) and are
+served `public, max-age=2592000, immutable`; `/video/` validates it the same way.
 
 ### Comparing two models (an experiment, `serve --compare-vectors DIR`)
 
@@ -299,6 +308,7 @@ Returns `{"ok": true, "pending": N}`.
 | Code | When |
 |---|---|
 | 200 | OK |
+| 206 | `/video/<sha>` with a `Range` it can answer |
 | 204 | `/api/log` |
 | 304 | A conditional request matched the `ETag` |
 | 201 | `PUT /api/upload/...` stored a new file |
@@ -306,5 +316,6 @@ Returns `{"ok": true, "pending": N}`.
 | 403 | A write from a caller who may not write (above) |
 | 404 | Unknown sha, unknown path, `/api/similar` with an unknown photo, or `/api/people/{review,person,odd}` with an unknown person (one just merged away included) and `/api/people/photo` with an unknown face |
 | 413 | A JSON body over 8 MB |
+| 416 | `/video/<sha>` with a `Range` that starts at or after the end of the file |
 | 500 | A part loaded in the background failed (issue #82): a typed search after the search model failed to load (`{"error": "the search model (...) failed to load: ..."}`), or `/people`, `/face/*` and `/api/people/*` after the faces failed to load (the error as text; `/people` as a page that says so) |
 | 503 | `/people` before the face data has loaded; a typed search (`/api/search?q=`, `/api/periods` and the rest that read words) while the search model is still loading after waiting 90 s for it (`{"error": "... is still loading ..."}`, `Retry-After: 5`) |

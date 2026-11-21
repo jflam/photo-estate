@@ -10,6 +10,7 @@ import { LIST_STEPS, END_STEPS } from "../grid-flow.js";
 import { PLACE_STEPS, KNOWN_STEPS, SCALES } from "../library-flow.js";
 import { ALBUMS_STEPS, LISTING_STEPS, MAKING_STEPS } from "../albums-flow.js";
 import { FIELD_STEPS } from "../query.js";
+import { VIDEO_STEPS } from "../video-flow.js";
 
 const asFlow = (/** @type {any} */ steps, /** @type {any} */ from) => flow("t", steps, from);
 const asMachine = (/** @type {any} */ steps, /** @type {any} */ from) => machine("t", steps, from, { strict: true, onRefuse: () => {} });
@@ -27,6 +28,7 @@ const TABLES = [
   ["albums", ALBUMS_STEPS, asFlow, 4, 0],
   ["album list", LISTING_STEPS, asFlow, 6, 10],
   ["album from search", MAKING_STEPS, asFlow, 5, 4],
+  ["video in the viewer", VIDEO_STEPS, asFlow, 6, 10],
 ];
 
 for (const [name, steps, make, legal, refused] of TABLES) {

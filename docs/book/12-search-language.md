@@ -38,7 +38,7 @@ flowchart TD
     RW -->|"places = []"| PM["places mask:<br/>photos in ANY of them"]
     RW -->|"rest = 'on a beach'"| TXT["text for the image model"]
     TM & NM & PM & FM["facet masks from the filter pills,<br/>date range, favourites, event scope"] --> AND["AND of every mask"]
-    AND --> RANK["ranked(): M @ text_vec(text),<br/>restricted to the mask, cut by floor and window"]
+    AND --> RANK["ranked(): sims(text_vec(text)), a video by its best frame,<br/>restricted to the mask, cut by floor and window"]
     TXT --> RANK
 ```
 
@@ -66,10 +66,12 @@ of the query first:
 | `year:` | A year or a range | `year:2010`, `year:2010-2012` |
 | `date:` | A prefix of the local time | `date:2010-07`, `date:2010-07-14` |
 | `event:` / `trip:` | A numeric event or trip id (also scopes the page, see below) | `trip:1594243200` |
-| `is:` | `fav`, `favorite` or `favourite` | `is:fav` |
+| `is:` | `fav`, `favorite` or `favourite`; `video` or `videos` (only videos); `photo` or `photos` (no videos) | `is:fav`, `is:video` |
 
 Rules:
 
+- `is:video` and `is:photo` are the same masks as the `kind=video` and `kind=photo` parameter of
+  `/api/search` (appendix B). A Live Photo counts as a photo: its clip is never in the catalog.
 - **Substring, not equality**, for text keys, so `camera:d300` finds "Nikon D300".
 - Unknown keys are *not* filters: `foo:bar` stays in the text.
 - Typed filters are echoed back in the response (`filters`) and shown in the page subtitle, so you can

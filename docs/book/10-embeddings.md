@@ -143,6 +143,7 @@ flowchart TD
     I --> J["astype float16, tobytes"]
     J --> K["INSERT OR REPLACE embeddings; commit"]
     E -->|"exception"| ERR["row with vec NULL and error text<br/>(so it is not retried forever)"]
+    K --> V["then each video that is not a clip:<br/>its frames into video_frames,<br/>their mean into embeddings"]
 ```
 
 The design choices, one by one:
@@ -167,11 +168,58 @@ The design choices, one by one:
 - **Progress.** Every 60 s it prints images per second, the undecodable count and an ETA in hours.
 - **RAW files are skipped** (`.dng`, `.cr2`, `.nef`, ...). They stay in the store and catalog but
   are not searchable by content yet; the README lists this as a limitation.
-- **Videos** are not embedded (`kind='image'` only).
+- **Videos come after the photos**, in the same run (below); `--no-videos` leaves them for a later one.
 
 A property of the `Pool.imap` the script uses: decoded images can pile up in memory if decoding
 outpaces the model. That is acceptable at 256×256×3 bytes per image, but `faces.py` decodes at 1280
 pixels and needed an explicit bound (chapter 14).
+
+### Videos
+
+A video is searched by stills taken from it, through the same model. After the photos, `cmd_run`
+takes every video with no embedding for the model that is not a Live Photo's clip (a clip's still is
+already searchable; `live_pairs`, [chapter 6](06-linking.md#step-2-live-photos-and-motion-photos)).
+
+- **Which frames.** [video.py](../../photo-estate/video.py) reads them with PyAV, which carries its
+  own FFmpeg, so there is nothing to install. `times()` gives one frame per three seconds (`EVERY`),
+  at least one and at most 30 a video (`CAP`), each at the middle of its stretch: a longer video is
+  sampled more thinly. `frames()` seeks to the key frame at or before each time and decodes that
+  one, so a 14-minute 8 GB 4K video costs 30 decoded frames (6 s on the Mac mini's USB disk), not
+  25,000; two times that land on the same key frame give one frame. Frames come out upright (a
+  phone stores its video as the sensor saw it, with a rotation beside it), and the stream is the
+  one FFmpeg calls best, not the first (an old `.wmv` carries its thumbnail as a second "video").
+- **The same path as a photo.** A worker (`_decode_video`) squashes each frame to 256×256 as
+  `_decode` does a photo; the parent embeds them in batches. It also records the video's upright
+  size in `assets.width` and `height`, which ingest cannot read.
+- **Which frames are kept.** `video.distinct` keeps the first frame, then each whose cosine with the
+  last one kept is under 0.96 (`ALIKE`): a talking head or a still scene comes down to one frame.
+  The kept frames go into `video_frames`, one row each with its time `t`; their mean, made unit
+  length again, is the video's own row in `embeddings` (`video_rows`).
+- **Committed whole.** Each video's frames and its mean are written together and committed, so a
+  stopped run redoes at most one video. A video that will not decode gets an `embeddings` row with
+  `vec NULL` and the error, as a photo does.
+
+Why every frame is kept, and not only the mean: measured on 220 of the author's videos longer than
+4.5 seconds (2,352 frames), against twenty plain searches ("a dog", "a birthday cake with
+candles", "snow", ...), a (video, search) pair counted as found when it scored at the app's floor of
+0.085 or above ([VIDEO-PLAN.md](../notes/VIDEO-PLAN.md)):
+
+| What stands for the video | Pairs found |
+|---|---|
+| Its best frame | 196 |
+| The mean of its frames | 98 |
+
+A video of a party is cake for ten seconds and faces for the rest, and the average is neither. The
+mean still earns its place: it puts the video in the same matrix as the photos, so the grid, albums,
+"Best first", "More like this" from the video and the phones' feed need no second path. On the same
+220 videos, keeping only frames under 0.96 of the last kept kept 63% of them and still found 190 of
+the 196 pairs; 0.92 kept 37% and found 165.
+
+| | |
+|---|---|
+| Measured | `embed.py run --limit 150` on a copy of the author's catalog on the Mac mini: 150 videos in 78 seconds, half a second a video with its three decoding workers beside the model, none undecodable; 859 of 1,399 frames kept (61%, 5.7 a video) |
+| For the author's 3,427 videos | about 30 minutes, once; about 20,000 frames, 60 MB in the app as float32 (30 MB on disk as float16), beside the photos' 330 MB |
+| One video at a time | 1.4 s a video in the first experiment, with no workers (0.9 reading frames, 0.5 in the model on the mini's GPU) |
 
 ## Turning a query into a vector
 
@@ -215,6 +263,11 @@ sims = np.where(mask, sims, -np.inf)           # photos excluded by filters can 
 sims[sims < max(MATCH_FLOOR, sims.max() - MATCH_WINDOW)] = -np.inf
 order = np.argsort(-sims)[: number_finite]
 ```
+
+For a video, `M @ q` is not the whole answer: the app asks `Catalog.sims(q)`, which is `M @ q` and
+then, with `np.maximum.at`, each video's best frame (`F @ q`, one row per kept frame) where it is
+higher than the mean. A video is found by one moment in it, and the cut below applies to that score.
+`Catalog.moment` says where that moment is, in seconds (`at` on the result row, [chapter 11](11-server.md)).
 
 The last line is the **match cut**, and it is what separates a search engine from a sorted list. Two
 constants, measured empirically:
@@ -263,7 +316,7 @@ The "More like this" button uses the same machinery with **a photo's own vector 
 
 ```python
 vec = M[index[sha]]
-sims = np.where(mask, M @ vec, -np.inf)
+sims = np.where(mask, c.sims(vec), -np.inf)   # a video: its best frame or its mean
 sims[index[sha]] = -np.inf          # not itself
 ```
 
@@ -275,6 +328,7 @@ lighthouses first, then the sea and sunsets around them.
 
 While paging through ranked results, the server checks each candidate against the last 8 photos it
 kept; if the cosine similarity to any is above **0.97** it skips the candidate and counts it as hidden.
+A video is never skipped, even when its frames look like the photos beside it.
 That is why Google's and iCloud's copies of one photo, or a burst of five frames, do not fill a
 screenful. It is purely a view-time filter (chapter 11).
 
@@ -349,7 +403,10 @@ why it loads after the app's own.
 - **Switching models re-embeds everything.** Vectors from different models are not comparable, so
   the app serves exactly one model at a time (`--model`), and the floor and window are
   *per-model* constants that must be re-measured. `/compare` (above) puts a second model beside it, as an experiment.
-- **RAW files and videos are not embedded yet.**
+- **RAW files are not embedded yet.**
+- **A video is seen as stills.** Its frames are one every three seconds, at most 30, so a moment
+  shorter than that can be missed, and nothing it says or plays is heard. A paired Live Photo clip is
+  not embedded at all: its still is.
 
 ## Where to look in the code
 
@@ -358,7 +415,9 @@ All in [embed.py](../../photo-estate/embed.py):
 | Topic | Code |
 |---|---|
 | Model and constants | `DEFAULT_MODEL`, `MATCH_FLOOR`, `MATCH_WINDOW` (with the measurement notes) |
-| Decode worker | `_decode` |
+| Decode worker | `_decode`, `_decode_video` |
+| A video's frames, and which are kept | `times`, `frames`, `distinct` in [video.py](../../photo-estate/video.py); `video_rows` |
+| A video's score: best frame or mean | `Catalog.sims`, `Catalog.moment` in [catalog.py](../../photo-estate/catalog.py) |
 | Model loading | `load_model`, `_features` |
 | The batch job | `cmd_run` |
 | Command-line search | `cmd_search` |

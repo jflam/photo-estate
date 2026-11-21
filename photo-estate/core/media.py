@@ -11,6 +11,7 @@
   ORIGINAL_TYPES  extension -> MIME type for `GET /original/<sha>` (images.py): the stills a phone can save
   EMBED_SKIP_EXT  stills `embed.py run` leaves out (RAW: undecodable)
   FACES_SKIP_EXT  stills `faces.py run` leaves out (RAW, and GIF: see below)
+  VIDEO_TYPES     extension -> the type `GET /video/<sha>` sends: MIME, but QuickTime as video/mp4 (see below)
   kind_of(name)   "image", "video" or None, by extension
 
 Every set is lower-case with the dot. The rules for a screenshot are in catalog.py, with a fixture both
@@ -56,6 +57,11 @@ EMBED_SKIP_EXT = RAW_EXT
 # graphic, its first frame is all the decoder reads, and it is palette-reduced, which makes weak face embeddings.
 # embed.py does embed GIFs: what one shows is still worth finding by a typed search.
 FACES_SKIP_EXT = RAW_EXT | {".gif"}
+
+# What /video sends. A phone's .mov holds H.264 or HEVC in the same boxes an .mp4 does, and Chrome refuses
+# "video/quicktime" outright while it plays the same bytes as "video/mp4" (Safari plays either), so .mov
+# and .m4v go out as video/mp4. The rest keep their own type: a browser plays what it can.
+VIDEO_TYPES: dict[str, str] = {e: ("video/mp4" if e in (".mov", ".m4v") else t) for e, t in _VIDEOS.items()}
 
 for _s in (IMAGE_EXT, VIDEO_EXT, UPLOAD_EXT):
     assert _s <= MIME.keys()

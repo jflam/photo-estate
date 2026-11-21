@@ -90,6 +90,17 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
   background: linear-gradient(transparent, rgba(0,0,0,.55)); opacity: 0; transition: opacity .2s; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .t:hover .cap { opacity: 1; }
+/* a video says how long it is, where a caption ends; a Live Photo says so, quietly, in the same place */
+.t .dur { position: absolute; right: 6px; bottom: 6px; display: flex; align-items: center; gap: 4px; padding: 1px 7px 1px 6px; border-radius: 999px;
+  background: rgba(0,0,0,.55); color: #fff; font: 600 12px/18px inherit; font-variant-numeric: tabular-nums; pointer-events: none; }
+.t .dur svg { flex: none; }
+.t .lv { position: absolute; right: 7px; bottom: 6px; display: flex; align-items: center; gap: 3px; color: #fff; opacity: .9;
+  font: 700 9.5px/14px inherit; letter-spacing: .08em; text-shadow: 0 1px 3px rgba(0,0,0,.6); filter: drop-shadow(0 1px 2px rgba(0,0,0,.45)); cursor: default; }
+/* its clip plays over the tile while the tile is held, or the mark is pointed at (a stack plays its best Live shot's) */
+.t:has(.lv) { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.t video.clip { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; pointer-events: none; transition: opacity .15s; }
+.t video.clip.in { opacity: 1; }
+.t:has(.dur, .lv) .cap { padding-right: 64px; }
 /* ghosts: a list laid out before its photos are known, every tile the shape its photo will be */
 .grid.ghost .t { cursor: default; }
 .grid.ghost .rows { animation: breathe .9s .25s ease-in-out infinite alternate; }
@@ -164,6 +175,10 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .chip { flex: none; height: 36px; padding: 0 14px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; background: var(--well);
   font-weight: 500; font-size: 14.5px; white-space: nowrap; max-width: 260px; transition: background .15s, transform .2s var(--ease); }
 .chip > span { overflow: hidden; text-overflow: ellipsis; }
+/* ahead of the chips: what kind of thing is looked for, as a segmented control (All, Photos, Videos) */
+.scope { flex: none; display: inline-flex; height: 36px; padding: 3px; border-radius: 999px; background: var(--well); }
+.scope button { height: 30px; padding: 0 14px; border-radius: 999px; font-weight: 500; font-size: 14.5px; color: var(--ink); transition: background .15s; }
+.scope button[aria-checked="true"] { background: var(--paper); color: inherit; box-shadow: 0 1px 3px rgba(0,0,0,.16); }
 .chip:hover { background: var(--well-2); }
 .chip:active { transform: scale(.97); }
 .chip.on { background: var(--sun-lit); color: var(--on-sun); }
@@ -286,6 +301,16 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .v-pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .v-pic .hi { opacity: 0; }                          /* fades in; goes at once, so an emptied one never shows */
 .v-pic .hi.in { opacity: 1; transition: opacity .3s; }
+/* a video plays where its poster is, at the poster's size; a Live Photo's clip plays over its still while held */
+.v-pic video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #111; }   /* (over the poster pictures under it: no sliver of them at a rounded edge) */
+.v-pic video.clip { object-fit: cover; opacity: 0; pointer-events: none; transition: opacity .15s; }
+.v-pic video.clip.in { opacity: 1; }
+.v-cant { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: max-content; max-width: calc(100% - 24px); padding: 14px 18px;
+  border-radius: 18px; background: rgba(28,27,26,.72); text-align: center; font-size: 14.5px; line-height: 1.35; color: #f4f2ee; }
+.v-cant a { display: inline-block; margin-top: 6px; color: #ffb061; font-weight: 600; }
+.v-bar #vLive { width: auto; padding: 0 14px; display: flex; gap: 6px; font-size: 11.5px; font-weight: 700; letter-spacing: .08em; touch-action: none; }
+.v-bar #vLive[hidden] { display: none; }
+.v-bar #vLive svg { width: 19px; height: 19px; }
 .v-ui { position: absolute; inset: 0; pointer-events: none; transition: opacity .25s; }
 .v-ui > * { pointer-events: auto; }
 .v-ui::before, .v-ui::after { content: ""; position: absolute; left: 0; right: 0; pointer-events: none; transition: opacity .25s; }
@@ -476,6 +501,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
       <button id="vShare" aria-label="Share this photo"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 12.5V2.5M6.5 5.8 10 2.500l3.500 3.300M7 8.500H5.500a1.300 1.300 0 0 0-1.300 1.300v6.400a1.300 1.300 0 0 0 1.300 1.300h9a1.300 1.300 0 0 0 1.300-1.300V9.800A1.300 1.300 0 0 0 14.500 8.500H13"/></svg></button>
       <button id="vFavBtn" aria-label="Favourite (F)" aria-pressed="false"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 16.800S3.200 12.600 3.200 7.800A3.700 3.700 0 0 1 10 6a3.700 3.700 0 0 1 6.800 1.800c0 4.800-6.800 9-6.800 9Z"/></svg></button>
       <button id="vInfoBtn" aria-label="Details of this photo (I)"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7.6"/><path d="M10 9v4.800"/><circle cx="10" cy="6.300" r=".5" fill="currentColor"/></svg></button>
+      <button id="vLive" hidden aria-label="Live Photo: press and hold to play it"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="2.4" fill="currentColor" stroke="none"/><circle cx="10" cy="10" r="5"/><circle cx="10" cy="10" r="8" stroke-dasharray="1.6 1.9"/></svg>LIVE</button>
       <button id="vLike" aria-label="Find more photos like this"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M8 2.500c.5 3.900 2.600 6 6.500 6.500-3.900.5-6 2.600-6.500 6.500-.5-3.900-2.600-6-6.500-6.500 3.900-.5 6-2.600 6.500-6.500ZM15 1.800c.2 1.400.9 2.100 2.300 2.300-1.400.2-2.100.9-2.300 2.300-.2-1.400-.9-2.100-2.300-2.300 1.400-.2 2.100-.9 2.300-2.300Z"/></svg></button>
     </div>
     <aside class="v-info" id="vInfo"></aside>
@@ -492,7 +518,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
 // What every page shares is in app/*.js (book chapter 2): native modules, fetched as they are. The names
 // in this script are the module's own: nothing here is on `window`.
 import { $, $$, esc, MARK } from "/app/dom.js";
-import { fmt, plural, dateParts as dParts } from "/app/format.js";
+import { fmt, plural, dateParts as dParts, duration } from "/app/format.js";
 import { api } from "/app/api.js";
 import { machine, flow, STALE } from "/app/fsm.js";
 import { toast } from "/app/toast.js";
@@ -503,6 +529,7 @@ import { libraryFlow, SCALES } from "/app/library-flow.js";
 import { albumsFlow, albumMaker } from "/app/albums-flow.js";
 import { viewerFlow, GESTURE_STEPS } from "/app/viewer-flow.js";
 import { favourites } from "/app/favourite.js";
+import { videoFlow } from "/app/video-flow.js";
 
 const EASE = "cubic-bezier(.2,.7,.2,1)";
 const svg = (d, w = 16, extra = "") => `<svg width="${w}" height="${w}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
@@ -526,6 +553,10 @@ const I = {
   plus: svg('<path d="M8 3v10M3 8h10"/>', 18),
   changes: svg('<path d="M3 4.5h10M3 8h6M3 11.5h4"/><path d="m10 11 1.6 1.6L14 9.6"/>', 18),
   stats: svg('<path d="M3 13V8M8 13V3M13 13V6"/>', 18),
+  play: '<svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><path d="M2 1.2v7.6a.6.6 0 0 0 .9.5l6.2-3.8a.6.6 0 0 0 0-1L2.900.7a.6.6 0 0 0-.9.5Z"/></svg>',
+  live: '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><circle cx="6" cy="6" r="1.500" fill="currentColor" stroke="none"/><circle cx="6" cy="6" r="3.200"/><circle cx="6" cy="6" r="5.100" stroke-dasharray="1 1.300"/></svg>',
+  liveBig: svg('<circle cx="8" cy="8" r="1.700" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="3.900" stroke-width="1.300"/><circle cx="8" cy="8" r="6.300" stroke-width="1.300" stroke-dasharray="1.200 1.500"/>', 20),
+  video: svg('<rect x="1.800" y="3.500" width="9" height="9" rx="2"/><path d="m10.800 7 3.400-2v6l-3.400-2"/>', 20),
   compare: svg('<rect x="2.500" y="3" width="4.500" height="10" rx="1"/><rect x="9" y="3" width="4.500" height="10" rx="1"/>', 18),
 };
 const DEBUG = (() => { try { return localStorage.getItem("estate.debug") === "1"; } catch (e) { return false; } })();   // set on the Library info page
@@ -733,7 +764,7 @@ class Grid {
       const c = new Map();
       for (const r of sec.items) { const p = firstPart(r.city || ""); if (p) c.set(p, (c.get(p) || 0) + 1); }
       wh.textContent = [...c].sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]).join("  ·  ");
-      $(".n", sec.el).textContent = photos(this.count?.(sec) || sec.items.length);
+      $(".n", sec.el).textContent = (this.noun || photos)(this.count?.(sec) || sec.items.length);
     }
     // rows are stable from the left, so only an unfinished last row needs laying out again
     let from = 0;
@@ -749,7 +780,7 @@ class Grid {
         const r = sec.items[row.start + k];
         if (r.ghost) { html += `<div class="t" data-i="${sec.base + row.start + k}" style="width:${row.widths[k]}px"></div>`; continue; }
         html += `<div class="t" tabindex="0" data-i="${sec.base + row.start + k}" style="width:${row.widths[k]}px"><img decoding="async" alt="" data-src="/thumb/${r.sha}" onload="this.classList.add('in')">`
-          + (r.fav ? I.heartFill : "") + (r.stack && this.stacks() ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (r.hidden ? `<span class="hid">Hidden</span>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
+          + (r.fav ? I.heartFill : "") + (r.stack && this.stacks() ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (r.hidden ? `<span class="hid">Hidden</span>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + badge(r, this.stacks()) + `</div>`;
       }
       html += "</div>";
       sec.rows.push({ start: row.start, n: row.n, full: row.full });
@@ -762,7 +793,7 @@ class Grid {
     const W = this.width();
     for (const sec of this.sections) { sec.rows = []; sec.box.innerHTML = ""; this.draw(sec, W); }
   }
-  counts() { for (const sec of this.sections) { const n = $(".n", sec.el); if (n) n.textContent = photos(this.count?.(sec) || sec.items.length); } }
+  counts() { for (const sec of this.sections) { const n = $(".n", sec.el); if (n) n.textContent = (this.noun || photos)(this.count?.(sec) || sec.items.length); } }
   top() {                                            // the section now at the top of the screen, under the bar
     const y = barH() + 8;
     for (const s of this.sections) if (s.el.getBoundingClientRect().bottom > y) return s;
@@ -772,6 +803,12 @@ class Grid {
 }
 const grids = () => [lgrid, mgrid, agrid, sgrid];
 const gridOf = el => grids().find(g => g.el.contains(el));
+const isVideo = r => r?.kind === "video";
+// What a tile says of its photo besides the picture: a video, how long it is (just that it is one, when
+// that is not known); a Live Photo, that it is one.
+const liveClip = (r, stacks) => !r || r.ghost || isVideo(r) ? null : r.live || (stacks && r.stack_live) || null;   // the clip a tile plays when held: its own, or its stack's
+const badge = (r, stacks) => isVideo(r) ? `<span class="dur" aria-label="Video${r.dur ? ", " + duration(r.dur) : ""}">${I.play}${r.dur ? duration(r.dur) : ""}</span>`
+  : liveClip(r, stacks) ? `<span class="lv" aria-label="Live Photo: press and hold to play it">${I.live}LIVE</span>` : "";
 const caption = r => { const d = dParts(when(r)); return [d && fMed.format(d), firstPart(r.city || "")].filter(Boolean).join("  ·  "); };
 const barH = () => $(TAB === "library" ? "#lbar" : TAB === "albums" ? "#abar" : "#sbar").offsetHeight;
 
@@ -1326,6 +1363,7 @@ const sgrid = new Grid({
   grain: () => sgrid.ranked ? 0 : D?.scope || Q.s.event ? 10 : Q.s.from && Q.s.to && ymOf(Q.s.to) - ymOf(Q.s.from) <= 1 ? 10 : 7,
   stacks: () => V.dedupe && !Q.s.stack,
   count: sec => sec.key.length === 7 && F ? F.months[ymOf(sec.key)] : null,
+  noun: n => Q?.s.video ? plural(n, "video") : photos(n),   // videos only: a month of them says so
   onData: d => { D = d; sgrid.ranked = !!(Q.s.sha || d.text) || d.sort === "best"; },   // best first is not by time: no months to head
   onGrow: () => { if (VO()?.list === sgrid) { arrange(); vChrome(); } },
   onError: e => { $("#sHead h1").textContent = "Couldn’t search"; $("#sHead p").textContent = e.message; },
@@ -1364,8 +1402,8 @@ function searchShow(quiet) {                          // which of the three show
   $("#sView").hidden = typing() || empty;
   $("#sAlbum").hidden = typing() || !albumable();
   $("#qClear").hidden = !$("#q").value;
-  $("#chips").hidden = empty || suggesting;
-  if (!$("#chips").hidden) drawChips();
+  $("#chips").hidden = suggesting || (empty && !INFO?.videos);
+  if (!$("#chips").hidden) drawChips(empty);
   drawNotice(suggesting);
   if ($("#q").value !== S.q && !typing()) $("#q").value = S.q;
   titleDoc();
@@ -1387,7 +1425,8 @@ function searchHead() {                               // what the answer is, in 
   else if (D.scope) { title = tripTitle(D.scope); parts = [span(D.scope.start, D.scope.end), n]; }
   else {
     const bits = filterBits(s);
-    title = bits.join(" · ") || (s.fav ? "Favourites" : "Photos"); parts = [n, s.fav && bits.length ? "favourites" : ""];
+    title = bits.join(" · ") || (s.fav && s.video ? "Favourite videos" : s.fav ? "Favourites" : s.video ? "Videos" : "Photos");
+    parts = [s.video ? plural(D.matching, "video") : n, s.fav && bits.length ? "favourites" : ""];
   }
   parts.push(...(D.filters || []));
   if (DEBUG) parts.push(`${D.ms} ms`);
@@ -1398,7 +1437,7 @@ function searchHead() {                               // what the answer is, in 
 // are now and in this order. Asked for from the bar, when there is an answer with photos in it ("More like this"
 // has no end: it is every photo, by likeness). The title offered is the question, in words.
 const albumable = () => !!D && Q?.key === sKey() && sgrid.phase.is("ready") && !Q.s.sha && D.matching > 0;
-const albumTitle = () => [Q.s.q, ...filterBits(Q.s), D.scope ? tripTitle(D.scope) : "", Q.s.fav ? "Favourites" : ""].filter(Boolean).join(" · ") || $("#sHead h1").textContent;
+const albumTitle = () => [Q.s.q, ...filterBits(Q.s), D.scope ? tripTitle(D.scope) : "", Q.s.fav ? "Favourites" : "", Q.s.video ? "Videos" : ""].filter(Boolean).join(" · ") || $("#sHead h1").textContent;
 // It is made by app/albums-flow.js: every page of the search is read, then one request makes the album. The
 // question, the title and the note ("From the search …") are those of the moment it is asked for. Until the
 // last page is in, moving on (another question, another place, the menu put away) stops it: no further page
@@ -1435,6 +1474,7 @@ const PILLS = [
   { id: "camera", label: "Camera", tabs: [["camera", "Cameras"], ["lens", "Lenses"]] },
   { id: "fav", label: "Favourites" },
 ];
+const toggles = { fav: I.heart };    // a chip that is on or off, with no sheet behind it
 function pillValue(p, s = S) {
   if (p.id === "fav") return s.fav ? "Favourites" : null;
   if (p.id === "when") return s.from || s.to ? rangeLabel(s) : null;
@@ -1449,14 +1489,22 @@ function clearPill(p, s = S) {
   else if (p.id === "when") s.from = s.to = "";
   else for (const [k] of p.tabs) s.f[k] = [];
 }
-function drawChips() {
-  const order = [...PILLS].sort((a, b) => (pillValue(a) ? 0 : 1) - (pillValue(b) ? 0 : 1));
-  $("#chips").innerHTML = order.map(p => {
+// What kind of thing is looked for: All, Photos or Videos, one control ahead of the chips (a library with
+// no videos has none). It is there before anything is asked, so the kind can be chosen before the words.
+const scopeOf = (s = S) => s.video ? "video" : s.photo ? "photo" : "all";
+const scopeBar = () => !INFO?.videos && scopeOf() === "all" ? "" : `<div class="scope" role="radiogroup" aria-label="Search in">${
+  [["all", "All"], ["photo", "Photos"], ["video", "Videos"]].map(([k, label]) =>
+    `<button role="radio" aria-checked="${scopeOf() === k}" data-scope="${k}">${label}</button>`).join("")}</div>`;
+function drawChips(empty) {
+  const order = empty ? [] : [...PILLS].sort((a, b) => (pillValue(a) ? 0 : 1) - (pillValue(b) ? 0 : 1));
+  $("#chips").innerHTML = scopeBar() + order.map(p => {
     const v = pillValue(p);
-    return `<button class="chip${v ? " on" : ""}" data-pill="${p.id}">${p.id === "fav" ? I.heart : ""}<span>${esc(v || p.label)}</span>${v && p.id !== "fav" ? `<i class="x" data-x aria-label="Clear ${p.label}">${I.x}</i>` : ""}</button>`;
+    return `<button class="chip${v ? " on" : ""}" data-pill="${p.id}"${toggles[p.id] ? ` aria-pressed="${!!v}"` : ""}>${toggles[p.id] || ""}<span>${esc(v || p.label)}</span>${v && !toggles[p.id] ? `<i class="x" data-x aria-label="Clear ${p.label}">${I.x}</i>` : ""}</button>`;
   }).join("");
 }
 $("#chips").onclick = e => {
+  const sc = e.target.closest("[data-scope]");
+  if (sc) { S.video = sc.dataset.scope === "video"; S.photo = sc.dataset.scope === "photo"; return refine(); }
   const b = e.target.closest(".chip"); if (!b) return;
   const p = PILLS.find(p => p.id === b.dataset.pill);
   if (e.target.closest("[data-x]")) { clearPill(p); return refine(); }
@@ -1573,6 +1621,7 @@ function drawBrowse() {
     }).join("")}</div></div>`;
   }
   if (INFO.fav) h += `<button class="favs" data-fav>${svg('<path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.9-5.6 7.3-5.6 7.3Z"/>', 22, 'fill="currentColor"')}<span><b>Favourites</b><small>${photos(INFO.fav)}</small></span>${I.chevR}</button>`;
+  if (INFO.videos) h += `<button class="favs" data-videos>${I.video}<span><b>Videos</b><small>${plural(INFO.videos, "video")}</small></span>${I.chevR}</button>`;
   for (const [name, pill, k] of [["Places", "where", "country"], ["People", "people", "person"], ["Albums", "albums", "album"], ["Cameras", "camera", "camera"]]) {
     const top = INFO.facets[k] || [];
     if (!top.length) continue;
@@ -1588,6 +1637,7 @@ $("#browse").onclick = e => {
   else if (b.dataset.trip) s.f.trip = [b.dataset.trip];
   else if (b.dataset.year) { s.from = `${b.dataset.year}-01`; s.to = `${b.dataset.year}-12`; }
   else if (b.hasAttribute("data-fav")) s.fav = true;
+  else if (b.hasAttribute("data-videos")) s.video = true;
   else if (b.dataset.k) s.f[b.dataset.k] = [b.dataset.v];
   else if (b.dataset.all) return openSheet(PILLS.find(p => p.id === b.dataset.all), b);
   else return;
@@ -1718,7 +1768,7 @@ function preview(s) {                                // 1600 px first because it
 }
 function sharpen(force = Z.s > 1.6) {                // then the 4096 px one, when the screen or the zoom can show more
   const s = cur, r = s.r;
-  if (!viewing() || !r || s.large || !s.hi.classList.contains("in") || Math.max(r.w || 0, r.h || 0) <= 1700) return;
+  if (!viewing() || !r || isVideo(r) || s.large || !s.hi.classList.contains("in") || Math.max(r.w || 0, r.h || 0) <= 1700) return;   // (a video's pictures are its poster: there is no larger one)
   const b = fit(r);
   if (!force && Math.max(b.w, b.h) * devicePixelRatio <= 1700) return;
   s.large = true;
@@ -1742,7 +1792,7 @@ function show(i, dir = 0) {
   Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0;
   arrange();
   $("#vShare").classList.remove("ready", "busy");
-  sharpen();
+  sharpen(); vMedia();
   if (dir) vPic.animate([{ opacity: 0, transform: `translateX(${dir * 28}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE });
   vChrome(); drawInfo(items[i]); drawStrip(); loadStack(items[i]);
   if (i > items.length - 12) o.list.more();
@@ -1778,7 +1828,7 @@ function pick(i) {                                   // another shot of the stac
   Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0;
   arrange();
   o.share = null; o.note = ""; $("#vShare").classList.remove("ready", "busy");
-  sharpen();
+  sharpen(); vMedia();
   vPic.animate([{ opacity: .4 }, { opacity: 1 }], { duration: 160, easing: "ease-out" });
   vChrome(); drawInfo(r); markStrip();
 }
@@ -1825,6 +1875,7 @@ function closeViewer(entry = "back", instant = false) {
   Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0; place(vPic, f); bg.style.opacity = ui.style.opacity = "";
   v.classList.remove("bare");
   pts.clear(); if (!GS.is("none")) GS.to("none");    // a finger still down has nothing left to move
+  vMediaOff();                                       // a video stops, and its stream is let go; it goes home as its poster
   // Closed, or leaving until the browser says the entry has gone (or a second passes without it saying so):
   // either way what the viewer knew of the photo goes with the step, and `o` is the last of it.
   VW.close(entry);
@@ -1848,6 +1899,122 @@ function toggleInfo() {
   const a = vPic.getBoundingClientRect(); arrange(); vChrome(); const b = fit(shown());
   vPic.animate([{ transform: `translate(${a.x - b.x}px,${a.y - b.y}px) scale(${a.width / b.w},${a.height / b.h})` }, { transform: "none" }], { duration: 300, easing: EASE });
 }
+
+/* ── a video, and a Live Photo's clip (app/video-flow.js) ── */
+// A video's slide is laid out as a photo's is (`ar` is its upright shape) and its pictures are its poster frame,
+// so it grows out of its tile, slides in as a neighbour and goes home as any photo does. When it is the one
+// showing, the viewer's one <video> is put in its slide, over the poster, and plays; when it is left (the next
+// photo, the one before, closed) the video stops and its stream is let go. A Live Photo's clip is the other
+// <video>: nothing of it is asked for until its LIVE control is first pressed, and it plays, muted, over the
+// still for as long as the control is held. Which of these is going on is VIDEO's: still, video, failed (this
+// browser cannot play it: its poster shows, with a way to download it) or live.
+const VIDEO = videoFlow();
+const vid = document.createElement("video"), clip = document.createElement("video");
+vid.controls = true; vid.playsInline = true; vid.preload = "metadata";
+clip.className = "clip"; clip.muted = true; clip.playsInline = true; clip.preload = "none"; clip.disablePictureInPicture = true;
+const fileName = r => (r.path || "").split("/").pop() || r.sha.slice(0, 12) + (r.ext || (isVideo(r) ? ".mp4" : ".jpg"));
+function vMedia() {                                  // what plays for the photo showing: its video, or nothing (a clip waits to be pressed for)
+  const r = shown();
+  vMediaOff();
+  $("#vLive").hidden = !r?.live || isVideo(r);
+  $("#vShare").setAttribute("aria-label", isVideo(r) ? "Share this video" : "Share this photo");
+  if (!isVideo(r)) return;
+  vid.poster = "/preview/" + r.sha;
+  cur.el.append(vid);
+  VIDEO.play(vid, r);                                // (from where a search found it in the video, if one did)
+}
+function vMediaOff() {
+  VIDEO.still(); liveShow();
+  vid.remove(); vid.removeAttribute("poster");
+  $(".v-cant", v)?.remove();
+}
+function vCant() {                                    // this browser cannot play it: the poster, saying so, and the file
+  const r = shown();
+  vid.remove();
+  if (!isVideo(r) || $(".v-cant", cur.el)) return;
+  cur.el.insertAdjacentHTML("beforeend", `<div class="v-cant vglass" role="status">This browser can’t play this video.<br><a href="/video/${r.sha}?original=1" download="${esc(fileName(r))}">Download it</a></div>`);
+}
+vid.addEventListener("error", () => { if (VIDEO.failed(vid)) vCant(); });
+vid.addEventListener("loadedmetadata", () => {
+  const r = shown();
+  if (!VIDEO.is("video") || !isVideo(r) || VIDEO.sha !== r.sha) return;
+  if (!vid.videoWidth || !vid.videoHeight) { if (VIDEO.failed(vid)) vCant(); return; }   // its sound and no picture: a picture this browser cannot decode
+  const ar = vid.videoWidth / vid.videoHeight;       // the shape the file has, if the catalog's was a guess: the viewer follows the file
+  if (Math.abs(ar - (r.ar || 1.5)) > .02) { r.ar = ar; arrange(); }
+});
+// LIVE: pressed and held (a finger, the mouse, or Enter or Space while it has the focus), or pointed at with a
+// mouse; let go, or come to its end, the still again.
+const liveBtn = $("#vLive");
+function liveOn() {
+  const r = shown();
+  if (!r?.live || isVideo(r) || !VIDEO.live(clip, r.live)) return;
+  cur.el.append(clip); liveShow();
+}
+function liveOff() { if (VIDEO.is("live")) { VIDEO.still(); liveShow(); } }
+function liveShow() {                                 // the control and the clip, as VIDEO says
+  const on = VIDEO.is("live");
+  liveBtn.classList.toggle("on", on); liveBtn.setAttribute("aria-pressed", on);
+  if (!on) { clip.classList.remove("in"); clip.remove(); }
+}
+clip.addEventListener("playing", () => { if (VIDEO.is("live")) clip.classList.add("in"); });   // over the still only once it has a picture
+clip.addEventListener("ended", () => { VIDEO.ended(clip); liveShow(); });
+clip.addEventListener("error", () => { VIDEO.failed(clip); liveShow(); });
+liveBtn.addEventListener("pointerdown", e => {
+  if (e.button) return;
+  if (e.pointerType !== "mouse") { e.preventDefault(); try { liveBtn.setPointerCapture(e.pointerId); } catch (x) {} }   // (held on to wherever the finger goes)
+  liveOn();
+});
+const liveUp = e => { if (e.pointerType !== "mouse" || !liveBtn.matches(":hover")) liveOff(); };   // a mouse still over it: it plays on
+liveBtn.addEventListener("pointerup", liveUp);
+liveBtn.addEventListener("pointercancel", liveOff);
+liveBtn.addEventListener("pointerenter", e => { if (e.pointerType === "mouse") liveOn(); });
+liveBtn.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") liveOff(); });
+liveBtn.addEventListener("keydown", e => {
+  if (e.key !== " " && e.key !== "Enter") return;
+  e.preventDefault(); e.stopPropagation();           // not the viewer's Space (the next photo)
+  if (!e.repeat) liveOn();
+});
+liveBtn.addEventListener("keyup", e => { if (e.key === " " || e.key === "Enter") liveOff(); });
+liveBtn.addEventListener("blur", liveOff);
+liveBtn.addEventListener("contextmenu", e => e.preventDefault());   // a long press is the press, not a menu
+// The same on a tile in a grid: a Live Photo's tile (or a stack with one in it) held for a moment plays its
+// clip over the tile, until it is let go, the finger moves off to scroll, or the clip ends; a mouse over the
+// LIVE mark plays it too. A hold that played is not a click: the photo does not open.
+let tHold = null, tHeld = false;                     // { t, clip, x, y, timer, on, hover }; tHeld: the click that follows a hold is not one
+const tLive = e => {
+  const t = e.target.closest?.(".t"), g = t && grids().find(g => g.el.contains(t));
+  const c = g && liveClip(g.items[+t.dataset.i], g.stacks());
+  return c ? { t, clip: c } : null;
+};
+function tPlay() {
+  if (!tHold || v.classList.contains("on") || !VIDEO.live(clip, tHold.clip)) return;
+  tHold.on = true; $("img", tHold.t).after(clip);
+}
+function tStop() {
+  if (!tHold) return;
+  clearTimeout(tHold.timer);
+  if (tHold.on) liveOff();
+  tHold = null;
+}
+document.addEventListener("pointerdown", e => {
+  if (e.button || e.target.closest(".stk") || tHold?.hover) return;
+  tStop();
+  const h = tLive(e);
+  if (h) tHold = { ...h, x: e.clientX, y: e.clientY, on: false, hover: false, timer: setTimeout(tPlay, 280) };
+});
+document.addEventListener("pointermove", e => { if (tHold && !tHold.on && !tHold.hover && Math.hypot(e.clientX - tHold.x, e.clientY - tHold.y) > 8) tStop(); });
+const tUp = () => { if (!tHold || tHold.hover) return; if (tHold.on) { tHeld = true; setTimeout(() => { tHeld = false; }, 80); } tStop(); };
+document.addEventListener("pointerup", tUp);
+document.addEventListener("pointercancel", tUp);
+document.addEventListener("click", e => { if (tHeld) { tHeld = false; e.stopPropagation(); e.preventDefault(); } }, true);
+document.addEventListener("contextmenu", e => { if (tHold && !tHold.hover) e.preventDefault(); });
+document.addEventListener("pointerover", e => {
+  if (e.pointerType !== "mouse" || tHold || !e.target.closest?.(".t .lv")) return;
+  const h = tLive(e);
+  if (h) { tHold = { ...h, on: false, hover: true, timer: 0 }; tPlay(); }
+});
+document.addEventListener("pointerout", e => { if (tHold?.hover && e.target.closest?.(".lv") && !e.relatedTarget?.closest?.(".lv")) tStop(); });
+
 // Anything that names a set of photos is a way into that set: it shows them in Search.
 function find(s) {
   const over = viewing();                            // the new search takes the open photo's place in history
@@ -1864,6 +2031,8 @@ function drawInfo(r) {                               // what is known about it, 
   if (sub) h += `<div class="sub num">${esc(sub)}</div>`;
   if (r.desc) h += `<div class="note">${esc(r.desc)}</div>`;
   if (r.reason) h += `<div class="here">In this album: ${esc(r.reason)}</div>`;
+  if (isVideo(r)) h += `<div class="vcard">${row("", I.video, "Video", r.dur ? `<span class="num">${duration(r.dur)}</span>` : "", "div")}</div>`;
+  else if (r.live) h += `<div class="vcard">${row("", I.liveBig, "Live Photo", "Press and hold LIVE to play it", "div")}</div>`;
   if (r.place || gps) {
     const map = gps ? `<a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${r.lat}&mlon=${r.lon}#map=15/${r.lat}/${r.lon}">Map</a>` : "";
     const detail = [esc(r.county || ""), r.place_inferred ? "from photos taken around then" : "", map].filter(Boolean).join("  ·  ");
@@ -1985,15 +2154,17 @@ function slideTo(d, x = 0) {                         // the neighbour slides in,
   const o = VO(), fin = o.settle = () => { if (VO()?.settle !== fin) return; o.settle = null; a.cancel(); show(o.i + d); };   // (not after the viewer closed, or another photo was shown)
   a.onfinish = fin;
 }
-const inViewerChrome = t => t.closest(".v-info, .v-btn, .v-bar, .v-strip");
+const inViewerChrome = t => t.closest(".v-info, .v-btn, .v-bar, .v-strip, .v-cant");
+// A touch on a playing video's own controls (its bottom edge: the play button, the time bar) is the video's, not a swipe.
+const onControls = e => e.target === vid && e.clientY > vid.getBoundingClientRect().bottom - 56;
 v.addEventListener("pointerdown", e => {
-  if (e.pointerType === "mouse" || inViewerChrome(e.target) || !viewing()) return;
+  if (e.pointerType === "mouse" || inViewerChrome(e.target) || onControls(e) || !viewing()) return;
   VO().settle?.();
   if (!pts.size && !GS.is("none")) GS.to("none");    // a finger that left without saying so
   pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
   vPic.getAnimations().forEach(a => a.finish());
   if (pts.size === 1) { if (GS.can("press")) GS.to("press", { x0: e.clientX, y0: e.clientY, t0: performance.now(), zx: Z.x, zy: Z.y }); }
-  else if (pts.size === 2 && GS.can("pinch")) {       // (a second finger, whatever the first was doing)
+  else if (pts.size === 2 && GS.can("pinch") && !isVideo(shown())) {   // (a second finger, whatever the first was doing; a video does not zoom)
     stage.style.transform = ""; vPic.style.transform = ""; $("#vBg").style.opacity = $("#vUi").style.opacity = ""; applyZoom();
     if (phone() && sheetUp()) toggleInfo();          // the photo has the whole screen again before it zooms
     const [a, b] = [...pts.values()];
@@ -2044,6 +2215,7 @@ function endGesture(e) {
     if (now - lastTap < 300) { lastTap = 0; clearTimeout(tapTimer);
       if (Z.s > 1) return resetZoomAnimated();
       if (phone() && sheetUp()) return toggleInfo();
+      if (isVideo(shown())) return;                  // a video does not zoom
       zoomAt(e.clientX, e.clientY, 2.5); clampZoom(); animateTo(); return; }
     lastTap = now;
     tapTimer = setTimeout(() => { if (!viewing()) return; if (phone() && sheetUp()) toggleInfo(); else v.classList.toggle("bare"); }, 280);
@@ -2084,21 +2256,22 @@ $("#vInfo").addEventListener("touchstart", e => { sheetY = narrow.matches && she
 $("#vInfo").addEventListener("touchend", e => { if (sheetY != null && e.changedTouches[0].clientY - sheetY > 70 && sheetUp()) toggleInfo(); sheetY = null; }, { passive: true });
 
 /* ── save / share: the original file, so Save to Photos keeps its date and place ── */
-// The file fetched for the photo showing waits for a second tap in the viewer's own state (VO().share).
+// The file fetched for the photo showing waits for a second tap in the viewer's own state (VO().share). A video's
+// file is its stream, /video/ (it has no /original/); a Live Photo shares its still.
 async function share() {
   const o = VO(), r = shown(), btn = $("#vShare");
   if (!r) return;
   const still = () => VO() === o && shown() === r;   // (not closed, and no other photo, since)
   if (o.share?.sha !== r.sha) logEvent("share", o.list, o.items[o.i], o.i);   // once per photo, not on the second tap
-  const name = (r.path || "").split("/").pop() || r.sha.slice(0, 12) + (r.ext || ".jpg");
-  if (!navigator.canShare) {                         // desktop browsers: just download it
-    const a = document.createElement("a"); a.href = "/original/" + r.sha; a.download = name; a.click(); return;
-  }
+  const name = fileName(r), src = isVideo(r) ? `/video/${r.sha}?original=1` : "/original/" + r.sha;   // (the stored file, not the copy it plays from)
+  const download = () => { const a = document.createElement("a"); a.href = src; a.download = name; a.click(); };
+  if (!navigator.canShare) return download();        // desktop browsers: just download it
   if (o.share?.sha === r.sha) return doShare(o.share.file, still);
   btn.classList.add("busy");
   try {
-    let res = await fetch("/original/" + r.sha);
+    let res = await fetch(src);
     let file = res.ok && new File([await res.blob()], name, { type: res.headers.get("Content-Type") });
+    if ((!file || !navigator.canShare({ files: [file] })) && isVideo(r)) { if (still()) download(); return; }   // a video the phone won't share: saved as a file instead
     if (!file || !navigator.canShare({ files: [file] })) {   // RAW, or a type the phone won't share: the large JPEG
       res = await fetch("/large/" + r.sha);
       file = new File([await res.blob()], name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
@@ -2134,7 +2307,8 @@ document.addEventListener("keydown", e => {
   const inField = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
   if (viewing()) {
     if (e.key === "Escape") closeViewer();
-    else if (e.key === "ArrowLeft") step(-1);
+    else if (e.key === " " && VIDEO.is("video", "failed")) { if (e.target !== vid) { e.preventDefault(); VIDEO.toggle(); } }   // a video showing: Space plays and pauses it (the video's own controls do, when it has the focus)
+    else if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
     else if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); step(1); }
     else if (e.key === "ArrowDown" || e.key === "ArrowUp") { if (VO().stack) { e.preventDefault(); pickStep(e.key === "ArrowDown" ? 1 : -1); } }
     else if (e.key === "i") toggleInfo();

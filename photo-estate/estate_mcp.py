@@ -112,6 +112,8 @@ FILTERS = {
     "trip": {"type": "integer", "description": "A trip id."},
     "favorite": {"type": "boolean", "description": "Only favourites."},
     "screenshots": {"type": "boolean", "description": "false leaves screenshots out."},
+    "kind": {"type": "string", "enum": ["photo", "video"],
+             "description": "Only photos, or only videos. A video is found by what its frames show; its row has kind 'video' and seconds."},
     "hidden_only": {"type": "boolean", "description": "Only photos a change set has hidden. Without it, hidden photos are never found."},
     "distinct": {"type": "boolean", "description": "true leaves out near-identical shots of a photo already found: of each such group, only its top photo."},
 }

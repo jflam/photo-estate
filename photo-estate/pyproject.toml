@@ -40,6 +40,7 @@ ml = [
     "transformers>=4.49",
     "sentencepiece",
     "protobuf",
+    "av>=14",              # video.py: frames out of videos (it carries its own FFmpeg)
 ]
 faces = [
     { include-group = "core" },
@@ -63,6 +64,7 @@ tools = [
 ]
 dev = [
     { include-group = "core" },
+    "av>=14",              # tests/test_video.py makes its own small videos and reads them back
     "pytest>=8.3",
     "ruff>=0.15",
     "pyright>=1.1.400",
