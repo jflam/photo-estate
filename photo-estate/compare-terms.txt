@@ -1,0 +1,30 @@
+# The searches a model comparison runs through (/compare), one a line. Every run asks all of them, in this
+# order, so two runs (of two candidate models, say) can be read side by side. Lines starting with # are
+# skipped. A file named terms.txt in the --compare-vectors folder is used in place of this one.
+#
+# They are meant to cover what a family library is asked: people and occasions, places and weather, things,
+# animals, food, and a few that are hard (several things at once, a mood, something small in the frame).
+kids at the lake
+a birthday cake with candles
+snowy mountains
+a dog on the beach
+fireworks at night
+a crowded city street
+grandparents with a baby
+food on a plate
+a child riding a bicycle
+people around a dinner table
+a sunset over the water
+a cat sleeping
+a wedding
+a christmas tree
+a waterfall in a forest
+a baby laughing
+a hot air balloon
+a cup of coffee
+a boat on a lake
+autumn leaves
+a group of friends smiling at the camera
+a rainy street at night
+a red car
+someone reading a book

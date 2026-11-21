@@ -67,7 +67,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
   images.py            135  thumbnails, previews, large images and originals
   admin.py             256  phone uploads, the ingest, restart, /stats, backups
   encoder.py           204  SigLIP's text (and image) side, for the photo app: loaded when asked for, let go when idle
-  compare.py           134  an experiment: each search ranked by a second model beside the app's own, at /compare (chapter 10)
+  compare.py           374  an experiment: a fixed list of searches ranked by a second model beside the app's own, voted on, and a report, at /compare (chapter 10)
+  compare-terms.txt     30  the searches a comparison asks, one a line
   estate.py          1,005  ingest, link, exif, dupes, review, tag, search, stats
   faces.py           1,072  faces: run, serve, and the People class (who is who)
   changes.py           455  albums and change sets: proposed, reviewed, applied, reverted (chapter 26)
@@ -103,7 +104,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   setup.html           445  bringing photos in, at /setup
   stats.html           307  library info, at /stats
   review.html          275  the near-duplicate review page
-  compare.html         190  two models' results side by side, unlabelled, and a vote, at /compare
+  compare.html         232  a run of the model comparison: two unlabelled columns a search, a vote, and the report, at /compare
   app/estate.css       119  the stylesheet every page shares
   app/sw.js             46  service worker: the "can't reach your photos" page
   app/                      the script every page shares: native ES modules with JSDoc types, imported by
@@ -125,6 +126,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                               months (unknown, asking, known, failed)
     albums-flow.js     146    the Albums tab: the list or an album; the list of albums; an album made from a
                               search, cancellable until the request that makes it is sent
+    compare-flow.js    155    a run of the model comparison (compare.html): its steps, votes sent as models not sides
     viewer-flow.js     193    the photo viewer and its history entry (closed, open, leaving), what the open
                               viewer owns, and the table of a touch on the photo
     favourite.js       160    the heart, and an album's "make all favourites": shown at once, saved one request at a time, put back when a save fails
@@ -310,8 +312,12 @@ that behaviour in the modules above, where each rule is a unit test, and ask the
 | `stats.html` | `statsWatch`: one `loop()` asks for the uploads and the figures in turn, so two requests are never in flight. A failed `/api/stats` is "Couldn't take stock" or "Can't reach the library" with **Try again**; a catalogue run or a restart that can not be started says why in the uploads panel | figures every 1.5 s while the server is measuring; uploads every 2 s during a run, else every 15 s; after a restart `/api/info` every 4 s for at most 5 minutes; paused while the page is hidden |
 | `setup.html` | Two strict machines from `setup-flow.js`, each state owning its data. The page: `loading`, `place`, `idle`, `watching`, `answering` (the states in which `/api/intake` is asked), `opening` (waiting for the photo app), `stuck`, `app`. The source panel: `closed`, `open`, `checking`, `checked`, `starting`, with `{ id, config, preview }` handed from state to state, so a preview never outlives the text it was made for and an answer for a panel that has moved on is dropped | asked every 1.2 s while a job is live, else every 8 s; `opening` asks `/api/info` every 1.5 s for at most 10 minutes, then "Still not open" with **Try again** |
 
-`compare.html` asks through `api.js` as well: only the latest search's answer is drawn (`latest()`), a
-vote counts once, and the wait for the second model's text side ends after five minutes.
+`compare.html` is a run of the model comparison, held by one strict machine from
+[app/compare-flow.js](../../photo-estate/app/compare-flow.js): `idle`, `starting`, `waiting` (the second
+model is loading; at most five minutes), `asking` (a search's two rankings), `judging` (on the page, with
+which model is on the left), `saving` (the vote; one that is not saved goes back to `judging`),
+`finishing`, `report`, `failed`. A second press, or an answer that comes after the run has moved on,
+changes nothing.
 
 ## How the pieces depend on each other
 

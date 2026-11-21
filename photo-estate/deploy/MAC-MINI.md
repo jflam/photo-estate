@@ -299,10 +299,11 @@ It needs two things the app does not make itself:
 | Its text side | `google/siglip2-large-patch16-384` in `~/.cache/huggingface` (3.5 GB; the agent runs with `HF_HUB_OFFLINE=1`, so download it first: `uvx --from huggingface_hub hf download google/siglip2-large-patch16-384`) |
 | Votes | `votes.jsonl` beside the vectors |
 
-The large model's text side takes 2 GB or more of memory, on the GPU. It is loaded when `/compare` is
-first opened (the page says it is loading; about 15 seconds) and let go when `/compare` has not been used
-for 15 minutes (`--compare-idle MINUTES`; 0 keeps it once loaded), so it costs nothing on a day nobody
-compares. Until 2026-11-20 it was loaded whole at every start and held: with the app's own model, 5.6 GB
+The large model's text side takes about 3 GB of memory, on the GPU. It is loaded when a comparison is
+started from `/compare` (**Compare models** in the Library's "..." menu; the page says it is loading, a
+few seconds) and let go when the comparison is finished, or when one is left unused for 15 minutes
+(`--compare-idle MINUTES`; 0 keeps it until the run ends), so it costs nothing on a day nobody compares.
+A comparison's report is kept in `~/photo-estate-lab/siglip2-large-384/vectors/runs/`. Until 2026-11-20 it was loaded whole at every start and held: with the app's own model, 5.6 GB
 of the mini's 16 GB, none of it visible in `ps` (use `footprint <pid>`). Without the vectors
 folder the app starts as usual and logs that `/compare` is off. To stop the experiment, take the two
 `--compare-vectors` lines out of the plist and restart.

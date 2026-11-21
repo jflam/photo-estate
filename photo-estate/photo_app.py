@@ -453,7 +453,8 @@ class PhotoApp:
         if path == "/api/favorite":
             return self.favorite(body, who)
         if self.compare and path.startswith("/api/compare"):
-            return Response.of(self.compare.handle("POST", path, qs, body, who)) if path == "/api/compare/vote" else NOT_FOUND
+            got = self.compare.handle("POST", path, qs, body, who)   # a vote, or a run started or finished
+            return Response.of(got) if got else NOT_FOUND
         if self.intake and path.startswith("/api/intake"):
             return Response.of(self.intake.handle("POST", path, qs, body, local))
         if (got := self.changes_route("POST", path, qs, body, who)) is not None:
@@ -487,8 +488,8 @@ class PhotoApp:
         if got:
             return Response.of(got)
         c = self.live.cat
-        if path == "/api/info":
-            return json_response(c.info)
+        if path == "/api/info":   # (compare: the experiment is on, so the Library's menu offers it)
+            return json_response({**c.info, "compare": True} if self.compare else c.info)
         if path == "/api/sync":   # what changed since a device last asked (sync.py)
             if not self.feed.ready:
                 return json_response({"error": "starting"}, 503, {"Retry-After": "5"})

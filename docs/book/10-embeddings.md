@@ -296,14 +296,33 @@ anything over:
 2. `tools/embed_squares.py` embeds the shards with the second model (by default SigLIP 2 large at
    384 px, 1,024 numbers a photo where the app's base model has 768) and writes one `.npy` per shard.
    On an M2 Max's GPU that is about 21 photos a second, about 65 minutes for 83,000 photos.
-3. `embed.py serve --compare-vectors DIR` loads those vectors (the second model's text side is loaded when
-   `/compare` is first opened, and let go when it has not been used for `--compare-idle` minutes, 15
-   unless said: its page waits for it), and
-   [compare.py](../../photo-estate/compare.py), wired in by `PhotoApp` ([photo_app.py](../../photo-estate/photo_app.py)), serves `/compare`: a search, read as the app reads it
-   (names, places and filters choose the photos; the words left over are ranked), ranked by each model
-   over the same photos. The two columns come in random order with no names; you vote for the better
-   one, and only then see which was which, with the scores and how long each took. Votes go to a file
-   beside the vectors, never to the catalog.
+3. `embed.py serve --compare-vectors DIR` loads those vectors, and
+   [compare.py](../../photo-estate/compare.py), wired in by `PhotoApp` ([photo_app.py](../../photo-estate/photo_app.py)), serves `/compare`
+   (**Compare models** in the Library's "..." menu, there only when the app has the vectors).
+
+**A run.** The comparison is an experiment with a fixed procedure, so that the next candidate model can be
+put through the same one:
+
+1. It asks a fixed list of searches, [compare-terms.txt](../../photo-estate/compare-terms.txt) (24 of them:
+   people and occasions, places and weather, things, animals, food, and a few hard ones), or `terms.txt`
+   in the vectors folder if there is one. A run keeps the list it began with.
+2. Starting a run loads the second model's text side (the page waits for it). Each search is read as the
+   app reads it and ranked by each model over the same photos, the top 24 of each. The two columns come in
+   random order with no names; you say Left, Same, Right or Skip. Which model was which is not said
+   during the run: knowing would colour the next answer.
+3. A run is a file, `runs/run-<id>.json` beside the votes, written at every answer, so it can be left and
+   carried on, also after a restart. **Finish now** ends it with searches unanswered.
+4. Finishing writes the report (in the run, and as `runs/<id>.md` to keep): how many searches each model
+   was better on, a sentence saying so, a sign test over the searches with a winner (how often a split
+   that uneven comes up between equal models; the ties are left out, as that test does), how many photos
+   the two columns shared on average, how long each model took to read a search's words, and every
+   search's result. Then the second model is let go (`Encoder.let_go`): it is in memory only while a run
+   is under way, and after 15 minutes unused if a run is left (`--compare-idle`).
+
+Twenty-four searches is a small sample: 17 to 7 is p = 0.06, and it takes 18 to 6 to pass 0.05. The
+report says which of the two it is in words. For a finer answer, give the run a longer `terms.txt`.
+
+Votes also go to a file beside the vectors (`votes.jsonl`), never to the catalog.
 
 The second model's scores sit on another scale, so the columns are each model's top k with no floor
 or window: those would have to be measured again before the app switched. Searching costs a little
