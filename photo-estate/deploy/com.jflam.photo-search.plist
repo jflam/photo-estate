@@ -7,9 +7,11 @@
   <array>
     <string>/opt/homebrew/bin/uv</string><string>run</string><string>--quiet</string>
     <string>/Users/jflam/src/photo-estate/photo-estate/embed.py</string>
-    <string>--db</string><string>/Volumes/estate/estate.db</string>
+    <string>--db</string><string>/Users/jflam/estate/estate.db</string>
     <string>serve</string>
     <string>--store</string><string>/Volumes/estate/store</string>
+    <string>--inbox</string><string>/Volumes/estate/iphone</string>
+    <string>--cache</string><string>/Volumes/estate/review</string>
     <string>--fast-cache</string><string>/Users/jflam/Library/Caches/photo-estate</string>
     <string>--backup-dir</string><string>/Volumes/estate/catalog-backups</string>
     <string>--compare-vectors</string><string>/Users/jflam/photo-estate-lab/siglip2-large-384/vectors</string>

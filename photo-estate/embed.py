@@ -313,6 +313,9 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--compare-vectors", help="experiment: a folder of a second model's vectors (tools/embed_squares.py);"
                    " /compare then ranks each search by both models side by side")
     s.add_argument("--compare-votes", help="where /compare records which side won (default: votes.jsonl in --compare-vectors)")
+    s.add_argument("--compare-idle", type=float, default=15.0,
+                   help="minutes /compare's second model is kept after its last use; it loads again when /compare"
+                        " is next opened (0: once loaded, kept)")
     s.add_argument("--query-log", help="where to record searches and photos opened (default: <db dir>/query-log.jsonl)")
     s.set_defaults(fn=cmd_serve)
     return p

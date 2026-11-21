@@ -308,6 +308,22 @@ SRC = {None: NONE, "auto": AUTO_SRC, "google": GOOGLE, "you": YOU}
 SRC_NAME = {v: k for k, v in SRC.items()}
 
 
+def face_rows(con) -> list[tuple]:
+    """Every face of MODEL with its photo's date, people tags and extension, in id order:
+    (id, sha256, idx, x, y, w, h, score, px, vec, person_id, source, taken_at, people, ext).
+    Faces in photos a change set hides (changes.py) are left out: nobody is asked who they are.
+
+    Each table is read once, front to back, and they are put together here. Asked of SQLite as one join,
+    every face is a lookup of its photo by sha256, somewhere else in `assets` each time: 120,000 of them
+    took 38 s of a 41 s start on a catalog on a USB disk, where the three passes take under 4 s."""
+    hidden = ({s for s, in con.execute("SELECT sha256 FROM hidden")}
+              if con.execute("SELECT 1 FROM sqlite_master WHERE name='hidden'").fetchone() else set())
+    photo = {s: (t, p, e) for s, t, p, e in con.execute("SELECT sha256, taken_at, people, ext FROM assets")}
+    return [r + photo[r[1]] for r in con.execute(
+        "SELECT id, sha256, idx, x, y, w, h, score, px, vec, person_id, source FROM faces WHERE model=? ORDER BY id", (MODEL,))
+        if r[1] in photo and r[1] not in hidden]
+
+
 class Draft:
     """A copy of what a change touches (who each face is, the not/later sets, the people) and the journal
     records it will write: changed while the change's SQLite transaction runs, and swapped into People
@@ -342,13 +358,7 @@ class People:
         """Read every face, person and not/later decision, and name what Google's tags say. Only __init__
         calls it: a People that fails here is never used, and its connection is closed (closing())."""
         import numpy as np
-        # Faces in photos a change set hides (changes.py) are left out: nobody is asked who they are.
-        shown = (" AND f.sha256 NOT IN (SELECT sha256 FROM hidden)"
-                 if con.execute("SELECT 1 FROM sqlite_master WHERE name='hidden'").fetchone() else "")
-        rows = con.execute(
-            "SELECT f.id, f.sha256, f.idx, f.x, f.y, f.w, f.h, f.score, f.px, f.vec, f.person_id, f.source,"
-            f" a.taken_at, a.people, a.ext FROM faces f JOIN assets a USING(sha256) WHERE f.model=?{shown} ORDER BY f.id",
-            (MODEL,)).fetchall()
+        rows = face_rows(con)
         self.n = n = len(rows)
         self.ids = np.array([r[0] for r in rows], np.int64)
         self.row = {int(i): k for k, i in enumerate(self.ids)}
@@ -501,10 +511,12 @@ class People:
                 self.persons[have[nm]] = {"name": nm, "born": None}
         good = (self.score >= 0.6) & (self.px >= 40)
         new = []
+        was = {}                                # what a face named here was before, to put back if the tag is not of it
         free = lambda k, p: self.src[k] < GOOGLE and k not in self.nots.get(p, ())
         for s, ks in self.by_sha.items():       # one tag, one face
             tags = self.tags[ks[0]]
             if len(tags) == 1 and len(ks) == 1 and good[ks[0]] and free(ks[0], have[tags[0]]):
+                was[ks[0]] = (self.pid[ks[0]], self.src[ks[0]])
                 self.pid[ks[0]], self.src[ks[0]] = have[tags[0]], GOOGLE
                 new.append(ks[0])
         for rnd in range(3):
@@ -515,8 +527,11 @@ class People:
                 rows = np.array(new)
                 pids, S, _ = self.scores(rows, cents)
                 own = S[np.arange(len(rows)), [pids.index(int(p)) for p in self.pid[rows]]]
+                # Put back as it was read, not as unknown: rescore() names it again either way, and writes
+                # only what differs from here. Left unknown, a face the catalog already names (auto) was
+                # written again, with a new labeled_at, at every start.
                 for k in rows[own < 0.2]:
-                    self.pid[k], self.src[k] = -1, NONE
+                    self.pid[k], self.src[k] = was[int(k)]
                 new = [k for k in new if self.src[k] == GOOGLE]
                 cents = self.centroids()
             open_ = np.flatnonzero((self.src < GOOGLE) & good & np.array([bool(t) for t in self.tags]))

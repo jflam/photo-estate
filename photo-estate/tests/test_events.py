@@ -267,6 +267,17 @@ def test_ingest_script_emits_its_events(fake_bin):
     assert protocol(nothing) == [Event("new_assets", {"count": 0})] and "nothing new" in nothing, nothing
 
 
+def test_ingest_script_puts_face_thumbnails_in_the_cache_it_is_given(fake_bin):
+    """With the catalog on another disk than the thumbnails (the Mac mini: catalog on the SSD, cache on
+    the USB disk), faces.py must be told the cache: its default is beside the catalog, where the app
+    does not look."""
+    script, root, env = fake_bin
+    faces = lambda out: next(line for line in out.splitlines() if line.startswith("step") and "faces.py" in line)
+    assert "--cache" not in faces(run([str(script), str(root)], True, **env))
+    (Path(env["FAKE"]) / "ingested").unlink()
+    assert faces(run([str(script), str(root)], True, **env, CACHE="/disk/review")).endswith("--cache /disk/review")
+
+
 def test_ingest_job_follows_the_real_script(fake_bin, monkeypatch):
     """The two ends together: IngestJob runs ingest-iphone.sh, and is told at its catalog_ready, even with
     the script's human lines reworded."""

@@ -11,6 +11,9 @@
 # - The photo app runs this itself, with PHOTO_ESTATE_EVENTS=1, and reloads its catalog at the
 #   catalog_ready event (core/events.py: `@@pe {json}` lines, printed only when asked). Run by hand, set
 #   RESTART=com.jflam.photo-search to restart the app at the end instead.
+# - With the catalog on another disk than the photos (the Mac mini: ~/estate on its SSD), say where each
+#   is: DB=~/estate/estate.db STORE=/Volumes/estate/store INBOX=/Volumes/estate/iphone
+#   CACHE=/Volumes/estate/review ./ingest-iphone.sh ~/estate   (the photo app passes all four itself).
 # - Set SKIP_MODELS=1 to catalogue only (ingest, link, exif, places) and leave embeddings and faces
 #   for later, e.g. while the Mac is busy.
 # - Safe to run while the photo app is up (the catalog is in WAL mode), and safe to overlap: a second
@@ -22,6 +25,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 DB=${DB:-$ROOT/estate.db}
 STORE=${STORE:-$ROOT/store}
 INBOX=${INBOX:-$ROOT/iphone}
+CACHE=${CACHE:-}   # the app's thumbnail cache (--cache), if it is not ROOT/review: the face thumbnails go there
 
 # The store is the disk that must be there; the catalog (ROOT) may be on another one, e.g. the internal SSD.
 [[ -d $STORE ]] || { echo "store $STORE does not exist (is the disk mounted?)"; exit 1; }
@@ -68,7 +72,7 @@ if [[ -z ${SKIP_MODELS:-} ]]; then run embed.py run --store "$STORE" --after-row
 echo "== $(date +%T) catalog ready"
 event catalog_ready
 if [[ -z ${SKIP_MODELS:-} ]]; then
-  run faces.py run --store "$STORE" --after-rowid "$since"
+  run faces.py run --store "$STORE" --after-rowid "$since" ${CACHE:+--cache "$CACHE"}
   mkdir -p "$(dirname "$MARK")" && echo "$top_now" > "$MARK"   # everything up to here is catalogued
 fi
 if [[ -n ${RESTART:-} ]]; then

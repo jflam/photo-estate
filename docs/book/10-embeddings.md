@@ -104,6 +104,20 @@ close as two CPU runs months apart), and 15 queries gave identical scores to fiv
 rankings, with no photo crossing `MATCH_FLOOR` differently. So a library embedded on one can be
 searched from the other.
 
+**What the GPU costs in memory.** On a Mac the GPU's memory is the machine's own memory, and it does not
+show in a process's RSS: look at `footprint <pid>` ("IOAccelerator"), not `ps`. With both models whole
+and in float32 on the GPU, the app on the 16 GB Mac mini had 0.5 GB of RSS and a 7.8 GB footprint, 5.6 GB
+of it GPU memory. Two things keep that down ([encoder.py](../../photo-estate/encoder.py)):
+
+- A model that is only asked about words has its image half dropped before it goes to the device
+  (`drop_image_side`). The base model is 375M parameters, 282M of them the text side (its vocabulary of
+  256,000 pieces is most of that): 1,464 MB of GPU memory whole, 1,112 MB without the image half, and
+  the query vectors are identical, bit for bit. The app's own model keeps its image half when it takes
+  uploads from the phone, which it embeds as they arrive.
+- A model with an idle time is loaded when it is first asked for (`Encoder.ensure`) and let go when
+  nothing has used it for that long (`Encoder.let_go`: the GPU memory goes back, measured to the last
+  megabyte). `/compare`'s second model is held this way, below.
+
 ## Embedding every photo: `embed.py run`
 
 ```bash
@@ -282,7 +296,9 @@ anything over:
 2. `tools/embed_squares.py` embeds the shards with the second model (by default SigLIP 2 large at
    384 px, 1,024 numbers a photo where the app's base model has 768) and writes one `.npy` per shard.
    On an M2 Max's GPU that is about 21 photos a second, about 65 minutes for 83,000 photos.
-3. `embed.py serve --compare-vectors DIR` loads those vectors and the second model's text side, and
+3. `embed.py serve --compare-vectors DIR` loads those vectors (the second model's text side is loaded when
+   `/compare` is first opened, and let go when it has not been used for `--compare-idle` minutes, 15
+   unless said: its page waits for it), and
    [compare.py](../../photo-estate/compare.py), wired in by `PhotoApp` ([photo_app.py](../../photo-estate/photo_app.py)), serves `/compare`: a search, read as the app reads it
    (names, places and filters choose the photos; the words left over are ranked), ranked by each model
    over the same photos. The two columns come in random order with no names; you vote for the better

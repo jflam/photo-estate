@@ -122,6 +122,18 @@ class WatchedLock:
         self.lock.release()
 
 
+@pytest.mark.parametrize("cache", [None, "/disk/review"])
+def test_ingest_run_is_told_the_thumbnail_cache(tmp_path, cache):
+    """The script's faces step writes thumbnails beside the catalog unless told where: the app says where
+    its own cache is (CACHE), so a catalog on another disk does not start a second cache there."""
+    said = "echo '" + events.line("event", name="new_assets", count=1) + "'"     # a run that added photos: on_faces is called at its end
+    job = ingest_job(tmp_path, said + '\necho "cache=[${CACHE-unset}]"', quiet=0, **({"cache": Path(cache)} if cache else {}))
+    ended = threading.Event()
+    job.on_faces = ended.set
+    assert job.start() is True and ended.wait(BOUND)
+    assert f"cache=[{cache or 'unset'}]" in list(job.log)
+
+
 def test_ingest_log_append_and_status_are_safe(tmp_path):
     """status() is part-way through copying the log when _follow appends a line. The copy pauses after its
     first line until the append has either happened (no lock: the copy then fails, "deque mutated during

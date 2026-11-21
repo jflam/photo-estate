@@ -40,7 +40,10 @@ def make(*extra) -> PhotoApp:
 @pytest.fixture(scope="module")
 def app(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("compare")
-    return make("--compare-vectors", str(vectors(tmp / "vectors")), "--compare-votes", str(tmp / "votes.jsonl"))
+    app = make("--compare-vectors", str(vectors(tmp / "vectors")), "--compare-votes", str(tmp / "votes.jsonl"))
+    app.loads = []                                   # the second model's loads: begun (so "loading"), never ended
+    app.encoder_b.start = lambda: (app.loads.append(1), app.encoder_b.state.begin())
+    return app
 
 
 def test_routes_only_with_vectors(tmp_path):
@@ -50,6 +53,16 @@ def test_routes_only_with_vectors(tmp_path):
         for path in ("/compare", "/api/compare/info", "/api/compare?q=dog"):
             assert bare.request("GET", path).status == 404, (extra, path)
         assert bare.request("POST", "/api/compare/vote", body={"q": "dog", "winner": "a"}).status == 404
+
+
+def test_second_model_is_loaded_by_the_first_use_not_at_start(app):
+    """It was loaded at every start and held all day: 3 GB or more of the Mac mini's 16 GB for an experiment.
+    Opening /compare (its page asks /api/compare/info) is what loads it now, once."""
+    assert app.encoder_b.idle == 15 * 60 and app.loads == []
+    info = app.request("GET", "/api/compare/info").json()
+    assert info["b"]["ready"] is False and app.loads == [1]
+    app.request("GET", "/api/compare/info")
+    assert app.request("GET", "/api/compare?q=a%20dog").status == 503 and app.loads == [1]
 
 
 def test_info_and_page(app):

@@ -51,7 +51,12 @@ Three ideas carry it:
 
 ## The data in memory
 
-`People.__init__` loads every face once, as parallel NumPy arrays indexed by a face's row number `k`:
+`People.__init__` loads every face once, as parallel NumPy arrays indexed by a face's row number `k`.
+`face_rows()` reads `faces`, `assets` (for each photo's date, tags and extension) and `hidden` one
+after the other and puts them together in Python: as one SQL join, each face was a lookup of its photo
+somewhere else in `assets`, and 120,000 of those took 38 s of a 41 s load from a hard disk. A load
+writes only what it changes: a second load of an unchanged catalog writes nothing (a test holds it to
+that).
 
 | Array | Meaning |
 |---|---|

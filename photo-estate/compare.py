@@ -93,6 +93,7 @@ class Compare:
         return v
 
     def info(self) -> dict:
+        self.encoder.ensure()   # the page asks this first, and until b.ready: opening /compare is what loads the model
         c = self.live.cat
         covered = int((self.aligned(c) >= 0).sum())
         return {"a": {"model": self.browse.model, "photos": int(c.N), "dim": int(c.M.shape[1])},
@@ -111,7 +112,9 @@ class Compare:
         if b.phase is Phase.FAILED:
             return js({"error": f"the second model failed to load: {b.error}"}, 500)
         if b.phase is not Phase.READY:
-            return js({"error": "the second model is still loading; try again in a minute"}, 503)
+            self.encoder.ensure()   # let go after a while unused (encoder.py): asking for it loads it again
+            return js({"error": "the second model is loading (it is let go when /compare has not been used"
+                                " for a while); try again in a minute"}, 503)
         rows = self.aligned(c)
         mask = c.combine(masks) & (rows >= 0)
         n = int(mask.sum())

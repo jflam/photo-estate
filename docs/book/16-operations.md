@@ -29,7 +29,7 @@ those should be local and fast.
 |---|---|
 | Library | About 102,000 photos and 19,000 videos (485 GB) from all three services; about 10,000 duplicates collapsed; about 130 trips found |
 | Machine | An M1 Mac mini, 16 GB RAM, running the app as a launchd agent |
-| Disk | An 8 TB USB hard disk formatted APFS, mounted `/Volumes/estate` |
+| Disk | An 8 TB USB hard disk formatted APFS, mounted `/Volumes/estate`, for the photos; the catalog is on the mini's internal SSD (`~/estate`) since 2026-11-20 |
 | Network | `tailscale serve` publishing `https://<host>.<tailnet>.ts.net:8766` to the author's own devices |
 | Earlier | A Linux laptop with a btrfs disk; a NAS is the next move |
 
@@ -157,7 +157,8 @@ timezone offsets exif extracts). Every stage can be run again at any time and do
 | `places run` | CPU, then the catalog's disk | Seconds on a laptop for a small library; about 10 min on the Mac mini at 135k photos |
 | `embed run` | CPU (the model) | About 6.8 img/s measured on a laptop: roughly 4-6 hours (PLAN.md says ~4 h for ~99k images; TAGGING-RESEARCH.md measured ~6 h) |
 | `faces run` | CPU | "About as fast as the SigLIP pass" |
-| `serve` startup | Disk reads of the catalog | 9-17 s on the Mac mini with a USB HDD; 2.4-2.8 s on a laptop SSD |
+| `serve` startup | Disk reads of the catalog | 9-19 s on the Mac mini with the catalog on a USB HDD, 4.4 s with it on the mini's SSD; 2.4-2.8 s on a laptop SSD |
+| People (`faces.py`) loading | Disk reads of `faces` and `assets` | 110,020 faces: 50-68 s as one join on the USB HDD (120,000 lookups of a photo by its hash); 4.1 s as that join on the SSD; 4.7 s first time and 1.7 s after as three front-to-back reads, even on the USB HDD |
 
 ### Adding photos later
 
@@ -194,7 +195,7 @@ is the author's complete guide. The moving parts:
 
 | Key | Value | Why |
 |---|---|---|
-| `ProgramArguments` | `uv run --quiet .../embed.py --db /Volumes/estate/estate.db serve --store /Volumes/estate/store --fast-cache ~/Library/Caches/photo-estate` | The same command you would type |
+| `ProgramArguments` | `uv run --quiet .../embed.py --db ~/estate/estate.db serve --store /Volumes/estate/store --inbox /Volumes/estate/iphone --cache /Volumes/estate/review --fast-cache ~/Library/Caches/photo-estate` | The same command you would type |
 | `RunAtLoad`, `KeepAlive` | true | Starts at login, restarts on exit |
 | `ThrottleInterval` | 30 s | Stops a crash loop from spinning |
 | `EnvironmentVariables.HF_HUB_OFFLINE` | `1` | Never contact Hugging Face once the model is cached; the app should not make network calls at runtime |
