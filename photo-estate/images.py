@@ -5,15 +5,18 @@ images.py — the photos themselves, as the photo app (`embed.py serve`) sends t
   GET /preview/<sha>    1600 px JPEG, for the viewer
   GET /large/<sha>      4096 px JPEG, for big high-density displays, where a 1600 px preview is visibly soft
   GET /original/<sha>   the file as stored, for Save to Photos / share
-  GET /video/<sha>      a video as stored, or a Live Photo's clip, with Range: photo_app's handler streams it
-                        from Images.video_file (this module only says which file, never reads it)
+  GET /video/<sha>      a video, or a Live Photo's clip, with Range: photo_app's handler streams it from
+                        Images.video_file (this module only says which file, never reads it). A heavy video
+                        (video.wants_copy) is played from a 1080p copy once the background job has made it,
+                        <cache>/streams/<sha>.mp4; ?original=1 is always the stored file (to save or share)
 
 A video's thumbnail and preview are made from its poster frame (video.poster); everything else is the same.
 
   Images.handle(method, path, qs, body) -> (status, body, content type, Cache-Control[, headers]) or None
   Images.image(sha, kind, side)         (a cached image, its type), made on first use
-  Images.pregenerate()                  every missing thumbnail, then every missing preview, in the background
-  Images.video_file(sha)                (the stored file, its content type, its name), or None if it is not a video
+  Images.pregenerate()                  every missing thumbnail, then every missing preview, then the heavy videos'
+                                        copies to play from, in the background
+  Images.video_file(sha, original=False)  (the file to send, its content type, its name), or None if it is not a video
   upright(src, side)                    a photo, or a video's poster frame, as an upright RGB image for a `side` px copy
 
 Made images are cached under <cache>/<kind>/<sha>.webp for thumbnails, <sha>.jpg for the rest. On the Mac mini the estate disk is a USB hard
@@ -147,9 +150,10 @@ class Images:
                 return None
         return dest.read_bytes(), TYPES[dest.suffix]
 
-    def video_file(self, sha: str) -> tuple[Path, str, str] | None:
-        """(the stored file, the type to send it as, its name) for a video in the catalog or a Live Photo's
-        clip; None for anything else, or a file that is not on the disk."""
+    def video_file(self, sha: str, original: bool = False) -> tuple[Path, str, str] | None:
+        """(the file to send, the type to send it as, its name) for a video in the catalog or a Live Photo's
+        clip; None for anything else, or a file that is not on the disk. The file is the copy to play from
+        if one has been made (_streams), unless `original`: then always the stored file."""
         if not sha_re.match(sha):
             return None
         cat = self.live.cat
@@ -161,6 +165,9 @@ class Images:
         if not src.exists():
             return None
         name = ((m["path"] or "") if m else "").rsplit("/", 1)[-1] or f"{sha[:12]}{ext}"
+        copy = self.cache / "streams" / f"{sha}.mp4"
+        if not original and copy.exists():
+            return copy, "video/mp4", name.rsplit(".", 1)[0] + ".mp4"
         return src, VIDEO_TYPES[ext], name
 
     def handle(self, method: str, path: str, qs: dict, body):
@@ -198,6 +205,7 @@ class Images:
             try:
                 self._thumbs()
                 self._previews()
+                self._streams()
             except Exception as e:     # never takes the app down; the images are still made on first use
                 print(f"pregenerate: {type(e).__name__}: {e}", flush=True)
             with self.pregen_lock:
@@ -245,6 +253,58 @@ class Images:
         (self.cache / "previews").mkdir(parents=True, exist_ok=True)
         self._make_all("previews", [(str(self.original(s, c.meta[s]["ext"])), None, str(self.cache / "previews" / f"{s}.jpg"))
                                     for s in (c.shas[i] for i in c.newest) if s not in previews])
+
+    def _streams(self) -> None:
+        """A copy to play from for every video that wants one (video.wants_copy: too heavy to stream as it
+        is, or of a kind no browser plays) and has none, newest first. One at a time, each in a process of
+        its own at low priority: the Mac mini has one hardware encoder, and a file FFmpeg crashes on must
+        not take the app with it. A video that cannot be copied is marked (<sha>.failed) and not tried again.
+        Gives way to a newer run between videos, and stops while the cache's disk is short of room."""
+        import video
+        c, d = self.live.cat, self.cache / "streams"
+        d.mkdir(parents=True, exist_ok=True)
+        have = {p.name[:64] for p in d.iterdir() if p.suffix in (".mp4", ".failed")}
+        todo = []
+        for s in (c.shas[i] for i in c.newest):
+            m = c.meta[s]
+            if m.get("kind") != "video" or s in have:
+                continue
+            src = self.original(s, m["ext"])
+            try:
+                if video.wants_copy(src.stat().st_size, m.get("dur"), m["ext"]):
+                    todo.append((s, src))
+            except OSError:
+                continue
+        if not todo:
+            return
+        print(f"making {len(todo)} videos' copies to play from in the background", flush=True)
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures.process import BrokenProcessPool
+        t, ok, pool = time.time(), 0, None
+        try:
+            for k, (s, src) in enumerate(todo):
+                if self.pregen_again:
+                    print(f"copies: {ok} made; stopping for a newer run", flush=True)
+                    return
+                if shutil.disk_usage(self.cache).free < PREVIEW_ROOM:
+                    print(f"copies: none while under {PREVIEW_ROOM >> 30} GB is free on {self.cache}", flush=True)
+                    return
+                if pool is None:
+                    pool = ProcessPoolExecutor(1, mp_context=mp.get_context("forkserver"), initializer=_lower_priority)
+                try:
+                    pool.submit(video.stream_copy, str(src), str(d / f"{s}.mp4")).result()
+                    ok += 1
+                except Exception as e:
+                    (d / f"{s}.failed").write_text(f"{type(e).__name__}: {e}\n")
+                    if isinstance(e, BrokenProcessPool):
+                        pool = None
+                if (k + 1) % 25 == 0:
+                    print(f"copies: {ok} of {len(todo)} made, {(time.time() - t) / 60:.0f} min", flush=True)
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=False, cancel_futures=True)
+        print(f"copies: {ok} made in {(time.time() - t) / 60:.0f} min", flush=True)
 
     def _make_all(self, what: str, todo: list[tuple[str, str | None, str | None]]) -> None:
         """Run _make over todo in batches of BATCH, in WORKERS low-priority processes (forkserver: no fork() of

@@ -665,6 +665,61 @@ def test_upright_and_make_for_a_video(clips, tmp_path):
     assert images._make((str(clips.bad), str(tmp_path / "b.webp"), None)) is False
 
 
+def test_wants_copy():
+    """Over COPY_OVER bits a second, or a container no browser plays; a video of unknown length is left alone."""
+    mb = 1_000_000
+    assert video.wants_copy(300 * mb, 100, ".mov") and not video.wants_copy(200 * mb, 100, ".mov")     # 24 and 16 Mbit/s
+    assert video.wants_copy(1 * mb, 100, ".avi") and video.wants_copy(1 * mb, None, ".WMV") and video.wants_copy(1, 0, ".3gp")
+    assert not video.wants_copy(10_000 * mb, None, ".mp4") and not video.wants_copy(10_000 * mb, 0, ".mov")
+
+
+def test_stream_copy(clips, tmp_path):
+    """The copy is an .mp4 that opens, upright (the turned clip comes out portrait, with no rotation left on
+    it), no larger than asked, with its index at the front; a file that is no video raises and leaves nothing."""
+    out = tmp_path / "nine.mp4"
+    n = video.stream_copy(str(clips.nine), str(out))
+    got = video.probe(str(out))
+    assert n > 0 and got["codec"] == "h264" and abs(got["duration"] - 9) < 0.5
+    assert out.read_bytes().find(b"moov") < out.read_bytes().find(b"mdat")
+    assert len(video.frames(str(out))) == 3
+    turned = tmp_path / "turned.mp4"
+    video.stream_copy(str(clips.turned), str(turned))
+    t = video.probe(str(turned))
+    assert (t["width"], t["height"]) == (32, 64)
+    im = video.poster(str(turned))
+    assert im.size == (32, 64) and near(im.getpixel((16, 12)), (255, 0, 0), 40) and near(im.getpixel((16, 52)), (0, 0, 0), 40)
+    small = tmp_path / "small.mp4"
+    video.stream_copy(str(clips.turned), str(small), side=16)
+    assert video.probe(str(small))["width"] == 16
+    with pytest.raises(Exception):
+        video.stream_copy(str(clips.bad), str(tmp_path / "bad.mp4"))
+    assert not (tmp_path / "bad.mp4").exists() and not list(tmp_path.glob("*.tmp"))
+
+
+def test_copies_are_made_in_the_background(clips, tmp_path, monkeypatch):
+    """_streams copies the videos that want one (here: everything with a known length), marks the one that
+    cannot be read, and does neither again."""
+    store = tmp_path / "store"
+    heavy, light, broken = sha_of("heavy"), sha_of("light"), sha_of("broken")
+    stored(store, heavy, ".mp4", clips.nine)
+    stored(store, light, ".mp4", clips.short)
+    stored(store, broken, ".mp4", clips.bad)
+    shas = [heavy, light, broken]
+    cat = SimpleNamespace(shas=shas, newest=[0, 1, 2], clips={}, meta={
+        heavy: {"ext": ".mp4", "kind": "video", "path": "a/heavy.mp4", "dur": 9.0},
+        light: {"ext": ".mp4", "kind": "video", "path": "a/light.mp4", "dur": None},
+        broken: {"ext": ".mp4", "kind": "video", "path": "a/broken.mp4", "dur": 5.0}})
+    im = Images(SimpleNamespace(cat=cat), store, tmp_path / "cache", tmp_path / "cache")
+    monkeypatch.setattr(video, "COPY_OVER", 1)
+    im._streams()
+    d = tmp_path / "cache" / "streams"
+    assert sorted(p.name for p in d.iterdir()) == sorted([f"{heavy}.mp4", f"{broken}.failed"])
+    assert im.video_file(heavy)[0] == d / f"{heavy}.mp4" and im.video_file(broken)[0].parent != d
+    made = (d / f"{heavy}.mp4").stat().st_mtime_ns
+    im._streams()
+    assert (d / f"{heavy}.mp4").stat().st_mtime_ns == made and len(list(d.iterdir())) == 2
+
+
 def test_video_file(clips, tmp_path):
     store = tmp_path / "store"
     vid, clip, photo, gone = sha_of("v"), sha_of("c"), sha_of("p"), sha_of("gone")
@@ -679,6 +734,13 @@ def test_video_file(clips, tmp_path):
     assert im.video_file(clip) == (csrc, "video/mp4", f"{clip[:12]}.mov")
     for nope in (photo, gone, "../../etc/passwd", "ab", vid.upper() + "x", sha_of("unknown")):
         assert im.video_file(nope) is None, nope
+    # a copy to play from, once there is one: it is what plays, and the stored file is still there to save
+    copy = tmp_path / "cache" / "streams" / f"{vid}.mp4"
+    copy.parent.mkdir(parents=True)
+    copy.write_bytes(b"a copy")
+    assert im.video_file(vid) == (copy, "video/mp4", "Beach day.mp4")
+    assert im.video_file(vid, original=True) == (src, "video/mp4", "Beach day.mp4")
+    copy.unlink()
     # a video's thumbnail and preview are its poster; it has no /original
     status, body, ctype, _ = im.handle("GET", f"/thumb/{vid}", {}, None)
     assert (status, ctype, body[8:12]) == (200, "image/webp", b"WEBP")
@@ -800,7 +862,15 @@ def test_video_over_http_with_ranges(app, port):
     size, data = app.size, app.bytes
     code, h, body = get(port, f"/video/{app.vid}")
     assert (code, h["content-type"], h["accept-ranges"], int(h["content-length"])) == (200, "video/mp4", "bytes", size)
-    assert body == data and "content-range" not in h and "immutable" in h["cache-control"]
+    assert body == data and "content-range" not in h and "max-age" in h["cache-control"] and "immutable" not in h["cache-control"]
+    etag = h["etag"]
+    assert etag == f'"{app.vid[:16]}-o"'
+    code, h, body = get(port, f"/video/{app.vid}", "Range: bytes=0-1", f"If-Range: {etag}")       # the same file: the part
+    assert (code, body) == (206, data[:2])
+    code, h, body = get(port, f"/video/{app.vid}", "Range: bytes=0-1", 'If-Range: "another-c"')   # part of another file is held: all of this one
+    assert (code, body) == (200, data) and "content-range" not in h
+    code, h, body = get(port, f"/video/{app.vid}?original=1", "Range: bytes=0-1")
+    assert (code, body, h["etag"]) == (206, data[:2], etag)
     assert h["content-disposition"] == "inline; filename*=UTF-8''Nine%20seconds.mp4"
     code, h, body = get(port, f"/video/{app.vid}", "Range: bytes=0-1")
     assert (code, h["content-range"], h["content-length"], body) == (206, f"bytes 0-1/{size}", "2", data[:2])

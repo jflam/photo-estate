@@ -229,7 +229,7 @@ def test_a_video_the_browser_cannot_play(app, page):
     p.wait_for_selector(".v-cant")
     assert "can’t play this video" in p.inner_text(".v-cant")
     link = p.locator(".v-cant a")
-    assert link.get_attribute("href") == f"/video/{sha}"
+    assert link.get_attribute("href") == f"/video/{sha}?original=1"      # the stored file, not a copy made to play from
     assert link.get_attribute("download")
     assert media(p) == [], "the stream was not let go"
     assert p.locator(".v-pic img.hi.in").count() >= 1, "no poster"

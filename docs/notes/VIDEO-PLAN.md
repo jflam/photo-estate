@@ -129,11 +129,33 @@ never stack with the photos taken beside them.
 - A video the browser cannot play (the `.avi`, `.wmv` and `.3gp` files; HEVC in a browser without it)
   shows its poster, says so, and offers the file.
 
+## A copy to play from (added 2026-11-21, after the first morning of use)
+
+Played in Safari on a laptop on the same network as the Mac mini, a phone's 4K video stopped and started.
+Measured, with the same files in Chrome and in WebKit (Playwright's, which loads media as Safari does):
+
+| | |
+|---|---|
+| The path, mini to laptop through the tailnet | about 168 Mbit/s (21 MB/s), by HTTPS and by ssh alike; a small ranged request takes 13 ms |
+| The mini's disk and server | 185 MB/s off the USB disk, 850 MB/s over loopback: neither is the limit, and a warm file stalls the same |
+| Chrome | one long request; a 4K video at 60 a second, 86 Mbit/s, played a minute with no stall |
+| WebKit | hundreds of requests, most of them 64 KB or abandoned (692 in 40 s): fine up to 78 Mbit/s, and a 107 Mbit/s video played 25 seconds in 40 |
+| A file with its sound far from its picture (1.2% of 1,000 sampled) | stalls in Chrome too, which jumps between the two places every 100 ms |
+
+So Safari, and AVPlayer on the phone, which loads the same way, need about twice a video's bitrate of the
+path, and a phone's 4K at 60 a second is 80 to 110 Mbit/s. The fix is a lighter copy: `video.stream_copy`
+writes a 1080p, 30 a second, 8 Mbit/s H.264 and AAC `.mp4` with its index first, upright, and `/video/<sha>`
+sends that when it is there (`?original=1` is always the stored file, which is what Save and Share ask for).
+The background job that makes thumbnails makes the copies after them, for every video over 20 Mbit/s or in a
+container no browser plays (`video.wants_copy`): 1,002 videos, 9.9 hours of footage. On the mini, with
+Apple's decoder and encoder, the 107 Mbit/s video was copied at 1.3 times real time. The copies are in the
+cache (`streams/`), about 36 GB in all, and can be deleted: they are made again.
+
 ## What is left
 
 | | |
 |---|---|
-| **A 720p proxy** | Originals are streamed as they are: a 4K HEVC file from the phone is about 50 Mbit/s, which a phone away from home may not keep up with. A background job that makes an H.264 720p copy into the cache, like previews, would fix that and the two dozen files no browser plays. It needs a transcoder; PyAV can do it, slowly. Decided to wait until the originals have been tried from the phone. |
+| **A lighter copy still, for away from home** | The copy to play from is 1080p at 8 Mbit/s, made for videos over 20 Mbit/s. A phone on a poor connection may want 720p, and videos between 8 and 20 Mbit/s are sent as stored. HDR is not kept: the copy is 8-bit. |
 | **Faces in videos** | Run the face detector over the same frames. `faces` needs a time column, and one person in thirty frames must count once. |
 | **A true Live Photo on the phone** | The phone plays the clip over the still. Saving a real Live Photo back to Photos needs both files there with matching identifiers (`PHAssetCreationRequest` with `.photo` and `.pairedVideo`); Takeout's re-encoded MP4s have lost theirs. |
 | **Videos kept on the phone** | The phone streams. Keeping a video for offline use is a storage decision, not a small one. |

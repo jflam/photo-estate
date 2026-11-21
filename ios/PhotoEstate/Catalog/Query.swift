@@ -287,6 +287,7 @@ enum Reader {
                 if key == "event" { p.scopeEvent = id } else { p.scopeTrip = id }
             case "is" where ["fav", "favorite", "favourite"].contains(v): typed.append("p.fav=1")
             case "is" where ["video", "videos"].contains(v): typed.append("p.kind='video'")
+            case "is" where ["photo", "photos"].contains(v): typed.append("p.kind IS NOT 'video'")
             default: continue
             }
             p.applied.append("\(key):\(val)")

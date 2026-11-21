@@ -43,6 +43,7 @@ ROOT/                                  e.g. /Volumes/estate
   estate.db.bak-YYYYMMDD               snapshots made by the pull scripts
   review/                              the cache (disposable)
     thumbs/<sha>.webp  previews/<sha>.jpg   large/<sha>.jpg   (thumbs/<sha>.jpg: made before 2026-11-20)
+    streams/<sha>.mp4  a heavy video's 1080p copy to play from (<sha>.failed: could not be made; delete to try again)
     faces/<ab>/<sha>-<idx>.jpg
     thumb-dims.json
     decisions.json                     your near-duplicate choices

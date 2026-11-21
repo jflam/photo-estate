@@ -73,7 +73,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   browse.py            389  search, similar, facets, Years and Months, layout; an agent's searches; kind and is:video
   images.py            251  thumbnails (WebP), previews, large images and originals, a video's from its poster;
                             making them in the background; which file /video/ sends
-  video.py             112  still frames out of a video with PyAV: when to look, frames, the poster, which to keep (chapter 10)
+  video.py             112  still frames out of a video with PyAV: when to look, frames, the poster, which to keep (chapter 10); a heavy video's copy to play from (chapter 11)
   admin.py             276  phone uploads, the ingest, restart, /stats, backups
   encoder.py           174  SigLIP's text (and image) side, for the photo app: loaded when asked for, let go when idle
   compare.py           340  an experiment: a fixed list of searches ranked by a second model beside the app's own, voted on, and a report, at /compare (chapter 10)

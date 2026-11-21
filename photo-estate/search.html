@@ -1924,7 +1924,7 @@ function vCant() {                                    // this browser cannot pla
   const r = shown();
   vid.remove();
   if (!isVideo(r) || $(".v-cant", cur.el)) return;
-  cur.el.insertAdjacentHTML("beforeend", `<div class="v-cant vglass" role="status">This browser can’t play this video.<br><a href="/video/${r.sha}" download="${esc(fileName(r))}">Download it</a></div>`);
+  cur.el.insertAdjacentHTML("beforeend", `<div class="v-cant vglass" role="status">This browser can’t play this video.<br><a href="/video/${r.sha}?original=1" download="${esc(fileName(r))}">Download it</a></div>`);
 }
 vid.addEventListener("error", () => { if (VIDEO.failed(vid)) vCant(); });
 vid.addEventListener("loadedmetadata", () => {
@@ -2255,7 +2255,7 @@ async function share() {
   if (!r) return;
   const still = () => VO() === o && shown() === r;   // (not closed, and no other photo, since)
   if (o.share?.sha !== r.sha) logEvent("share", o.list, o.items[o.i], o.i);   // once per photo, not on the second tap
-  const name = fileName(r), src = (isVideo(r) ? "/video/" : "/original/") + r.sha;
+  const name = fileName(r), src = isVideo(r) ? `/video/${r.sha}?original=1` : "/original/" + r.sha;   // (the stored file, not the copy it plays from)
   const download = () => { const a = document.createElement("a"); a.href = src; a.download = name; a.click(); };
   if (!navigator.canShare) return download();        // desktop browsers: just download it
   if (o.share?.sha === r.sha) return doShare(o.share.file, still);

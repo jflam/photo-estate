@@ -412,7 +412,10 @@ Every result is the photo's `meta` plus its `sha`: `ext`, `taken`, `local`, `tz`
 `fnumber`, `exposure`, `iso`, `place`, `city`, `region`, `country`, `county`, `place_inferred`,
 `event`, `event_title`, `trip`, `trip_title`. A video's row also has `kind: "video"` and `dur`; a
 Live Photo's still has `live`, its clip's sha; a photo's row has none of the three, so it is what it
-was before there were videos. A row of a stack with a Live Photo in it also has `stack_live`: the clip the
+was before there were videos. `/video/<sha>` sends a heavy video's 1080p copy once the background job has made it (`Images._streams`,
+after the thumbnails and previews; chapter 16) and the stored file with `?original=1`; its `ETag` says
+which, and a `Range` with another file's `If-Range` gets the whole of this one. A row of a stack with a
+Live Photo in it also has `stack_live`: the clip the
 stack plays when its tile is held, the row's own if it is a Live Photo, else that of the stack's best shot
 that is one (`Catalog.stack_live`). A search with words adds `at` to a video's row: the seconds into it
 where they match best (`Catalog.moment`), so a player can start there. The page needs all of it for the details panel without

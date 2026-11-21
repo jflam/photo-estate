@@ -221,4 +221,6 @@ final class MovieNote: UIView {
 extension Server {
     /// Where a video (or a Live Photo's clip, by the clip's own sha) streams from.
     static func video(_ sha: String) -> URL { baseURL.appendingPathComponent("video/\(sha)") }
+    /// The file as it is stored, to save or share: `video(_:)` may be a lighter copy the server made to play from.
+    static func videoFile(_ sha: String) -> URL { video(sha).appending(queryItems: [URLQueryItem(name: "original", value: "1")]) }
 }

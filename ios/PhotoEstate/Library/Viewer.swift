@@ -212,7 +212,7 @@ struct ViewerScreen: View {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             var file: URL?
             if tile.isLocal { file = await LocalPhotos.shared.original(sha) }
-            var req = URLRequest(url: video ? Server.video(sha) : Server.baseURL.appendingPathComponent("original/\(sha)"))
+            var req = URLRequest(url: video ? Server.videoFile(sha) : Server.baseURL.appendingPathComponent("original/\(sha)"))
             req.timeoutInterval = 20
             if file == nil, !tile.isLocal, let (tmp, resp) = try? await URLSession.shared.download(for: req), (resp as? HTTPURLResponse)?.statusCode == 200 {
                 let dest = dir.appendingPathComponent(name)
@@ -269,6 +269,11 @@ struct InfoView: View {
                         Label("On this iPhone, not yet on your server. Places, people and the rest come once it is.", systemImage: "arrow.up.circle")
                             .font(.footnote).foregroundStyle(.secondary).padding(.top, 6)
                     }
+                }
+                if photo.video {
+                    fact("play.rectangle", "Video", photo.dur.map { Tile.clock(Float($0)) } ?? "")
+                } else if photo.live != nil {
+                    fact("livephoto", "Live Photo", "Press and hold the photo to play it")
                 }
                 if photo.place != nil || photo.lat != nil { place }
                 if photo.event != nil || photo.trip != nil {
@@ -331,6 +336,21 @@ struct InfoView: View {
         }
         .buttonStyle(.plain)
         .disabled(photo.city == nil)
+    }
+
+    /// Something said of the photo that leads nowhere: that it is a video and how long, or a Live Photo.
+    private func fact(_ symbol: String, _ title: String, _ detail: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: symbol).font(.system(size: 17)).foregroundStyle(Color.sunLit).frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.title(17)).foregroundStyle(.primary)
+                if !detail.isEmpty { Text(detail).font(.footnote).foregroundStyle(.secondary).monospacedDigit() }
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(Color.well, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     private func link(_ symbol: String, _ title: String, _ detail: String, _ run: @escaping () -> Void) -> some View {

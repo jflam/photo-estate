@@ -468,7 +468,7 @@ class PhotoApp:
         if re.fullmatch(r"/api/albums/(\d+)/download", path):
             return Response(501, b"the album download is streamed: ask the HTTP server", "text/plain")
         if path.startswith("/video/"):    # so a test, or a caller with no socket, can still ask whether it is there
-            got = self.images.video_file(path[len("/video/"):])
+            got = self.images.video_file(path[len("/video/"):], one("original") == "1")
             return Response(501, b"a video is streamed: ask the HTTP server", got[1]) if got else NOT_FOUND
         if self.intake and path.startswith(("/setup", "/api/intake")):
             return Response.of(self.intake.handle("GET", path, qs, None, req.local))
@@ -645,7 +645,7 @@ def make_handler(app: PhotoApp):
             if method == "GET" and (m := re.fullmatch(r"/api/albums/(\d+)/download", path)):
                 return self.download(int(m[1]))
             if method == "GET" and path.startswith("/video/"):
-                return self.video(path[len("/video/"):])
+                return self.video(path[len("/video/"):], parse_qs(urlparse(self.path).query).get("original") == ["1"])
             body = b""
             if method == "POST":
                 try:
@@ -678,19 +678,26 @@ def make_handler(app: PhotoApp):
             self.close_connection = client_closes or unread
             self.send(Response.of(got))
 
-        def video(self, sha: str):
+        def video(self, sha: str, original: bool = False):
             """GET /video/<sha>: a video, or a Live Photo's clip, as stored, read from the disk as it is sent
             (a video can be gigabytes). Answers a Range request with 206 and just those bytes: a player asks
             for the start, then the index at the end, then wherever it is dragged to, and Safari plays nothing
             from a server that cannot. An unsatisfiable range is a 416."""
             with app.live.gate:              # which file: one look at the catalog, then the gate is let go
-                got = app.images.video_file(sha)
+                got = app.images.video_file(sha, original)
             if got is None:
                 return self.send(NOT_FOUND)
             src, ctype, name = got
             size = src.stat().st_size
+            # Which file this is, so a browser that holds part of the stored file never joins it to part of
+            # the copy made since (or the other way round): a Range sent with another file's If-Range gets
+            # the whole of this one.
+            etag = f'"{sha[:16]}-{"c" if src.parent.name == "streams" else "o"}"'
+            asked = self.headers.get("Range")
+            if asked and self.headers.get("If-Range") not in (None, etag):
+                asked = None
             try:
-                span = byte_range(self.headers.get("Range"), size)
+                span = byte_range(asked, size)
             except ValueError:
                 return self.send(Response(416, b"", "text/plain", "no-store", {"Content-Range": f"bytes */{size}"}))
             start, end = span or (0, size - 1)
@@ -698,9 +705,10 @@ def make_handler(app: PhotoApp):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(end - start + 1))
             self.send_header("Accept-Ranges", "bytes")
+            self.send_header("ETag", etag)
             if span:
                 self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-            self.send_header("Cache-Control", "private, max-age=2592000, immutable")   # named by its hash, as the images are
+            self.send_header("Cache-Control", "private, max-age=2592000")   # named by its hash; not immutable: a copy to play from may come
             self.send_header("Content-Disposition", f"inline; filename*=UTF-8''{quote(name)}")
             self.end_headers()
             left = end - start + 1
