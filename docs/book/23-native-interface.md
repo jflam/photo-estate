@@ -17,6 +17,16 @@ than from a text field. This chapter walks through the Library and Search tabs a
 *Library, Search, a search for "kitten", and a photo's details, in the iOS Simulator against the 104-photo
 demo library.*
 
+<table>
+<tr>
+<td width="25%"><img src="../screenshots/iphone-videos-grid.jpg" alt="Two videos with their lengths, and a Live Photo with its mark, in the grid"></td>
+<td width="25%"><img src="../screenshots/iphone-video-playing.jpg" alt="A video playing in the viewer, with its bar of controls above the actions"></td>
+</tr>
+</table>
+
+*Videos and a Live Photo in the grid, and a video in the viewer, in the iOS Simulator against the
+library `tools/video_demo.py` builds (chapter 17).*
+
 ## Principles
 
 Chapter 13 gave the web page four; the phone keeps them and adds two.
@@ -84,6 +94,11 @@ rather than jumping, and the grid **anchors on the first photo of the top row** 
 changing size or receiving a sync keeps you looking at the same photos. A new *question* instead scrolls
 to the top.
 
+A video's tile carries a small dark pill at its top right with a play mark and its length (`0:12`,
+`Tile.clock`); a Live Photo's still carries the `livephoto` symbol in the same corner. The pill is the
+same `Badge` as a stack's count, which sits at the top left. VoiceOver reads "video, 0:12" or "Live
+Photo" first.
+
 Each section has a caption: the month, then its three commonest places and a count ("March 2017
 · Archway · Frankfurt am Main · Hornepayne · 3 photos"). The big title ("Library") sits inside the scroll
 view above the first photo, so it scrolls away with them and the photos reach the top of the screen.
@@ -131,7 +146,40 @@ flowchart LR
 - **Share sends the original.** The share action downloads `/original/<sha>` to a temporary file with
   the original name, so **Save Image** keeps its date and place (the same reason as the web page's share,
   chapter 13). If the server can't be reached, it falls back to the largest copy the phone has: the
-  preview, then the thumbnail.
+  preview, then the thumbnail. A video is downloaded from `/video/<sha>` to a file of its own name, so
+  the sheet offers **Save Video**; with no server there is nothing to share, and the caption says
+  "Videos are shared from your server, which isn’t reachable". A Live Photo is shared as its still.
+
+### Videos and Live Photos
+
+A video's page is a photo's page with a player in it ([Movie.swift](../../ios/PhotoEstate/Library/Movie.swift)):
+
+- **`MovieView`** is an `AVPlayerLayer` inside the page's image view, over the poster, so it zooms and
+  pans with it (there is no `/large/` for a video). When the page becomes the one up (`viewDidAppear`),
+  `PhotoPage.play` gives it an `AVPlayerItem` for `/video/<sha>` and it starts, at the search's `at` when
+  a search found it there (more than half a second in). AVPlayer streams it by byte ranges; nothing is
+  kept. When the page goes (`viewDidDisappear`), `stop` releases the player and what it had loaded.
+- **The bar is outside the pager.** `VideoBar` (play or pause, the time, a playhead, the time left)
+  sits in the viewer's bottom bar above Share, Details and More like this, so dragging the playhead
+  never turns the page. It watches a `Playback`, the one object that knows which page's video is up; a
+  page attaches its player when it is up and detaches it when it goes. Play at the end starts from the
+  beginning again, as Photos does.
+- **Waiting and failing are said.** A spinner shows while the player waits for the network. If the item
+  fails, or is not ready after 12 seconds, the poster stays and a `MovieNote` (a short line on glass)
+  says "Videos play from your server, which isn’t reachable right now." (or, for a video still in the
+  phone's own Photos, that it can't be read). When the server is back the page tries again.
+- **Its own shape.** The catalog's shape for a video can be a guess; the page takes the poster's and then
+  the picture's own when they differ by more than 2%.
+
+A **Live Photo** shows LIVE (with the `livephoto` symbol) under the caption. Its page loads the clip
+(`/video/<clip sha>`, from the still's `live`) when it comes up, in a second `MovieView` that fills the
+still exactly and is hidden. **Touch and hold** the photo (a quarter of a second) and the clip plays
+over the still, with a tap of haptic feedback; let go, or reach its end, and the
+still is back. Held with no server, it says so for a moment.
+
+The video paths were tried in the iOS Simulator (iOS 27.0, iPhone 18 Pro) against `tools/video_demo.py`'s
+library, not yet on a real iPhone. Sound, **Save Video** into Photos and dragging the playhead were not
+exercised.
 
 ### Details, like the back of a print
 
@@ -158,7 +206,8 @@ a blank screen:
 - A row of **ideas**, tappable descriptions ("sunset over water", "dog on the beach", "a child laughing").
 - **Trips** as a row of large cards (cover photo, a title, dates and a count).
 - **Through the years**, a bar per year with the count; tapping one searches that year.
-- **Favourites** and **Places**, each with a count.
+- **Favourites** and **Places**, each with a count, and **Videos**, with its count, when the replica holds
+  any videos.
 
 **While typing.** The page is replaced by suggestions: first the literal search (`"kitten"`, "Photos that
 look like this"), then the filters that *contain what you typed* (`Vocab.suggest`, chapter 21), each with
@@ -172,11 +221,13 @@ what is on this iPhone" in the sun's colour.
 
 ### Filters
 
-The chips under the field are **Where, People, Albums, Trips, When, Camera, Favourites**. Each opens a
+The chips under the field are **Where, People, Albums, Trips, When, Camera, Favourites, Videos**. Each opens a
 system sheet (`FilterSheet`) whose content comes from the replica: the values of the facet with live
 counts (and a count of zero when a value would give nothing, rather than vanishing); a list of trips with
 their dates; or a year-and-month picker with a bar of photos per month. A chosen filter's chip shows its
-first value with a "+N" for the rest and a small cross to clear it; Favourites is a toggle.
+first value with a "+N" for the rest and a small cross to clear it; Favourites and Videos are toggles,
+with no sheet. Videos keeps to videos (`p.kind='video'` on the phone, `kind=video` to the server), and
+the heading is then "Videos" and counts videos, not photos.
 
 ## Where to look in the code
 
@@ -185,6 +236,7 @@ first value with a "+N" for the rest and a small cross to clear it; Favourites i
 | The question and the answer, `Router` | [LibraryModel.swift](../../ios/PhotoEstate/Library/LibraryModel.swift) |
 | The grid layout, scrubber, headings, pinch | [Grid.swift](../../ios/PhotoEstate/Library/Grid.swift) |
 | The viewer, pager, zoom, details, share | [Viewer.swift](../../ios/PhotoEstate/Library/Viewer.swift) |
+| A video and a Live Photo's clip: `MovieView`, `Playback`, `VideoBar`, `MovieNote` | [Movie.swift](../../ios/PhotoEstate/Library/Movie.swift); `PhotoPage.play`, `stop`, `holding` in Viewer.swift |
 | The Search tab and its landing page | [SearchView.swift](../../ios/PhotoEstate/Library/SearchView.swift) |
 | Filter sheets | [FilterSheet.swift](../../ios/PhotoEstate/Library/FilterSheet.swift) |
 | The Library tab and its bar | [LibraryView.swift](../../ios/PhotoEstate/Library/LibraryView.swift) |

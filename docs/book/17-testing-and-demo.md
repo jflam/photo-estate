@@ -30,7 +30,8 @@ tools in `tools/`.
 | `tests/test_job_lifecycles.py` | The background jobs' lifecycles (issue #86), with hooks, `threading.Event`s and small child processes, no model and no app: an `IngestJob` step not in `MOVES` raises, `start()` is refused while a run is being followed and cancels an armed quiet timer, and `status()` copying the log while a line is appended is safe; a task cancelled between the worker's `SELECT` and its claim, or between the claim and the agent's start, never runs, and one cancelled as it completes (or while running) stays cancelled; a failed task's error has the whole of stderr (the reader is joined); the timeout kills an agent that ignores SIGTERM, as `core.procs.stop` does; `Tasks.update` refuses unknown columns; an intake job cancelled while queued is never claimed, `Store.move` refuses moves `JOB_MOVES` does not list, and a cancel kills a stage that ignores SIGTERM; the sync feed sends a current device no deletions, each deletion once over a many-page sync, and every missed one to a device that is behind |
 | `tests/test_events.py` | The steps' event lines (issue #84, [chapter 16](16-operations.md)), no model: `core.events` round-trips progress and events with the version, reads a newer `1.x`, and returns `None` (without raising) for another major version, an unknown type and malformed lines; `IngestJob._follow` on a fake child reloads the catalog at `catalog_ready` before the run ends, also when the human lines are reworded, and does nothing for the old wording without the events, keeping event lines out of the page's log; the intake engine's bar follows a stage's `progress` events (through `Store.set`) and not its human lines, which go in the job's log; and the emitters on a tiny catalog in `tmp_path`: `estate.py` ingest/link (and exif with exiftool), `places.py`, `embed.py` and `faces.py` with nothing to do, and `ingest-iphone.sh` with faked `uv` and `sqlite3`, both alone and run by a real `IngestJob`; none of them prints a `@@pe` line unless asked |
 | `tests/test_video.py` | Videos and Live Photos with no app and no model (fast tier), on small videos it makes with PyAV: which frames are read and that they come out upright, posters, which frames are kept, a video's rows, the Live Photo pairing rule (what marks a clip, which still it takes, what must not pair, running it again), and videos in a loaded catalog (best-frame scoring, no stacks, an incremental load) |
-| `tests/test_video_app.py` | Videos in the running app over real HTTP (slow tier, needs the search model), on the library `tools/video_demo.py` builds: a search finding a video at the right scene, Live Photos, posters, `/video` with `Range`, "more like this" from a video, `kind` for an agent, `embed.py stats` |
+| `tests/test_video_app.py` | Videos in the running app over real HTTP (slow tier, needs the search model), on the library `tools/video_demo.py` builds: `/api/info`'s count and `kind`, a search finding a video at the right scene and saying when (`at`), Live Photos (the still's `live`, the clip in no list and playable at `/video/`), posters, `/video` with and without `Range`, "more like this" from a video, `kind` for an agent, `embed.py stats` |
+| `tests/test_video_browser.py` | Videos and Live Photos on the page, in a real browser (slow tier; below) |
 | `tests/test_http_util.py` | `http_util.py`: `Response` can't be changed, `int_param`, `byte_range` (what a `Range` header asks for, and when it is a 416), bounded bodies, the auth rule; months outside 1-12; intake's `job` and `after`; the setup server's 400 and 413 |
 | `tests/test_core.py` | `core/` (issue #85): every module's file types are what they were, from one list; `GET /original/<sha>` answers 200 with the right `Content-Type` for `.heif`, `.tif`, `.tiff` and `.avif`; fresh databases from every open path match `tests/fixtures/schema_baseline.json` (captured from the code before), an old `change_sets`/`change_items` gains its columns with its rows kept, a copy of the demo catalog only gains tables, and `favorites` exists once the app opens; the default ports are distinct and the task agent's MCP URL follows the app's port; the screenshot cases in `tests/fixtures/screenshot_rules.json`, and that `Screenshots.swift` lists the same screen sizes |
 
@@ -48,7 +49,7 @@ the exit code and the script's last lines. Any other `test_*.py` is an ordinary 
 [`tests/test_harness.py`](../../photo-estate/tests/test_harness.py), which checks the runner itself (a
 script that fails is reported as failed, a slow one is left out of the fast tier, no script is missing
 from the list) and that the modules the light entry points import load no torch, transformers or
-onnxruntime. `tests/test_photo_app.py`, `tests/test_http_util.py`, `tests/test_core.py`, `tests/test_compare_app.py`, `tests/test_lifecycle.py`, `tests/test_live_races.py`, `tests/test_faces_consistency.py`, `tests/test_job_lifecycles.py`, `tests/test_events.py` and `tests/test_pages.py` are native too, and in the fast
+onnxruntime. `tests/test_photo_app.py`, `tests/test_http_util.py`, `tests/test_core.py`, `tests/test_compare_app.py`, `tests/test_lifecycle.py`, `tests/test_live_races.py`, `tests/test_faces_consistency.py`, `tests/test_job_lifecycles.py`, `tests/test_events.py`, `tests/test_pages.py` and `tests/test_video.py` are native too, and in the fast
 tier: they build the app in process instead of starting it. So is `tests/test_types.py`, which checks the
 typed contracts below: `Catalog`'s fields, a demo catalog's types with and without scorers, the state
 enums against the strings already on disk and on the wire, and pyright itself.
@@ -77,6 +78,9 @@ Each script is marked with what it needs (`pyproject.toml` declares the markers)
 
 `tests/test_pages_browser.py` is `slow` and `server` too, but an ordinary pytest file, not a script: it
 needs a browser as well, and skips without one (see "The pages' script modules" below).
+`tests/test_video_app.py` and `tests/test_video_browser.py` are ordinary pytest files marked `slow`,
+`server` and `model`: each builds `tools/video_demo.py`'s library in a scratch folder (about 30 s, with
+the search model) and starts the app on it, never on `demo/`.
 
 By default pytest runs each script with its own Python, the environment `uv sync` builds from
 [`pyproject.toml`](../../photo-estate/pyproject.toml) and its lockfile
@@ -146,8 +150,8 @@ which needs a browser or builds anything:
   the service worker are left out. TypeScript is the only package
   ([`app/package.json`](../../photo-estate/app/package.json), pinned, with its lockfile); it checks, it
   compiles nothing, and no part of it reaches the browser.
-- **Unit tests.** [`app/tests/*.test.js`](../../photo-estate/app/tests/) run under Node's built-in runner
-  (`npm test`, which is `node --test`): `esc` against text that would break out of an attribute; `api`
+- **Unit tests.** [`app/tests/*.test.js`](../../photo-estate/app/tests/) (209 tests, under a second) run
+  under Node's built-in runner (`npm test`, which is `node --test`): `esc` against text that would break out of an attribute; `api`
   against a stub `fetch` for every way a request ends (JSON, an error with a JSON body, an error
   without, no answer, a timeout, a cancellation); the state machine's legal and refused steps;
   `latest()` dropping the answer to a question that was replaced; `poll()` stopping at its bounds, when
@@ -181,6 +185,12 @@ which needs a browser or builds anything:
   `viewer-flow.test.js`, on a model of the browser's history: open, next and previous, close; close
   while still opening; the close button against the Back button; the one-second fallback when the
   browser never reports the entry gone; and that nothing the viewer knew survives `closed`.
+  `video-flow.test.js`, on a stand-in for a `<video>` element: a video plays from `/video/<sha>` with the
+  search's `at` as `#t=`; every way out of `video` or `live` (the next photo, closing, LIVE let go, the
+  clip's end) releases the element (no `src`, `load()` called), so two videos never hold a stream at
+  once; an `error` from the playing video is `failed`, one from a Live Photo's clip goes back to the
+  still, and one from an element already let go changes nothing; LIVE pressed on a video does nothing,
+  and a video's end leaves it where it ended; a browser that refuses sound plays it muted; and Space plays and pauses only a video.
 
 On the Python side, `tests/test_pages.py` (fast tier) holds the two together: every page imports only
 modules that are served and names they export, no page has grown its own copy of `esc` or `api` again,
@@ -219,12 +229,25 @@ and are skipped when there is none. CI does not run them (they are slow, and it 
 uv run pytest tests/test_pages_browser.py     # about 45 s once the servers' environments exist
 ```
 
+**Videos in a browser.** [`tests/test_video_browser.py`](../../photo-estate/tests/test_video_browser.py)
+(slow tier) plays them on `search.html`, on `tools/video_demo.py`'s library: the Videos chip shows only
+the videos, each tile with its length and a Live Photo's with LIVE; a video opens playing, Space pauses
+and plays it, the next video takes its place with no second stream, and closing leaves nothing playing;
+a typed search ("waterfall") opens "Coast to mountains" at the moment the words match, 8 to 12 seconds
+in; a video the browser cannot play shows its poster, says so and offers the file; and LIVE, held, plays
+the clip over the still (nothing of it was asked for before), and let go, the still is back. All with
+nothing said in the console. Playwright's own Chromium has no H.264 decoder, so these tests use
+installed Google Chrome (Playwright's `channel="chrome"`), else Playwright's WebKit, and are skipped when
+neither is there. A file the browser cannot decode is simulated, by the `error` event of the video
+element, not tried with a real HEVC or `.avi` file.
+
 Those tests cover the regressions; they do not look at the pages. For a change to a page, still drive
 the real page on the demo library with Playwright, in light and dark, and read the console: a module
 that fails to load, or a name a page's script no longer has, shows there and nowhere else.
 
 The iPhone app has no unit tests of its own. It was checked in the iOS Simulator against the demo
-library (104 photos), with the server up and then stopped; `ios/project-sim.yml` builds it for a
+library (104 photos), with the server up and then stopped, and its videos and Live Photos against
+`tools/video_demo.py`'s library in the Simulator on iOS 27.0 (iPhone 18 Pro), not yet on a real iPhone; `ios/project-sim.yml` builds it for a
 Simulator older than the upload extension needs. The demo is what makes that cheap: `embed.py serve
 --demo --port 8791` and the app's `SERVER_BASE` pointed at it. Screenshots in the README and chapter 23
 are taken that way.

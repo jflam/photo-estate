@@ -173,11 +173,22 @@ The extra columns on `photos` are computed once when a row arrives, so that no q
 | `dup` | The feed's flag | Hiding near-identical shots |
 | `epoch` | The feed's epoch when the row arrived | Dropping rows a new epoch no longer has |
 
+Three columns hold what a row says of videos, as the server sent it: `kind` (`video`, or empty for a
+still), `dur` (a video's length in seconds) and `live` (on a Live Photo's still, its clip's sha). The grid's
+badges, the Videos filter and `is:video` read them, and the viewer plays `/video/<sha>` by them
+([chapter 23](23-native-interface.md)). A search's `at` (where in a video the words match best) comes with
+a search the server answers, and is never kept.
+
 `apply()` upserts on `sha` (`INSERT ... ON CONFLICT(sha) DO UPDATE`), then rewrites that photo's `tags`
 and `fts` rows, so a changed row can never leave a stale tag behind. For the web page, one photo's name
 lives in two places; here it is in four, and one function keeps them in step.
 
-The replica needs no migrations. It is excluded from backup and treated as disposable: if
+The replica has one small migration: `Catalog.migrate` adds any of the columns a newer build reads that
+a `catalog.db` made by an older build lacks (`stack` and `best` for stacks and "Best first"; `kind`, `dur`
+and `live` for videos), with `ALTER TABLE ... ADD COLUMN`, when the file is opened. They fill in as the
+server sends those rows again (a row changes when the server begins to send a new field of it); until
+then every photo held is a still, as it always was. Nothing else is migrated. It is excluded from backup
+and treated as disposable: if
 `catalog.db` fails to open, `Catalog.init` deletes it and its `-wal` and `-shm` files and starts again,
 and the next sync fills it from nothing.
 

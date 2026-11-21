@@ -21,6 +21,7 @@ The web page holds the whole question in one object, `S` (chapter 13). The phone
 | `event` | `event` | Scope to an event |
 | `from`, `to` | `from`, `to` | Months, as `year * 12 + month - 1`, inclusive |
 | `fav`, `oldFirst` | `fav`, `sort` | Favourites only; the order |
+| `videos` | `video` | Videos only: `kind=video` to the server, as the page sends it |
 
 Because the fields match, a `Query` can be turned back into the server's query string
 (`Query.items(...)`) for the searches only the server can answer. The same object drives both paths.
@@ -83,6 +84,7 @@ left over. A clause is one SQL condition and its arguments:
 | `trip`, `event` | `p.trip IN (...)`, `p.event = ?` |
 | `date` | `p.ym BETWEEN ? AND ?` |
 | `fav` | `p.fav = 1` |
+| `videos` | `p.kind = 'video'` |
 | `typed` | Typed filters: `place:` and `camera:` and so on, with `instr()` over the lower-cased column; `year:2010-2012` as an integer range; `date:2010-07` as a prefix |
 | `names`, `places` | What the reader found. A place reads as `p.place_words LIKE '% san diego %'`, so "Paris" matches the city and not "Parish" |
 
@@ -92,6 +94,8 @@ means either.
 
 Typed filters are parsed with a regular expression before anything else and stripped from the text,
 exactly like the server: `sunset place:denmark` becomes the clause `place` and the words "sunset".
+`is:video` (or `is:videos`) reads as `p.kind='video'`, so it works offline too; the server's
+`is:photo`, which leaves videos out, is not read on the phone.
 
 ## Answering: tiles, counts, months
 
@@ -99,7 +103,7 @@ Everything the Library draws comes from three queries over the plan
 ([Query.swift](../../ios/PhotoEstate/Catalog/Query.swift), the `Catalog` extension):
 
 - **`tiles(plan)`**: every selected photo in time order, as a `Tile` (`sha`, aspect ratio, local time,
-  city, favourite flag). A `Tile` is deliberately tiny: a library of 100,000 is held in memory as
+  city, favourite flag; for a video its length, and whether a still is a Live Photo). A `Tile` is deliberately tiny: a library of 100,000 is held in memory as
   100,000 of them, and the grid needs nothing else to lay itself out (chapter 23). Undated photos sort
   last in either direction (`ORDER BY whenk = '', whenk`).
 - **`counts(facet, plan)`**: the live counts behind each filter sheet. It follows the server's rule from
@@ -123,7 +127,10 @@ GET /api/search?q=dog+in+the+snow&names=0&limit=300&cursor=0&dedupe=1
 GET /api/similar?sha=...
 ```
 
-(`Remote.search` in [Query.swift](../../ios/PhotoEstate/Catalog/Query.swift).) The response has the same
+(`Remote.search` in [Query.swift](../../ios/PhotoEstate/Catalog/Query.swift).) With the Videos chip on,
+`kind=video` goes too, so "a birthday cake" among the videos is ranked by the server by each video's
+best frame, and each row says where in its video that frame is (`at`), which the viewer starts from.
+The response has the same
 rows as the replica holds, so a ranked result is shown with the same grid and viewer, flat rather than
 grouped by month (`grain = 0`), with a "best match first" subtitle. The whole question goes, filters
 included, so "ben on a beach" is read **by the server** (names first, then "on a beach" ranked) and the

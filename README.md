@@ -154,10 +154,13 @@ lighthouses first, then the sea and sunsets around them.
 
 **Videos and Live Photos.** A video is searched by stills taken from it every few seconds, through
 the same model as the photos, so "birthday cake" finds the ten seconds of cake in a party video, and
-the result says where in it they are. A Live Photo is one item, its still, with the short clip beside it; the clips
-are not counted or shown as videos of their own. Videos stream from your own disk, with nothing to
-install: frames are read with PyAV, which carries its own FFmpeg. `is:video` in a search, or
-`kind=video` for an agent, keeps to videos.
+it opens playing at that moment. A Live Photo is one item, its still: hold its LIVE control (on the
+iPhone, the photo) and the short clip plays over it. The clips are not counted or shown as videos of
+their own. Videos stream from your own disk, with nothing to install: frames are read with PyAV, which
+carries its own FFmpeg. The Videos filter, `is:video` in a search, or `kind=video` for an agent keeps
+to videos.
+
+![A video playing in the viewer, with its details](docs/screenshots/videos-viewer.jpg)
 
 **Every photo's story.** The viewer shows local time and timezone, place (worked out offline from
 GPS), the event and trip it belongs to, camera, lens and exposure. Each of those is a link to the
@@ -165,7 +168,7 @@ photos that share it.
 
 ![The photo viewer with its details panel](docs/screenshots/viewer-details.jpg)
 
-**Filters with live counts.** Where, People, Albums, Trips, When, Camera and Favourites narrow
+**Filters with live counts.** Where, People, Albums, Trips, When, Camera, Favourites and Videos narrow
 whatever is showing, and combine with a description. The web app is laid out as the iPhone app is:
 a Library tab (every photo, or a card a year or a month) and a Search tab, with the same view
 options (order, five photo sizes, stack near-identical shots, hide screenshots).
@@ -216,6 +219,9 @@ and full-screen copies of favourites and anything you've opened, within a size c
 - **Offline.** Everything above works on a plane. Describing a photo ("dog in the snow", "More like
   this") needs the image model, so online it asks your server; offline it falls back to matching
   words in names, places, albums and captions, and says so.
+- **Videos and Live Photos.** A video's tile shows its length and its page plays it, streamed from your
+  server with its own play bar; touch and hold a Live Photo to see it move. Videos are not kept on the
+  phone, so with no network a video shows its poster and says why.
 - **Uploads.** An optional upload extension sends new photos from the phone to your server in the
   background (see [Bring your own photos](#bring-your-own-photos)).
 
@@ -371,8 +377,8 @@ phone yet: building the iPhone app (it needs Xcode on a Mac), touching the real 
 - **[docs/README.md](docs/README.md)**: every other document (guides, plans, research and
   measurements) and where it lives.
 
-In round numbers the project is 22,000 lines of code: a 7,100-line Python server, 4,300 lines of web
-pages, a 5,300-line iPhone app, and 5,000 lines of tests and tools.
+In round numbers the project is 35,000 lines of code: a 9,700-line Python server, 5,800 lines of web
+pages and their script modules, a 5,700-line iPhone app, and 13,000 lines of tests and tools.
 
 ## What's next
 
@@ -387,7 +393,7 @@ Roughly in order, the larger ones:
 3. **Text in photos** ([#19](https://github.com/jflam/photo-estate/issues/19)): OCR on documents,
    receipts, signs and screenshots.
 4. **The rest of videos** ([#20](https://github.com/jflam/photo-estate/issues/20)): videos are searched,
-   played and in the iPhone app; left are a 720p copy for playing away from home, faces in videos, saving
+   played and in the iPhone app; left are trying them on a real iPhone, a 720p copy for playing away from home, faces in videos, saving
    a true Live Photo back to the phone, and keeping videos on the phone for offline use
    ([VIDEO-PLAN.md](docs/notes/VIDEO-PLAN.md)).
 5. **Event captions** ([#21](https://github.com/jflam/photo-estate/issues/21)) from a local

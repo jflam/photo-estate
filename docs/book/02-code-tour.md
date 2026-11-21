@@ -2,61 +2,65 @@
 
 ## How much code is there?
 
-Measured with `tokei` on 2026-11-19 (159 commits, 2026-11-11 to 2026-11-19), counting lines of code
+Measured with `tokei` on 2026-11-21 (219 commits, 2026-11-11 to 2026-11-21), counting lines of code
 (not blanks or comments), with the CSS and JavaScript inside each web page counted as code, and
 leaving out the checked-in demo library and every Markdown file:
 
 | | Files | Code lines |
 |---|---:|---:|
-| **Server** (Python: `photo-estate/*.py` and `intake/`) | 28 | 7,521 |
-| **Web pages** (seven pages, the shared stylesheet, the service worker) | 9 | 4,434 |
-| **iPhone app** (Swift, plus `deploy.sh`) | 29 | 5,317 |
-| Shell scripts the pipeline runs (`pull-drive.sh`, `pull-icloud.sh`, `ingest-iphone.sh`) | 3 | 126 |
-| Tests (`tests/`: 16 self-running scripts, the pytest harness and its test, in-process tests) | 19 | 2,436 |
-| Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts, square export and embedding) | 25 | 3,213 |
+| **Server** (Python: `photo-estate/*.py`, `intake/` and `core/`) | 39 | 9,691 |
+| **Web pages** (seven pages, the shared stylesheet, the service worker) | 9 | 4,664 |
+| **The pages' script modules** (`app/*.js`, without their tests) | 21 | 1,132 |
+| **iPhone app** (Swift, plus `deploy.sh`) | 30 | 5,751 |
+| Shell scripts the pipeline runs (`pull-drive.sh`, `pull-icloud.sh`, `ingest-iphone.sh`) | 3 | 130 |
+| Tests (`tests/`: 16 self-running scripts, 17 pytest files, `conftest.py`) | 34 | 6,847 |
+| The script modules' unit tests (`app/tests/`) | 22 | 2,619 |
+| Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts, square export and embedding, the video demo) | 27 | 3,506 |
 | The cloud preview on the Mac mini (`deploy/*.sh`) | 4 | 330 |
-| **Total** | **116** | **23,377** |
+| **Total** | **189** | **34,670** |
 
-The web pages' 4,434 lines are 2,979 of JavaScript, 905 of CSS and 550 of HTML markup. What you run
-(the server, its pages, the iPhone app and the three pipeline scripts) is **17,398 lines of code**:
+The web pages' 4,664 lines are 3,085 of JavaScript, 950 of CSS and 629 of HTML markup (tokei counts
+the script of `setup.html`, a module it does not parse, as markup). What you run (the server, its pages
+and their modules, the iPhone app and the three pipeline scripts) is **21,368 lines of code**:
 
 ```mermaid
-pie showData title "What you run, by part (17,398 lines)"
-    "Server: Python (7,521)" : 7521
-    "Web pages (4,434)" : 4434
-    "iPhone app: Swift (5,300)" : 5300
-    "Shell (143)" : 143
+pie showData title "What you run, by part (21,368 lines)"
+    "Server: Python (9,691)" : 9691
+    "Web pages and their modules (5,796)" : 5796
+    "iPhone app: Swift (5,734)" : 5734
+    "Shell (147)" : 147
 ```
 
 When this book was first written, on 2026-11-13, the server and its pages were 5,483 lines and there
-was no iPhone app. Six days later the server and pages are 11,748 lines and the iPhone app is 5,300.
-A few things stand out:
+was no iPhone app. Eight days later the server, pages and modules are 15,487 lines and the iPhone app
+is 5,734. A few things stand out:
 
-- **Most of the code is interface.** The web pages and the iPhone app are 9,560 lines, 56% of what
-  you run. A justified grid, a viewer that grows out of its tile, pinch zoom and a filter sheet with
-  live counts take more code than any model.
+- **Most of the code is interface.** The web pages, their modules and the iPhone app are 11,547 lines,
+  54% of what you run. A justified grid, a viewer that grows out of its tile, pinch zoom, a filter
+  sheet with live counts and a video player take more code than any model.
 - **The AI models are a small fraction of the code.** The embedding job is about 150 lines in
-  `embed.py` (`_decode`, `_decode_video` and `cmd_run`, videos included); face detection, alignment and recognition (`Models`) are
-  about 80 lines in `faces.py`; the two "best photo" scorers are applied in under 100 lines of
-  `scores.py`. The rest deals with the unglamorous parts: reconciling metadata from three services,
-  laying out a grid, keeping a phone's copy in step, and making it fast.
+  `embed.py` (`_decode`, `_decode_video` and `cmd_run`, videos included); face detection, alignment
+  and recognition (`Models`) are about 80 lines in `faces.py`; the two "best photo" scorers are applied
+  in under 100 lines of `scores.py`. The rest deals with the unglamorous parts: reconciling metadata
+  from three services, laying out a grid, keeping a phone's copy in step, and making it fast.
 - **The server has grown by adding modules, not by growing modules.** Each feature since the first
   week is a file of its own with a `handle(method, path, body)` method that `embed.py serve` mounts:
   `faces.People`, `changes.Changes` (albums and change sets), `intake.api` (the setup page),
   `estate_mcp` (the MCP endpoint) and `tasks.Tasks` (the agent). The exception was `cmd_serve`
   itself, which grew from 660 lines to about 1,640; on 2026-11-19 it was split the same way, into
   `catalog.py`, `browse.py`, `images.py`, `admin.py` and `encoder.py` ([chapter 11](11-server.md)).
-  (The counts in this chapter are from just after that split.)
-- **The tests are about a ninth of the code.** Fifteen scripts, each run with `uv run tests/<file>`,
-  and a small pytest harness that runs them all with one command and in CI; 2,268 lines
-  ([chapter 17](17-testing-and-demo.md)). (The harness was added on 2026-11-19, after the other counts.)
-- **The documentation is half as large as the code.** The Markdown in the repository is about 8,800
-  lines, 7,000 of them this book.
+  Videos (2026-11-21) followed the rule: `video.py` is new, and the rest is a few dozen lines in each
+  module that a video passes through.
+- **The tests are about a quarter of the code.** Sixteen scripts, each run with `uv run tests/<file>`,
+  seventeen ordinary pytest files, and a small harness that runs them all with one command and in CI;
+  6,847 lines, and 2,619 more of unit tests for the pages' script modules
+  ([chapter 17](17-testing-and-demo.md)).
+- **The documentation is a third as large as the code.** The Markdown in the repository is about
+  11,200 lines, 8,900 of them this book.
 
 ## File by file
 
-Code lines, measured as above; the files the videos changed (and the two they added) were measured
-again on 2026-11-21, on the `videos` branch.
+Code lines, measured as above (a script module's JSDoc comments are not counted).
 
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
@@ -70,24 +74,24 @@ photo-estate/                  the server and the web app (Python run with uv; n
   images.py            251  thumbnails (WebP), previews, large images and originals, a video's from its poster;
                             making them in the background; which file /video/ sends
   video.py             112  still frames out of a video with PyAV: when to look, frames, the poster, which to keep (chapter 10)
-  admin.py             256  phone uploads, the ingest, restart, /stats, backups
-  encoder.py           204  SigLIP's text (and image) side, for the photo app: loaded when asked for, let go when idle
-  compare.py           374  an experiment: a fixed list of searches ranked by a second model beside the app's own, voted on, and a report, at /compare (chapter 10)
+  admin.py             276  phone uploads, the ingest, restart, /stats, backups
+  encoder.py           174  SigLIP's text (and image) side, for the photo app: loaded when asked for, let go when idle
+  compare.py           340  an experiment: a fixed list of searches ranked by a second model beside the app's own, voted on, and a report, at /compare (chapter 10)
   compare-terms.txt     30  the searches a comparison asks, one a line
   estate.py          1,046  ingest, link, exif, live (Live Photo pairs), dupes, review, tag, search, stats
-  faces.py           1,072  faces: run, serve, and the People class (who is who)
-  changes.py           455  albums and change sets: proposed, reviewed, applied, reverted (chapter 26)
+  faces.py             964  faces: run, serve, and the People class (who is who)
+  changes.py           439  albums and change sets: proposed, reviewed, applied, reverted (chapter 26)
   places.py            388  place names, local time, events, trips
   estate_mcp.py        417  the library as MCP tools for an agent, at /mcp (chapter 26)
-  upload.py            312  receives phone uploads into an inbox (chapter 24)
-  tasks.py             273  a request in words, worked on by Claude Code on the library's computer (chapter 26)
+  upload.py            340  receives phone uploads into an inbox (chapter 24)
+  tasks.py             299  a request in words, worked on by Claude Code on the library's computer (chapter 26)
   stats.py             181  the numbers behind the /stats page
-  sync.py               96  the change feed a phone syncs from (chapter 20)
-  scores.py             92  which photos are best: the two scorers (chapter 25)
+  sync.py               98  the change feed a phone syncs from (chapter 20)
+  scores.py             88  which photos are best: the two scorers (chapter 25)
   stacks.py             74  near-identical shots as one stack (chapter 25)
-  pages.py              76  puts the shared stylesheet into each page as it is sent, and says which
+  pages.py              64  puts the shared stylesheet into each page as it is sent, and says which
                             script modules (app/*.js) a server sends at /app/<name>.js
-  intake/            1,169  the setup page's engine: sources, jobs, the pipeline every source feeds (chapter 16)
+  intake/            1,235  the setup page's engine: sources, jobs, the pipeline every source feeds (chapter 16)
   core/                     what several parts must agree on, standard library only (issue #85):
     media.py                  file types: extension -> MIME, the image/video/RAW/upload sets, what each decoder skips,
                               what /video/ sends each video as (VIDEO_TYPES)
@@ -104,58 +108,61 @@ photo-estate/                  the server and the web app (Python run with uv; n
                               progress and new_assets/catalog_ready, emitted by estate, places, embed, faces and
                               ingest-iphone.sh, read by intake/engine.py and upload.py (issue #84, chapter 16)
 
-  search.html        2,192  the photo app: Library, Albums and Search (HTML + CSS + its own script, a module)
-  people.html          835  the People page
-  changes.html         492  reviewing an album or change set, at /changes
-  setup.html           445  bringing photos in, at /setup
-  stats.html           307  library info, at /stats
-  review.html          275  the near-duplicate review page
-  compare.html         232  a run of the model comparison: two unlabelled columns a search, a vote, and the report, at /compare
-  app/estate.css       119  the stylesheet every page shares
-  app/sw.js             46  service worker: the "can't reach your photos" page
+  search.html        2,092  the photo app: Library, Albums and Search (HTML + CSS + its own script, a module)
+  people.html          796  the People page
+  changes.html         449  reviewing an album or change set, at /changes
+  setup.html           429  bringing photos in, at /setup
+  stats.html           282  library info, at /stats
+  review.html          255  the near-duplicate review page
+  compare.html         226  a run of the model comparison: two unlabelled columns a search, a vote, and the report, at /compare
+  app/estate.css        97  the stylesheet every page shares
+  app/sw.js             38  service worker: the "can't reach your photos" page
   app/                      the script every page shares: native ES modules with JSDoc types, imported by
                             address (/app/dom.js), no bundler (issue #89, chapter 13):
-    dom.js              52    $, $$, the one esc() (& < > " '), on, the icon's picture (MARK)
-    api.js             149    api(path, body, options): JSON in and out, one ApiError (status, message, body),
+    dom.js              19    $, $$, the one esc() (& < > " '), on, the icon's picture (MARK)
+    api.js              69    api(path, body, options): JSON in and out, one ApiError (status, message, body),
                               cancelled by an AbortSignal, an optional timeout
-    fsm.js             318    machine() (a state machine with a table of steps), flow() (a strict machine whose
+    fsm.js             120    machine() (a state machine with a table of steps), flow() (a strict machine whose
                               states own their data), latest() (one piece of async work at a time; a stale
                               answer is dropped), poll() (bounded, cancellable); the rule about refused steps
-    toast.js            45    the line of text that rises from the bottom of a page, with an optional Undo
-    format.js           33    fmt, plural, dateParts
-    query.js           106    search.html's question as a value and as the address: blank, toParams, fromParams
-    layout.js           74    the justified grid's arithmetic: packRows, clampShape, shapeFromByte
+    toast.js            19    the line of text that rises from the bottom of a page, with an optional Undo
+    format.js           12    fmt, plural, dateParts, duration (a video's length as a clock)
+    query.js            37    search.html's question as a value and as the address: blank, toParams, fromParams
+    layout.js           22    the justified grid's arithmetic: packRows, clampShape, shapeFromByte
                               search.html's state over time (issue #81; chapter 13, "The machines"):
-    grid-flow.js       187    one list of photos: its first page, more at either end, the retry after a page
+    grid-flow.js        99    one list of photos: its first page, more at either end, the retry after a page
                               that did not come; another list aborts the one before
-    library-flow.js    135    the Library: the scale showing with its anchor and trail, and what is known of the
+    library-flow.js     61    the Library: the scale showing with its anchor and trail, and what is known of the
                               months (unknown, asking, known, failed)
-    albums-flow.js     146    the Albums tab: the list or an album; the list of albums; an album made from a
+    albums-flow.js      75    the Albums tab: the list or an album; the list of albums; an album made from a
                               search, cancellable until the request that makes it is sent
-    compare-flow.js    155    a run of the model comparison (compare.html): its steps, votes sent as models not sides
-    viewer-flow.js     193    the photo viewer and its history entry (closed, open, leaving), what the open
+    compare-flow.js     92    a run of the model comparison (compare.html): its steps, votes sent as models not sides
+    viewer-flow.js      64    the photo viewer and its history entry (closed, open, leaving), what the open
                               viewer owns, and the table of a touch on the photo
-    favourite.js       160    the heart, and an album's "make all favourites": shown at once, saved one request at a time, put back when a save fails
+    favourite.js        84    the heart, and an album's "make all favourites": shown at once, saved one request at a time, put back when a save fails
                               what the secondary pages do over time (issue #80; "The web pages" below):
-    loop.js            115    loop(): a page asking the server again and again, one step at a time, paused and
+    loop.js             51    loop(): a page asking the server again and again, one step at a time, paused and
                               stopped from outside; until(): poll() that answers how it ended instead of throwing
-    work.js            119    single() (a save that can not overlap itself, free again when it fails), batch()
+    work.js             48    single() (a save that can not overlap itself, free again when it fails), batch()
                               (which of several requests were done when one failed), serial() (one at a time, in order)
-    save-queue.js      115    review.html's saves: one request at a time, a failed one retried under newer choices
-    changes-flow.js     63    changes.html: settle() (the bounded wait for the library), edits() (marks put right
+    save-queue.js       58    review.html's saves: one request at a time, a failed one retried under newer choices
+    changes-flow.js     23    changes.html: settle() (the bounded wait for the library), edits() (marks put right
                               from the server when one fails)
-    people-flow.js      47    people.html: unknownFaces(), the bounded wait for the groups of unnamed faces
-    stats-watch.js      92    stats.html's one loop for the figures and the uploads
-    setup-flow.js      111    setup.html's two strict state machines (the page, the source panel) and their tables
-    tests/           2,559    their unit tests, run by Node's own runner: `npm test` (chapter 17)
+    people-flow.js      21    people.html: unknownFaces(), the bounded wait for the groups of unnamed faces
+    stats-watch.js      50    stats.html's one loop for the figures and the uploads
+    setup-flow.js       45    setup.html's two strict state machines (the page, the source panel) and their tables
+    video-flow.js       63    what plays in search.html's viewer: still, video, failed, live; every step out of
+                              video or live lets the element's stream go (chapter 13)
+    tests/           2,619    their unit tests (video-flow.test.js among them), run by Node's own runner: `npm test` (chapter 17)
     package.json              TypeScript, pinned, to check the modules' types (`npm run typecheck`); with
     package-lock.json         tsconfig.json and .npmrc (the lockfile names no registry). Nothing here is
                               shipped: the browser loads the modules as they are
 
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
-  ingest-iphone.sh      45  catalogue what the phone uploaded, touching only the new photos
+  ingest-iphone.sh      49  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             2,548  17 self-running test scripts; conftest.py runs them under pytest, test_harness.py checks it;
+  tests/             6,847  16 self-running test scripts and 17 pytest files; conftest.py runs the scripts under pytest,
+                            test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_core.py checks core/ against what the code before it did;
                             test_types.py checks the typed contracts (Catalog's fields, the enums) and runs pyright;
@@ -170,8 +177,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             over HTTP, on the library tools/video_demo.py builds;
                             test_pages.py checks that every page imports only script modules and names that exist,
                             and that the servers send the modules as JavaScript (issue #89);
-                            test_pages_browser.py (426 lines, slow tier) drives the secondary pages in a real
-                            browser with Playwright and makes their requests fail or never end (issue #80)
+                            test_pages_browser.py (734 lines, slow tier) drives the secondary pages in a real
+                            browser with Playwright and makes their requests fail or never end (issue #80);
+                            test_video_browser.py (slow tier) plays videos and Live Photos in search.html, in Chrome
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)
@@ -184,9 +192,10 @@ photo-estate/                  the server and the web app (Python run with uv; n
   deploy/              330  launchd plists, the cloud preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
   demo/                     104 CC0 photos, their catalog, and credits
 
-ios/                 5,317  the iPhone app (chapters 19-24, 26)
-  PhotoEstate/Library/   3,478  grid, viewer, Library and Search tabs, albums, filter sheets, the phone's own photos
-  PhotoEstate/Catalog/     934  the replica of the catalog, reading a search, the server's JSON API
+ios/                 5,751  the iPhone app (chapters 19-24, 26)
+  PhotoEstate/Library/   3,887  grid, viewer, Library and Search tabs, albums, filter sheets, the phone's own photos,
+                                Movie.swift (178: a video and a Live Photo's clip in the viewer, its bar)
+  PhotoEstate/Catalog/     959  the replica of the catalog, reading a search, the server's JSON API
   PhotoEstate/Images/      306  thumbnails and kept photos
   PhotoEstate/*.swift      398  the tab bar, the look, This iPhone, uploads, the in-app web view
   UploadExtension/          94  the background upload extension
@@ -194,8 +203,8 @@ ios/                 5,317  the iPhone app (chapters 19-24, 26)
   project.yml, project-sim.yml, deploy.sh, build-number   XcodeGen specs; build and install on the phone
 ```
 
-The largest Swift files are `Grid.swift` (679), `Viewer.swift` (580), `Albums.swift` (490),
-`SearchView.swift` (457), `LibraryModel.swift` (436) and `Query.swift` (383).
+The largest Swift files are `Viewer.swift` (762), `Grid.swift` (698), `Albums.swift` (490),
+`SearchView.swift` (470), `LibraryModel.swift` (434) and `Query.swift` (378).
 
 ### estate.py: the catalog tool
 
@@ -290,9 +299,9 @@ import { toast } from "/app/toast.js";
 | [app/api.js](../../photo-estate/app/api.js) | `api(path, body, options)`: a GET, or a POST of JSON when there is a body. A request that fails throws one `ApiError` with the HTTP `status` (0 when no answer came), the server's own message (the `error` of a JSON body, as `http_util.py` sends) and the parsed `body`; a request cancelled through `options.signal` throws the `AbortError` itself |
 | [app/fsm.js](../../photo-estate/app/fsm.js) | `machine(name, steps, state)` and `flow()`, a strict machine whose states own their data: the state machines of [chapter 13](13-photo-app.md#the-machines) and of the setup page; `latest()`, which owns the `AbortController` of one piece of async work and drops an answer that arrives after its question was replaced; `poll()`, which asks until done, bounded by tries and time |
 | [app/toast.js](../../photo-estate/app/toast.js) | `toast(message, { action })` |
-| [app/format.js](../../photo-estate/app/format.js) | `fmt`, `plural`, `dateParts` |
+| [app/format.js](../../photo-estate/app/format.js) | `fmt`, `plural`, `dateParts`, `duration` |
 | [app/query.js](../../photo-estate/app/query.js), [app/layout.js](../../photo-estate/app/layout.js) | The parts of `search.html` that are pure functions: the question and its address, and the justified grid's rows |
-| [app/grid-flow.js](../../photo-estate/app/grid-flow.js), [app/library-flow.js](../../photo-estate/app/library-flow.js), [app/albums-flow.js](../../photo-estate/app/albums-flow.js), [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js), [app/favourite.js](../../photo-estate/app/favourite.js) | `search.html`'s state over time: its machines, their tables, what each state owns, and the requests they make and cancel ([chapter 13](13-photo-app.md#the-machines), [issue #81](https://github.com/jflam/photo-estate/issues/81)). The page gives them its `fetch`es and is told what to draw |
+| [app/grid-flow.js](../../photo-estate/app/grid-flow.js), [app/library-flow.js](../../photo-estate/app/library-flow.js), [app/albums-flow.js](../../photo-estate/app/albums-flow.js), [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js), [app/video-flow.js](../../photo-estate/app/video-flow.js), [app/favourite.js](../../photo-estate/app/favourite.js) | `search.html`'s state over time: its machines, their tables, what each state owns, and the requests they make and cancel ([chapter 13](13-photo-app.md#the-machines), [issue #81](https://github.com/jflam/photo-estate/issues/81)). The page gives them its `fetch`es and is told what to draw |
 | [app/loop.js](../../photo-estate/app/loop.js) | `loop(step)`: asking the server again and again for as long as a page is open. One step at a time (a timer and a click can never both start one), the step says how long to wait, a failing step does not end it, `pause()`/`resume()` for a hidden page, `stop()` aborts the step under way. `until(step, options)`: `poll()` that resolves to `{ state: "done" \| "timeout" \| "error" }` for a page that shows how the wait ended |
 | [app/work.js](../../photo-estate/app/work.js) | `single()`: work that must not overlap itself, not busy any more when it fails; `batch(items, step)`: several requests in a row, and which were done when one failed; `serial({ settle })`: requests one at a time in the order asked, and one call to put the page right after a failure |
 | [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |

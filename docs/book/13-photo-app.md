@@ -1,7 +1,7 @@
 # 13. The photo app
 
-[search.html](../../photo-estate/search.html) is the face of the system: about 2,050 lines of code containing the
-page, all of its CSS (about 340 lines) and all of its JavaScript (about 1,600 lines). It is served
+[search.html](../../photo-estate/search.html) is the face of the system: about 2,100 lines of code containing the
+page, all of its CSS (about 350 lines) and all of its JavaScript (about 1,600 lines). It is served
 as-is by `embed.py serve`. There is no build step, no framework and no package: it is plain
 ES2020 in one file, which is why a change shows after a browser reload.
 
@@ -58,7 +58,7 @@ you are already on scrolls it to the top. The bar is hidden while the viewer is 
 Search's question is one object, `S`:
 
 ```js
-S = { q: "", plain: false, sha: "", event: "", fav: false, from: "", to: "", sort: "",
+S = { q: "", plain: false, sha: "", event: "", fav: false, from: "", to: "", sort: "", video: false,
       f: { country: [], region: [], city: [], person: [], album: [], camera: [], lens: [], trip: [] } }
 ```
 
@@ -74,6 +74,7 @@ S = { q: "", plain: false, sha: "", event: "", fav: false, from: "", to: "", sor
 | `event` | `event=` | Scope to an event |
 | `from`, `to` | `from=2019-06&to=2019-08` | A range of months, from the When chip |
 | `fav` | `fav=1` | Favourites only |
+| `video` | `kind=video` | Videos only (the Videos chip) |
 | `sort` | `sort=old` | Oldest first |
 
 The Library's position is a second, smaller thing: its `scale` (`years`, `months`, `all`, or `month` for
@@ -140,6 +141,7 @@ them its `fetch`es and is told what to draw.
 | The list of albums (`ALB.listing`) | albums-flow.js | `idle`, `loading`, `ready`, `failed` | The server's answer, or the error |
 | An album from a search (`MAKER.job`) | albums-flow.js | `idle` → `collecting` → `creating` → `idle`; `collecting` → `idle` | The question, the title and the note, as they were when it was asked for |
 | The search field (`FIELD`) | [query.js](../../photo-estate/app/query.js) (`FIELD_STEPS`) | `resting`, `typing` | — |
+| What plays in the viewer (`VIDEO`) | [video-flow.js](../../photo-estate/app/video-flow.js) (`VIDEO_STEPS`) | `still` → `video` → `failed` → `still`; `video` → `still`; `still` → `live` → `still` | `video`: the sha and the `<video>` playing it. `failed`: the sha. `live`: the clip's sha and the `<video>` playing it. `still`: nothing |
 
 A favourite is not a machine but a record per photo with a save under way
 ([favourite.js](../../photo-estate/app/favourite.js)): what the server was last known to hold, and what
@@ -165,6 +167,7 @@ that exists whether or not a photo is open.
 | `/api/periods` and `/api/layout` | The `asking` state of the library | The library is asked for again (another order, a view option) |
 | The list of albums | `ALB.listing` | It is asked for again |
 | The pages an album from a search is collected from | `MAKER.job` in `collecting` | Any step in history (`nav`), Back, another question, or the menu put away. No further page is asked for and no album is made. Once the one request that makes the album has been sent it is left to finish, and if the person has moved on by then a toast says the album was made, with **Open**, instead of taking them to it |
+| A video's stream, or a Live Photo clip's | `VIDEO`'s `video` or `live` state | Any step out of it: the next photo, the one before, the viewer closed, LIVE let go, the clip's end. The element is paused, its `src` taken away and `load()` called, which is what makes a browser close the connection (pausing alone keeps it) |
 | The stack of the photo showing, the file fetched to share | The viewer's `open` state | Not aborted, but dropped if the viewer has closed or shows another photo when they arrive |
 | A favourite's save | Its record | Never cancelled: one request at a time for a photo, and the next carries what was asked for last |
 
@@ -239,7 +242,11 @@ Details that make it feel right:
 
 A section header shows the title, the **top three places** of that section (`Paris · Versailles`) and
 the month's total count (from `/api/periods` in the Library, `/api/facets` in Search), not just what has
-loaded so far. Favourites show a small filled heart on the tile. A favourite set in the app (`POST /api/favorite`) shows at once in every
+loaded so far. Favourites show a small filled heart on the tile. A video's tile says how long it is in
+a dark pill at its bottom right, with a play mark (`0:12`; `duration()` in
+[app/format.js](../../photo-estate/app/format.js) writes it, never `0:00` for a video with any length);
+a Live Photo's still says LIVE in the same place, in small white letters. In Search, with the Videos
+chip on, a section's count is in videos. A favourite set in the app (`POST /api/favorite`) shows at once in every
 view and count: the server changes the catalog it serves with no request reading it, and a reload under way
 keeps it ([chapter 11](11-server.md#concurrency)).
 
@@ -331,6 +338,7 @@ With nothing asked, `drawBrowse` lays out the ways into the library, built from 
 - **Through the years**: the library's whole life as one line of bars, a year each, as tall as it was busy
   (`sqrt`, so a few busy years do not flatten the rest); tap one for that year.
 - **Favourites**, with its count.
+- **Videos**, with its count, when `/api/info` says the library has any (`videos`).
 - **Places, People, Albums, Cameras**: the twelve biggest of each with counts, and "See all", which opens the
   same sheet as the chip.
 
@@ -362,7 +370,7 @@ flowchart LR
 `searchHead` says what the answer is, in words. A search that read names and places ("anna in paris") is
 titled with what it read; a described search is the words in quotes, "N photos, best match first"; More
 like this is "Closest in look and subject"; a trip is its title and dates; filters alone are their values
-joined. When names or places were read from the words, a line under the field offers the other reading:
+joined; the Videos chip alone is "Videos", and its count is "N videos". When names or places were read from the words, a line under the field offers the other reading:
 "Search for the words instead" (or back again), as a new search.
 
 An empty answer explains itself ("No photo looks like “kangaroo” with these filters") with a Start again
@@ -371,9 +379,10 @@ button.
 ### Chips and the sheets behind them
 
 Under the field, with a question showing, is a row of chips (`PILLS`): **Where · People · Albums · Trips ·
-When · Camera · Favourites**. It scrolls sideways on a narrow screen. The ones with a value come first, in
+When · Camera · Favourites · Videos**. It scrolls sideways on a narrow screen. The ones with a value come first, in
 the sun's colour, showing the first value and "+N" with an × to clear (`pillValue`, `clearPill`).
-Favourites is a plain toggle.
+Favourites and Videos are plain toggles, with no sheet behind them (`aria-pressed`); Videos sends
+`kind=video` and is there only in a library that has videos (`/api/info`'s `videos`), or while it is on.
 
 Tapping a chip opens its sheet (`openSheet`): **a sheet from below on a phone** (over a scrim, taller for
 When and Trips), **a popover under the chip on a wide screen**. Both have Clear, the title and Done at the top.
@@ -439,7 +448,8 @@ Over the photo:
 
 - At the top, a **caption**: the date in full, and under it the time and the city (`vChrome`); a Close button
   on the left; a heart on the right if it is a favourite.
-- At the bottom, a glass **bar** of three buttons: Share, Details (i) and **More like this**.
+- At the bottom, a glass **bar** of three buttons: Share, Details (i) and **More like this**; on a Live
+  Photo, a fourth, **LIVE** (below).
 - On a desktop, ‹ › buttons at the sides (hidden on touch screens, where you swipe).
 - A note above the bar when something needs saying ("Tap share again", "The full-size image didn’t load").
 
@@ -471,11 +481,46 @@ Each slide has two `<img>` layers:
 |---|---|---|
 | `lo` | `/thumb/<sha>` (360 px; already in the browser's cache from the grid) | Immediately |
 | `hi` | `/preview/<sha>` (1600 px) | As soon as the slide is filled |
-| `hi`, replaced | `/large/<sha>` (4096 px) | `sharpen()`: when the on-screen size times the device pixel ratio exceeds 1,700 px, or the user zooms past 1.6×, and the photo is bigger than 1,700 px |
+| `hi`, replaced | `/large/<sha>` (4096 px) | `sharpen()`: when the on-screen size times the device pixel ratio exceeds 1,700 px, or the user zooms past 1.6×, and the photo is bigger than 1,700 px. Never for a video: its pictures are its poster, and there is no larger one |
 
 The photo therefore appears at once (from the thumbnail), becomes sharp in a moment, and is
 razor-sharp on a 4K screen or at 6× zoom, with no flash: the preview fades in over the thumbnail once
 `img.decode()` has finished.
+
+### Videos and Live Photos
+
+A video's slide is laid out as a photo's is (`ar` is its upright shape) and its two pictures are its
+poster frame ([chapter 11](11-server.md)), so it grows out of its tile, slides in as a neighbour and goes
+home as any photo does. When it is the photo showing, `vMedia` puts the viewer's one `<video>` into its
+slide, over the poster, and `VIDEO.play` starts it:
+
+- **From `/video/<sha>`, where the search found it.** `videoSrc` adds the result row's `at` as a media
+  fragment (`/video/<sha>#t=8.5`), so the browser starts at the moment the words matched without the page
+  waiting for it to load. A browser that will not play it with sound plays it muted.
+- **With the browser's own controls**, `preload="metadata"` and `playsinline`. Space plays and pauses it
+  (`VIDEO.toggle`), where for a photo it is the next photo; the arrow keys still step. On a touch screen a
+  press on the controls' strip at the video's bottom edge (56 px) is the video's, not a swipe.
+- **The file's own shape.** When the metadata comes, a shape that differs from the catalog's by more than
+  2% is taken, and the slide is laid out again. A file with sound and no picture is treated as one this
+  browser cannot play.
+- **What a video does not do:** it does not zoom (a pinch or a double tap does nothing), and it has no
+  `/large/`.
+- **Leaving lets the stream go.** The next photo, the one before, another shot of a stack, or the viewer
+  closed: `vMediaOff` says `VIDEO.still()`, and every step out of `video` releases the element. The video
+  goes home as its poster.
+
+**A video the browser cannot play** (an `.avi`, `.wmv` or `.3gp`; HEVC in a browser without it): the
+element's `error` event steps `VIDEO` to `failed`, which lets the stream go; the poster stays, and a line
+over it says "This browser can’t play this video." with a **Download it** link to `/video/<sha>` under the
+file's own name.
+
+**A Live Photo** is its still, with a **LIVE** control in the viewer's bar and a "Live Photo" card in its
+details. The clip is a second `<video>`, muted, with `preload="none"` and no `src` until LIVE is first
+pressed, so nothing of it is asked for before. It plays over the still, covering it exactly, for as long
+as LIVE is held: pressed with a finger (held on to wherever the finger goes) or the mouse, pointed at
+with a mouse, or Enter or Space while LIVE has the focus. It fades in only once it has a picture. Let go,
+at its end, or when it fails, the still is back (`VIDEO`'s `live` back to `still`). A long press is the
+press, not a menu.
 
 ### Fly in, fly out
 
@@ -495,6 +540,7 @@ does ([chapter 23](23-native-interface.md)), like the back of a print:
 | Part | Shows | Tap it for |
 |---|---|---|
 | Heading | The full date; under it the time and the time zone; the photo's description, if it has one | |
+| Video or Live Photo card | "Video" and its length; or "Live Photo", "Press and hold LIVE to play it" | |
 | Place card | The place; under it the county, "from photos taken around then" if the place was inferred, and a Map link to OpenStreetMap | Photos in that city |
 | Event and trip card | The event ("Everything taken around then") and the trip ("The whole trip") | That event, that trip |
 | With | A tag for each person | Photos of that person |
@@ -510,7 +556,7 @@ where the photo was opened from. The bar's More like this does the same with `sh
 
 | Key | Action |
 |---|---|
-| ← / → or Space | Previous / next |
+| ← / → or Space | Previous / next; on a video, Space plays and pauses it |
 | `i` | Toggle details |
 | Esc | Close |
 | Click the dark background | Close |
@@ -549,8 +595,8 @@ stateDiagram-v2
 | Swipe down | The photo follows the finger and shrinks about its centre while the background fades; releasing far enough flies it back to its tile and closes |
 | Swipe up | Brings up the details sheet |
 | Swipe down, or tap the photo, with the sheet up | Puts it away (pulling the sheet itself down from its top does too) |
-| Pinch | Zooms between 1× and 6× about the fingers' midpoint; the pan follows the fingers' movement too |
-| Double-tap | Zooms to 2.5× at the tap point; double-tap again to reset |
+| Pinch | Zooms between 1× and 6× about the fingers' midpoint; the pan follows the fingers' movement too. Not on a video |
+| Double-tap | Zooms to 2.5× at the tap point; double-tap again to reset. Not on a video |
 | Single tap | Hides or shows the caption and bar |
 
 **Zoom that stays sharp.** Zoom is a scale and a pan on top of the fitted size, and has two states:
@@ -579,6 +625,10 @@ share button (`share()`):
    gesture expired, the button turns amber and the note says "Tap share again"; the fetched file
    is kept so the second tap shares instantly (`doShare`).
 
+A video has no `/original/`: its file is its stream, `/video/<sha>`, so that is what is downloaded or
+fetched to share, under its own name. A video the phone will not share is downloaded as a file instead,
+never replaced by a JPEG. A Live Photo is shared as its still alone.
+
 The share and open events are recorded in the query log (chapter 11) by `logEvent`, with the question that
 found the photo and its position.
 
@@ -596,7 +646,7 @@ The page is a [Progressive Web App](https://web.dev/progressive-web-apps/) with 
 |---|---|
 | [app/manifest.webmanifest](../../photo-estate/app/manifest.webmanifest) | Name, `display: standalone`, theme and background `#09090a` (ink), icons |
 | `icon-180/192/512.png`, `icon-maskable-512.png` (made by [tools/make_icons.py](../../photo-estate/tools/make_icons.py)) | Home-screen icons, one maskable for Android's adaptive shapes |
-| [app/sw.js](../../photo-estate/app/sw.js) (41 lines) | A service worker that does *one thing* |
+| [app/sw.js](../../photo-estate/app/sw.js) (38 lines) | A service worker that does *one thing* |
 | The `<meta>` tags in search.html | `apple-mobile-web-app-capable`, status-bar style, theme colour for light and dark |
 
 The service worker's single job: if a **navigation** fails (on a phone, usually because Tailscale is
@@ -647,9 +697,9 @@ which is in the script modules in [app/](../../photo-estate/app/) ([chapter 2](0
 
 | Topic | Code |
 |---|---|
-| Shared with the other pages | [app/dom.js](../../photo-estate/app/dom.js) (`$`, `$$`, `esc`, `MARK`), [app/api.js](../../photo-estate/app/api.js) (`api`), [app/fsm.js](../../photo-estate/app/fsm.js) (`machine`, `flow`, `STALE`), [app/toast.js](../../photo-estate/app/toast.js), [app/format.js](../../photo-estate/app/format.js) (`fmt`, `plural`, `dateParts`) |
+| Shared with the other pages | [app/dom.js](../../photo-estate/app/dom.js) (`$`, `$$`, `esc`, `MARK`), [app/api.js](../../photo-estate/app/api.js) (`api`), [app/fsm.js](../../photo-estate/app/fsm.js) (`machine`, `flow`, `STALE`), [app/toast.js](../../photo-estate/app/toast.js), [app/format.js](../../photo-estate/app/format.js) (`fmt`, `plural`, `dateParts`, `duration`) |
 | State, history and URL | `blank`, `copy`, `toParams`, `fromParams` in [app/query.js](../../photo-estate/app/query.js); `snap`, `url`, `nav`, `restore`, the `popstate` handler, `init` |
-| The machines | [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js) (`VW`, `GS`), [app/grid-flow.js](../../photo-estate/app/grid-flow.js) (`Grid.list`), [app/library-flow.js](../../photo-estate/app/library-flow.js) (`LIB`, read through `L`), [app/albums-flow.js](../../photo-estate/app/albums-flow.js) (`ALB`, `MAKER`), [app/favourite.js](../../photo-estate/app/favourite.js) (`FAV`), `FIELD` |
+| The machines | [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js) (`VW`, `GS`), [app/video-flow.js](../../photo-estate/app/video-flow.js) (`VIDEO`), [app/grid-flow.js](../../photo-estate/app/grid-flow.js) (`Grid.list`), [app/library-flow.js](../../photo-estate/app/library-flow.js) (`LIB`, read through `L`), [app/albums-flow.js](../../photo-estate/app/albums-flow.js) (`ALB`, `MAKER`), [app/favourite.js](../../photo-estate/app/favourite.js) (`FAV`), `FIELD` |
 | Tabs | `setTab`, the `#tabbar` click handler, `titleDoc` |
 | Grid | `Grid` (`load`, `poke`, `more`, `less`, `add`, `draw`, `relayout`, `top`), `rowH`; the rows themselves are `packRows` in [app/layout.js](../../photo-estate/app/layout.js) |
 | Library | `lgrid`, `mgrid`, `libLoad`, `libKnown`, `libRetry`, `monthShow`, `libShow`, `renderPeriods`, `libBack`, `libJump`, `toSection` |
@@ -661,6 +711,7 @@ which is in the script modules in [app/](../../photo-estate/app/) ([chapter 2](0
 | Chips and sheets | `PILLS`, `pillValue`, `clearPill`, `drawChips`, `openSheet`, `drawTools`, `drawSheet`, `sheetClick` |
 | Viewer | `mkSlide`, `fit`, `fill`, `preview`, `sharpen`, `arrange`, `show`, `vChrome`, `openViewer`, `closeViewer`, `toggleInfo`, `drawInfo`, `find` |
 | Touch | `Z`, `Zb`, `applyZoom`, `bake`, `clampZoom`, `zoomAt`, `slideTo`, `endGesture`, `animateTo`, the edge-swipe handlers |
-| Share | `share`, `doShare`, `logEvent` |
+| Videos and Live Photos | `VIDEO` ([app/video-flow.js](../../photo-estate/app/video-flow.js): `videoFlow`, `videoSrc`, `release`), `vMedia`, `vMediaOff`, `vCant`, `liveOn`, `liveOff`, `liveShow`, `badge`, `duration` in app/format.js |
+| Share | `share`, `doShare`, `logEvent`, `fileName` |
 | PWA | [app/](../../photo-estate/app/), `serviceWorker.register` at the bottom |
 | Server: view options and cards | `view_masks`, `periods` and the `/api/periods` handler in [embed.py](../../photo-estate/embed.py) |

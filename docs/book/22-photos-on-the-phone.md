@@ -21,6 +21,22 @@ phone asks for the same three, from the same routes, and keeps each differently:
 The original file is a fourth thing the phone never keeps: `/original/<sha>` is fetched only to be shared
 (chapter 23), and goes in a temporary folder.
 
+### Videos are streamed, never kept
+
+A video is a row like a photo's, and its three sizes are its poster frame (chapter 11): its thumbnail
+is kept in `thumbs.db` and its preview by the same rules as any photo's, so the grid and the viewer
+show it offline as a still. The video itself is never kept. When its page in the viewer is up, AVPlayer
+streams it from `/video/<sha>`, which answers byte ranges, and lets it go when the page goes
+(Movie.swift; chapter 23). A Live Photo's clip is streamed the same way, by the clip's own sha, while
+the still is held. With no server, a video's page shows its poster and says "Videos play from your
+server, which isn’t reachable right now.", and a held Live Photo stays still and says so; when the
+server is back the page tries again. A video that is still in the phone's own Photos library, and not
+yet on the server (chapter 24), plays from Photos instead, fetched from iCloud if the phone keeps only
+a small copy.
+
+Keeping videos on the phone for a flight is not done: a library's videos are hundreds of gigabytes,
+and choosing which to keep is a decision of its own (chapter 18).
+
 ### Why thumbnails are rows and the rest are files
 
 A thumbnail is a few tens of KB, and there are as many as photos. At 100,000 photos that is 100,000
@@ -135,6 +151,7 @@ are fetched again when needed").
 | Topic | Where |
 |---|---|
 | Thumbnail rows, files, quiet period, `Inflight` | [ImageStore.swift](../../ios/PhotoEstate/Images/ImageStore.swift) |
+| A video streamed, and let go | `MovieView`, `Server.video` in [Movie.swift](../../ios/PhotoEstate/Library/Movie.swift); `PhotoPage.play`, `stop` in [Viewer.swift](../../ios/PhotoEstate/Library/Viewer.swift) |
 | What to fetch, eviction, Wi-Fi rule, lanes | [Downloader.swift](../../ios/PhotoEstate/Images/Downloader.swift) |
 | The settings sheet | [ThisPhoneView.swift](../../ios/PhotoEstate/ThisPhoneView.swift) |
 | The server's three sizes | "Serving images" in [chapter 11](11-server.md) |
