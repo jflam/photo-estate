@@ -487,12 +487,23 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
   <button class="tb ts glass" data-tab="search" aria-label="Search your photos (/)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.500" cy="10.500" r="6.300"/><path d="m15.300 15.300 5 5"/></svg></button>
 </nav>
 
-<script>
-"use strict";
-const $ = (s, el = document) => el.querySelector(s);
-const $$ = (s, el = document) => [...el.querySelectorAll(s)];
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const fmt = n => Number(n).toLocaleString();
+<div class="toast" id="toast"></div>
+<script type="module">
+// What every page shares is in app/*.js (book chapter 2): native modules, fetched as they are. The names
+// in this script are the module's own: nothing here is on `window`.
+import { $, $$, esc, MARK } from "/app/dom.js";
+import { fmt, plural, dateParts as dParts } from "/app/format.js";
+import { api } from "/app/api.js";
+import { machine, flow, STALE } from "/app/fsm.js";
+import { toast } from "/app/toast.js";
+import { KEYS, FIELD_STEPS, blank, copy, toParams, fromParams, filtered as filteredQ, isEmpty as isEmptyQ } from "/app/query.js";
+import { clampShape, shapeFromByte, packRows } from "/app/layout.js";
+import { gridFlow } from "/app/grid-flow.js";
+import { libraryFlow, SCALES } from "/app/library-flow.js";
+import { albumsFlow, albumMaker } from "/app/albums-flow.js";
+import { viewerFlow, GESTURE_STEPS } from "/app/viewer-flow.js";
+import { favourites } from "/app/favourite.js";
+
 const EASE = "cubic-bezier(.2,.7,.2,1)";
 const svg = (d, w = 16, extra = "") => `<svg width="${w}" height="${w}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
 const I = {
@@ -516,8 +527,6 @@ const I = {
   changes: svg('<path d="M3 4.5h10M3 8h6M3 11.5h4"/><path d="m10 11 1.6 1.6L14 9.6"/>', 18),
   stats: svg('<path d="M3 13V8M8 13V3M13 13V6"/>', 18),
 };
-// The icon's picture: hills under a low sun. Shown where there are no photos to show.
-const MARK = '<svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>';
 const DEBUG = (() => { try { return localStorage.getItem("estate.debug") === "1"; } catch (e) { return false; } })();   // set on the Library info page
 const IDEAS = ["sunset over water", "dog on the beach", "birthday cake", "snowy mountains", "city at night", "a child laughing"];
 const DEMO_IDEAS = ["latte art", "kitten", "waterfall in autumn", "dog in the snow", "city at night"];   // searches that find a group in the demo
@@ -534,36 +543,13 @@ const saveView = () => { try { localStorage.setItem("estate.view", JSON.stringif
 const rowH = W => DENS[V.dens] * (W >= 1000 ? 1.5 : W >= 700 ? 1.25 : 1);   // the iPhone's sizes, a little bigger on a big screen
 const viewParams = p => { p.set("dedupe", V.dedupe ? "1" : "0"); p.set("shots", V.shots ? "0" : "1"); return p; };
 
-/* ── the question Search asks ──────────────────────────────────────── */
-const KEYS = ["country", "region", "city", "person", "album", "camera", "lens", "trip"];
+/* ── the question Search asks (app/query.js: the question as a value, and as the address) ── */
 const KIND = { country: "Country", region: "Region", city: "Place", person: "Person", album: "Album", camera: "Camera", lens: "Lens", trip: "Trip" };
-const blank = () => ({ q: "", plain: false, sha: "", event: "", stack: "", fav: false, from: "", to: "", sort: "", f: Object.fromEntries(KEYS.map(k => [k, []])) });
-const copy = s => ({ ...s, f: Object.fromEntries(KEYS.map(k => [k, [...s.f[k]]])) });
 let S = blank();
-function toParams(s) {
-  const p = new URLSearchParams();
-  if (s.q) p.set("q", s.q);
-  if (s.q && s.plain) p.set("names", "0");        // names typed in the search are words, not people
-  if (s.sha) p.set("sha", s.sha);
-  for (const k of KEYS) for (const v of s.f[k]) p.append(k, v);
-  for (const k of ["event", "stack", "from", "to", "sort"]) if (s[k]) p.set(k, s[k]);
-  if (s.fav) p.set("fav", "1");
-  return p;
-}
-function fromParams(p) {
-  const s = blank();
-  for (const k of ["q", "sha", "event", "stack", "from", "to", "sort"]) s[k] = p.get(k) || "";
-  for (const k of KEYS) s.f[k] = p.getAll(k);
-  s.fav = p.get("fav") === "1";
-  s.plain = p.get("names") === "0";
-  return s;
-}
-const filtered = (s = S) => KEYS.some(k => s.f[k].length) || s.event || s.stack || s.fav || s.from || s.to;
-const isEmpty = (s = S) => !s.q && !s.sha && !filtered(s);
+const filtered = (s = S) => filteredQ(s);
+const isEmpty = (s = S) => isEmptyQ(s);
 
 /* ── dates ─────────────────────────────────────────────────────────── */
-const dParts = w => { const m = /^(\d{4})-(\d\d)(?:-(\d\d))?(?:T(\d\d):(\d\d))?/.exec(w || "");
-  return m && new Date(+m[1], +m[2] - 1, +(m[3] || 1), +(m[4] || 0), +(m[5] || 0)); };
 const DF = o => new Intl.DateTimeFormat(undefined, o);
 const fLong = DF({ weekday: "long", day: "numeric", month: "long", year: "numeric" });
 const fTime = DF({ hour: "numeric", minute: "2-digit" });
@@ -588,34 +574,30 @@ function rangeLabel(s = S) {
   }
   return a != null ? `Since ${M(a)}` : b != null ? `Until ${M(b)}` : "";
 }
-const photos = n => `${fmt(n)} ${n === 1 ? "photo" : "photos"}`;
+const photos = n => plural(n, "photo");
 const about = n => { const r = n >= 10000 ? Math.round(n / 1000) * 1000 : n >= 1000 ? Math.round(n / 100) * 100 : n;   // 81K, 8.1K, 950
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(r); };
 const tripTitle = t => (t?.title || "Trip").replace(/^Trip to /, "");
 const tripById = id => INFO.trips.find(t => String(t.id) === String(id));
 const firstPart = v => String(v).split(",")[0].trim();
 
-const getJSON = async (u, o) => { const r = await fetch(u, o); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; };
-const postJSON = (u, body) => getJSON(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-
-/* ── machines. Whatever in the page is in one of several states (a list loading, the photo viewer, a finger on
-      the screen) says so in one place: its name, the state it is in, and every step it may take. A step that
-      is not in its table is refused and reported, so a mistake shows as a line in the console naming the two
-      states, not as a page that is subtly wrong some time later. ── */
-function machine(name, steps, state) {
-  return {
-    get state() { return state; },
-    is: (...names) => names.includes(state),
-    to(next) {
-      if (!steps[state].includes(next)) { console.warn(`${name}: no step from ${state} to ${next}`); return false; }
-      state = next; return true;
-    },
-  };
-}
-// The photo viewer. closed; open (an open photo is a history entry, so Back closes it); or leaving: put away on
-// screen, its history entry still to be taken back, which the browser reports a moment later (popstate).
-const VW = machine("viewer", { closed: ["open"], open: ["leaving", "closed"], leaving: ["closed"] }, "closed");
+/* ── machines (app/fsm.js). Whatever in the page is in one of several states (a list loading, the photo
+      viewer, a finger on the screen) says so in one place: its name, the state it is in, and every step it may
+      take. All of them are strict: a step that is not in the table throws (a TransitionError) before anything
+      has changed, and what a state needs to know is owned by the state, handed over at the step into it and
+      gone at the step out. The tables, and what moves them, are modules of their own (app/viewer-flow.js,
+      grid-flow.js, library-flow.js, albums-flow.js, favourite.js), unit-tested without a page; this script
+      joins them to the page. ── */
+// The photo viewer (app/viewer-flow.js). closed; open (an open photo is a history entry, so Back closes it); or
+// leaving: put away on screen, its history entry still to be taken back, which the browser reports a moment
+// later (popstate). Everything about the photo showing is owned by `open`: VO() is that, or null.
+const VW = viewerFlow({ history: {
+  push: () => history.pushState({ ...history.state, v: 1 }, ""),
+  back: () => history.back(),
+  write: (mode, entry, to) => navWrite(mode, entry, to),
+} });
 const viewing = () => VW.is("open");
+const VO = () => VW.open;
 const narrow = matchMedia("(max-width: 760px)"), coarse = matchMedia("(pointer: coarse)"), standalone = matchMedia("(display-mode: standalone)");
 let INFO = null;                                    // the library's facts (/api/info)
 
@@ -651,91 +633,61 @@ class Thumbs {
 class Grid {
   constructor(o) {
     Object.assign(this, o);
-    this.el = $(o.grid); this.items = []; this.sections = []; this.lo = 0; this.next = null; this.data = null;
-    // The list as a whole. empty: nothing asked for. loading: its first page is on its way (ghosts, or the list
-    // before it dimmed, show meanwhile). ready: showing, and either end may grow. failed: the first page did not come.
-    this.phase = machine(o.grid, { empty: ["loading", "empty"], loading: ["loading", "ready", "failed", "empty"],
-      ready: ["loading", "empty"], failed: ["loading", "empty"] }, "empty");
-    this.ends = { down: "idle", up: "idle" };        // each end of a ready list: idle | asking (a page is on its way) | retrying (it did not come)
-    this.gen = 0;                                    // which list this is: only ask() compares it
+    this.el = $(o.grid); this.items = []; this.sections = [];
     this.thumbs = new Thumbs();
-    this.first = 150; this.step = 200;               // photos in the first page, and in each one after
+    // What is asked of the server and what has come (app/grid-flow.js). The list as a whole is empty (nothing
+    // asked for), loading (its first page is on its way: ghosts, or the list before it dimmed, show meanwhile),
+    // ready (showing, and either end may grow: each end is idle, asking, or retrying) or failed. A list is a
+    // list `of` something (a month, a question, an album), fixed when it is asked for and handed to every
+    // fetch of it; asking for another aborts whatever the one before still had on its way (#42, #81).
+    this.list = gridFlow(o.grid, {
+      fetch: o.fetch, live: () => this.live(),
+      near: (end, again) => end === "up" ? !!this.up && $(this.up).getBoundingClientRect().bottom > -900
+        : $(this.down).getBoundingClientRect().top < innerHeight + (again ? 1200 : 1400),
+      view: {
+        first: (page, { start, how }) => { this.onData?.(page); this.put(start, page.results, how); this.onGrow?.(); setTimeout(() => this.poke(), 30); },
+        below: results => { this.add(results); this.onGrow?.(); },
+        above: (results, at) => this.add(results, at),
+      },
+    });
+    this.phase = this.list.phase; this.first = this.list.first;   // first: photos in the first page
     new IntersectionObserver(es => { if (es[0].isIntersecting) this.more(); }, { rootMargin: "1400px" }).observe($(o.down));
     if (o.up) new IntersectionObserver(es => { if (es[0].isIntersecting) this.less(); }, { rootMargin: "900px" }).observe($(o.up));
   }
+  get lo() { return this.list.lo; }                  // the position in the whole list of the first photo it has
+  get data() { return this.list.page; }              // the first page of the list showing: what the server said of the whole of it
+  get of() { return this.list.of; }                  // what the list asked for or showing is a list of
   live() { return this.el.offsetParent !== null; }
-  // The list from `start`. With `ghosts` (the first page as far as it is already known: each photo's month and
-  // shape, no picture), the page is laid out before the answer comes, and the photos then arrive in their
-  // places with nothing moving. Without, what is showing dims until the answer replaces it.
-  async load(start = 0, ghosts = null) {
-    this.reset("loading");                           // the old list's place is gone now: nothing may be added from it (#42)
+  // The list `of` something, from `start`. With `ghosts` (the first page as far as it is already known: each
+  // photo's month and shape, no picture), the page is laid out before the answer comes, and the photos then
+  // arrive in their places with nothing moving. Without, what is showing dims until the answer replaces it.
+  // Null if another list was asked for since (its answer is the one to show), or if this one failed (onError
+  // has said so; `retry` is what its "Try again" does).
+  async load(start = 0, ghosts = null, of = null, retry = null) {
+    const loading = this.list.load(start, { of, retry, how: ghosts ? "" : "fresh" });   // the old list's place is gone now: nothing may be added from it (#42)
     if (ghosts) this.put(start, ghosts, "ghost"); else this.el.classList.add("stale");
-    let data;
-    try { data = await this.ask(start, this.first); }
-    catch (e) { this.phase.to("failed"); this.el.classList.remove("stale"); this.onError?.(e); return null; }
-    if (!data) return null;                          // another list was asked for since: its answer is the one to show
-    this.phase.to("ready"); this.data = data; this.next = data.next;
-    this.onData?.(data);
-    this.put(start, data.results, ghosts ? "" : "fresh");
-    this.onGrow?.();
-    setTimeout(() => this.poke(), 30);
-    return data;
+    try { return await loading; }
+    catch (e) { this.el.classList.remove("stale"); this.onError?.(e); return null; }
   }
   put(start, list, how) {                            // these photos, from `start`, in place of whatever is showing
     const el = this.el, W = this.width(), y = scrollY;
     dropPending(el); this.thumbs.reset();
-    this.items = new Array(start); this.lo = start; this.sections = [];
+    this.items = new Array(start); this.sections = [];
     el.innerHTML = ""; el.classList.remove("stale", "fresh", "ghost");
     if (how === "fresh") void el.offsetWidth;        // so the rise plays again
     if (how) el.classList.add(how);
     this.add(list, null, W);
     if (how !== "fresh" && scrollY !== y) scrollTo(0, y);   // ghosts and the photos that take their places: the page stays where it is
   }
-  reset(phase) {                                     // a new list from here on: whatever was asked of the old one is no longer wanted
-    this.gen++; this.phase.to(phase); this.ends.down = this.ends.up = "idle"; this.data = this.next = null;
-  }
-  // A page of the list now showing. Null if the list was replaced while the page was on its way (whoever asked
-  // has nothing left to do); throws only when this list's own page did not come.
-  async ask(at, n) {
-    const g = this.gen;
-    try { const d = await this.fetch(at, n); return g === this.gen ? d : null; }
-    catch (e) { if (g === this.gen) throw e; return null; }
-  }
-  clear() {                                          // nothing showing, and nothing more to come from the old list (its thumbnails stop loading too)
-    this.reset("empty"); this.items = []; this.sections = []; this.lo = 0;
+  clear() { this.list.clear(); this.wipe(); }        // nothing showing, and nothing more to come from the old list
+  wipe() {                                           // nothing on the page (its thumbnails stop loading too)
+    this.items = []; this.sections = [];
     dropPending(this.el); this.thumbs.reset(); this.el.innerHTML = ""; this.el.classList.remove("stale", "fresh", "ghost");
   }
   width() { return this.el.clientWidth - 2 * this.gpad(); }
-  poke() {                                           // fill in either end that is on screen (the observers only say when that changes)
-    if (this.up && $(this.up).getBoundingClientRect().bottom > -900) this.less();
-    if ($(this.down).getBoundingClientRect().top < innerHeight + 1400) this.more();
-  }
-  async more() {
-    if (!this.phase.is("ready") || this.ends.down !== "idle" || this.next == null || !this.live()) return;
-    this.ends.down = "asking";
-    let d;
-    try { d = await this.ask(this.next, this.step); } catch (e) { return this.retry("down"); }
-    if (!d) return;
-    this.next = d.next; this.add(d.results); this.onGrow?.(); this.ends.down = "idle";
-    if (this.next != null && $(this.down).getBoundingClientRect().top < innerHeight + 1200) this.more();
-  }
-  async less() {
-    if (!this.phase.is("ready") || this.ends.up !== "idle" || this.lo <= 0 || !this.live()) return;
-    this.ends.up = "asking";
-    const n = Math.min(this.step, this.lo), at = this.lo - n;
-    let d;
-    try { d = await this.ask(at, n); } catch (e) { return this.retry("up"); }
-    if (!d) return;
-    const ok = d.results.length === n && at + n === this.lo;   // a short page, or one that no longer meets the list, would leave a gap
-    if (ok) this.add(d.results, at);
-    this.ends.up = "idle";
-    if (ok && this.lo > 0 && $(this.up).getBoundingClientRect().bottom > -900) this.less();
-  }
-  retry(end) {                                       // the server didn't answer: ask again shortly, if that end is still in sight
-    this.ends[end] = "retrying";
-    const g = this.gen;
-    setTimeout(() => { if (g === this.gen) { this.ends[end] = "idle"; this.poke(); } }, 2000);
-  }
+  poke() { this.list.poke(); }                       // fill in either end that is on screen (the observers only say when that changes)
+  more() { return this.list.more(); }
+  less() { return this.list.less(); }
   section(key, base) {
     const el = document.createElement("section");
     if (key || !this.ranked) el.innerHTML = `<div class="sh"><h2>${esc(this.titleOf ? this.titleOf(key) : heading(key))}</h2><p><span class="where"></span><span class="n num"></span></p></div>`;
@@ -765,7 +717,6 @@ class Grid {
       if (!sec || sec.key !== key) { sec = this.section(key, at + k); fresh.push(sec); }
       sec.items.push(r);
     });
-    this.lo = at;
     const first = this.sections[0], last = fresh[fresh.length - 1];
     if (first && last && first.key === last.key) { last.items.push(...first.items); first.el.remove(); this.sections.shift(); }
     const before = this.sections[0]?.el || null;
@@ -789,26 +740,18 @@ class Grid {
     if (last && !last.full) { sec.rows.pop(); sec.box.lastElementChild.remove(); from = last.start; }
     else if (last) from = last.start + last.n;
     const H = rowH(W + 2 * this.gpad()), G = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gap")) || 3;
-    const ar = (r, k) => Math.min(2.6, Math.max(.5, this.shape?.(sec.base + k) || r.ar || 1.5));   // k: its place in the section
+    const ar = k => clampShape(this.shape?.(sec.base + k) || sec.items[k].ar);   // k: its place in the section
     let html = "";
-    for (let i = from; i < sec.items.length;) {
-      let sum = 0, j = i, full = false;
-      while (j < sec.items.length) { sum += ar(sec.items[j], j++); if (sum * H + G * (j - i - 1) >= W) { full = true; break; } }
-      const n = j - i, room = W - G * (n - 1);
-      if (!full && sum * H >= room * .9) full = true;
-      const h = Math.round(full ? room / sum : H);
-      const ws = sec.items.slice(i, j).map((r, k) => Math.round(ar(r, i + k) * h));
-      if (full) { let d = room - ws.reduce((a, b) => a + b, 0); for (let k = 0; d !== 0; k = (k + 1) % n) { ws[k] += Math.sign(d); d -= Math.sign(d); } }
-      html += `<div class="row" style="height:${h}px;contain-intrinsic-size:auto ${h}px">`;
-      for (let k = 0; k < n; k++) {
-        const r = sec.items[i + k];
-        if (r.ghost) { html += `<div class="t" data-i="${sec.base + i + k}" style="width:${ws[k]}px"></div>`; continue; }
-        html += `<div class="t" tabindex="0" data-i="${sec.base + i + k}" style="width:${ws[k]}px"><img decoding="async" alt="" data-src="/thumb/${r.sha}" onload="this.classList.add('in')">`
+    for (const row of packRows(sec.items.length, ar, from, W, H, G)) {         // app/layout.js
+      html += `<div class="row" style="height:${row.height}px;contain-intrinsic-size:auto ${row.height}px">`;
+      for (let k = 0; k < row.n; k++) {
+        const r = sec.items[row.start + k];
+        if (r.ghost) { html += `<div class="t" data-i="${sec.base + row.start + k}" style="width:${row.widths[k]}px"></div>`; continue; }
+        html += `<div class="t" tabindex="0" data-i="${sec.base + row.start + k}" style="width:${row.widths[k]}px"><img decoding="async" alt="" data-src="/thumb/${r.sha}" onload="this.classList.add('in')">`
           + (r.fav ? I.heartFill : "") + (r.stack && this.stacks() ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (r.hidden ? `<span class="hid">Hidden</span>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + `</div>`;
       }
       html += "</div>";
-      sec.rows.push({ start: i, n, full });
-      i = j;
+      sec.rows.push({ start: row.start, n: row.n, full: row.full });
     }
     const had = sec.box.childElementCount;
     sec.box.insertAdjacentHTML("beforeend", html);
@@ -840,15 +783,23 @@ let TAB = "library";
 // here (`trail`).
 // A history entry holds exactly that. What it knows of the photos is separate, and is `known`: the months and
 // years (P), how many in each month, and every photo's shape, all for one order and one set of view options.
-const L = { scale: ["years", "months", "all"].includes(V.scale) ? V.scale : "all", trail: [], anchor: null, sort: "", y: {},
-  P: null, months: null, shapes: null,
-  // unknown: never asked. asking. known. failed: asked, and nothing to show for it (a failure with the months
-  // already known leaves it known: the old ones stay up).
-  known: machine("library", { unknown: ["asking"], asking: ["asking", "known", "failed"], known: ["asking"], failed: ["asking"] }, "unknown"),
-  asked: 0, loading: null, retry: null };            // asked: which asking this is; loading: done when it is answered; retry: what "Try again" does
+const LIB = libraryFlow({                            // app/library-flow.js
+  periods: (q, signal) => api("/api/periods?" + q, undefined, { signal }),
+  layout: (q, signal) => fetch("/api/layout?" + q, { signal }).then(r => r.ok ? r.arrayBuffer() : null),
+  scale: ["years", "months", "all"].includes(V.scale) ? V.scale : "all",
+  onKnown: (facts, keep) => libKnown(facts, keep),
+});
+// How this script reads it. scale, anchor and trail are the place (LIB.place: the scale is its state, which owns
+// the other two). known is unknown (never asked), asking, known, or failed (asked, and nothing to show for it;
+// a failure with the months already known leaves it known: the old ones stay up); P, months and shapes are
+// what the state `known` owns (while asking again, what was known before). sort and y are the page's own: the
+// order chosen, and where each place was left.
+const L = { sort: "", y: {}, known: LIB.known,
+  get scale() { return LIB.scale; }, get anchor() { return LIB.anchor; }, get trail() { return LIB.trail; },
+  get P() { return LIB.facts?.P ?? null; }, get months() { return LIB.facts?.months ?? null; }, get shapes() { return LIB.facts?.shapes ?? null; } };
 const libPlace = () => ({ scale: L.scale, anchor: L.anchor, trail: L.trail });
 const libCards = () => L.scale === "years" || L.scale === "months";
-function libSet(place) { L.scale = place.scale || L.scale; L.anchor = place.anchor ?? null; L.trail = place.trail || []; }
+function libSet(place) { LIB.set({ scale: SCALES.includes(place.scale) ? place.scale : L.scale, anchor: place.anchor, trail: place.trail }); }
 // Go to a place in the Library. how: "push" (a step to come back through) or "replace". arrive: show the
 // anchor (a card was opened, or Back came to it); otherwise the scale opens where it was last left.
 function libGo(place, how, arrive) {
@@ -856,23 +807,22 @@ function libGo(place, how, arrive) {
   libSet(place);
   nav(how); libShow(arrive);
 }
-const snap = () => ({ tab: TAB, s: String(toParams(S)), lib: libPlace(), alb: AL.id });
-const url = () => TAB === "library" ? location.pathname : TAB === "albums" ? (AL.id ? `?album=${AL.id}` : "?albums") : "?" + (toParams(S).size ? toParams(S) : "search");
-const yKey = () => TAB === "library" ? "library" + L.scale : TAB === "albums" ? "albums" + (AL.id || "") : "search";   // where each place was left
+const snap = () => ({ tab: TAB, s: String(toParams(S)), lib: libPlace(), alb: ALB.id });
+const url = () => TAB === "library" ? location.pathname : TAB === "albums" ? (ALB.id ? `?album=${ALB.id}` : "?albums") : "?" + (toParams(S).size ? toParams(S) : "search");
+const yKey = () => TAB === "library" ? "library" + L.scale : TAB === "albums" ? "albums" + (ALB.id || "") : "search";   // where each place was left
 // A step in history. push: one to go back through; replace: the same step, refined. The entry is what the app
 // shows at the moment of asking. While the viewer is leaving, its own entry is still being taken back, and a
-// step written now would be the one taken back instead: it waits for that (navFlush).
-const navWaiting = [];
+// step written now would be the one taken back instead: the viewer holds it until then (VW.nav). Any step is
+// the person moving on: an album still being made from the search they were at is not made (#81).
 function nav(mode = "push") {
-  const entry = snap(), to = url();
-  if (VW.is("leaving")) navWaiting.push([mode, entry, to]); else navWrite(mode, entry, to);
+  MAKER.cancel();
+  VW.nav(mode, snap(), url());
 }
 function navWrite(mode, entry, to) {
   const prev = mode === "push" ? { tab: history.state?.tab, scale: history.state?.lib?.scale } : history.state?.prev;
   const d = (history.state?.d || 0) + (mode === "push" ? 1 : 0);
   history[mode === "push" ? "pushState" : "replaceState"]({ ...entry, prev, d }, "", to);
 }
-function navFlush() { for (const step of navWaiting.splice(0)) navWrite(...step); }
 function setTab(t, how = "push", arrive = false) {    // how: push, replace, or "init" (the state is already in history). arrive: see libGo
   if (t === TAB && how !== "init") return;
   closeMenus();
@@ -893,7 +843,7 @@ $("#tabbar").onclick = e => {
   setTab(b.dataset.tab);
 };
 function titleDoc() {
-  const t = TAB === "library" ? "" : TAB === "albums" ? (AL.id && AL.album ? AL.album.title : "Albums") : isEmpty() ? "Search" : $("#sHead h1").textContent;
+  const t = TAB === "library" ? "" : TAB === "albums" ? (ALB.id && album() ? album().title : "Albums") : isEmpty() ? "Search" : $("#sHead h1").textContent;
   document.title = (t ? t + " — " : "") + "Photo Estate";
 }
 
@@ -901,39 +851,46 @@ function titleDoc() {
       months, a month opens its photos. ── */
 const lgrid = new Grid({
   grid: "#libGrid", up: "#libUp", down: "#libDown", ranked: false,
-  fetch: (c, n) => getJSON("/api/search?" + libParams() + `&limit=${n}&cursor=${c}`),
+  fetch: (c, n, signal, q) => api("/api/search?" + q + `&limit=${n}&cursor=${c}`, undefined, { signal }),   // q: the order and view options the list was asked for with
   grain: () => 7,
   count: sec => L.months?.get(sec.key),
-  shape: i => L.shapes && i < L.shapes.length ? .5 + L.shapes[i] * 2.1 / 255 : 0,   // from /api/layout: known before the photo is
+  shape: i => L.shapes && i < L.shapes.length ? shapeFromByte(L.shapes[i]) : 0,   // from /api/layout: known before the photo is
   stacks: () => V.dedupe,
-  onGrow: () => { $("#libHead").hidden = lgrid.lo > 0; if (VL === lgrid && viewing()) { arrange(); vChrome(); } },
+  onGrow: () => { $("#libHead").hidden = lgrid.lo > 0; if (VO()?.list === lgrid) { arrange(); vChrome(); } },
   onError: e => {                                    // said where the photos would have been, with a way to ask again
-    lgrid.clear();
+    lgrid.wipe();
     lgrid.el.innerHTML = libSorry("Couldn’t load these photos", e);
   },
 });
+// "Try again", under a list that did not come or a library that did not: what it does belongs to the state
+// that failed (the list's, else the library's), so there is nothing to do when nothing has.
+function libRetry(grid) {
+  const failed = grid?.phase.is("failed") ? grid.phase : L.known.is("failed") ? L.known : null;
+  failed?.data.retry?.();
+}
 const libSorry = (what, e) => `<div class="blank">${MARK}<h3>${what}</h3><p>${esc(e?.message || "")}</p><button class="btn" id="libRetry">Try again</button></div>`;
 // One month, opened from its card: a set of its own, the month's photos and nothing above or below them. It is
 // the library's list from where the month starts (`at`) for as many photos as it has (`n`), so it is in the
 // order the Library is in, its shapes are known before its photos are, and it ends where the month does.
-const M = { key: null, m: null };                    // the month showing, and its card's facts (from L.P)
+// Which month, and where it is in the library, is what the list is `of`: { key, at, n, q }, fixed when it is
+// asked for, so a page of it is asked for with that month's place whatever month is showing by then (#81).
 const mgrid = new Grid({
   grid: "#monGrid", down: "#monDown", ranked: true,  // one run of photos, no headings within it; each says its day when pointed at
-  fetch: async (c, n) => {
-    const m = M.m, take = Math.min(n, m.n - c);
-    const d = await getJSON("/api/search?" + libParams() + `&limit=${take}&cursor=${m.at + c}`);
+  fetch: async (c, n, signal, m) => {
+    const take = Math.min(n, m.n - c);
+    const d = await api("/api/search?" + m.q + `&limit=${take}&cursor=${m.at + c}`, undefined, { signal });
     d.next = c + take < m.n ? c + take : null;       // the month ends here, whatever comes after it in the library
     return d;
   },
   grain: () => 0,
-  shape: i => L.shapes && M.m && M.m.at + i < L.shapes.length ? .5 + L.shapes[M.m.at + i] * 2.1 / 255 : 0,
+  shape: i => { const m = mgrid.of; return L.shapes && m && m.at + i < L.shapes.length ? shapeFromByte(L.shapes[m.at + i]) : 0; },
   stacks: () => V.dedupe,
-  onGrow: () => { if (VL === mgrid && viewing()) { arrange(); vChrome(); } },
-  onError: e => { mgrid.clear(); mgrid.el.innerHTML = libSorry("Couldn’t load these photos", e); $("#monNav").innerHTML = ""; },
+  onGrow: () => { if (VO()?.list === mgrid) { arrange(); vChrome(); } },
+  onError: e => { mgrid.wipe(); mgrid.el.innerHTML = libSorry("Couldn’t load these photos", e); $("#monNav").innerHTML = ""; },
 });
 async function monthShow() {
   const key = L.anchor;
-  if (!L.known.is("known")) await L.loading;         // opened from history before the months are known: when they are
+  if (!L.known.is("known")) await LIB.settled();     // opened from history before the months are known: when they are
   if (TAB !== "library" || L.scale !== "month" || L.anchor !== key || !L.known.is("known")) return;
   const m = L.P.months.find(x => x.key === key);
   $("#monHead h1").textContent = heading(key);
@@ -941,13 +898,14 @@ async function monthShow() {
   const keys = L.P.months.map(x => x.key).sort(), i = keys.indexOf(key), arrow = d => svg(`<path d="${d}"/>`, 14, 'stroke-width="2"');
   const to = (k, before) => k ? `<button data-month="${k}">${before ? arrow("M10 3 5 8l5 5") : ""}${esc(heading(k))}${before ? "" : arrow("m6 3 5 5-5 5")}</button>` : "";
   $("#monNav").innerHTML = to(keys[i - 1], true) + "<span></span>" + to(keys[i + 1], false);
-  if (!m) { M.key = key; M.m = null; return mgrid.clear(); }
-  if (M.m === m && mgrid.phase.is("loading", "ready")) return scrollTo(0, L.y.librarymonth || 0);   // still showing (back from Search, or from a photo): where it was left
-  M.key = key; M.m = m; L.retry = monthShow;
+  if (!m) return mgrid.clear();
+  const q = LIB.facts.q, of = mgrid.of;
+  if (of && of.key === key && of.at === m.at && of.n === m.n && of.q === q && mgrid.phase.is("loading", "ready"))
+    return scrollTo(0, L.y.librarymonth || 0);       // still showing (back from Search, or from a photo): where it was left
   scrollTo(0, 0);
   const ghosts = L.shapes ? Array.from({ length: Math.min(mgrid.first, m.n) }, () => ({ ghost: true })) : null;   // laid out at once, each tile the shape its photo will be
   if (!ghosts) mgrid.clear();
-  mgrid.load(0, ghosts);
+  mgrid.load(0, ghosts, { key, at: m.at, n: m.n, q }, monthShow);
 }
 $("#monNav").onclick = e => {                         // the month before or after: in this one's place, so Back is still the Months
   const b = e.target.closest("[data-month]");
@@ -959,38 +917,26 @@ const libHere = () => { const sec = TAB === "library" && L.scale === "all" && (s
 // Ask for the library again (another order, a view option, the first time). It stays at the month it is at
 // unless told another: no caller has to remember to say so. (Choosing "Best first" inside a month used to
 // forget, and went back to the top of the library.)
-function libLoad(keep = libHere()) { L.retry = () => libLoad(keep); return L.loading = libLoad_(keep); }   // L.loading: done when the library's months are known
-async function libLoad_(keep) {                      // keep: the month to stay at (a view option changed)
-  const g = ++L.asked, q = libParams();
-  L.known.to("asking");
-  let failed = null;
-  const [P, shapes] = await Promise.all([getJSON("/api/periods?" + q).catch(e => { failed = e; return null; }),
-    fetch("/api/layout?" + q).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null)]);
-  if (g !== L.asked) return;                         // asked again since (another order, another view option): that answer is the one to show
-  if (!P) {
-    L.known.to(L.P ? "known" : "failed");
-    if (!L.P) { lgrid.onError(failed); $("#libPeriods").innerHTML = libSorry("Couldn’t load the library", failed); }
-    return;
-  }
-  L.known.to("known");
-  L.P = P; L.months = new Map(P.months.map(m => [m.key, m.n]));
-  L.shapes = shapes && shapes.byteLength === P.matching ? new Uint8Array(shapes) : null;   // every photo's shape, in the library's order
+function libLoad(keep = libHere()) {                 // keep: the month to stay at (a view option changed)
+  LIB.load(String(libParams()), { retry: () => libLoad(keep), ctx: keep }).then(how => {
+    if (how !== "failed") return;                    // known: libKnown has drawn it. kept: the old months stay up. stale: asked again since
+    const e = LIB.known.data.error;
+    lgrid.clear(); lgrid.el.innerHTML = libSorry("Couldn’t load these photos", e);
+    $("#libPeriods").innerHTML = libSorry("Couldn’t load the library", e);
+  });
+}
+async function libKnown({ P, q }, keep) {             // the library's months are known (again): everything that shows them
   const hidden = P.total - P.matching;               // what the view options hide, so the count adds up to the whole library
   $("#libHead p").textContent = hidden > 0 ? `${about(P.matching)} of ${about(P.total)} photos  ·  ${about(hidden)} hidden` : `${about(P.matching)} photos`;
   if (libCards()) renderPeriods();
   if (L.scale === "month") monthShow();              // the same month, in the order and with the view options now asked for
   const m = keep && P.months.find(x => x.key === keep), ghosts = libGhosts(m ? m.at : 0);
-  const loading = lgrid.load(m ? m.at : 0, ghosts);
-  if (!ghosts) await loading;
+  const loading = lgrid.load(m ? m.at : 0, ghosts, q, () => libLoad(keep));
+  if (!ghosts && !await loading) return;             // (another list since, or this one failed)
   if (m && L.scale === "all" && TAB === "library") toSection(keep);
-  await loading;
 }
 async function libCovers() {                          // a favourite changed: the same months and years, perhaps with other covers
-  const g = L.asked, P = await getJSON("/api/periods?" + libParams()).catch(() => null);
-  if (!P || g !== L.asked || !L.known.is("known") || P.matching !== L.P.matching) return;
-  L.P = P;
-  if (M.m) M.m = P.months.find(x => x.key === M.key) || M.m;   // (the month showing is still the month showing)
-  if (libCards() && TAB === "library") renderPeriods();
+  if (await LIB.covers() && libCards() && TAB === "library") renderPeriods();
 }
 function libGhosts(at) {                              // the page of photos from `at`, as far as it is known without asking: each one's month and shape
   if (!L.shapes) return null;
@@ -1010,7 +956,7 @@ function libShow(arrive = false) {                    // arrive: at the anchor (
   if (month) { clearPeriods(); monthShow(); }
   else if (!all) {
     if (L.known.is("known")) renderPeriods();
-    else if (arrive) { const at = L.anchor; L.loading?.then(() => { if (TAB === "library" && libCards() && L.anchor === at) libShow(true); }); }   // the card to show is not known yet: when it is
+    else if (arrive) { const at = L.anchor; LIB.settled().then(() => { if (L.known.is("known") && TAB === "library" && libCards() && L.anchor === at) libShow(true); }); }   // the card to show is not known yet: when it is
     const key = arrive && L.anchor && (L.scale === "years" ? L.P?.years : L.P?.months)?.find(p => p.key.startsWith(L.anchor))?.key;
     const card = key && (L.scale === "months" && L.anchor.length === 4 && $(`.yr[data-year="${L.anchor}"]`) || $(`.card[data-key="${key}"]`));   // a year opens at its heading
     if (card) card.scrollIntoView({ block: "start" }); else scrollTo(0, L.y["library" + L.scale] || 0);
@@ -1037,7 +983,7 @@ function renderPeriods() {
     }).join("")}</div>`;
 }
 $("#libPeriods").onclick = e => {
-  if (e.target.closest("#libRetry")) return L.retry?.();
+  if (e.target.closest("#libRetry")) return libRetry();
   const c = e.target.closest(".card"); if (!c) return;
   const key = c.dataset.key;
   libSet({ ...libPlace(), anchor: key }); nav("replace");   // this step now says which card was opened: Back comes to it
@@ -1061,12 +1007,11 @@ function toSection(key) {
   return !!sec;
 }
 async function libJump(key) {                         // the whole library, at this month
-  if (!L.P) await L.loading;                          // Back to a month before the library's months are known: when they are
+  if (!L.P) await LIB.settled();                      // Back to a month before the library's months are known: when they are
   if (!L.P || TAB !== "library" || L.scale !== "all") return;
   if (toSection(key)) return;
   const m = L.P.months.find(x => x.key === key);
   if (!m) return;
-  L.retry = () => libJump(key);
   const ghosts = libGhosts(m.at);                     // the month laid out at once, each tile the shape its photo will be
   scrollTo(0, 0);
   if (!ghosts) {                                      // shapes not known: at least not the photos of wherever the grid was, and the month, said at once
@@ -1074,7 +1019,7 @@ async function libJump(key) {                         // the whole library, at t
     lgrid.el.innerHTML = `<section><div class="sh"><h2>${esc(heading(key))}</h2><p><span class="n num">${photos(m.n)}</span></p></div></section>`;
   }
   $("#libHead").hidden = true;
-  const loading = lgrid.load(m.at, ghosts);
+  const loading = lgrid.load(m.at, ghosts, LIB.facts.q, () => libJump(key));
   if (ghosts) return toSection(key);                  // the photos arrive in their places; the page is not moved again under a reader
   if (await loading && TAB === "library" && L.scale === "all") { scrollTo(0, 0); toSection(key); setTimeout(() => lgrid.poke(), 30); }
 }
@@ -1131,42 +1076,45 @@ addEventListener("scroll", () => {
       one is a search, and holds whatever it finds. Under them, the albums that came in with the photos, which
       are a filter in Search. An album is somewhere to look, and something to act on: its photos can be made
       favourites, downloaded, or put up for hiding, which makes it a change set to review (/changes). ── */
-const AL = { id: null, album: null, sections: null };   // the album showing (null: the list of them), and what the server last said of it
+// Which it shows is ALB.where (app/albums-flow.js): the list, or an album and its id. What the server last said
+// of the album showing (its title, its note, its sections) came with the first page of its photos, and is
+// owned by that list's `ready` state: album() is it, or null.
+const ALB = albumsFlow({ list: signal => api("/api/albums", undefined, { signal }) });
 const agrid = new Grid({
   grid: "#albGrid", down: "#albDown", ranked: true,  // no dates to head it by: its own sections, or one run
-  fetch: (c, n) => getJSON(`/api/albums/${AL.id}/photos?limit=${n}&cursor=${c}`),
+  fetch: (c, n, signal, id) => api(`/api/albums/${id}/photos?limit=${n}&cursor=${c}`, undefined, { signal }),
   grain: () => 0,
   keyOf: r => r.section || "", titleOf: key => key,
-  count: sec => AL.sections?.get(sec.key),
+  count: sec => agrid.data?.counts.get(sec.key),
   stacks: () => false,
-  onData: d => { AL.album = d.album; AL.sections = new Map(d.sections.map(s => [s.title, s.n])); albHead(d.matching); },
-  onGrow: () => { if (VL === agrid && viewing()) { arrange(); vChrome(); } },
-  onError: e => { agrid.clear(); agrid.el.innerHTML = `<div class="blank">${MARK}<h3>Couldn’t open this album</h3><p>${esc(e.message)}</p><button class="btn" id="albRetry">Try again</button></div>`; },
+  onData: d => { d.counts = new Map(d.sections.map(s => [s.title, s.n])); albHead(d.matching); },
+  onGrow: () => { if (VO()?.list === agrid) { arrange(); vChrome(); } },
+  onError: e => { agrid.wipe(); agrid.el.innerHTML = `<div class="blank">${MARK}<h3>Couldn’t open this album</h3><p>${esc(e.message)}</p><button class="btn" id="albRetry">Try again</button></div>`; },
 });
+const album = () => agrid.data?.album ?? null;
 function albGo(id, how = "push") {                    // an album, or (null) the list of them
   L.y[yKey()] = scrollY;
-  AL.id = id; nav(how); albShow();
+  ALB.go(id); nav(how); albShow();
 }
 function albBack() {
-  if (AL.id == null) return;
+  if (ALB.id == null) return;
   if (history.state?.prev?.tab === "albums") return history.back();
   albGo(null, "replace");
 }
 $("#albBack").onclick = albBack;
 function albShow() {
-  const one = AL.id != null;
+  const id = ALB.id, one = id != null;
   $("#albList").hidden = one; $("#albOne").hidden = !one;
   $("#albBack").hidden = !one || coarse.matches; $("#albCaps").hidden = !one;
   if (!one) return albList();
-  if (AL.album?.id === AL.id && agrid.phase.is("loading", "ready")) return scrollTo(0, L.y[yKey()] || 0);   // still showing: where it was left
-  AL.album = AL.sections = null;
+  if (agrid.of === id && agrid.phase.is("loading", "ready")) return scrollTo(0, L.y[yKey()] || 0);   // still showing, or on its way: where it was left
   $("#albHead h1").innerHTML = "&nbsp;"; $("#albHead p").innerHTML = "&nbsp;"; $(".why", $("#albHead")).textContent = "";
   agrid.clear(); scrollTo(0, 0);
-  agrid.load(0).then(d => { if (d && !d.results.length) agrid.el.innerHTML = `<div class="blank">${MARK}<h3>Nothing in it yet</h3><p>${
+  agrid.load(0, null, id).then(d => { if (d && !d.results.length) agrid.el.innerHTML = `<div class="blank">${MARK}<h3>Nothing in it yet</h3><p>${
     d.album.kind === "live" ? "Its search finds no photos now." : "Photos are added to an album by asking for them in a chat connected to this library, or from a search."}</p></div>`; });
 }
 function albHead(n) {
-  const a = AL.album;
+  const a = album();
   $("#albHead h1").textContent = a.title;
   $("#albHead p").textContent = [photos(n), a.kind === "live" ? "Live: whatever its search finds" : "",
     a.op === "hide" ? (a.applied ? `Hiding ${photos(a.applied)}` : a.state === "done" ? "Hidden" : "Up for hiding") : ""].filter(Boolean).join("  ·  ");
@@ -1174,13 +1122,14 @@ function albHead(n) {
   titleDoc();
 }
 async function albList() {
-  const el = $("#albList"), asked = AL.asked = (AL.asked || 0) + 1;
+  const el = $("#albList");
   if (!el.childElementCount) el.innerHTML = `<div class="head"><h1>Albums</h1><p class="num">&nbsp;</p></div>`;
   scrollTo(0, L.y.albums || 0);
-  let d;
-  try { d = await getJSON("/api/albums"); }
-  catch (e) { if (asked === AL.asked) el.innerHTML = `<div class="head"><h1>Albums</h1></div><div class="blank">${MARK}<h3>Couldn’t load the albums</h3><p>${esc(e.message)}</p><button class="btn" id="albRetry">Try again</button></div>`; return; }
-  if (asked !== AL.asked || TAB !== "albums" || AL.id != null) return;
+  const how = await ALB.load();                      // (asked again before this answer came: that asking draws)
+  if (how === STALE) return;
+  if (how === "failed") { el.innerHTML = `<div class="head"><h1>Albums</h1></div><div class="blank">${MARK}<h3>Couldn’t load the albums</h3><p>${esc(ALB.listing.data.error.message)}</p><button class="btn" id="albRetry">Try again</button></div>`; return; }
+  if (TAB !== "albums" || ALB.id != null) return;
+  const d = ALB.listing.data;
   const from = INFO?.facets.album || [];
   const badge = s => s.op !== "hide" ? (s.kind === "live" ? "Live" : "") : s.applied ? `Hiding ${fmt(s.applied)}` : s.state === "done" ? "Hidden" : s.state === "reverted" ? "" : "Up for hiding";
   const card = s => `<button class="card" data-album="${s.id}" aria-label="${esc(s.title)}">${s.cover[0] ? `<img alt="" loading="lazy" src="/thumb/${s.cover[0]}" onload="this.classList.add('in')"><img alt="" loading="lazy" src="/preview/${s.cover[0]}" onload="this.classList.add('in')">` : ""}
@@ -1198,7 +1147,7 @@ $("#albList").onclick = e => {
   if (c) albGo(+c.dataset.album);
   else if (s) { const x = blank(); x.f.album = [s.dataset.src]; find(x); }   // an album that came with the photos: those photos, in Search
 };
-$("#albOne").addEventListener("click", e => { if (e.target.closest("#albRetry")) { AL.album = null; albShow(); } });
+$("#albOne").addEventListener("click", e => { if (e.target.closest("#albRetry")) albShow(); });
 $("#albView").onclick = e => openMenu(e.currentTarget, el => {
   const mi = (i, on, label) => `<button class="mi${on ? " on" : ""}" data-dens="${i}">${I.check}<span>${label}</span></button>`;
   el.innerHTML = `<h5>Photo size</h5>${DENS_NAME.map((n, i) => mi(i, V.dens === i, n)).join("")}`;
@@ -1207,7 +1156,7 @@ $("#albView").onclick = e => openMenu(e.currentTarget, el => {
 // What can be done with the album showing. Each is done to all its photos; hiding is only proposed here, and
 // is looked over and applied on the review page.
 $("#albMore").onclick = e => openMenu(e.currentTarget, el => {
-  const a = AL.album; if (!a) return closeMenus();
+  const a = album(); if (!a) return closeMenus();
   const row = (attr, icon, label, tag = "button") => `<${tag} class="mi ln" ${attr}>${icon}<span>${label}</span></${tag}>`;
   const heart = svg('<path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.900-5.600 7.300-5.600 7.300Z"/>', 18);
   const down = svg('<path d="M8 2.500v8M4.800 7.500 8 10.700l3.200-3.200M3 13.500h10"/>', 18), eye = svg('<path d="M2 8s2.200-4 6-4 6 4 6 4-2.200 4-6 4-6-4-6-4Z"/><path d="m3 13 10-10"/>', 18), bin = svg('<path d="M3.500 4.500h9M6.500 4.500V3h3v1.500M4.800 4.500l.5 8.500h5.400l.5-8.500"/>', 18);
@@ -1222,24 +1171,26 @@ $("#albMore").onclick = e => openMenu(e.currentTarget, el => {
       const mine = menu, field = (label, v, hint = "") => `<h5>${label}</h5><input type="text" aria-label="${label}" autocomplete="off" placeholder="${hint}" value="${esc(v || "")}">`;
       return menuForm(el, field("Title", a.title).replace("<input", '<input maxlength="200"') + field("Note", a.prompt, "What this album is, if you like"),
         "Save", "Saving…", "Couldn’t save", async (title, prompt) => {
-          const got = await postJSON(`/api/albums/${a.id}/rename`, { title, prompt });
+          const got = await api(`/api/albums/${a.id}/rename`, { title, prompt });
           if (menu === mine) closeMenus();
-          if (AL.album?.id === a.id) { AL.album = { ...AL.album, title: got.title, prompt: got.prompt }; albHead(agrid.data?.matching ?? a.n); }
+          if (album()?.id === a.id) { agrid.data.album = { ...album(), title: got.title, prompt: got.prompt }; albHead(agrid.data.matching ?? a.n); }
         });
     }
     closeMenus();
     try {
       if (b.dataset.fav) {
-        const got = await postJSON(`/api/albums/${a.id}/favorite`, { fav: b.dataset.fav === "1" });
-        INFO.fav += (got.fav ? 1 : -1) * got.changed; $("#browse").innerHTML = "";
-        for (const r of agrid.items) if (r) favShow(r, got.fav);          // the ones loaded: every tile of theirs, wherever it shows
+        // (app/favourite.js: one request, in step with the hearts; the photos of this album the page has, and none once it shows another)
+        const here = () => album()?.id === a.id ? agrid.items.filter(Boolean).map(r => [r.sha, !!r.fav, r]) : [];
+        const done = await FAV.all(here, b.dataset.fav === "1", fav => api(`/api/albums/${a.id}/favorite`, { fav }));
+        if (!done.ok) throw done.error;
+        INFO.fav += (done.answer.fav ? 1 : -1) * done.answer.changed; $("#browse").innerHTML = "";
         libCovers();
       } else if (b.hasAttribute("data-hide")) {
-        await postJSON(`/api/albums/${a.id}/hide`, {});
+        await api(`/api/albums/${a.id}/hide`, {});
         location.href = `/changes/${a.id}`;            // looked over and applied there, as any change set
       } else if (b.hasAttribute("data-drop") && confirm(`Delete the album “${a.title}”? Its photos stay in the library.`)) {
-        await postJSON(`/api/albums/${a.id}/discard`, {});
-        AL.album = null; albGo(null, "replace");
+        await api(`/api/albums/${a.id}/discard`, {});
+        agrid.clear(); albGo(null, "replace");
       }
     } catch (err) { alert(err.message === "not allowed" ? "Albums can’t be changed from this account." : err.message); }
   };
@@ -1255,7 +1206,10 @@ document.addEventListener("mouseover", e => {
 
 /* ── menus: the view options, and the rest of your library ─────────── */
 let menu = null;
-function closeMenus() { if (menu) { menu.anchor.classList.remove("open"); menu.el.remove(); menu = null; } closeSheet(); }
+function closeMenus() {                               // (onClose: what a menu had under way ends with it)
+  if (menu) { const m = menu; m.anchor.classList.remove("open"); m.el.remove(); menu = null; m.onClose?.(); }
+  closeSheet();
+}
 function openMenu(anchor, draw) {
   const again = menu?.anchor === anchor; closeMenus(); if (again) return;
   const el = document.createElement("div"); el.className = "menu"; document.body.append(el);
@@ -1359,19 +1313,19 @@ document.addEventListener("touchend", e => { if (e.touches.length < 2) pinch = n
 // state (sgrid.phase: empty for no question, loading, ready, failed); D is the answer and F the counts beside it.
 let Q = null, D = null, F = null, sug = [], sugCur = -1;
 // The field is resting or being typed in. Typing starts with a tap in it and ends in stopTyping, however it ends.
-const FIELD = machine("field", { resting: ["typing"], typing: ["resting"] }, "resting");
+const FIELD = machine("field", FIELD_STEPS, "resting", { strict: true });   // app/query.js
 const typing = () => FIELD.is("typing");
 function stopTyping(text = S.q) { if (typing()) FIELD.to("resting"); $("#q").blur(); $("#q").value = text; }
 // What shows under the field follows from those: what the typed words could be, the ways in, or the answer.
 const pane = () => { const typed = $("#q").value.trim(); return typing() && typed && typed !== S.q ? "suggest" : isEmpty() ? "browse" : "results"; };
 const sgrid = new Grid({
   grid: "#sGrid", down: "#sDown",
-  fetch: (c, n) => getJSON((Q.s.sha ? "/api/similar?" : "/api/search?") + Q.key + `&limit=${n}&cursor=${c}`),
+  fetch: (c, n, signal, q) => api((q.s.sha ? "/api/similar?" : "/api/search?") + q.key + `&limit=${n}&cursor=${c}`, undefined, { signal }),   // q: the question the list was asked for
   grain: () => sgrid.ranked ? 0 : D?.scope || Q.s.event ? 10 : Q.s.from && Q.s.to && ymOf(Q.s.to) - ymOf(Q.s.from) <= 1 ? 10 : 7,
   stacks: () => V.dedupe && !Q.s.stack,
   count: sec => sec.key.length === 7 && F ? F.months[ymOf(sec.key)] : null,
   onData: d => { D = d; sgrid.ranked = !!(Q.s.sha || d.text) || d.sort === "best"; },   // best first is not by time: no months to head
-  onGrow: () => { if (VL === sgrid && viewing()) { arrange(); vChrome(); } },
+  onGrow: () => { if (VO()?.list === sgrid) { arrange(); vChrome(); } },
   onError: e => { $("#sHead h1").textContent = "Couldn’t search"; $("#sHead p").textContent = e.message; },
 });
 const sParams = () => viewParams(toParams(S));
@@ -1380,14 +1334,15 @@ function go(s) { S = s; nav(); refreshSearch(); }           // a new question: a
 function refine() { nav("replace"); refreshSearch(); }      // the same question, narrowed or widened
 function loadF() {                                    // the counts beside the question now being answered
   const key = Q.key;
-  return getJSON("/api/facets?" + key).then(f => { if (Q.key === key) { F = f; sgrid.counts(); drawSheet(); } }).catch(() => {});
+  return api("/api/facets?" + key).then(f => { if (Q.key === key) { F = f; sgrid.counts(); drawSheet(); } }).catch(() => {});
 }
 async function refreshSearch() {                      // S is asked: it becomes Q
   if (TAB !== "search") return;                     // asked when Search shows again (setTab sees that Q is not what S now says)
+  MAKER.cancel();                                   // an album still being made from the question before is not made
   Q = { s: copy(S), key: sKey() };
   loadF();
   if (isEmpty()) { sgrid.clear(); D = null; searchShow(); return; }
-  const loading = sgrid.load(0);
+  const loading = sgrid.load(0, null, Q);
   searchShow(); scrollTo(0, 0);
   const data = await loading;
   if (!data) return;                                // another question was asked since, or this one failed (the grid said so)
@@ -1442,24 +1397,25 @@ function searchHead() {                               // what the answer is, in 
 // has no end: it is every photo, by likeness). The title offered is the question, in words.
 const albumable = () => !!D && Q?.key === sKey() && sgrid.phase.is("ready") && !Q.s.sha && D.matching > 0;
 const albumTitle = () => [Q.s.q, ...filterBits(Q.s), D.scope ? tripTitle(D.scope) : "", Q.s.fav ? "Favourites" : ""].filter(Boolean).join(" · ") || $("#sHead h1").textContent;
-async function albumFromSearch(title) {
-  const q = Q, items = [];
-  for (let c = 0; c != null;) {                       // the whole answer, a page at a time, as the grid asks for it
-    const d = await getJSON(`/api/search?${q.key}&limit=500&cursor=${c}`);
-    for (const r of d.results) items.push({ sha: r.sha });
-    c = d.next;
-  }
-  if (!items.length) throw new Error("This search finds no photos now.");
-  return postJSON("/api/albums", { title, prompt: `From the search ${$("#sHead h1").textContent}`, items });
-}
+// It is made by app/albums-flow.js: every page of the search is read, then one request makes the album. The
+// question, the title and the note ("From the search …") are those of the moment it is asked for. Until the
+// last page is in, moving on (another question, another place, the menu put away) stops it: no further page
+// is asked for and no album is made. Once the request that makes it has been sent it is left to finish.
+const MAKER = albumMaker({
+  page: (key, c, signal) => api(`/api/search?${key}&limit=500&cursor=${c}`, undefined, { signal }),
+  create: made => api("/api/albums", made),
+});
+function albumOpen(id) { ALB.go(id); if (TAB === "albums") { nav(); albShow(); } else setTab("albums"); }
 $("#sAlbum").onclick = e => openMenu(e.currentTarget, el => {
   if (!albumable()) return closeMenus();
-  const mine = menu;
+  const mine = menu, key = Q.key, heading = $("#sHead h1").textContent;   // the answer showing now: what the album is made from
+  mine.onClose = () => MAKER.cancel();
   menuForm(el, `<h5>New album from ${photos(D.matching)}</h5><input type="text" aria-label="Album title" maxlength="200" autocomplete="off" value="${esc(albumTitle())}">`,
     "Create album", "Creating…", "Couldn’t make the album", async title => {   // if it fails the search stays as it was; the menu says why, and can be tried again
-      const a = await albumFromSearch(title);
-      if (menu === mine) closeMenus();
-      AL.id = a.id; AL.album = null; setTab("albums");
+      const a = await MAKER.make({ key, title, prompt: `From the search ${heading}` });
+      if (a === STALE) { if (menu === mine) closeMenus(); return; }   // stopped before it was made: nothing is left saying "Creating…"
+      if (menu === mine) { closeMenus(); albumOpen(a.id); }
+      else toast(`Made the album “${title}”`, { action: { label: "Open", fn: () => albumOpen(a.id) } });   // made after the person had moved on: said, not gone to
     });
 });
 function drawNotice(suggesting) {
@@ -1719,20 +1675,22 @@ const mkSlide = () => { const el = document.createElement("div"); el.className =
   return { el, lo: el.firstChild, hi: el.lastChild, r: null, large: false, failed: false, asked: false }; };
 const slides = [mkSlide(), mkSlide(), mkSlide()];
 let cur = slides[0], vPic = cur.el;
-let VL = null, items = [];                           // the grid the photo was opened from, and its photos
-let vCur = -1, sheetUp = false, vNote = "";          // vCur: the photo showing while the viewer is open (VW). sheetUp: details showing on a phone (never to begin with)
-let vStack = null, vPick = null;                     // the shots of the stack the photo is on top of, and the one of them looked at in its place
-const shown = () => vPick || items[vCur];            // the photo on screen: the list's own, or the one picked from its stack
-const stripped = r => !!r && r.stack > 1 && VL.stacks();   // on top of a stack (in a list that stacks): its shots go in a strip under it
-let settle = null;                                   // finishes a swipe that is still sliding into place
+// What the open viewer knows is owned by its `open` state (VO(), app/viewer-flow.js): the grid the photo was
+// opened from (`list`) and its photos as they were then (`items`: the photos to step through), the photo showing (`i`), the shots of the
+// stack it is on top of and the one of them looked at in its place (`stack`, `pick`), whether the details are
+// up on a phone (`sheetUp`: never to begin with), the file fetched to share, a note under the caption, and
+// what finishes a swipe still sliding into place (`settle`). None of it outlives the viewer.
+const shown = () => { const o = VO(); return o ? o.pick || o.items[o.i] : null; };   // the photo on screen: the list's own, or the one picked from its stack
+const stripped = r => !!r && r.stack > 1 && !!VO()?.list.stacks();   // on top of a stack (in a list that stacks): its shots go in a strip under it
+const sheetUp = () => !!VO()?.sheetUp;
 const phone = () => narrow.matches || coarse.matches;   // full-screen photo, details only when asked for
 const vw = () => v.clientWidth, vh = () => v.clientHeight;
-const infoOn = () => phone() ? sheetUp : V.info;
+const infoOn = () => phone() ? sheetUp() : V.info;
 const infoW = () => !narrow.matches && infoOn() ? 360 : 0;   // narrow: details are a sheet from below instead
 const pageW = () => vw() - infoW() + GAP;
 function fit(r) {
   const W = vw() - infoW(), px = phone() ? 0 : 72, py = phone() ? 0 : 76;
-  const H = (narrow.matches ? vh() * (sheetUp ? .45 : 1) : vh()) - (!phone() && stripped(r) ? 56 : 0);   // with a frame round it, the photo stands clear of the strip
+  const H = (narrow.matches ? vh() * (sheetUp() ? .45 : 1) : vh()) - (!phone() && stripped(r) ? 56 : 0);   // with a frame round it, the photo stands clear of the strip
   const ar = r.ar || 1.5; let w = W - px * 2, h = w / ar;
   if (h > H - py * 2) { h = H - py * 2; w = h * ar; }
   return { x: Math.round((W - w) / 2), y: Math.round((H - h) / 2), w: Math.round(w), h: Math.round(h) };
@@ -1758,14 +1716,15 @@ function preview(s) {                                // 1600 px first because it
 }
 function sharpen(force = Z.s > 1.6) {                // then the 4096 px one, when the screen or the zoom can show more
   const s = cur, r = s.r;
-  if (!r || s.large || !s.hi.classList.contains("in") || Math.max(r.w || 0, r.h || 0) <= 1700) return;
+  if (!viewing() || !r || s.large || !s.hi.classList.contains("in") || Math.max(r.w || 0, r.h || 0) <= 1700) return;
   const b = fit(r);
   if (!force && Math.max(b.w, b.h) * devicePixelRatio <= 1700) return;
   s.large = true;
   const im = new Image(); im.onload = () => { if (s.r === r) s.hi.src = im.src; }; im.src = "/large/" + r.sha;
 }
 function arrange() {                                 // the current photo and its neighbours, each in a slide
-  const want = [shown(), items[vCur - 1] || null, items[vCur + 1] || null];
+  const { items, i } = VO();
+  const want = [shown(), items[i - 1] || null, items[i + 1] || null];
   const free = slides.filter(s => !s.r || !want.includes(s.r));
   const use = want.map(r => (r && slides.find(s => s.r === r)) || free.pop());
   cur = use[0]; vPic = cur.el;
@@ -1773,76 +1732,78 @@ function arrange() {                                 // the current photo and it
   if (Z.s !== 1) bake();
 }
 function show(i, dir = 0) {
-  vCur = i; vPick = vStack = null;
-  settle = null; stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
+  const o = VW.show(i);                              // what belonged to the photo before (its stack, the file to share, a note) is dropped
+  if (!o) return;
+  const items = o.items;
+  stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
   for (const s of slides) s.el.style.transform = "";
   Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0;
   arrange();
-  shareFile = null; vNote = ""; $("#vShare").classList.remove("ready", "busy");
+  $("#vShare").classList.remove("ready", "busy");
   sharpen();
   if (dir) vPic.animate([{ opacity: 0, transform: `translateX(${dir * 28}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE });
   vChrome(); drawInfo(items[i]); drawStrip(); loadStack(items[i]);
-  if (i > items.length - 12) VL.more();
-  if (VL.lo > 0 && i < VL.lo + 12) VL.less();
+  if (i > items.length - 12) o.list.more();
+  if (o.list.lo > 0 && i < o.list.lo + 12) o.list.less();
 }
 // The stack the photo is on top of, as a row of small prints over the bar, best first: click one to look at it
 // (or ↑ and ↓). Left and right still go from photo to photo of the list; the strip is how to look through one stack.
 async function loadStack(top) {
+  const o = VO();
   if (!stripped(top)) return;
   let d;
-  try { d = await getJSON(`/api/search?stack=${top.sha}&shots=1&limit=500`); } catch (e) { return; }   // no strip; the details still open the stack
-  if (!viewing() || items[vCur] !== top || d.results.length < 2 || !d.results.some(r => r.sha === top.sha)) return;
-  vStack = d.results.map(r => r.sha === top.sha ? top : r);
+  try { d = await api(`/api/search?stack=${top.sha}&shots=1&limit=500`); } catch (e) { return; }   // no strip; the details still open the stack
+  if (VO() !== o || o.items[o.i] !== top || d.results.length < 2 || !d.results.some(r => r.sha === top.sha)) return;   // (closed, or another photo, since)
+  o.stack = d.results.map(r => r.sha === top.sha ? top : r);
   drawStrip(d.sort === "best");
 }
 function drawStrip(best) {
-  const el = $("#vStrip");
-  el.hidden = !vStack; v.classList.toggle("stacked", !!vStack);
-  el.innerHTML = (vStack || []).map((r, i) => `<button data-i="${i}" aria-label="Shot ${i + 1} of ${vStack.length}${best && !i ? ", the best" : ""}"><img alt="" draggable="false" src="/thumb/${r.sha}"></button>`).join("");
+  const el = $("#vStrip"), stack = VO()?.stack || null;
+  el.hidden = !stack; v.classList.toggle("stacked", !!stack);
+  el.innerHTML = (stack || []).map((r, i) => `<button data-i="${i}" aria-label="Shot ${i + 1} of ${stack.length}${best && !i ? ", the best" : ""}"><img alt="" draggable="false" src="/thumb/${r.sha}"></button>`).join("");
   markStrip();
 }
 function markStrip() {
-  const on = shown();
-  for (const b of $("#vStrip").children) { const is = vStack[+b.dataset.i] === on; b.classList.toggle("on", is); b.setAttribute("aria-pressed", is);
+  const on = shown(), stack = VO()?.stack;
+  for (const b of $("#vStrip").children) { const is = stack?.[+b.dataset.i] === on; b.classList.toggle("on", is); b.setAttribute("aria-pressed", is);
     if (is) b.parentNode.scrollTo({ left: b.offsetLeft - (b.parentNode.clientWidth - b.offsetWidth) / 2, behavior: "smooth" }); }
 }
 function pick(i) {                                   // another shot of the stack, in the place of the one on top
-  const r = vStack?.[i];
+  const o = VO(), r = o?.stack?.[i];
   if (!r || r === shown()) return;
-  vPick = r === items[vCur] ? null : r;
+  o.pick = r === o.items[o.i] ? null : r;
   for (const s of slides) s.el.style.transform = "";
   Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0;
   arrange();
-  shareFile = null; vNote = ""; $("#vShare").classList.remove("ready", "busy");
+  o.share = null; o.note = ""; $("#vShare").classList.remove("ready", "busy");
   sharpen();
   vPic.animate([{ opacity: .4 }, { opacity: 1 }], { duration: 160, easing: "ease-out" });
   vChrome(); drawInfo(r); markStrip();
 }
-const pickStep = d => { if (vStack) pick(vStack.indexOf(shown()) + d); };
+const pickStep = d => { const stack = VO()?.stack; if (stack) pick(stack.indexOf(shown()) + d); };
 $("#vStrip").addEventListener("click", e => { const b = e.target.closest("button"); if (b) pick(+b.dataset.i); });
 function vChrome() {                                 // what and when, as a caption above the print
-  const r = shown(), d = dParts(when(r)), note = vNote || (cur.failed ? "The full-size image didn’t load" : "");
-  $("#vPrev").disabled = !items[vCur - 1]; $("#vNext").disabled = !items[vCur + 1];
+  const o = VO(); if (!o) return;
+  const r = shown(), d = dParts(when(r)), note = o.note || (cur.failed ? "The full-size image didn’t load" : "");
+  $("#vPrev").disabled = VW.neighbour(-1) == null; $("#vNext").disabled = VW.neighbour(1) == null;
   $("#vTitle").innerHTML = `<b>${d ? fLong.format(d) : "Undated"}</b><span class="num">${esc([d && when(r).length > 10 && fTime.format(d), firstPart(r.city || "")].filter(Boolean).join("  ·  ")) || "&nbsp;"}</span>`;
   $("#vFavBtn").classList.toggle("on", !!r.fav); $("#vFavBtn").setAttribute("aria-pressed", !!r.fav);
   $("#vInfoBtn").classList.toggle("on", infoOn());
   $("#vNote").textContent = note;
 }
 // Opening or sharing a photo says a search found something; the server keeps these with the searches.
-const logEvent = (ev, i) => { const r = items[i]; if (!r) return;
-  const p = VL === sgrid ? new URLSearchParams(Q.key) : libParams(); p.set("ev", ev); p.set("sha", r.sha); p.set("pos", i);
+const logEvent = (ev, list, r, i) => { if (!r) return;
+  const p = list === sgrid ? new URLSearchParams((sgrid.of || Q).key) : libParams(); p.set("ev", ev); p.set("sha", r.sha); p.set("pos", i);
   fetch("/api/log?" + p, { keepalive: true }).catch(() => {}); };
 function openViewer(grid, i) {
   if (!grid.items[i] || grid.items[i].ghost) return;   // a tile whose photo is not known yet
-  if (!VW.to("open")) return;                         // already open, or the last one still leaving
-  history.pushState({ ...history.state, v: 1 }, "");
-  VL = grid; items = grid.items;
-  logEvent("open", i);
-  sheetUp = false; closeMenus();
+  if (!VW.openOn(grid, i)) return;                    // already open, or the last one still leaving
+  logEvent("open", grid, grid.items[i], i);
+  closeMenus();
   v.classList.add("on"); v.classList.remove("bare"); v.classList.toggle("info", infoOn());
   document.documentElement.style.overflow = "hidden";
   show(i);
-  const t = VL.tile(i)?.getBoundingClientRect(), f = fit(items[i]);
+  const t = grid.tile(i)?.getBoundingClientRect(), f = fit(grid.items[i]);
   if (t) vPic.animate([{ transform: `translate(${t.x - f.x}px,${t.y - f.y}px) scale(${t.width / f.w},${t.height / f.h})` }, { transform: "none" }], { duration: 380, easing: EASE });
   else vPic.animate([{ opacity: 0, transform: "scale(.97)" }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE });
   $("#vBg").animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: "ease-out" });
@@ -1851,22 +1812,23 @@ function openViewer(grid, i) {
 // entry: what becomes of the viewer's history entry. "back": it is taken back (the viewer is leaving until the
 // browser says it has gone). "gone": Back was pressed, so it already has. "taken": a search is about to take its place.
 function closeViewer(entry = "back", instant = false) {
-  if (!viewing()) return;
-  const i = vCur, bg = $("#vBg"), ui = $("#vUi");
+  const o = VO();
+  if (!o) return;
+  const i = o.i, bg = $("#vBg"), ui = $("#vUi");
   const dim = bg.style.opacity || 1, hidden = ui.style.opacity === "0";   // where a drag left things
-  settle = null; stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
+  stage.getAnimations().forEach(a => a.cancel()); stage.style.transform = "";
   const at = vPic.getBoundingClientRect(), f = fit(shown());   // zoomed or dragged: it goes home from where it is
   const from = `translate(${at.x - f.x}px,${at.y - f.y}px) scale(${at.width / f.w},${at.height / f.h})`;
   for (const s of slides) { s.el.style.transform = ""; if (s !== cur) s.el.style.display = "none"; }
   Z.s = Zb.s = 1; Z.x = Z.y = Zb.x = Zb.y = 0; place(vPic, f); bg.style.opacity = ui.style.opacity = "";
-  v.classList.remove("bare"); vCur = -1; vPick = vStack = null;
-  if (entry === "back") {
-    VW.to("leaving"); history.back();
-    setTimeout(() => { if (VW.is("leaving")) { VW.to("closed"); navFlush(); } }, 1000);   // (a browser that never says so)
-  } else VW.to("closed");
+  v.classList.remove("bare");
+  pts.clear(); if (!GS.is("none")) GS.to("none");    // a finger still down has nothing left to move
+  // Closed, or leaving until the browser says the entry has gone (or a second passes without it saying so):
+  // either way what the viewer knew of the photo goes with the step, and `o` is the last of it.
+  VW.close(entry);
   const done = () => { if (!viewing()) { v.classList.remove("on"); document.documentElement.style.overflow = ""; } };
   if (instant) return done();
-  const el = VL.tile(i);
+  const el = o.list.tile(i);
   el?.scrollIntoView({ block: "nearest" });
   const t = el?.getBoundingClientRect();
   const a = t ? vPic.animate([{ transform: from }, { transform: `translate(${t.x - f.x}px,${t.y - f.y}px) scale(${t.width / f.w},${t.height / f.h})` }], { duration: 300, easing: EASE })
@@ -1875,9 +1837,10 @@ function closeViewer(entry = "back", instant = false) {
   ui.animate([{ opacity: hidden ? 0 : 1 }, { opacity: 0 }], { duration: 150, fill: "forwards" }).finished.then(x => setTimeout(() => x.cancel(), 200));
   a.finished.then(done, done);
 }
-const step = d => { const i = vCur + d; if (items[i]) show(i, d); };
+const step = d => { const i = VW.neighbour(d); if (i != null) show(i, d); };
 function toggleInfo() {
-  if (phone()) sheetUp = !sheetUp; else { V.info = !V.info; saveView(); }
+  const o = VO(); if (!o) return;
+  if (phone()) o.sheetUp = !o.sheetUp; else { V.info = !V.info; saveView(); }
   v.classList.toggle("info", infoOn()); if (infoOn()) v.classList.remove("bare");
   resetZoom();
   const a = vPic.getBoundingClientRect(); arrange(); vChrome(); const b = fit(shown());
@@ -1936,21 +1899,24 @@ $("#vInfo").addEventListener("click", e => {
   if (k === "event") s.event = val; else if (k === "stack") s.stack = val; else s.f[k] = [val];
   find(s);
 });
-// A favourite: said on the page at once, then to the server; if the server will not have it, taken back.
-// A month's cover is a favourite of that month if it has one, so the cards are asked for again.
-async function favour() {
+// A favourite: said on the page at once, then to the server; if the server will not have it, taken back
+// (app/favourite.js: pressed again before the answer comes, the page stays on what was last asked for, and the
+// server is told that last). A month's cover is a favourite of that month if it has one, so the cards are
+// asked for again.
+const FAV = favourites({
+  save: (r, fav) => api("/api/favorite", { sha: r.sha, fav }),
+  show: favShow,
+  saved: got => { INFO.fav = got.favourites; $("#browse").innerHTML = ""; libCovers(); },   // the count on Search's first page: drawn again when next shown
+  failed: (e, r) => {
+    const o = VO();
+    if (o && shown()?.sha === r.sha) { o.note = e.message === "not allowed" ? "Favourites can’t be changed from this account" : "Couldn’t save the favourite"; vChrome(); }
+  },
+});
+function favour() {
   const r = shown();
-  if (!r || r.saving) return;
-  const on = !r.fav;
-  r.saving = true; vNote = ""; favShow(r, on);
-  try {
-    const got = await postJSON("/api/favorite", { sha: r.sha, fav: on });
-    INFO.fav = got.favourites; $("#browse").innerHTML = "";   // the count on Search's first page: drawn again when next shown
-    libCovers();
-  } catch (e) {
-    favShow(r, !on);
-    if (shown() === r) { vNote = e.message === "not allowed" ? "Favourites can’t be changed from this account" : "Couldn’t save the favourite"; vChrome(); }
-  } finally { r.saving = false; }
+  if (!r) return;
+  VO().note = "";
+  FAV.toggle(r.sha, !!r.fav, r);
 }
 function favShow(r, on) {                             // in the viewer, and on the photo's tile wherever it is showing
   for (const g of grids()) {
@@ -1961,7 +1927,7 @@ function favShow(r, on) {                             // in the viewer, and on t
     if (t) { $(".fv", t)?.remove(); if (on) t.insertAdjacentHTML("beforeend", I.heartFill); }
   }
   r.fav = on;
-  if (viewing() && shown() === r) vChrome();
+  if (shown()?.sha === r.sha) { shown().fav = on; vChrome(); }
 }
 $("#vFavBtn").onclick = favour;
 $("#vLike").onclick = () => { const r = shown(); if (r) { const s = blank(); s.sha = r.sha; find(s); } };
@@ -1983,12 +1949,12 @@ narrow.addEventListener("change", vResize);
 // browser draws it again from the full-size image and it is as sharp as the file allows.
 const Z = { s: 1, x: 0, y: 0 }, Zb = { s: 1, x: 0, y: 0 };   // Zb: the zoom the photo is laid out at
 const pts = new Map();
-// A touch on the open photo. none; press (one finger down, not yet moved: a tap if it lifts); then what the
-// movement turned out to be: pan (of a zoomed photo), swipe (to a neighbour), down (to close), up (for the
-// details); or pinch (two fingers), which becomes a pan when one of them lifts. `g` is that gesture's numbers.
-const GS = machine("gesture", { none: ["press"], press: ["pan", "swipe", "down", "up", "pinch", "none"], pan: ["pinch", "none"],
-  swipe: ["pinch", "none"], down: ["pinch", "none"], up: ["pinch", "none"], pinch: ["pan", "none"] }, "none");
-let g = null, lastTap = 0, tapTimer = 0;
+// A touch on the open photo (GESTURE_STEPS, app/viewer-flow.js). none; press (one finger down, not yet moved: a
+// tap if it lifts); then what the movement turned out to be: pan (of a zoomed photo), swipe (to a neighbour),
+// down (to close), up (for the details); or pinch (two fingers), which becomes a pan when one of them lifts.
+// Each state owns that gesture's numbers (GS.data: where it started, the zoom it started from).
+const GS = flow("gesture", GESTURE_STEPS, "none");
+let lastTap = 0, tapTimer = 0;
 const applyZoom = () => { const k = Z.s / Zb.s, x = Z.x - Zb.x, y = Z.y - Zb.y;
   vPic.style.transform = k === 1 && !x && !y ? "" : `translate(${x}px,${y}px) scale(${k})`; };
 function bake() {
@@ -2014,27 +1980,28 @@ function slideTo(d, x = 0) {                         // the neighbour slides in,
   const a = stage.animate([{ transform: `translateX(${x}px)` }, { transform: `translateX(${-d * pageW()}px)` }],
     { duration: 300, easing: EASE, fill: "forwards" });
   stage.style.transform = "";
-  const fin = settle = () => { if (settle !== fin) return; settle = null; a.cancel(); show(vCur + d); };
+  const o = VO(), fin = o.settle = () => { if (VO()?.settle !== fin) return; o.settle = null; a.cancel(); show(o.i + d); };   // (not after the viewer closed, or another photo was shown)
   a.onfinish = fin;
 }
 const inViewerChrome = t => t.closest(".v-info, .v-btn, .v-bar, .v-strip");
 v.addEventListener("pointerdown", e => {
   if (e.pointerType === "mouse" || inViewerChrome(e.target) || !viewing()) return;
-  if (settle) settle();
+  VO().settle?.();
   if (!pts.size && !GS.is("none")) GS.to("none");    // a finger that left without saying so
   pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
   vPic.getAnimations().forEach(a => a.finish());
-  if (pts.size === 1) { if (GS.to("press")) g = { x0: e.clientX, y0: e.clientY, t0: performance.now(), zx: Z.x, zy: Z.y }; }
-  else if (pts.size === 2 && GS.to("pinch")) {
+  if (pts.size === 1) { if (GS.can("press")) GS.to("press", { x0: e.clientX, y0: e.clientY, t0: performance.now(), zx: Z.x, zy: Z.y }); }
+  else if (pts.size === 2 && GS.can("pinch")) {       // (a second finger, whatever the first was doing)
     stage.style.transform = ""; vPic.style.transform = ""; $("#vBg").style.opacity = $("#vUi").style.opacity = ""; applyZoom();
-    if (phone() && sheetUp) toggleInfo();            // the photo has the whole screen again before it zooms
+    if (phone() && sheetUp()) toggleInfo();          // the photo has the whole screen again before it zooms
     const [a, b] = [...pts.values()];
-    g = { d0: Math.hypot(a.x - b.x, a.y - b.y), s0: Z.s, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, zx: Z.x, zy: Z.y };
+    GS.to("pinch", { d0: Math.hypot(a.x - b.x, a.y - b.y), s0: Z.s, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, zx: Z.x, zy: Z.y });
   }
 });
 v.addEventListener("pointermove", e => {
   if (!pts.has(e.pointerId) || GS.is("none")) return;
   pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const g = GS.data;
   if (GS.is("pinch")) {
     if (pts.size < 2) return;
     const [a, b] = [...pts.values()];
@@ -2044,17 +2011,17 @@ v.addEventListener("pointermove", e => {
     return applyZoom();
   }
   const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
-  if (GS.is("press") && Math.hypot(dx, dy) > 8) GS.to(Z.s > 1 ? "pan" : Math.abs(dx) > Math.abs(dy) ? "swipe" : dy > 0 ? "down" : "up");
+  if (GS.is("press") && Math.hypot(dx, dy) > 8) GS.to(Z.s > 1 ? "pan" : Math.abs(dx) > Math.abs(dy) ? "swipe" : dy > 0 ? "down" : "up", g);
   if (GS.is("pan")) { Z.x = g.zx + dx; Z.y = g.zy + dy; applyZoom(); }
   else if (GS.is("swipe")) {                     // the neighbours come along; past either end it only stretches
-    const end = dx > 0 ? !items[vCur - 1] : !items[vCur + 1];
+    const end = VW.neighbour(dx > 0 ? -1 : 1) == null;
     stage.style.transform = `translateX(${end ? dx * .3 : dx}px)`;
-  } else if (GS.is("down") && !(phone() && sheetUp)) {   // the photo follows the finger and shrinks about its centre
+  } else if (GS.is("down") && !(phone() && sheetUp())) {   // the photo follows the finger and shrinks about its centre
     const k = Math.max(.6, 1 - dy / vh()), b = fit(shown());
     vPic.style.transform = `translate(${dx + b.w * (1 - k) / 2}px,${dy + b.h * (1 - k) / 2}px) scale(${k})`;
     $("#vBg").style.opacity = Math.max(0, 1 - dy / (vh() * .6));
     $("#vUi").style.opacity = dy > 20 ? 0 : 1;
-  } else if (GS.is("up") && !(phone() && sheetUp)) {   // a flick up for details: the photo gives a little
+  } else if (GS.is("up") && !(phone() && sheetUp())) {   // a flick up for details: the photo gives a little
     vPic.style.transform = `translateY(${Math.min(0, dy) * .35}px)`;
   }
 });
@@ -2063,21 +2030,21 @@ function endGesture(e) {
   pts.delete(e.pointerId);
   if (GS.is("none")) return;
   if (GS.is("pinch")) {
-    if (pts.size === 0) { GS.to("none"); g = null; if (Z.s < 1.05) return resetZoomAnimated(); clampZoom(); animateTo(); }
-    else if (pts.size === 1) { const [a] = [...pts.values()]; GS.to("pan"); g = { x0: a.x, y0: a.y, zx: Z.x, zy: Z.y }; }
+    if (pts.size === 0) { GS.to("none"); if (Z.s < 1.05) return resetZoomAnimated(); clampZoom(); animateTo(); }
+    else if (pts.size === 1) { const [a] = [...pts.values()]; GS.to("pan", { x0: a.x, y0: a.y, zx: Z.x, zy: Z.y }); }
     return;
   }
   if (pts.size) return;
-  const dx = e.clientX - g.x0, dy = e.clientY - g.y0, dt = performance.now() - (g.t0 || 0), mode = GS.state;
-  GS.to("none"); g = null;
+  const g = GS.data, dx = e.clientX - g.x0, dy = e.clientY - g.y0, dt = performance.now() - (g.t0 || 0), mode = GS.state;
+  GS.to("none");
   if (mode === "press") {                                       // a tap: double tap zooms, single tap shows/hides the buttons
     const now = performance.now();
     if (now - lastTap < 300) { lastTap = 0; clearTimeout(tapTimer);
       if (Z.s > 1) return resetZoomAnimated();
-      if (phone() && sheetUp) return toggleInfo();
+      if (phone() && sheetUp()) return toggleInfo();
       zoomAt(e.clientX, e.clientY, 2.5); clampZoom(); animateTo(); return; }
     lastTap = now;
-    tapTimer = setTimeout(() => { if (!viewing()) return; if (phone() && sheetUp) toggleInfo(); else v.classList.toggle("bare"); }, 280);
+    tapTimer = setTimeout(() => { if (!viewing()) return; if (phone() && sheetUp()) toggleInfo(); else v.classList.toggle("bare"); }, 280);
     return;
   }
   if (mode === "pan") { clampZoom(); animateTo(); return; }
@@ -2085,9 +2052,9 @@ function endGesture(e) {
   if (mode === "swipe") {
     const d = dx < -60 || (fast && dx < -20) ? 1 : dx > 60 || (fast && dx > 20) ? -1 : 0;
     const x = new DOMMatrix(getComputedStyle(stage).transform).e;
-    if (d && items[vCur + d]) slideTo(d, x);
+    if (d && VW.neighbour(d) != null) slideTo(d, x);
     else { stage.style.transform = ""; stage.animate([{ transform: `translateX(${x}px)` }, { transform: "none" }], { duration: 260, easing: EASE }); }
-  } else if (phone() && sheetUp) { if (mode === "down" && (dy > 50 || fast)) toggleInfo(); }   // down puts the details away
+  } else if (phone() && sheetUp()) { if (mode === "down" && (dy > 50 || fast)) toggleInfo(); }   // down puts the details away
   else if (mode === "down") {
     if (dy > 110 || (fast && dy > 40)) closeViewer();
     else {
@@ -2111,20 +2078,21 @@ v.addEventListener("pointerup", endGesture);
 v.addEventListener("pointercancel", endGesture);
 // The details sheet scrolls by itself; pulled down from its top, it goes away.
 let sheetY = null;
-$("#vInfo").addEventListener("touchstart", e => { sheetY = narrow.matches && sheetUp && e.currentTarget.scrollTop <= 0 ? e.touches[0].clientY : null; }, { passive: true });
-$("#vInfo").addEventListener("touchend", e => { if (sheetY != null && e.changedTouches[0].clientY - sheetY > 70 && sheetUp) toggleInfo(); sheetY = null; }, { passive: true });
+$("#vInfo").addEventListener("touchstart", e => { sheetY = narrow.matches && sheetUp() && e.currentTarget.scrollTop <= 0 ? e.touches[0].clientY : null; }, { passive: true });
+$("#vInfo").addEventListener("touchend", e => { if (sheetY != null && e.changedTouches[0].clientY - sheetY > 70 && sheetUp()) toggleInfo(); sheetY = null; }, { passive: true });
 
 /* ── save / share: the original file, so Save to Photos keeps its date and place ── */
-let shareFile = null;                                // fetched for the current photo, waiting for a second tap
+// The file fetched for the photo showing waits for a second tap in the viewer's own state (VO().share).
 async function share() {
-  const r = shown(), btn = $("#vShare");
+  const o = VO(), r = shown(), btn = $("#vShare");
   if (!r) return;
-  if (shareFile?.sha !== r.sha) logEvent("share", vCur);   // once per photo, not on the second tap
+  const still = () => VO() === o && shown() === r;   // (not closed, and no other photo, since)
+  if (o.share?.sha !== r.sha) logEvent("share", o.list, o.items[o.i], o.i);   // once per photo, not on the second tap
   const name = (r.path || "").split("/").pop() || r.sha.slice(0, 12) + (r.ext || ".jpg");
   if (!navigator.canShare) {                         // desktop browsers: just download it
     const a = document.createElement("a"); a.href = "/original/" + r.sha; a.download = name; a.click(); return;
   }
-  if (shareFile?.sha === r.sha) return doShare(shareFile.file);
+  if (o.share?.sha === r.sha) return doShare(o.share.file, still);
   btn.classList.add("busy");
   try {
     let res = await fetch("/original/" + r.sha);
@@ -2133,19 +2101,19 @@ async function share() {
       res = await fetch("/large/" + r.sha);
       file = new File([await res.blob()], name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
     }
-    if (shown() !== r) return;
-    shareFile = { sha: r.sha, file };
-    await doShare(file);
+    if (!still()) return;
+    o.share = { sha: r.sha, file };
+    await doShare(file, still);
   } catch (e) {
-    if (shown() === r) { vNote = "Couldn’t load the photo"; vChrome(); }
+    if (still()) { o.note = "Couldn’t load the photo"; vChrome(); }
   } finally { btn.classList.remove("busy"); }
 }
-async function doShare(file) {
+async function doShare(file, still) {
   const btn = $("#vShare");
   try { await navigator.share({ files: [file] }); btn.classList.remove("ready"); }
   catch (e) {
     // Safari only opens the share sheet straight from a tap; if the download took too long, ask for one more tap
-    if (e.name === "NotAllowedError") { btn.classList.add("ready"); vNote = "Tap share again"; vChrome(); }
+    if (e.name === "NotAllowedError" && still()) { btn.classList.add("ready"); VO().note = "Tap share again"; vChrome(); }
   }
 }
 $("#vShare").onclick = share;
@@ -2153,8 +2121,8 @@ $("#vShare").onclick = share;
 /* ── page events ───────────────────────────────────────────────────── */
 const openStack = e => { const b = e.target.closest(".stk"); if (b) { const s = blank(); s.stack = b.dataset.stack; find(s); } return !!b; };   // the count on a tile: the whole stack
 $("#albGrid").addEventListener("click", e => { const t = e.target.closest(".t"); if (t) openViewer(agrid, +t.dataset.i); });
-$("#monGrid").addEventListener("click", e => { if (e.target.closest("#libRetry")) return L.retry?.(); if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(mgrid, +t.dataset.i); });
-$("#libGrid").addEventListener("click", e => { if (e.target.closest("#libRetry")) return L.retry?.(); if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(lgrid, +t.dataset.i); });
+$("#monGrid").addEventListener("click", e => { if (e.target.closest("#libRetry")) return libRetry(mgrid); if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(mgrid, +t.dataset.i); });
+$("#libGrid").addEventListener("click", e => { if (e.target.closest("#libRetry")) return libRetry(lgrid); if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(lgrid, +t.dataset.i); });
 $("#sGrid").addEventListener("click", e => {
   if (openStack(e)) return;
   const t = e.target.closest(".t"); if (t) return openViewer(sgrid, +t.dataset.i);
@@ -2166,7 +2134,7 @@ document.addEventListener("keydown", e => {
     if (e.key === "Escape") closeViewer();
     else if (e.key === "ArrowLeft") step(-1);
     else if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); step(1); }
-    else if (e.key === "ArrowDown" || e.key === "ArrowUp") { if (vStack) { e.preventDefault(); pickStep(e.key === "ArrowDown" ? 1 : -1); } }
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") { if (VO().stack) { e.preventDefault(); pickStep(e.key === "ArrowDown" ? 1 : -1); } }
     else if (e.key === "i") toggleInfo();
     else if (e.key === "f") favour();
     return;
@@ -2191,15 +2159,15 @@ function restore(st) {                               // a history entry: the who
   if (!st) { const p = new URLSearchParams(location.search), alb = p.has("album") || p.has("albums");   // an address with no entry behind it
     st = { tab: alb ? "albums" : location.search ? "search" : "library", s: alb ? "" : location.search.slice(1), alb: +p.get("album") || null }; }
   if (st.lib) libSet(st.lib);
-  AL.id = st.alb ?? null;
+  ALB.go(st.alb ?? null);
   S = fromParams(new URLSearchParams(st.s ?? location.search)); stopTyping();
   setTab(st.tab || "library", "init", !!st.lib);       // an entry that says where the Library was: there, at its card or month
 }
 addEventListener("popstate", () => {
-  if (VW.is("leaving")) { VW.to("closed"); return navFlush(); }   // the viewer closed itself; its entry has now been taken back
-  if (viewing()) return closeViewer("gone");        // Back, or a swipe from the screen edge, closes the photo
-  if (history.state?.v) return history.back();      // the entry left by a photo that is no longer open: step over it
-  closeMenus();
+  const what = VW.popped(history.state);            // app/viewer-flow.js: what this means with the viewer as it is
+  if (what === "left" || what === "over") return;   // the viewer closed itself and its entry has now been taken back; or the entry left by a photo no longer open, stepped over
+  if (what === "close") return closeViewer("gone"); // Back, or a swipe from the screen edge, closes the photo
+  closeMenus(); MAKER.cancel();
   restore(history.state);
 });
 let lastW = 0;
@@ -2208,13 +2176,13 @@ new ResizeObserver(() => { const w = document.documentElement.clientWidth; if (w
 history.scrollRestoration = "manual";               // the page puts you back where you were, card or month, itself
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});   // the "can't reach" page
 (async function init() {
-  INFO = await getJSON("/api/info");                // the library's facts; its facet counts double as the first ones
+  INFO = await api("/api/info");                // the library's facts; its facet counts double as the first ones
   if (INFO.demo) q.placeholder = "Try: latte art, kitten, waterfall in autumn";
   buildVocab();
   const params = new URLSearchParams(location.search);
   S = fromParams(params); q.value = S.q;
   TAB = params.has("album") || params.has("albums") ? "albums" : [...params].length ? "search" : "library";
-  if (TAB === "albums") { AL.id = +params.get("album") || null; S = blank(); }
+  if (TAB === "albums") { ALB.go(+params.get("album") || null); S = blank(); }
   history.replaceState({ ...snap(), d: 0 }, "", url());
   libLoad();
   setTab(TAB, "init");

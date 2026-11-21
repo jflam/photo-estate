@@ -45,7 +45,7 @@ the exit code and the script's last lines. Any other `test_*.py` is an ordinary 
 [`tests/test_harness.py`](../../photo-estate/tests/test_harness.py), which checks the runner itself (a
 script that fails is reported as failed, a slow one is left out of the fast tier, no script is missing
 from the list) and that the modules the light entry points import load no torch, transformers or
-onnxruntime. `tests/test_photo_app.py`, `tests/test_http_util.py`, `tests/test_core.py`, `tests/test_compare_app.py`, `tests/test_lifecycle.py`, `tests/test_live_races.py`, `tests/test_faces_consistency.py`, `tests/test_job_lifecycles.py` and `tests/test_events.py` are native too, and in the fast
+onnxruntime. `tests/test_photo_app.py`, `tests/test_http_util.py`, `tests/test_core.py`, `tests/test_compare_app.py`, `tests/test_lifecycle.py`, `tests/test_live_races.py`, `tests/test_faces_consistency.py`, `tests/test_job_lifecycles.py`, `tests/test_events.py` and `tests/test_pages.py` are native too, and in the fast
 tier: they build the app in process instead of starting it. So is `tests/test_types.py`, which checks the
 typed contracts below: `Catalog`'s fields, a demo catalog's types with and without scorers, the state
 enums against the strings already on disk and on the wire, and pyright itself.
@@ -59,6 +59,9 @@ uv run pytest --legacy-runner=uv   # each script with `uv run`, in its own PEP 7
 uv run ruff check .                # lint: syntax errors and pyflakes (unused imports, undefined names)
 uv run pyright                     # type check: every module of the app, basic mode, no errors
 uv run tests/test_poc.py           # one script on its own still works exactly as before
+cd app && npm ci                   # once: TypeScript, for the web pages' script modules (Node 22)
+npm run typecheck                  # their JSDoc types: tsc --noEmit --allowJs --checkJs
+npm test                           # their unit tests: node --test, under a second, no browser
 ```
 
 Each script is marked with what it needs (`pyproject.toml` declares the markers):
@@ -68,6 +71,9 @@ Each script is marked with what it needs (`pyproject.toml` declares the markers)
 | (none: the fast tier) | `test_poc`, `test_upload`, `test_intake`, `test_sync`, `test_scores`, `test_stacks`, `test_aesthetics_judge`, `test_aesthetics_taste` | Need numpy, Pillow and pillow-heif (the dev group) and `uv` |
 | `slow`, `server` | `test_changes`, `test_favorite`, `test_layout`, `test_tasks`, `test_mcp` | Start the real app (`uv run embed.py serve --demo`), whose environment has torch and transformers: gigabytes on a fresh Linux machine. `test_mcp` waits two minutes for a search without the model |
 | `slow`, `server`, `model` | `test_albums`, `test_connections` | Also need the SigLIP 2 model in the Hugging Face cache: a text search, and uploads embedded as they arrive |
+
+`tests/test_pages_browser.py` is `slow` and `server` too, but an ordinary pytest file, not a script: it
+needs a browser as well, and skips without one (see "The pages' script modules" below).
 
 By default pytest runs each script with its own Python, the environment `uv sync` builds from
 [`pyproject.toml`](../../photo-estate/pyproject.toml) and its lockfile
@@ -93,7 +99,8 @@ since torch and onnxruntime need the upper one.
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every pull request and every push
 to `main`, on Ubuntu with Python 3.12: `uv lock --check`, `uv sync --locked --group dev`,
 `ruff check .`, `pyright` and `pytest -m "not slow"` (with exiftool installed, so `test_poc` checks EXIF
-too). It never downloads the model and never reaches the Mac mini or a real library. The slow tests are
+too), then, with Node 22 in `photo-estate/app`, `npm ci`, `npm run typecheck` and `npm test`
+([below](#the-pages-script-modules)). It never downloads the model and never reaches the Mac mini or a real library. The slow tests are
 left out on purpose: they need the ML stack (run `uv run pytest` on a machine that has it). Ruff's rules
 are kept to syntax errors and pyflakes, and `ruff format` is not enforced: the code has its own compact
 style.
@@ -122,6 +129,96 @@ The optional groups' packages (torch, transformers, onnxruntime, reverse_geocode
 pycountry) are not in the dev environment, so their imports carry a narrow
 `# pyright: ignore[reportMissingImports]`. The `pyright` package fetches its own Node.js the first
 time it runs.
+
+### The pages' script modules
+
+The script the web pages share is a set of native ES modules in
+[`photo-estate/app/`](../../photo-estate/app/) ([chapter 2](02-code-tour.md#the-web-pages),
+[issue #89](https://github.com/jflam/photo-estate/issues/89)). They are checked in two ways, neither of
+which needs a browser or builds anything:
+
+- **Types.** The modules are JavaScript with JSDoc annotations; `npm run typecheck` is
+  `tsc --noEmit --allowJs --checkJs` with `strict` on, configured in
+  [`app/tsconfig.json`](../../photo-estate/app/tsconfig.json). The pages' own inline scripts, the tests and
+  the service worker are left out. TypeScript is the only package
+  ([`app/package.json`](../../photo-estate/app/package.json), pinned, with its lockfile); it checks, it
+  compiles nothing, and no part of it reaches the browser.
+- **Unit tests.** [`app/tests/*.test.js`](../../photo-estate/app/tests/) run under Node's built-in runner
+  (`npm test`, which is `node --test`): `esc` against text that would break out of an attribute; `api`
+  against a stub `fetch` for every way a request ends (JSON, an error with a JSON body, an error
+  without, no answer, a timeout, a cancellation); the state machine's legal and refused steps;
+  `latest()` dropping the answer to a question that was replaced; `poll()` stopping at its bounds, when
+  cancelled, and riding out as many failures as it is told to; the toast against a stand-in element; the
+  search question to its address and back; and the grid's rows. The modules behind the secondary pages
+  ([issue #80](https://github.com/jflam/photo-estate/issues/80)) are tested the same way, with requests
+  the test settles and timers it fires by hand (`tests/helpers.js`): a newer review choice survives a
+  failed save and is what the retry sends, and saves never overlap or reorder (`save-queue.test.js`); a
+  busy flag is cleared by a failed save, and a batch that fails midway says what was applied
+  (`work.test.js`); the wait for the unnamed faces stops on `failed`, at its bound and when cancelled
+  (`people-flow.test.js`); `settle` stops at its bound and on abort, and a failed mark is put right from
+  the server (`changes-flow.test.js`); the stats loop never has two requests in flight and shows a 500
+  as an error (`stats-watch.test.js`); `loop()` under every interleaving of start, stop, pause and now
+  (`loop.test.js`); and the setup machines take every step in their tables and refuse every other
+  (`setup-flow.test.js`). The photo app's machines
+  ([issue #81](https://github.com/jflam/photo-estate/issues/81), [chapter 13](13-photo-app.md#the-machines))
+  are tested the same way. `machines.test.js` tries every pair of states of every table: the steps in
+  the table are taken, every other pair throws a `TransitionError` and leaves the machine and its data
+  as they were. `grid-flow.test.js`: a question edited while its answer is on its way shows only the
+  new question's photos and aborts the old request; a month's answer that arrives after the month
+  changed is dropped; the retry timer of a list that was replaced or cleared is cleared, and does
+  nothing if it fires. `library-flow.test.js`: the library asked twice shows the second answer; a
+  failure with the months known keeps them; and every view switched faster than the server answers
+  (library, month, album, search and back) ends with only the last of each drawn, everything
+  superseded aborted, and no machine throwing. `albums-flow.test.js`: an album from a search that is
+  cancelled by moving on asks for no further page and makes no album, and one left to finish has the
+  name and note given at the start. `favourite.test.js`: a double toggle, a toggle during a save,
+  answers out of order and a failed save all end on what was last asked for, or put back; an album's
+  "make all favourites" waits for a heart's save, is followed by a heart pressed meanwhile, and puts
+  back only what it changed when it fails.
+  `viewer-flow.test.js`, on a model of the browser's history: open, next and previous, close; close
+  while still opening; the close button against the Back button; the one-second fallback when the
+  browser never reports the entry gone; and that nothing the viewer knew survives `closed`.
+
+On the Python side, `tests/test_pages.py` (fast tier) holds the two together: every page imports only
+modules that are served and names they export, no page has grown its own copy of `esc` or `api` again,
+and the photo app and the setup server send the modules as `text/javascript`.
+
+`tests/test_pages.py` also refuses a `fetch()` or a `setInterval()` in the secondary pages: they ask
+the server through `api.js`, `loop()` and `poll()`. And it holds `search.html` to issue #81: every
+`machine()` in it is strict, nothing branches on the result of a step, and the variables that used to
+sit beside the machines have not come back.
+
+**In a browser.** [`tests/test_pages_browser.py`](../../photo-estate/tests/test_pages_browser.py)
+(slow tier) drives the secondary pages with Playwright and makes their requests fail or never end with
+request interception (`page.route`), moving the page's own clock forward (`page.clock`) where a bound is
+minutes away: on `review.html` a choice made while a save is failing is the one saved; on `people.html`
+Save works again after a 500, a batch that fails midway leaves the page in step with the server, and
+the wait for the unnamed faces ends on `failed`, on a change of view and after ten minutes; on
+`changes.html` a library that never settles is given up on after two minutes with a way to check again,
+and a refused mark is put back from the server; on `stats.html` a 500 is an error and the page never has
+two polls in flight. On `search.html` (issue #81) requests are held back and let go after the person has
+moved on: a question edited while its answer is on its way shows only the new question's photos; an
+album being made from a search is not made (no `POST`, no further page of the search) after a change of
+tab or of question, and left to finish takes its note from the moment it was asked for; a double click
+on the heart ends off, with `fav: true` then `fav: false` sent, and a save that fails is put back and
+said; an album's "Make all favourites" shows at once, a heart pressed while it is held is sent after it
+and stands, and one the server refuses is put back; the viewer opened and closed quickly with Escape, Back and Forward leaves the address right and
+the page usable; and a hundred actions across every view, each answered a few actions late, throw
+nothing. The page under test has no service worker (`service_workers="block"`): a request that passes
+through one is not seen by `page.route`. Each test starts a real server (`embed.py serve --demo`, `estate.py review`,
+`faces.py serve`) on the demo library or a scratch copy of its catalog (the People page's copy is given
+synthetic faces, since the demo has none), and fails on any uncaught error or console error in the page.
+Playwright is in the dev group; the tests use its own Chromium if it has one
+(`uv run playwright install chromium-headless-shell`), else any Chromium already in Playwright's cache,
+and are skipped when there is none. CI does not run them (they are slow, and it has no browser).
+
+```bash
+uv run pytest tests/test_pages_browser.py     # about 45 s once the servers' environments exist
+```
+
+Those tests cover the regressions; they do not look at the pages. For a change to a page, still drive
+the real page on the demo library with Playwright, in light and dark, and read the console: a module
+that fails to load, or a name a page's script no longer has, shows there and nowhere else.
 
 The iPhone app has no unit tests of its own. It was checked in the iOS Simulator against the demo
 library (104 photos), with the server up and then stopped; `ios/project-sim.yml` builds it for a

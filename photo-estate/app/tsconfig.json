@@ -1,0 +1,19 @@
+{
+  // Type checks for the pages' script modules: `npm run typecheck` (tsc --noEmit --allowJs --checkJs).
+  // The modules are plain JavaScript with JSDoc types; nothing is compiled. Left out: sw.js (a service
+  // worker, not a module), the tests, and the pages' own inline scripts.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "skipLibCheck": true
+  },
+  "include": ["*.js"],
+  "exclude": ["sw.js", "node_modules", "tests"]
+}

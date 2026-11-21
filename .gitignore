@@ -16,5 +16,8 @@ ios/build/
 ios/build-device/
 ios/PhotoEstateSim.xcodeproj/
 
+# TypeScript, for checking the pages' script modules (photo-estate/app: npm ci)
+node_modules/
+
 # the book, built locally with photo-estate/tools/build_book.py
 site/

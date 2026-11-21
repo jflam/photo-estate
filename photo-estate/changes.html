@@ -54,6 +54,7 @@ h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032
 .why { padding: 0 4px 10px; color: var(--ink-2); font-size: 13.5px; max-width: 110ch; }
 .why .ok { color: var(--yes); font-weight: 700; }
 .why .bad { color: var(--no); font-weight: 700; }
+.why .link { margin-left: 6px; }
 .fin { margin: 0 4px 12px; padding: 14px 18px; border-radius: var(--r); background: var(--well); font-size: 15px; color: var(--ink-2); max-width: 110ch; }
 .fin b { color: var(--ink); }
 .fin.done b:first-child { color: var(--yes); }
@@ -104,26 +105,19 @@ h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032
 <div class="dock" id="dock" hidden></div>
 <div class="toast" id="toast"></div>
 
-<script>
-const $ = (s, el = document) => el.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const fmt = n => Number(n).toLocaleString("en-US");
-const plural = (n, one, many = one + "s") => `${fmt(n)} ${n === 1 ? one : many}`;
-const api = async (path, body) => {
-  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `${path}: ${r.status}`);
-  return r.json();
-};
+<script type="module">
+import { $, esc, MARK } from "/app/dom.js";
+import { fmt, plural } from "/app/format.js";
+import { api, isAbort } from "/app/api.js";
+import { latest, STALE } from "/app/fsm.js";
+import { loop } from "/app/loop.js";
+import { settle, edits } from "/app/changes-flow.js";
+import { toast } from "/app/toast.js";
+
 const store = {   // what this browser remembers: the size of the photos, and where you were in each set
   get(k, d) { try { return localStorage.getItem("changes." + k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem("changes." + k, v); } catch {} },
 };
-function toast(msg) {
-  const t = $("#toast");
-  t.textContent = msg; t.classList.add("on");
-  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2600);
-}
-const MARK = '<svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>';
 const STATES = { empty: "Nothing in it", review: "To review", applied: "To commit", done: "Done", reverted: "Reverted" };
 const day = when => {
   const d = new Date(when.slice(0, 10) + "T12:00:00");
@@ -144,8 +138,8 @@ function taskCard(t) {
     ${t.result ? `<details><summary>What the agent did</summary><div class="report">${esc(t.result)}</div></details>` : ""}
     ${t.change_sets.map(c => `<a class="btn ask" href="${c.review}">Review ${plural(c.photos, "photo")}: ${esc(c.title)}</a>`).join(" ")}</div>`;
 }
-async function home() {
-  const [d, k] = await Promise.all([api("/api/changes"), api("/api/tasks")]);
+async function home(signal) {
+  const [d, k] = await Promise.all([api("/api/changes", undefined, { signal }), api("/api/tasks", undefined, { signal })]);
   $("#crumb").innerHTML = "Changes";
   $("#sum").textContent = d.hidden ? `${plural(d.hidden, "photo")} hidden` : "";
   const counts = s => [s.applied && `${fmt(s.applied)} hidden`, s.n - s.reject - s.applied > 0 && `${fmt(s.n - s.reject - s.applied)} to hide`,
@@ -168,19 +162,25 @@ async function home() {
     e.preventDefault();
     const prompt = $("#ask").value.trim();
     if (!prompt) return;
-    try { await api("/api/tasks", { prompt }); $("#ask").value = ""; home(); } catch (err) { toast(err.message); }
+    try { await api("/api/tasks", { prompt }); $("#ask").value = ""; watching.now(); } catch (err) { toast(err.message); }
   };
   $("#ask").onkeydown = e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("#askForm").requestSubmit(); };
   $("#tasks").onclick = async e => {
     const b = e.target.closest("[data-cancel]");
-    if (b) { await api(`/api/tasks/${b.dataset.cancel}/cancel`, {}).catch(err => toast(err.message)); home(); }
+    if (b) { b.disabled = true; await api(`/api/tasks/${b.dataset.cancel}/cancel`, {}).catch(err => toast(err.message)); watching.now(); }
   };
-  clearTimeout(home.t);
-  if (k.tasks.some(t => t.status === "queued" || t.status === "running")) home.t = setTimeout(() => {
-    if (!$("#tasks details[open]") ) home().catch(() => {});
-    else home.t = setTimeout(() => home().catch(() => {}), 2000);
-  }, 2000);
+  return k.tasks.some(t => t.status === "queued" || t.status === "running");
 }
+// While an agent is working the list is drawn again every 2 s: one request round at a time (app/loop.js),
+// not while a report is open to be read, not while the page is hidden, and no more once nothing is
+// queued or running. A round that fails is tried again; the page keeps what it showed.
+let homeDrawn = false;
+const watching = loop(async signal => {
+  if (homeDrawn && $("#tasks details[open]")) return 2000;
+  const live = await home(signal);
+  homeDrawn = true;
+  return live ? 2000 : false;
+}, { onError(e) { if (!homeDrawn) { failed(e); return false; } return 5000; } });
 
 // ── one change set ──────────────────────────────────────────────────────────────────────────
 // Every photo here will be hidden unless it is marked Keep, so looking it over is one pass: move
@@ -239,22 +239,39 @@ function paintBars() {
   on("#commit", () => finish("commit")); on("#reopen", () => finish("reopen"));
 }
 
-// A mark shows at once and is saved behind it; if saving fails it is put back.
+// A mark shows at once and is saved behind it. Marks, apply and revert are sent one at a time, in the
+// order made (app/changes-flow.js). If one fails, the set is read again from the server once nothing more
+// is on its way, and the page shows that: what the server has, whatever was shown meanwhile.
+let changing = null;               // edits(S, ...): made when a set is opened
+function reconciled({ errors, reconciled }) {
+  render(); paintZoom();
+  const why = errors.at(-1)?.message || "The server did not answer";
+  toast(`Could not save that: ${why}`, { ms: 5000 });
+  if (reconciled) return;                            // the set is drawn as the server has it
+  $("#why").innerHTML = `<span class="bad">This page may not show the set as it is.</span> A change could not be saved, and the set could not be read again. <button class="link" id="reread">Read it again</button>`;
+  $("#reread").addEventListener("click", reread);
+}
+async function reread() {
+  $("#why").textContent = "Reading the set…";
+  try { Object.assign(S, await api(`/api/changes/${S.id}`)); }
+  catch (e) {
+    $("#why").innerHTML = `<span class="bad">Could not read the set:</span> ${esc(e.message)}. <button class="link" id="reread">Try again</button>`;
+    return $("#reread").addEventListener("click", reread);
+  }
+  render(); paintZoom();
+  $("#why").textContent = S.prompt || "";
+  if (S.busy) watchSettle(); else if (S.applied) check();
+}
 async function setKeep(items, keep) {
   items = items.filter(it => kept(it) !== keep);
   if (!items.length) return;
   if (S.state === "done") return toast("This set is done. Reopen it to change it");
-  const was = items.map(it => it.decision), decision = keep ? "reject" : "accept";
-  items.forEach(it => { it.decision = decision; paintTile(it); });
-  if (S.state === "applied") S.state = "review";   // a new mark is something left to apply
-  paintBars(); paintZoom();
-  try {
-    await api(`/api/changes/${S.id}/decide`, { shas: items.map(it => it.sha), decision });
-  } catch (e) {
-    items.forEach((it, i) => { it.decision = was[i]; paintTile(it); });
+  const decision = keep ? "reject" : "accept", shas = items.map(it => it.sha);
+  await changing.make(() => {
+    items.forEach(it => { it.decision = decision; paintTile(it); });
+    if (S.state === "applied") S.state = "review";   // a new mark is something left to apply
     paintBars(); paintZoom();
-    toast("Could not save that. Try again");
-  }
+  }, () => api(`/api/changes/${S.id}/decide`, { shas, decision }));
 }
 
 function render() {
@@ -307,6 +324,7 @@ function neighbour(dx, dy) {
 
 async function openSet(id) {
   S = await api(`/api/changes/${id}`);
+  changing = edits(S, () => api(`/api/changes/${S.id}`), reconciled);
   document.title = `${S.title} — Changes — Photo Estate`;
   $("#back").href = "/changes";
   $("#crumb").innerHTML = `<a href="/changes">Changes</a><i>›</i><span>${esc(S.title)}</span>`;
@@ -341,7 +359,7 @@ async function openSet(id) {
   cur = store.get("at." + id, null);
   render();
   tile(cur)?.scrollIntoView({ block: "center" });
-  if (S.busy) settle(); else if (S.applied) check();
+  if (S.busy) watchSettle(); else if (S.applied) check();
 }
 
 // ── one photo, as big as the window ─────────────────────────────────────────────────────────
@@ -393,63 +411,82 @@ addEventListener("keydown", e => {
 // All of the set, or only as far as one photo (in the order of the set, whatever is listed now): the
 // rest waits, so a long set can be looked over and applied a stretch at a time.
 async function apply(through) {
-  $("#apply").disabled = $("#upto").disabled = true;
-  try {
-    const r = await api(`/api/changes/${S.id}/apply`, through ? { through } : {});
-    S.state = r.state;
-    const end = through ? S.items.findIndex(it => it.sha === through) + 1 : S.items.length;
-    S.items.slice(0, end).forEach(it => { it.applied = !kept(it); paintTile(it); });
-    paintBars(); paintZoom();
-    const did = [r.hid && `${plural(r.hid, "photo")} hidden`, r.showed && `${plural(r.showed, "photo")} shown again`].filter(Boolean).join(", ");
-    const left = tally().hide;
-    toast((did || (through ? "Nothing to apply up to here" : "Nothing to apply")) + (did && left ? ` · ${fmt(left)} still to look at` : ""));
-    if (r.hid || r.showed) settle();
-  } catch (e) { toast(e.message); paintBars(); }
+  for (const b of [$("#apply"), $("#upto")]) if (b) b.disabled = true;
+  const r = await changing.make(null, () => api(`/api/changes/${S.id}/apply`, through ? { through } : {}));
+  if (!r.ok) return;                                 // reconciled() has redrawn the set and said why
+  S.state = r.value.state;
+  const end = through ? S.items.findIndex(it => it.sha === through) + 1 : S.items.length;
+  S.items.slice(0, end).forEach(it => { it.applied = !kept(it); paintTile(it); });
+  paintBars(); paintZoom();
+  const did = [r.value.hid && `${plural(r.value.hid, "photo")} hidden`, r.value.showed && `${plural(r.value.showed, "photo")} shown again`].filter(Boolean).join(", ");
+  const left = tally().hide;
+  toast((did || (through ? "Nothing to apply up to here" : "Nothing to apply")) + (did && left ? ` · ${fmt(left)} still to look at` : ""));
+  if (r.value.hid || r.value.showed) watchSettle();
 }
 async function undo() {
   const n = tally().applied;
   if (!confirm(`Revert: show all ${plural(n, "photo")} this set hides again? What you marked to keep is remembered, so you can apply it again later.`)) return;
-  try {
-    S.state = (await api(`/api/changes/${S.id}/revert`, {})).state;
-    S.items.forEach(it => { it.applied = false; paintTile(it); });
-    paintBars(); paintZoom();
-    toast(`${plural(n, "photo")} shown again`);
-    settle();
-  } catch (e) { toast(e.message); }
+  if ($("#undo")) $("#undo").disabled = true;
+  const r = await changing.make(null, () => api(`/api/changes/${S.id}/revert`, {}));
+  if (!r.ok) return;
+  S.state = r.value.state;
+  S.items.forEach(it => { it.applied = false; paintTile(it); });
+  paintBars(); paintZoom();
+  toast(`${plural(n, "photo")} shown again`);
+  watchSettle();
 }
 // Commit: the set is done and can no longer be changed. Reopen: it can be again. Neither moves a photo.
 async function finish(what) {
-  try {
-    const r = await api(`/api/changes/${S.id}/${what}`, {});
-    S.state = r.state; S.done_at = r.done_at;
-    paintBars(); paintZoom();
-    toast(what === "commit" ? "Done" : "Reopened");
-  } catch (e) { toast(e.message); }
+  const r = await changing.make(null, () => api(`/api/changes/${S.id}/${what}`, {}));
+  if (!r.ok) return;
+  S.state = r.value.state; S.done_at = r.value.done_at;
+  paintBars(); paintZoom();
+  toast(what === "commit" ? "Done" : "Reopened");
 }
 // After a change the app re-reads the library; when it has, say whether every photo is where it should be.
-async function settle() {
+// The page asks every 700 ms, for at most two minutes (app/changes-flow.js): if the app has still not
+// finished, or stops answering, it says so and offers to check again instead of asking for ever. A new
+// change, or leaving or hiding the page, cancels the asking; coming back to the page starts it again.
+const settling = latest();
+let unsettled = false;             // a change was made and its check has not been shown yet
+const ask = signal => api(`/api/changes/${S.id}/check`, undefined, { signal, timeout: 20000 });
+async function watchSettle() {
+  unsettled = true;
   $("#why").textContent = "Updating the library…";
-  for (;;) {
-    await new Promise(r => setTimeout(r, 700));
-    if (await check()) return;
-  }
+  showCheck(await settling.run(signal => settle(ask, { signal })).catch(error => ({ state: "error", error })));
 }
 async function check() {
-  let c;
-  try { c = await api(`/api/changes/${S.id}/check`); } catch (e) { toast(e.message); return true; }
-  if (c.busy) return false;
+  unsettled = true;
+  showCheck(await settling.run(signal => ask(signal).then(value => ({ state: "done", value }), error => ({ state: "error", error }))));
+}
+function showCheck(r) {
+  if (r === STALE || isAbort(r.error)) return;
+  const again = (text, label = "Check again") => {
+    $("#why").innerHTML = `${text} <button class="link" id="recheck">${label}</button>`;
+    $("#recheck").addEventListener("click", watchSettle);
+  };
+  if (r.state === "error") return again(`<span class="bad">Could not check the library:</span> ${esc(r.error.message)}.`);
+  const c = r.state === "done" ? r.value : null;
+  if (!c || c.busy) return again(`<span class="bad">Still updating.</span> The app has not finished taking this change in${r.state === "timeout" ? " after two minutes" : ""}. The change itself is saved.`);
+  unsettled = false;
   const parts = [c.hidden && `${plural(c.hidden, "hidden photo")} ${c.hidden === 1 ? "is" : "are"} in no view and not on phones`,
     c.visible && `${plural(c.visible, "other photo")} of this set ${c.visible === 1 ? "is" : "are"} in the library`].filter(Boolean);
   $("#why").innerHTML = c.wrong.length
     ? `<span class="bad">${plural(c.wrong.length, "photo")} not where ${c.wrong.length === 1 ? "it" : "they"} should be.</span> ${c.wrong.slice(0, 5).map(w => `${w.sha.slice(0, 10)} should be ${w.should_be}`).join("; ")}`
     : `<span class="ok">Checked.</span> ${parts.join("; ") || "This set has no photos"}.`;
-  return true;
 }
 
-const id = location.pathname.match(/^\/changes\/(\d+)/)?.[1];
-(id ? openSet(id) : home()).catch(e => {
+function failed(e) {
   $("#main").innerHTML = `<div class="blank">${MARK}<h3>Could not open this</h3><p>${esc(e.message)}</p><a class="btn" href="/changes">All changes</a></div>`;
+}
+const id = location.pathname.match(/^\/changes\/(\d+)/)?.[1];
+if (id) openSet(id).catch(failed); else watching.start();
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { watching.pause(); if (settling.busy) settling.cancel(); }
+  else { watching.resume(); if (S && unsettled && !settling.busy) watchSettle(); }
 });
+addEventListener("pagehide", () => { watching.stop(); settling.cancel(); });
+addEventListener("pageshow", e => { if (!e.persisted) return; if (id) { if (S && unsettled) watchSettle(); } else watching.now(); });
 </script>
 </body>
 </html>

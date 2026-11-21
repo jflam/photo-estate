@@ -155,7 +155,10 @@ class PhotoApp:
         # Home-screen app files (manifest, icons, service worker), served from the site root: a service
         # worker only controls pages at or below its own path.
         app_dir = HERE / "app"
-        self.app_files = {f"/{p.name}": p for p in app_dir.iterdir() if p.suffix in APP_TYPES} if app_dir.is_dir() else {}
+        # The pages' script modules are in app/ too; those are served under /app/ (pages.module), not here.
+        self.app_files = ({f"/{p.name}": p for p in app_dir.iterdir()
+                           if p.suffix in APP_TYPES and (p.suffix != ".js" or p.name in pages.NOT_MODULES)}
+                          if app_dir.is_dir() else {})
 
         self.qlog = qlog = Path(a.query_log or Path(a.db).resolve().parent / "query-log.jsonl")
         self.browse = browse = Browse(live, self.encoder, a.db, a.model, qlog, a.match_floor, a.match_window, a.best_window)
@@ -499,6 +502,8 @@ class PhotoApp:
         if path in self.app_files:
             f = self.app_files[path]
             return _etagged(f.read_bytes(), APP_TYPES[f.suffix])
+        if (mod := pages.module(path)) is not None:   # a script module a page imports; revalidated like the page
+            return _etagged(mod, pages.MODULE_TYPE)
         return NOT_FOUND
 
     def people_page(self, method: str, path: str, qs: dict, body) -> Response | None:

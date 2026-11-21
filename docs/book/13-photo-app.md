@@ -62,7 +62,8 @@ S = { q: "", plain: false, sha: "", event: "", fav: false, from: "", to: "", sor
       f: { country: [], region: [], city: [], person: [], album: [], camera: [], lens: [], trip: [] } }
 ```
 
-`toParams(S)` serialises it to a query string and `fromParams` parses it back:
+`toParams(S)` serialises it to a query string and `fromParams` parses it back (both in
+[app/query.js](../../photo-estate/app/query.js), with unit tests of the round trip):
 
 | `S` field | URL parameter | Meaning |
 |---|---|---|
@@ -75,8 +76,10 @@ S = { q: "", plain: false, sha: "", event: "", fav: false, from: "", to: "", sor
 | `fav` | `fav=1` | Favourites only |
 | `sort` | `sort=old` | Oldest first |
 
-The Library's position is a second, smaller object, `L`: its `scale` (`years`, `months` or `all`), the
-`anchor` (the year or month you came to), and the `trail` of cards you opened to get there.
+The Library's position is a second, smaller thing: its `scale` (`years`, `months`, `all`, or `month` for
+one month's photos), the `anchor` (the year or month you came to), and the `trail` of cards you opened to
+get there. The scale is the state of a machine that owns the other two
+([The machines](#the-machines)); the script reads all three through `L`.
 
 `snap()` takes both, with the tab, as one history state: `{ tab, s: toParams(S), lib: { scale, anchor, trail } }`.
 `nav(mode)` writes it:
@@ -95,15 +98,84 @@ in a page that is laid out again from scratch, so the page puts you back itself,
 at the month you were looking at.
 
 Opening a photo pushes one more entry (`{...history.state, v: 1}`), so Back closes the viewer. The
-`popstate` handler sorts out the three cases: the viewer closed itself and took its entry back (`vBack`),
-Back pressed while a photo is open (`vHist`: close it), or an entry left by a photo that is no longer open
-(step over it). Anything else is `restore(history.state)`.
+viewer and its entry are one machine (`closed`, `open`, `leaving`: [The machines](#the-machines)), and the
+`popstate` handler asks it what the event means (`VW.popped`): the viewer closed itself and its entry has
+now been taken back (`left`), Back was pressed while a photo is open (`close`: close it), or this is an
+entry left by a photo that is no longer open (`over`: step over it). Anything else is
+`restore(history.state)`.
 
-### Two grids, one concurrency rule
+## The machines
 
-Each tab's grid is a `Grid` with its own generation counter `gen`. Every load increments it; every answer
-is **dropped if `gen` moved on** (`if (g !== this.gen) return`), so a slow response to an old question can
-never overwrite a newer answer. This is the whole concurrency story of the page.
+Whatever in the page is in one of several states says so in one place: a machine with a name, the state it
+is in, and a table of every step it may take. All of them are **strict**
+([app/fsm.js](../../photo-estate/app/fsm.js), [issue #81](https://github.com/jflam/photo-estate/issues/81)):
+a step the table does not have throws a `TransitionError` before anything has changed. The rule that
+follows from it:
+
+- A step the code asks for that its table refuses is a bug, not a case to handle. Where an event can
+  arrive in more than one state (a second finger, Back, a press on a tile while the last photo is still
+  leaving) the code asks first, with `is()` or `can()`, and does nothing when the answer is no.
+- An answer from the server that arrives late is not such an event. It is dropped before it reaches a
+  machine: its request was aborted when the state that asked for it was left, and if it arrives all the
+  same it finds that the state object it was asked for is no longer the one the machine holds.
+- What a state needs to know is **owned by the state**: handed over at the step into it
+  (`flow.to(next, data)`) and gone at the step out. There is no photo of a closed viewer and no retry
+  timer of a list that has been replaced, because there is nowhere for one to be kept.
+- A `TransitionError` that is thrown all the same shows where any bug does, as an uncaught error in the
+  console naming the machine and the two states, and the page carries on from the state it was in.
+  There is no handler of last resort: there is nothing honest for one to do.
+
+The machines, their tables and the requests they make are modules in `app/`, with no page in them, so
+each rule is a unit test ([chapter 17](17-testing-and-demo.md#the-pages-script-modules)). The page hands
+them its `fetch`es and is told what to draw.
+
+| Machine (in `search.html`) | Module | States | What a state owns |
+|---|---|---|---|
+| The viewer and its history entry (`VW`) | [viewer-flow.js](../../photo-estate/app/viewer-flow.js) | `closed` → `open` → `leaving` → `closed`; `open` → `closed` | `open`: the grid it was opened from and its photos, the photo showing, its stack and the shot picked from it, whether the details are up (phone), the file fetched to share, the note under the caption, what finishes a swipe. `leaving`: the history steps asked for meanwhile, and the 1 s timer for a browser that never reports the entry gone. `closed`: nothing |
+| A touch on the open photo (`GS`) | viewer-flow.js (`GESTURE_STEPS`) | `none`, `press`, `pan`, `swipe`, `down`, `up`, `pinch` | Where the gesture started and the zoom it started from |
+| A list of photos (`Grid.list`, one each for All, a month, an album, Search) | [grid-flow.js](../../photo-estate/app/grid-flow.js) | `empty`, `loading`, `ready`, `failed`; each end of a `ready` list is `idle`, `asking` or `retrying` | What the list is a list **of** (a month and its place in the library, a question, an album's id), fixed when it is asked for and handed to every fetch of it; its `AbortController`; `ready`: its cursors, the server's first answer, the two ends and their retry timers; `failed`: the error and what **Try again** does |
+| Where the Library is (`LIB.place`) | [library-flow.js](../../photo-estate/app/library-flow.js) | `years`, `months`, `all`, `month` (any to any) | `anchor` and `trail` |
+| What is known of the library (`LIB.known`) | library-flow.js | `unknown`, `asking`, `known`, `failed` | `known`: the months and years, the count in each month, every photo's shape, and the query they were asked with. `asking`: what was known before (it stays up meanwhile) and the `AbortController` of its two requests. `failed`: the error and what **Try again** does |
+| Where Albums is (`ALB.where`) | [albums-flow.js](../../photo-estate/app/albums-flow.js) | `list`, `album` | `album`: its id. (Its title, note and sections came with its photos: the album grid's `ready` state owns them) |
+| The list of albums (`ALB.listing`) | albums-flow.js | `idle`, `loading`, `ready`, `failed` | The server's answer, or the error |
+| An album from a search (`MAKER.job`) | albums-flow.js | `idle` → `collecting` → `creating` → `idle`; `collecting` → `idle` | The question, the title and the note, as they were when it was asked for |
+| The search field (`FIELD`) | [query.js](../../photo-estate/app/query.js) (`FIELD_STEPS`) | `resting`, `typing` | — |
+
+A favourite is not a machine but a record per photo with a save under way
+([favourite.js](../../photo-estate/app/favourite.js)): what the server was last known to hold, and what
+was last asked for. An album's **Make all favourites** and **Take all out of favourites** are one request
+for every photo of the album, and go through the same module (`FAV.all`): it is shown at once on the
+photos the page has, it waits for a heart's save that is under way, a heart pressed while it is being
+sent is sent after it and is what stands, two of them go one after the other, and one that fails puts
+back only the photos it changed. Its answer is drawn only on the album it was asked for, never on the
+one the page has gone to since.
+
+Not in a machine, and why: the tab showing (`TAB`), the question as it stands and as it was asked (`S`,
+`Q`), the answer and its counts (`D`, `F`), the view options (`V`) and the open menu or sheet are plain
+values replaced whole, with no steps to refuse; the viewer's three slides and its zoom are drawing state
+that exists whether or not a photo is open.
+
+### What is cancelled, and when
+
+| Work | Belongs to | Ends when |
+|---|---|---|
+| A page of a list (the first, or more at either end) | That list (`loading` or `ready`) | Another list is asked for in that grid, or the grid is cleared: the request is aborted, and an answer that still comes is dropped. Another *tab* does not end it: a list that is not showing finishes loading and is there when you come back |
+| The retry of an end whose page did not come (2 s) | The `ready` list | With the list: the timer is cleared, and does nothing if it fires all the same |
+| A month's photos | The month's list; the month (`{ key, at, n, q }`) is what the list is of | Another month, or another order or view option, is asked for. The cards being asked for again after a favourite (`libCovers`) no longer touch it |
+| `/api/periods` and `/api/layout` | The `asking` state of the library | The library is asked for again (another order, a view option) |
+| The list of albums | `ALB.listing` | It is asked for again |
+| The pages an album from a search is collected from | `MAKER.job` in `collecting` | Any step in history (`nav`), Back, another question, or the menu put away. No further page is asked for and no album is made. Once the one request that makes the album has been sent it is left to finish, and if the person has moved on by then a toast says the album was made, with **Open**, instead of taking them to it |
+| The stack of the photo showing, the file fetched to share | The viewer's `open` state | Not aborted, but dropped if the viewer has closed or shows another photo when they arrive |
+| A favourite's save | Its record | Never cancelled: one request at a time for a photo, and the next carries what was asked for last |
+
+### Lists, and the one concurrency rule
+
+Each grid is a `Grid` (the drawing: rows, sections, thumbnails) over a list from
+[grid-flow.js](../../photo-estate/app/grid-flow.js) (the asking). Every `load` steps the list to `loading`
+with a new state object, which aborts the requests of the state before it; every answer is **dropped unless
+the state it was asked for is still the list's** (`if (phase.data !== mine) return`), so a slow response to
+an old question can never overwrite a newer answer, and a page of "more" asked for one question can never
+be added to the photos of another.
 
 ```mermaid
 sequenceDiagram
@@ -111,21 +183,21 @@ sequenceDiagram
     participant P as Page (refreshSearch)
     participant S as Server
     U->>P: submits a search, picks a suggestion, ticks a value in a sheet
-    P->>P: nav(push or replace), sgrid.gen = 5, dim the grid, redraw the chips at once
+    P->>P: nav(push or replace), sgrid: loading { of: this question }, dim the grid, redraw the chips at once
     par
       P->>S: GET /api/search?...&dedupe=1&shots=0&limit=150
     and
       P->>S: GET /api/facets?... (loadF)
     end
     S-->>P: results
-    P->>P: gen still 5, so render the grid and the heading
+    P->>P: still that list, so ready: render the grid and the heading
     S-->>P: facets (counts)
-    P->>P: gen still 5, so update the section counts and any open sheet
-    Note over P: if the user changed the question meanwhile,<br/>gen is 6 and these answers are ignored
+    P->>P: still that question, so update the section counts and any open sheet
+    Note over P: if the user changed the question meanwhile, the first request<br/>was aborted, and an answer that still arrives is ignored
 ```
 
-A search refined while you are on the Library is not run at all until Search shows again (`sShown` remembers
-which question the page last answered).
+A search refined while you are on the Library is not run at all until Search shows again (`Q` is the
+question the page last asked; `setTab` sees that it is not what `S` now says).
 
 ## The justified grid
 
@@ -151,6 +223,10 @@ Details that make it feel right:
   tall screenshot does not stretch a row to the moon.
 - **Rows are stable from the left.** When more photos arrive, `draw` lays out again only the *unfinished
   last row* of the section. Finished rows never move, so there is no jumping while scrolling.
+- **The arithmetic is a pure function**, `packRows` in [app/layout.js](../../photo-estate/app/layout.js): how
+  many photos, each one's shape, the width, the row height and the gap in; rows of pixel widths out. `Grid.draw`
+  writes the tiles. Its unit tests check what the picture above promises: every full row exactly as wide as
+  the screen, a short last row left ragged, the same rows again when the list grows.
 - **On a phone the photos run to the edges** (`--gpad: 0` under 760 px), as on the iPhone.
 - **Resize** (a `ResizeObserver` on the page) calls `relayout` only if the *width* changed.
 - **Sections** group the rows by the grid's `grain`: the Library is always by **month**; Search chooses:
@@ -184,7 +260,7 @@ viewer's index and the server's `cursor`.
   on the page stops the browser from trying to do the same thing at the same time.) A short page from the
   server would leave a gap, so `less` only adds a page that came back whole.
 - `poke()` fills in either end that is already on screen, since an observer only reports changes.
-- `busy` and `busyUp` prevent overlapping loads, and `gen` discards loads for stale questions.
+- Each end of the list is `idle`, `asking` or `retrying`, which prevents overlapping loads, and a page asked for a list that has since been replaced is discarded ([The machines](#the-machines)).
 
 ## The Library
 
@@ -446,7 +522,8 @@ also takes the entry back, so the history does not accumulate photos.
 ## Touch: the phone viewer
 
 On a phone (narrow screen *or* coarse pointer) the photo takes the whole screen, and the caption and bar sit
-on translucent gradients that hide with a tap. One pointer-event state machine handles every gesture:
+on translucent gradients that hide with a tap. One pointer-event state machine handles every gesture (`GS`,
+strict like the others, each state owning its gesture's numbers; in the code `Idle` is `none` and `Pending` is `press`):
 
 ```mermaid
 stateDiagram-v2
@@ -545,7 +622,9 @@ Phone polish found throughout the CSS:
 
 - **One stylesheet, [app/estate.css](../../photo-estate/app/estate.css), is shared by every page** (the photo
   app, People, Library info, duplicate review). [pages.py](../../photo-estate/pages.py) puts it into each page as it
-  is sent, so a page is still one request and the pages cannot drift apart.
+  is sent, so the pages cannot drift apart. What their scripts share (escaping, the API call, the toast, the
+  state machines) is shared the same way, as modules in `app/` that each page imports
+  ([chapter 2](02-code-tour.md#the-web-pages)).
 - **The look is the iPhone app's** ([chapter 23](23-native-interface.md)), and comes from the icon: ink, paper and a
   low sun. Surfaces are quiet (warm paper in the light, near-black in the dark, switched by
   `prefers-color-scheme`); one colour, the sun, marks what is chosen, alive or waiting for you: a chip that is
@@ -563,14 +642,17 @@ Phone polish found throughout the CSS:
 
 ## Where to look in the code
 
-All in [search.html](../../photo-estate/search.html), except the server side:
+All in [search.html](../../photo-estate/search.html), except the server side and what is shared or pure,
+which is in the script modules in [app/](../../photo-estate/app/) ([chapter 2](02-code-tour.md#the-web-pages)):
 
 | Topic | Code |
 |---|---|
-| State, history and URL | `blank`, `toParams`, `fromParams`, `snap`, `url`, `nav`, `restore`, the `popstate` handler, `init` |
+| Shared with the other pages | [app/dom.js](../../photo-estate/app/dom.js) (`$`, `$$`, `esc`, `MARK`), [app/api.js](../../photo-estate/app/api.js) (`api`), [app/fsm.js](../../photo-estate/app/fsm.js) (`machine`, `flow`, `STALE`), [app/toast.js](../../photo-estate/app/toast.js), [app/format.js](../../photo-estate/app/format.js) (`fmt`, `plural`, `dateParts`) |
+| State, history and URL | `blank`, `copy`, `toParams`, `fromParams` in [app/query.js](../../photo-estate/app/query.js); `snap`, `url`, `nav`, `restore`, the `popstate` handler, `init` |
+| The machines | [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js) (`VW`, `GS`), [app/grid-flow.js](../../photo-estate/app/grid-flow.js) (`Grid.list`), [app/library-flow.js](../../photo-estate/app/library-flow.js) (`LIB`, read through `L`), [app/albums-flow.js](../../photo-estate/app/albums-flow.js) (`ALB`, `MAKER`), [app/favourite.js](../../photo-estate/app/favourite.js) (`FAV`), `FIELD` |
 | Tabs | `setTab`, the `#tabbar` click handler, `titleDoc` |
-| Grid | `Grid` (`load`, `poke`, `more`, `less`, `add`, `draw`, `relayout`, `top`), `rowH` |
-| Library | `lgrid`, `libLoad`, `libShow`, `renderPeriods`, `libBack`, `libJump`, `toSection` |
+| Grid | `Grid` (`load`, `poke`, `more`, `less`, `add`, `draw`, `relayout`, `top`), `rowH`; the rows themselves are `packRows` in [app/layout.js](../../photo-estate/app/layout.js) |
+| Library | `lgrid`, `mgrid`, `libLoad`, `libKnown`, `libRetry`, `monthShow`, `libShow`, `renderPeriods`, `libBack`, `libJump`, `toSection` |
 | Scrubber | `scrubShow`, `scrubPlace`, `monthAt`, `scrubEnd` |
 | View options | `V`, `DENS`, `saveView`, `viewParams`, `viewMenu`, `viewChanged`, `setDens`, the pinch handlers |
 | Search | `sgrid`, `go`, `refine`, `refreshSearch`, `loadF`, `searchShow`, `searchHead`, `drawNotice`, `sBack` |

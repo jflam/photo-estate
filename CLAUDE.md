@@ -9,9 +9,18 @@ dependencies, a plain HTTP server and SQLite), and an iPhone app in `ios/` (need
   lists its API.
 - Run it on the demo library only, never a real one:
   `cd photo-estate && HF_HUB_OFFLINE=1 uv run embed.py serve --demo --port 8767`
+- The script the pages share is in `photo-estate/app/*.js`: native ES modules with JSDoc types (`dom.js`,
+  `api.js`, `fsm.js`, `toast.js`, `format.js`; `query.js`, `layout.js` and the state machines `*-flow.js`
+  and `favourite.js` for `search.html`), imported by address (`import { esc } from "/app/dom.js"`), no
+  bundler. A page's state machines are strict (`flow()` in `fsm.js`: a step not in the table throws) and
+  own their data; they live in a module with a unit test, not in the page. A helper two pages need goes there, with a
+  unit test in `app/tests/`. A page's script is a module: nothing in it is on `window`, so no
+  `onclick="..."` in markup.
 - Tests: `uv run pytest` from `photo-estate/` runs them all (`-m "not slow"` is the fast tier CI runs);
   `uv run ruff check .` lints. Each script still runs on its own: `uv run tests/<file>`, every `test_*.py` in
   `photo-estate/tests`. The checked-in demo library (`photo-estate/demo/`) must not change.
+- For the script modules, from `photo-estate/app/` with Node 22: `npm ci` once, then `npm run typecheck`
+  (`tsc --noEmit --allowJs --checkJs`) and `npm test` (`node --test`). CI runs both.
 - For a change to the page, drive the real page with Playwright and look at screenshots in light and
   dark mode.
 

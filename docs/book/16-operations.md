@@ -73,6 +73,17 @@ cancelling a running one stops its step with SIGTERM, then SIGKILL ten seconds l
 setup page stays at `/setup` (the **+** in the library's header) for adding sources later. The code
 is in `intake/`, and [INTAKE-PLAN.md](../notes/INTAKE-PLAN.md) explains how sources plug in.
 
+The page itself ([setup.html](../../photo-estate/setup.html)) is two strict state machines, with their
+tables in [app/setup-flow.js](../../photo-estate/app/setup-flow.js) (issue #80). One is where the server
+is: no library yet (`place`), nothing coming in (`idle`), a job running (`watching`) or waiting for you
+(`answering`), then `opening` when the first photos are in and the server is becoming the photo app. The
+page asks `/api/intake` only in the first of those (every 1.2 s while a job is live, every 8 s
+otherwise, not while the tab is hidden); in `opening` it asks `/api/info` every 1.5 s and goes to the
+library when that answers, and after ten minutes says "Still not open" with **Try again**. The other is
+the source being added: `open` (what you have typed), `checking`, `checked` (its preview said yes),
+`starting`. What is typed and what the preview said belong to those states, so editing a field after a
+check goes back to `open` and the job can not be started on a preview of something else.
+
 ### How the steps report back: the event lines
 
 The setup page's progress bar and the photo app's live reload are driven by one small protocol, not by
