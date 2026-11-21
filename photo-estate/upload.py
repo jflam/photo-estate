@@ -163,10 +163,11 @@ class IngestJob:
     del S
 
     def __init__(self, script: Path, root: Path, db: str, store: Path, inbox: Path,
-                 quiet: float = 60.0, max_wait: float = 600.0):
+                 quiet: float = 60.0, max_wait: float = 600.0, cache: Path | None = None):
         import collections
         import threading
         self.script, self.root, self.db, self.store, self.inbox = script, root, db, store, inbox
+        self.cache = cache                            # the app's thumbnail cache (--cache), when it is not beside the catalog
         self.quiet, self.max_wait = quiet, max_wait   # seconds; quiet = 0 turns the automatic runs off
         self.on_added: Callable[[], object] | None = None      # called once a run that added photos has them searchable (the app reloads its catalog)
         self.on_faces: Callable[[], object] | None = None      # called when that run has also finished faces (the app reloads its People page)
@@ -224,6 +225,8 @@ class IngestJob:
                 return False
             env = dict(os.environ, DB=str(self.db), STORE=str(self.store), INBOX=str(self.inbox),
                        **{events.ENV: "1"})   # its steps tell _follow what happened (core/events.py)
+            if self.cache:                 # the face thumbnails go where the app reads them, not beside the catalog
+                env["CACHE"] = str(self.cache)
             env.pop("RESTART", None)   # the page asks for a restart separately: it would kill this run's output
             self.log.clear()
             self.started, self.finished, self.code = time.time(), None, None

@@ -27,6 +27,41 @@ everything off and back, verified by file count, byte total and the `estate.db` 
 Spotlight is turned off for the volume (`sudo mdutil -i off /Volumes/estate`). The app has its own
 search, and indexing 120k photos slows every big copy.
 
+## The catalog is on the internal SSD
+
+Since 2026-11-20 the catalog is not on that disk. The photos are big and read front to back, which a
+hard disk does well; the catalog is read in small pieces from all over the file, which it does badly.
+
+| On the SSD, in `~/estate/` | On the USB disk, in `/Volumes/estate/` |
+|---|---|
+| `estate.db` (1.5 GB), `sync-feed.db`, `intake.db` and `intake/` | `store/`: the photos |
+| `face-labels.jsonl`, `query-log.jsonl`, `stats-cache.json` | `iphone/` and `iphone.partial/`: uploads from the phone (`--inbox`) |
+| | `review/`: thumbnails and face crops (`--cache`) |
+| | `catalog-backups/` (`--backup-dir`): now on a different disk from what it backs up |
+
+The app finds the small files beside `--db`, so they moved with it; `--inbox` and `--cache` keep the
+big folders where they were. Measured on the real library (113,634 photos, 110,020 faces) at a restart:
+
+| | Catalog on the USB disk | On the SSD |
+|---|---|---|
+| The page answers | 22 s | 7 s |
+| Reading the catalog | 18.9 s | 4.4 s |
+| Reading the faces (People) | 50-68 s | 4.1 s, and under 2 s with the join taken out of `faces.py` |
+
+How it was moved (the app stopped throughout): `PRAGMA wal_checkpoint(TRUNCATE)`, then `sqlite3
+old ".backup new"` for each of the three databases, `PRAGMA integrity_check` and a row count of every
+table compared with the original; the three plain files copied and compared; then the originals renamed
+`*.moved-20261120` on the USB disk (delete them once you are sure), and the plist changed. To go back:
+stop the app, rename them back, restore the plist (`~/photo-estate-lab/com.jflam.photo-search.plist.before-ssd-move`).
+
+Scripts run by hand need to be told, because their default is everything under one folder:
+
+```bash
+DB=~/estate/estate.db STORE=/Volumes/estate/store INBOX=/Volumes/estate/iphone CACHE=/Volumes/estate/review \
+  ./photo-estate/ingest-iphone.sh ~/estate
+uv run photo-estate/faces.py --db ~/estate/estate.db run --store /Volumes/estate/store --cache /Volumes/estate/review
+```
+
 ## The service
 
 | | |
@@ -34,13 +69,14 @@ search, and indexing 120k photos slows every big copy.
 | Code | `~/src/photo-estate` (a clone of this repo) |
 | launchd agent | `~/Library/LaunchAgents/com.jflam.photo-search.plist` (copy in this folder) |
 | Log | `~/Library/Logs/photo-search.log` |
-| Query log | `/Volumes/estate/query-log.jsonl` (next to the catalog) |
+| Catalog | `~/estate/estate.db`, on the internal SSD (see above) |
+| Query log | `~/estate/query-log.jsonl` (next to the catalog) |
 | Catalog backups | `/Volumes/estate/catalog-backups/` (`--backup-dir`): the app copies `estate.db` and `face-labels.jsonl` there daily and keeps 7 |
 | Local port | `127.0.0.1:8766` |
 | Tailnet | `tailscale serve --bg --https=8766 http://127.0.0.1:8766` |
 
-It starts at login and restarts if it exits. The page answers about 15 seconds after a restart,
-most of it reading the catalog off the USB disk; typed searches wait about 5 seconds more for the
+It starts at login and restarts if it exits. The page answers about 7 seconds after a restart
+(about 20 when the catalog was on the USB disk); typed searches wait about 15 seconds more for the
 text encoder, which loads in the background. It's a per-user agent, so the Mac must be logged in after a reboot (automatic login in
 Users & Groups covers this).
 
@@ -286,7 +322,8 @@ them** (the app reads the catalogue at startup; the restart works because launch
 relaunches it). The same from a terminal:
 
 ```bash
-RESTART=com.jflam.photo-search ./photo-estate/ingest-iphone.sh /Volumes/estate
+RESTART=com.jflam.photo-search DB=~/estate/estate.db STORE=/Volumes/estate/store \
+  INBOX=/Volumes/estate/iphone CACHE=/Volumes/estate/review ./photo-estate/ingest-iphone.sh ~/estate
 ```
 
 `RESTART` restarts the app at the end, because it reads the catalog at startup. A launchd timer

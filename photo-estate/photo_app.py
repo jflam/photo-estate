@@ -126,10 +126,10 @@ class PhotoApp:
         # Phone uploads land in a plain folder that `estate.py ingest` reads like any other source. The demo
         # takes none unless --inbox says where; otherwise the inbox sits beside the catalog.
         self.inbox = inbox = Path(a.inbox) if a.inbox else None if a.demo else Path(a.db).resolve().parent / "iphone"
-        self.ingest = ingest = (IngestJob(Path(a.ingest_script or HERE / "ingest-iphone.sh"), Path(a.db).resolve().parent,
-                                          a.db, store, inbox, quiet=a.ingest_quiet, max_wait=a.ingest_max_wait)
-                                if inbox else None)
         self.seed = seed = Path(a.cache or Path(a.db).resolve().parent / "review")
+        self.ingest = ingest = (IngestJob(Path(a.ingest_script or HERE / "ingest-iphone.sh"), Path(a.db).resolve().parent,
+                                          a.db, store, inbox, quiet=a.ingest_quiet, max_wait=a.ingest_max_wait, cache=seed)
+                                if inbox else None)
         # On the Mac mini the estate disk is a USB hard disk: --fast-cache puts the thumbnail cache on the
         # internal SSD, filled from the disk's cache (`seed`) on first use (images.py).
         self.cache = cache = Path(a.fast_cache) if a.fast_cache else seed
