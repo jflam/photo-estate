@@ -118,6 +118,11 @@ of it GPU memory. Two things keep that down ([encoder.py](../../photo-estate/enc
   nothing has used it for that long (`Encoder.let_go`: the GPU memory goes back, measured to the last
   megabyte). `/compare`'s second model is held this way, below.
 
+On the mini, after the deploy on 2026-11-20, these two changes brought the app's footprint from 7.8 GB
+to 3.3 GB and its GPU memory from 5.6 GB to 1.5 GB (4.6 GB while `/compare`'s model is loaded). 15
+minutes after `/compare` was last used, GPU memory was back to 1,465 MB. The measurements are in
+[PERFORMANCE.md](../notes/PERFORMANCE.md#people-the-catalogs-disk-and-gpu-memory-2026-11-20).
+
 ## Embedding every photo: `embed.py run`
 
 ```bash
@@ -323,6 +328,9 @@ Twenty-four searches is a small sample: 17 to 7 is p = 0.06, and it takes 18 to 
 report says which of the two it is in words. For a finer answer, give the run a longer `terms.txt`.
 
 Votes also go to a file beside the vectors (`votes.jsonl`), never to the catalog.
+
+The checklist for putting the next candidate through the same procedure (export, embed, point the app at
+it, run, read the report) is [guides/COMPARE-A-MODEL.md](../guides/COMPARE-A-MODEL.md).
 
 The second model's scores sit on another scale, so the columns are each model's top k with no floor
 or window: those would have to be measured again before the app switched. Searching costs a little

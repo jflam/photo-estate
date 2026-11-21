@@ -249,6 +249,7 @@ the Mac mini (M1, 16 GB, catalog on a USB hard disk) from a laptop over Tailscal
 | Memory pressure | 16 GB with swap nearly full: the OS page cache cannot keep thumbnails or the catalog warm |
 | Startup | Seek-bound SQLite reads, not Python: the `exif` scan 8.7 s, a correlated subquery 5.8 s, embeddings via the primary key 2.7 s |
 | The network path | `tailscale serve` forwards each request as HTTP/1.1; the Python server was HTTP/1.0, so every request opened a connection and a thread |
+| GPU memory (2026-11-20) | Not in RSS on a Mac (`ps` showed 0.5 GB). `footprint <pid>` showed 7.8 GB, 5.6 GB of it the two SigLIP models held on the GPU |
 
 ### What changed, and the result
 
@@ -258,6 +259,8 @@ the Mac mini (M1, 16 GB, catalog on a USB hard disk) from a laptop over Tailscal
 | HTTP/1.1 keep-alive, no Nagle delay, gzip, ETag | `/api/search` 150 results: 120 KB → 14 KB; `/api/info` 67 KB → 22 KB |
 | Startup reads in table order; covering index `exif_app` | Restart to first answer ~21-26 s → 9-17 s |
 | Text encoder loads in a background thread, with a warm-up query | First text query after restart 1.36 s → 0.21 s |
+| The catalog on the mini's SSD; `face_rows()` reads three tables front to back in place of a join (2026-11-20) | Page answers after a restart 22 s → 7 s; People loads 50-68 s → under 4 s |
+| `/compare`'s model loaded only for a run; a text-only model drops its image half (2026-11-20) | App footprint 7.8 GB → 3.3 GB; GPU memory 5.6 GB → 1.5 GB |
 
 On a laptop (M2 Max, NVMe) the same changes took restart-to-first-answer from 8.1-9.8 s to 2.4-2.8 s,
 and `/api/facets` from 8.6 ms to 4.3 ms. API answers are **byte-identical** before and after on a set of
@@ -271,9 +274,9 @@ few milliseconds per request, and what is left of startup is sequential disk rea
 Each is written up independently in PERFORMANCE.md:
 
 1. A faster static server for `/thumb/` (only worth it if it saves well over 50 ms of a ~150 ms burst).
-2. Cache the embedding matrix as `.npy` on the SSD (saves ~2.7 s of startup).
+2. Cache the embedding matrix as `.npy` on the SSD (saved ~2.7 s of startup off the HDD; mostly overtaken now that the catalog is on the SSD).
 3. Pre-generate HEIC previews onto the SSD (the first open of a HEIC costs 0.1-0.5 s).
-4. Reduce the server's ~1.7 GB RSS: the per-photo `meta` dictionaries are the target.
+4. Reduce the server's ~1.7 GB RSS: the per-photo `meta` dictionaries are the target. Measure with `footprint <pid>`, which counts GPU memory too.
 5. HTTP/2 to the backend (only if task 1 shows the proxy's connections matter).
 
 ### Measuring it yourself

@@ -304,7 +304,9 @@ started from `/compare` (**Compare models** in the Library's "..." menu; the pag
 few seconds) and let go when the comparison is finished, or when one is left unused for 15 minutes
 (`--compare-idle MINUTES`; 0 keeps it until the run ends), so it costs nothing on a day nobody compares.
 A comparison's report is kept in `~/photo-estate-lab/siglip2-large-384/vectors/runs/`. Until 2026-11-20 it was loaded whole at every start and held: with the app's own model, 5.6 GB
-of the mini's 16 GB, none of it visible in `ps` (use `footprint <pid>`). Without the vectors
+of the mini's 16 GB, none of it visible in `ps` (use `footprint <pid>`). Measured after the change: the
+app's footprint is 3.3-3.4 GB with no run under way (was 7.8 GB), GPU memory 1.5 GB, 4.6 GB during a run.
+The checklist for comparing another model is [guides/COMPARE-A-MODEL.md](../../docs/guides/COMPARE-A-MODEL.md). Without the vectors
 folder the app starts as usual and logs that `/compare` is off. To stop the experiment, take the two
 `--compare-vectors` lines out of the plist and restart.
 
