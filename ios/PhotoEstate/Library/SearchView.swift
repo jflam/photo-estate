@@ -182,12 +182,12 @@ struct SearchView: View {
         let value = pill.value(model.query, trips: model.trips)
         return Button {
             Haptics.tick()
-            if pill == .fav { var q = model.query; q.fav.toggle(); model.query = q } else { sheet = pill }
+            if pill.isToggle { model.query = pill.toggled(model.query) } else { sheet = pill }
         } label: {
             HStack(spacing: 5) {
                 if let symbol = pill.symbol { Image(systemName: value == nil ? symbol : "\(symbol).fill").imageScale(.small) }
                 Text(value ?? pill.title).lineLimit(1)
-                if value != nil && pill != .fav {
+                if value != nil && !pill.isToggle {
                     Image(systemName: "xmark").font(.caption2.weight(.bold)).opacity(0.7)
                         .onTapGesture { model.query = pill.cleared(model.query) }
                         .accessibilityLabel("Clear \(pill.title)")
@@ -269,6 +269,7 @@ struct BrowseView: View {
 
     @State private var years: [(year: Int, count: Int)] = []
     @State private var favourites = 0
+    @State private var videos = 0
     private static let ideas = ["sunset over water", "dog on the beach", "birthday cake", "snowy mountains", "city at night", "a child laughing"]
 
     var body: some View {
@@ -290,23 +291,8 @@ struct BrowseView: View {
 
                 if !model.trips.isEmpty { trips }
                 if years.count > 1 { timeline }
-                if favourites > 0 {
-                    Button { model.go(Query(fav: true)) } label: {
-                        HStack(spacing: 14) {
-                            Image(systemName: "heart.fill").font(.title3).foregroundStyle(Color.sun)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Favourites").font(.title(19)).foregroundStyle(.primary)
-                                Text("\(favourites.formatted()) photos").font(.footnote).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                        }
-                        .padding(16)
-                        .background(Color.well, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 16)
-                }
+                if favourites > 0 { card("heart.fill", "Favourites", "\(favourites.formatted()) photos") { model.go(Query(fav: true)) } }
+                if videos > 0 { card("play.rectangle.fill", "Videos", "\(videos.formatted()) \(videos == 1 ? "video" : "videos")") { model.go(Query(videos: true)) } }
                 threads("Places", .place, .country)
                 threads("People", .people, .person)
                 threads("Albums", .albums, .album)
@@ -320,7 +306,27 @@ struct BrowseView: View {
             let months = await Catalog.shared.months(Plan())
             years = Dictionary(grouping: months, by: { $0.ym / 12 }).map { ($0.key, $0.value.reduce(0) { $0 + $1.count }) }.sorted { $0.0 < $1.0 }
             favourites = (try? await Catalog.shared.store.read { try $0.one("SELECT count(*) FROM photos WHERE fav=1") { Int($0.int(0)) } ?? 0 }) ?? 0
+            videos = (try? await Catalog.shared.store.read { try $0.one("SELECT count(*) FROM photos WHERE kind='video'") { Int($0.int(0)) } ?? 0 }) ?? 0
         }
+    }
+
+    /// A way into one set of photos, as a wide card: Favourites, Videos.
+    private func card(_ symbol: String, _ title: String, _ detail: String, _ go: @escaping () -> Void) -> some View {
+        Button(action: go) {
+            HStack(spacing: 14) {
+                Image(systemName: symbol).font(.title3).foregroundStyle(Color.sun).frame(width: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.title(19)).foregroundStyle(.primary)
+                    Text(detail).font(.footnote).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .background(Color.well, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
     }
 
     private func title(_ text: String, all: Pill? = nil) -> some View {
@@ -442,7 +448,7 @@ struct Cover: View {
 
 /// The filter chips above the grid.
 enum Pill: String, CaseIterable, Identifiable {
-    case place, people, albums, trips, dates, camera, fav
+    case place, people, albums, trips, dates, camera, fav, videos
     var id: String { rawValue }
 
     var title: String {
@@ -454,10 +460,20 @@ enum Pill: String, CaseIterable, Identifiable {
         case .dates: "When"
         case .camera: "Camera"
         case .fav: "Favourites"
+        case .videos: "Videos"
         }
     }
 
-    var symbol: String? { self == .fav ? "heart" : nil }
+    var symbol: String? { self == .fav ? "heart" : self == .videos ? "play.rectangle" : nil }
+
+    /// A chip that is on or off, with no sheet behind it.
+    var isToggle: Bool { self == .fav || self == .videos }
+
+    func toggled(_ q: Query) -> Query {
+        var q = q
+        if self == .fav { q.fav.toggle() } else if self == .videos { q.videos.toggle() }
+        return q
+    }
 
     var facets: [Facet] {
         switch self {
@@ -466,7 +482,7 @@ enum Pill: String, CaseIterable, Identifiable {
         case .albums: [.album]
         case .trips: [.trip]
         case .camera: [.camera, .lens]
-        case .dates, .fav: []
+        case .dates, .fav, .videos: []
         }
     }
 
@@ -484,6 +500,7 @@ enum Pill: String, CaseIterable, Identifiable {
     func value(_ q: Query, trips: [Trip]) -> String? {
         switch self {
         case .fav: return q.fav ? "Favourites" : nil
+        case .videos: return q.videos ? "Videos" : nil
         case .dates: return q.from == nil && q.to == nil ? nil : Dates.range(q.from, q.to)
         default:
             var picked = facets.flatMap { q.picked($0) }
@@ -498,6 +515,7 @@ enum Pill: String, CaseIterable, Identifiable {
         var q = q
         switch self {
         case .fav: q.fav = false
+        case .videos: q.videos = false
         case .dates: q.from = nil; q.to = nil
         default: for f in facets { q.picks[f] = nil }
         }

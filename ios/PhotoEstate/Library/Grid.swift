@@ -651,15 +651,16 @@ private final class Scrubber: UIView {
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { bounds.insetBy(dx: -14, dy: -10).contains(point) }
 }
 
-/// The count on the top photo of a stack.
-private final class StackBadge: UIView {
-    private let icon = UIImageView(image: UIImage(systemName: "square.stack.fill",
-                                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .semibold)))
+/// A small dark pill on a photo, a symbol and a few characters: the count on the top photo of a stack,
+/// a video's length.
+private final class Badge: UIView {
+    private let icon: UIImageView
     private let label = UILabel()
-    var count = 0 { didSet { label.text = String(count) } }
+    var text = "" { didSet { label.text = text } }
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    init(_ symbol: String) {
+        icon = UIImageView(image: UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .semibold)))
+        super.init(frame: .zero)
         backgroundColor = UIColor.black.withAlphaComponent(0.55)
         isUserInteractionEnabled = false
         icon.tintColor = .white
@@ -689,7 +690,10 @@ private final class TileView: UIImageView {
     private var task: Task<Void, Never>?
     private let heart = UIImageView(image: UIImage(systemName: "heart.fill"))
     private let mine = UIImageView(image: UIImage(systemName: "arrow.up.circle.fill"))   // on this iPhone, not yet on the server
-    private let stack = StackBadge()      // the top of a stack: how many shots it holds
+    private let stack = Badge("square.stack.fill")      // the top of a stack: how many shots it holds
+    private let length = Badge("play.fill")             // a video: how long it runs
+    private let live = UIImageView(image: UIImage(systemName: "livephoto",
+                                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)))
     var index = 0
 
     override init(frame: CGRect) {
@@ -713,6 +717,14 @@ private final class TileView: UIImageView {
         mine.contentMode = .scaleAspectFit
         addSubview(mine)
         addSubview(stack)
+        addSubview(length)
+        live.tintColor = .white
+        live.alpha = 0.9
+        live.layer.shadowOpacity = 0.5
+        live.layer.shadowRadius = 2
+        live.layer.shadowOffset = .zero
+        live.contentMode = .center
+        addSubview(live)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -723,6 +735,9 @@ private final class TileView: UIImageView {
         mine.frame = CGRect(x: bounds.width - 20, y: bounds.height - 20, width: 15, height: 15)
         let s = stack.sizeThatFits(.zero)
         stack.frame = CGRect(x: 5, y: 5, width: s.width, height: s.height)
+        let l = length.sizeThatFits(.zero)
+        length.frame = CGRect(x: bounds.width - 5 - l.width, y: 5, width: l.width, height: l.height)
+        live.frame = CGRect(x: bounds.width - 23, y: 5, width: 18, height: 18)
     }
 
     func show(_ tile: Tile, index i: Int) {
@@ -730,8 +745,13 @@ private final class TileView: UIImageView {
         heart.isHidden = !tile.fav
         mine.isHidden = !tile.isLocal
         stack.isHidden = tile.stack < 2
-        if !stack.isHidden { stack.count = Int(tile.stack); setNeedsLayout() }
-        accessibilityLabel = [Dates.long(tile.when), tile.city?.split(separator: ",").first.map(String.init), tile.fav ? "favourite" : nil,
+        if !stack.isHidden { stack.text = String(tile.stack) }
+        length.isHidden = !tile.video
+        if tile.video { length.text = Tile.clock(tile.dur) }
+        live.isHidden = !tile.live || tile.video
+        setNeedsLayout()
+        accessibilityLabel = [tile.video ? "video, \(Tile.clock(tile.dur))" : nil, tile.live ? "Live Photo" : nil,
+                              Dates.long(tile.when), tile.city?.split(separator: ",").first.map(String.init), tile.fav ? "favourite" : nil,
                               stack.isHidden ? nil : "stack of \(tile.stack)", tile.isLocal ? "not yet on the server" : nil]
             .compactMap { $0 }.joined(separator: ", ")
         guard tile.sha != sha || image == nil else { return }

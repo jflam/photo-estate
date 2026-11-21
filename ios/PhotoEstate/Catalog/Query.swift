@@ -35,9 +35,10 @@ struct Query: Equatable {
     var from: Int?                    // months as year*12 + month-1, inclusive
     var to: Int?
     var fav = false
+    var videos = false                // videos only
     var order: Order?
 
-    var isFiltered: Bool { picks.values.contains { !$0.isEmpty } || event != nil || stack != nil || from != nil || to != nil || fav }
+    var isFiltered: Bool { picks.values.contains { !$0.isEmpty } || event != nil || stack != nil || from != nil || to != nil || fav || videos }
     var isEmpty: Bool { text.isEmpty && similar == nil && !isFiltered }
 
     func picked(_ f: Facet) -> [String] { picks[f] ?? [] }
@@ -61,6 +62,7 @@ struct Query: Equatable {
         if let from { out.append(.init(name: "from", value: Query.month(from))) }
         if let to { out.append(.init(name: "to", value: Query.month(to))) }
         if fav { out.append(.init(name: "fav", value: "1")) }
+        if videos { out.append(.init(name: "kind", value: "video")) }
         if let stack { out.append(.init(name: "stack", value: stack)) }
         if let order { out.append(.init(name: "sort", value: order.rawValue)) }
         out += [.init(name: "limit", value: String(limit)), .init(name: "cursor", value: String(cursor)),
@@ -252,6 +254,7 @@ enum Reader {
             p.clauses.append(Clause(key: "date", sql: "p.ym BETWEEN ? AND ?", args: [q.from ?? 0, q.to ?? 1_000_000]))
         }
         if q.fav { p.clauses.append(Clause(key: "fav", sql: "p.fav=1", args: [])) }
+        if q.videos { p.clauses.append(Clause(key: "videos", sql: "p.kind='video'", args: [])) }
         if let s = q.stack { p.clauses.append(Clause(key: "stack", sql: "p.stack=?", args: [s])) }
         if let e = q.event {
             p.clauses.append(Clause(key: "event", sql: "p.event=?", args: [e]))
@@ -283,6 +286,7 @@ enum Reader {
                 typed.append("p.\(key)=?"); typedArgs.append(id)
                 if key == "event" { p.scopeEvent = id } else { p.scopeTrip = id }
             case "is" where ["fav", "favorite", "favourite"].contains(v): typed.append("p.fav=1")
+            case "is" where ["video", "videos"].contains(v): typed.append("p.kind='video'")
             default: continue
             }
             p.applied.append("\(key):\(val)")
@@ -329,22 +333,16 @@ extension Catalog {
         if hideDups { sql += " AND p.dup=0" }
         if hideShots { sql += " AND NOT \(Screenshots.sql)" }
         let size = "CASE WHEN p.stack IS NULL THEN 0 ELSE (SELECT count(*) FROM photos s WHERE s.stack=p.stack) END"
-        let q = "SELECT p.sha, p.ar, p.whenk, p.city, p.fav, \(size), p.best FROM photos p WHERE \(sql) ORDER BY p.whenk='' , p.whenk \(oldFirst ? "ASC" : "DESC"), p.sha"
+        let q = "SELECT \(Tile.columns), \(size) FROM photos p WHERE \(sql) ORDER BY p.whenk='' , p.whenk \(oldFirst ? "ASC" : "DESC"), p.sha"
         return (try? await store.read { db in
-            try db.query(q, args) {
-                Tile(sha: $0.text(0), ar: Float($0.double(1)), when: $0.text(2), city: $0.string(3), fav: $0.bool(4),
-                     stack: Int32($0.int(5)), best: $0.optDouble(6).map { Float($0) } ?? -.infinity)
-            }
+            try db.query(q, args) { Tile(row: $0, stack: Int32($0.int(9))) }
         }) ?? []
     }
 
     /// The photos of one stack, best first (the one on top first), for the viewer's strip.
     func stackTiles(_ stack: String) async -> [Tile] {
         (try? await store.read { db in
-            try db.query("SELECT sha, ar, whenk, city, fav, best FROM photos WHERE stack=? ORDER BY best IS NULL, best DESC, whenk, sha", [stack]) {
-                Tile(sha: $0.text(0), ar: Float($0.double(1)), when: $0.text(2), city: $0.string(3), fav: $0.bool(4),
-                     best: $0.optDouble(5).map { Float($0) } ?? -.infinity)
-            }
+            try db.query("SELECT \(Tile.columns) FROM photos WHERE stack=? ORDER BY best IS NULL, best DESC, whenk, sha", [stack]) { Tile(row: $0) }
         }) ?? []
     }
 
@@ -358,10 +356,7 @@ extension Catalog {
                 let chunk = Array(shas[at..<min(at + 400, shas.count)])
                 at += chunk.count
                 let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
-                for t in try db.query("SELECT sha, ar, whenk, city, fav, best FROM photos WHERE sha IN (\(marks))", chunk, {
-                    Tile(sha: $0.text(0), ar: Float($0.double(1)), when: $0.text(2), city: $0.string(3), fav: $0.bool(4),
-                         best: $0.optDouble(5).map { Float($0) } ?? -.infinity)
-                }) { out[t.sha] = t }
+                for t in try db.query("SELECT \(Tile.columns) FROM photos WHERE sha IN (\(marks))", chunk, { Tile(row: $0) }) { out[t.sha] = t }
             }
             return out
         }) ?? [:]

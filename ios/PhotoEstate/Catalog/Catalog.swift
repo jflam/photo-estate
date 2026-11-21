@@ -37,6 +37,10 @@ struct Photo: Identifiable, Equatable {
     var stackOf: String?      // the stack it is in (near-identical shots taken together), named by one of its photos
     var stackN = 0            // how many photos that stack holds
     var best: Double?         // what "Best first" sorts by: larger is better
+    var video = false         // a video, not a still: it plays from the server, at `/video/<sha>`
+    var dur: Double?          // a video's length in seconds
+    var live: String?         // a Live Photo's moving part: the sha of its short clip, also at `/video/<sha>`
+    var at: Double?           // a video a typed search found: where in it the words match best, in seconds
 
     var id: String { sha }
     var when: String { local ?? taken ?? "" }
@@ -59,12 +63,13 @@ struct Photo: Identifiable, Equatable {
         event = n("event"); eventTitle = s("event_title"); trip = n("trip"); tripTitle = s("trip_title")
         people = (j["people"] as? [String]) ?? []; albums = (j["albums"] as? [String]) ?? []
         stackOf = s("stack_of"); stackN = n("stack").map(Int.init) ?? 0; best = d("best")
+        video = s("kind") == "video"; dur = d("dur"); live = s("live"); at = d("at")
     }
 
     static let columns = """
         sha, ext, taken, local, tz, lat, lon, descr, fav, w, h, ar, path, camera, lens, focal, focal35, fnumber, \
         exposure, iso, place, city, region, country, county, place_inferred, event, event_title, trip, trip_title, people, albums, \
-        stack, best
+        stack, best, kind, dur, live
         """
 
     /// From a row selected with `columns`.
@@ -81,6 +86,7 @@ struct Photo: Identifiable, Equatable {
         placeInferred = r.bool(25); event = r.optInt(26); eventTitle = r.string(27); trip = r.optInt(28); tripTitle = r.string(29)
         people = list(30); albums = list(31)
         stackOf = r.string(32); best = r.optDouble(33)
+        video = r.string(34) == "video"; dur = r.optDouble(35); live = r.string(36)
     }
 }
 
@@ -93,6 +99,37 @@ struct Tile: Equatable {
     let fav: Bool
     var stack: Int32 = 0              // photos in its stack, 0 for a photo on its own
     var best: Float = -.infinity      // what "Best first" sorts by; -infinity when the server has not said
+    var video = false                 // a video: the grid shows its length, the viewer plays it
+    var live = false                  // a Live Photo: a still with a short clip that plays while held
+    var dur: Float = 0                // a video's length in seconds
+    var at: Float = 0                 // where a video starts playing: where a typed search matched it
+
+    /// What the grid needs of a row the server sent (a search, an album) or the catalog read.
+    init(_ p: Photo) {
+        self.init(sha: p.sha, ar: Float(p.ar), when: p.when, city: p.city, fav: p.fav, stack: Int32(p.stackN),
+                  best: p.best.map { Float($0) } ?? -.infinity)
+        video = p.video; live = p.live != nil; dur = Float(p.dur ?? 0); at = Float(p.at ?? 0)
+    }
+
+    init(sha: String, ar: Float, when: String, city: String?, fav: Bool, stack: Int32 = 0, best: Float = -.infinity) {
+        self.sha = sha; self.ar = ar; self.when = when; self.city = city; self.fav = fav; self.stack = stack; self.best = best
+    }
+
+    /// The columns `init(row:)` reads, in order, for a `SELECT ... FROM photos`.
+    static let columns = "sha, ar, whenk, city, fav, best, kind, dur, live IS NOT NULL"
+
+    /// From a row selected with `columns`, and a stack size if the query counted one.
+    init(row r: Row, stack: Int32 = 0) {
+        self.init(sha: r.text(0), ar: Float(r.double(1)), when: r.text(2), city: r.string(3), fav: r.bool(4), stack: stack,
+                  best: r.optDouble(5).map { Float($0) } ?? -.infinity)
+        video = r.string(6) == "video"; dur = Float(r.optDouble(7) ?? 0); live = r.bool(8)
+    }
+
+    /// A video's length as a clock: 0:07, 12:30, 1:02:03.
+    static func clock(_ seconds: Float) -> String {
+        let s = max(Int(seconds.rounded()), 0)
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+    }
 }
 
 struct Trip: Identifiable, Equatable {
@@ -130,7 +167,7 @@ final class Catalog {
             place TEXT, city TEXT, region TEXT, country TEXT, county TEXT, place_inferred INTEGER NOT NULL DEFAULT 0,
             event INTEGER, event_title TEXT, trip INTEGER, trip_title TEXT, people TEXT, albums TEXT,
             place_lc TEXT, place_words TEXT, camera_lc TEXT, albums_lc TEXT, people_lc TEXT, epoch TEXT,
-            stack TEXT, best REAL);
+            stack TEXT, best REAL, kind TEXT, dur REAL, live TEXT);
         CREATE INDEX IF NOT EXISTS photos_when ON photos(whenk);
         CREATE INDEX IF NOT EXISTS photos_event ON photos(event);
         CREATE INDEX IF NOT EXISTS photos_trip ON photos(trip);
@@ -140,12 +177,14 @@ final class Catalog {
         CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(text, tokenize='unicode61 remove_diacritics 2');
         """
 
-    /// A catalog from a build before stacks and "Best first" gets their two columns. They fill in as the
-    /// server sends every photo again (its rows changed when it began to send them).
+    /// A catalog from an older build gets the columns it lacks: two for stacks and "Best first", three for
+    /// videos and Live Photos. They fill in as the server sends rows again (a row changes when the server
+    /// begins to send a new field of it); until then every photo held is a still, as it always was.
     private static func migrate(_ db: SQLite) throws {
         let have = Set(try db.query("PRAGMA table_info(photos)") { $0.text(1) })
-        if !have.contains("stack") { try db.exec("ALTER TABLE photos ADD COLUMN stack TEXT") }
-        if !have.contains("best") { try db.exec("ALTER TABLE photos ADD COLUMN best REAL") }
+        for (name, type) in [("stack", "TEXT"), ("best", "REAL"), ("kind", "TEXT"), ("dur", "REAL"), ("live", "TEXT")] where !have.contains(name) {
+            try db.exec("ALTER TABLE photos ADD COLUMN \(name) \(type)")
+        }
         try db.exec("CREATE INDEX IF NOT EXISTS photos_stack ON photos(stack)")
     }
 
@@ -183,8 +222,9 @@ final class Catalog {
     private static let upsert = """
         INSERT INTO photos (sha, ext, taken, local, tz, whenk, ym, lat, lon, descr, fav, dup, w, h, ar, path, camera, lens,
             focal, focal35, fnumber, exposure, iso, place, city, region, country, county, place_inferred, event, event_title,
-            trip, trip_title, people, albums, place_lc, place_words, camera_lc, albums_lc, people_lc, epoch, stack, best)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            trip, trip_title, people, albums, place_lc, place_words, camera_lc, albums_lc, people_lc, epoch, stack, best,
+            kind, dur, live)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(sha) DO UPDATE SET ext=excluded.ext, taken=excluded.taken, local=excluded.local, tz=excluded.tz,
             whenk=excluded.whenk, ym=excluded.ym, lat=excluded.lat, lon=excluded.lon, descr=excluded.descr, fav=excluded.fav,
             dup=excluded.dup, w=excluded.w, h=excluded.h, ar=excluded.ar, path=excluded.path, camera=excluded.camera,
@@ -194,7 +234,7 @@ final class Catalog {
             event_title=excluded.event_title, trip=excluded.trip, trip_title=excluded.trip_title, people=excluded.people,
             albums=excluded.albums, place_lc=excluded.place_lc, place_words=excluded.place_words, camera_lc=excluded.camera_lc,
             albums_lc=excluded.albums_lc, people_lc=excluded.people_lc, epoch=excluded.epoch,
-            stack=excluded.stack, best=excluded.best
+            stack=excluded.stack, best=excluded.best, kind=excluded.kind, dur=excluded.dur, live=excluded.live
         """
 
     /// One page of the server's feed. Runs inside the caller's transaction.
@@ -215,7 +255,7 @@ final class Catalog {
                 p.trip, p.tripTitle, json(p.people), json(p.albums), placeText.lowercased(), words(placeText),
                 [p.camera, p.lens].compactMap { $0 }.joined(separator: " ").lowercased(),
                 p.albums.joined(separator: " | ").lowercased(), p.people.joined(separator: " | ").lowercased(), epoch,
-                p.stackOf, p.best])
+                p.stackOf, p.best, p.video ? "video" : nil, p.dur, p.live])
             guard let id = try db.one("SELECT id FROM photos WHERE sha=?", [p.sha], { $0.int(0) }) else { continue }
             try db.run("DELETE FROM tags WHERE id=?", [id])
             try db.run("DELETE FROM fts WHERE rowid=?", [id])

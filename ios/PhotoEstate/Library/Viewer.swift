@@ -1,3 +1,4 @@
+import AVFoundation
 import Combine
 import MapKit
 import SwiftUI
@@ -6,7 +7,8 @@ import UIKit
 /// One photo, full screen. It grows out of its tile and goes back into it; between photos you swipe;
 /// pinch or double-tap to look closer; flick up for what is known about it. It shows whatever is on
 /// the phone at once (the thumbnail, then the full-screen copy if it has been kept) and sharpens from
-/// the server when it can.
+/// the server when it can. A video plays from the server when its page is up; a Live Photo's clip plays
+/// while the photo is held (Movie.swift).
 struct ViewerScreen: View {
     @ObservedObject var session: ViewerSession
     var lookup: @MainActor (String) async -> Photo?     // what the list it came from knows of a photo
@@ -22,7 +24,8 @@ struct ViewerScreen: View {
     @State private var picked: Tile?          // the one of them showing, when it is not the one on top
     @State private var favs: [String: Bool] = [:]     // favourites set here, which the list this came from has not heard of
     @State private var saving: Set<String> = []
-    @State private var note: String?          // why a favourite could not be saved
+    @State private var note: String?          // why a favourite (or a video's file) could not be had
+    @State private var playback = Playback()  // the video that is up, for its controls; not observed here, only by them
 
     private var isFav: Bool { favs[tile.sha] ?? tile.fav }
 
@@ -32,11 +35,12 @@ struct ViewerScreen: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            PagerView(session: session, onTap: { withAnimation(.easeOut(duration: 0.2)) { chrome.toggle() } },
+            PagerView(session: session, lookup: lookup, playback: playback,
+                      onTap: { withAnimation(.easeOut(duration: 0.2)) { chrome.toggle() } },
                       onInfo: { info = photo }, onZoomedIn: { withAnimation(.easeOut(duration: 0.2)) { chrome = false } }, visible: chrome,
                       shown: picked, shownAt: session.index,
                       top: AnyView(caption.environment(\.colorScheme, .dark)),
-                      bottom: AnyView(VStack(spacing: 2) { strip; actions }.environment(\.colorScheme, .dark).tint(.sunLit)))
+                      bottom: AnyView(VStack(spacing: 2) { strip; controls; actions }.environment(\.colorScheme, .dark).tint(.sunLit)))
                 .ignoresSafeArea()
         }
         .task(id: session.index) {
@@ -81,6 +85,15 @@ struct ViewerScreen: View {
                         .filter { !$0.isEmpty }.joined(separator: "  ·  "))
                     .font(.caption).opacity(0.75)
                 if let note { Text(note).font(.caption.weight(.medium)).foregroundStyle(Color.sunLit) }
+                if tile.live && !tile.video {
+                    Label("LIVE", systemImage: "livephoto")
+                        .font(.caption2.weight(.semibold)).kerning(1)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(.black.opacity(0.35), in: Capsule())
+                        .padding(.top, 3)
+                        .accessibilityLabel("Live Photo")
+                        .accessibilityHint("Touch and hold the photo to play it")
+                }
             }
             .multilineTextAlignment(.center)
             .shadow(color: .black.opacity(0.6), radius: 6)
@@ -135,6 +148,11 @@ struct ViewerScreen: View {
         }
     }
 
+    /// A video's play button and playhead, above the actions.
+    @ViewBuilder private var controls: some View {
+        if tile.video { VideoBar(playback: playback, sha: tile.sha, dur: tile.dur).padding(.bottom, 4) }
+    }
+
     private var actions: some View {
         HStack(spacing: 4) {
             action(sharing ? "ellipsis" : "square.and.arrow.up", "Share") { share() }
@@ -180,23 +198,30 @@ struct ViewerScreen: View {
     }
 
     /// Share the original file when the server can be reached (so Save Image keeps its date and place),
-    /// else the best copy on the phone.
+    /// else the best copy on the phone. A video is shared as its file, fetched from the server (Save Video
+    /// keeps it a video); with no server there is nothing to share, and the caption says so. A Live Photo
+    /// is shared as its still alone.
     private func share() {
         guard !sharing else { return }
         sharing = true
-        let sha = tile.sha, name = photo?.filename ?? "\(sha.prefix(12)).jpg"
+        note = nil
+        let sha = tile.sha, video = tile.video, name = photo?.filename ?? "\(sha.prefix(12))\(video ? ".mp4" : ".jpg")"
         Task {
             defer { sharing = false }
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("share-\(sha.prefix(8))", isDirectory: true)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             var file: URL?
             if tile.isLocal { file = await LocalPhotos.shared.original(sha) }
-            var req = URLRequest(url: Server.baseURL.appendingPathComponent("original/\(sha)"))
+            var req = URLRequest(url: video ? Server.video(sha) : Server.baseURL.appendingPathComponent("original/\(sha)"))
             req.timeoutInterval = 20
             if file == nil, !tile.isLocal, let (tmp, resp) = try? await URLSession.shared.download(for: req), (resp as? HTTPURLResponse)?.statusCode == 200 {
                 let dest = dir.appendingPathComponent(name)
                 try? FileManager.default.removeItem(at: dest)
                 if (try? FileManager.default.moveItem(at: tmp, to: dest)) != nil { file = dest }
+            }
+            if file == nil && video {
+                if tile.sha == sha { note = "Videos are shared from your server, which isn’t reachable" }
+                return
             }
             if file == nil { file = await ImageStore.shared.fetch(.preview, sha) }
             if file == nil, let data = await ImageStore.shared.thumbData(sha, network: false) {
@@ -392,6 +417,8 @@ struct InfoView: View {
 
 struct PagerView: UIViewControllerRepresentable {
     let session: ViewerSession
+    var lookup: @MainActor (String) async -> Photo?
+    var playback: Playback
     var onTap: () -> Void
     var onInfo: () -> Void
     var onZoomedIn: () -> Void  // looking closer: the caption and controls get out of the way
@@ -402,7 +429,7 @@ struct PagerView: UIViewControllerRepresentable {
     var bottom: AnyView
 
     func makeUIViewController(context: Context) -> PagerController {
-        let c = PagerController(tiles: session.tiles, index: session.index)
+        let c = PagerController(tiles: session.tiles, index: session.index, lookup: lookup, playback: playback)
         c.onIndex = { [session] i in DispatchQueue.main.async { session.index = i; Haptics.tick() } }
         c.onZoom = { [session] z in
             if z && !session.zoomed { context.coordinator.zoomedIn() }
@@ -434,9 +461,13 @@ final class PagerController: UIPageViewController, UIPageViewControllerDataSourc
     let top = UIHostingController(rootView: AnyView(EmptyView()))
     let bottom = UIHostingController(rootView: AnyView(EmptyView()))
     private let tiles: [Tile]
+    private let lookup: @MainActor (String) async -> Photo?
+    private let playback: Playback
 
-    init(tiles: [Tile], index: Int) {
+    init(tiles: [Tile], index: Int, lookup: @escaping @MainActor (String) async -> Photo?, playback: Playback) {
         self.tiles = tiles
+        self.lookup = lookup
+        self.playback = playback
         super.init(transitionStyle: .scroll, navigationOrientation: .horizontal, options: [.interPageSpacing: 20])
         dataSource = self
         delegate = self
@@ -474,11 +505,16 @@ final class PagerController: UIPageViewController, UIPageViewControllerDataSourc
 
     private func page(_ i: Int) -> PhotoPage? {
         guard tiles.indices.contains(i) else { return nil }
-        let p = PhotoPage(tile: tiles[i], index: i)
-        p.onTap = { [weak self] in self?.onTap() }
-        p.onZoom = { [weak self] z in self?.onZoom(z) }
+        let p = make(tiles[i], i)
         // Keep the neighbours' full-screen copies warm, so a swipe lands on a sharp photo.
         for j in [i + 1, i - 1] where tiles.indices.contains(j) { Task { await ImageStore.shared.warm(tiles[j].sha) } }
+        return p
+    }
+
+    private func make(_ tile: Tile, _ i: Int) -> PhotoPage {
+        let p = PhotoPage(tile: tile, index: i, lookup: lookup, playback: playback)
+        p.onTap = { [weak self] in self?.onTap() }
+        p.onZoom = { [weak self] z in self?.onZoom(z) }
         return p
     }
 
@@ -491,10 +527,7 @@ final class PagerController: UIPageViewController, UIPageViewControllerDataSourc
         guard let c = current, c.index == index, tiles.indices.contains(c.index) else { return }
         let want = tile ?? tiles[c.index]
         guard c.tile.sha != want.sha else { return }
-        let p = PhotoPage(tile: want, index: c.index)
-        p.onTap = { [weak self] in self?.onTap() }
-        p.onZoom = { [weak self] z in self?.onZoom(z) }
-        setViewControllers([p], direction: .forward, animated: false)
+        setViewControllers([make(want, c.index)], direction: .forward, animated: false)
     }
 
     func pageViewController(_ pvc: UIPageViewController, viewControllerBefore vc: UIViewController) -> UIViewController? {
@@ -544,10 +577,24 @@ final class PhotoPage: UIViewController, UIScrollViewDelegate {
     private var sharp = false           // the full-screen image is showing, not just the thumbnail
     private var asked = false           // ...and it has been asked for, and didn't come
     private var back: AnyCancellable?
+    private lazy var aspect = CGFloat(max(tile.ar, 0.05))    // a video's is corrected from its poster and its picture
 
-    init(tile: Tile, index: Int) {
+    // a video, or a Live Photo's clip: made when the page is the one up, let go when it is not
+    private let lookup: @MainActor (String) async -> Photo?
+    private let playback: Playback
+    private lazy var movie = MovieView(fill: !tile.video)
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let problem = MovieNote()
+    private var up = false              // the current page
+    private var failed = false
+    private var held = false            // a Live Photo being held
+    private var patience: Task<Void, Never>?
+
+    init(tile: Tile, index: Int, lookup: @escaping @MainActor (String) async -> Photo?, playback: Playback) {
         self.tile = tile
         self.index = index
+        self.lookup = lookup
+        self.playback = playback
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -577,12 +624,34 @@ final class PhotoPage: UIViewController, UIScrollViewDelegate {
         single.require(toFail: double)
         scroll.addGestureRecognizer(double)
         scroll.addGestureRecognizer(single)
+        if tile.video || tile.live {
+            movie.frame = imageView.bounds
+            movie.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            movie.alpha = tile.video ? 1 : 0
+            imageView.addSubview(movie)
+            spinner.color = .white
+            spinner.hidesWhenStopped = true
+            problem.isHidden = true
+            view.addSubview(spinner)
+            view.addSubview(problem)
+        }
+        if tile.live && !tile.video {
+            // Touch and hold to see it move, as in Photos. Nothing else in the viewer holds.
+            let hold = UILongPressGestureRecognizer(target: self, action: #selector(holding(_:)))
+            hold.minimumPressDuration = 0.25
+            scroll.addGestureRecognizer(hold)
+        }
 
         imageView.image = ImageStore.shared.ready(tile.sha)
+        if let i = imageView.image { fit(i.size) }
         load()
-        // A page that could only show its thumbnail (the server was away) sharpens when the server is back.
+        // A page that could only show its thumbnail (the server was away) sharpens when the server is back,
+        // and a video that could not play tries again.
         back = SyncEngine.shared.$online.removeDuplicates().dropFirst().filter { $0 }.receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.sharpen() }
+            .sink { [weak self] _ in
+                self?.sharpen()
+                if let self, self.up, self.failed { self.play() }
+            }
     }
 
     private func load() {
@@ -590,11 +659,15 @@ final class PhotoPage: UIViewController, UIScrollViewDelegate {
         asked = false
         let sha = tile.sha
         task = Task { [weak self] in
-            if self?.imageView.image == nil, let t = await ImageStore.shared.thumb(sha), !Task.isCancelled { self?.imageView.image = t }
+            if self?.imageView.image == nil, let t = await ImageStore.shared.thumb(sha), !Task.isCancelled {
+                self?.imageView.image = t
+                self?.fit(t.size)
+            }
             let p = await ImageStore.shared.image(.preview, sha)
             guard !Task.isCancelled, let self else { return }
             guard let p else { self.asked = true; return }
             self.sharp = true
+            self.fit(p.size)
             if !self.large { UIView.transition(with: self.imageView, duration: 0.15, options: .transitionCrossDissolve) { self.imageView.image = p } }
         }
     }
@@ -606,16 +679,149 @@ final class PhotoPage: UIViewController, UIScrollViewDelegate {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         sharpen()
+        up = true
+        if tile.video || tile.live { play() }
     }
 
-    deinit { task?.cancel() }
+    deinit { task?.cancel(); patience?.cancel() }
+
+    /// A video's shape, from its poster or its picture: the catalog may not know it. A photo's is the catalog's.
+    private func fit(_ size: CGSize) {
+        guard tile.video, size.width > 0, size.height > 0 else { return }
+        let ar = size.width / size.height
+        guard abs(ar - aspect) / aspect > 0.02 else { return }
+        aspect = ar
+        fitted = .zero
+        view.setNeedsLayout()
+    }
+
+    // MARK: a video, or a Live Photo's clip
+
+    /// The page is up: a video starts (where a search found it, if one did); a Live Photo's clip is made
+    /// ready, to play the moment the photo is held.
+    private func play() {
+        failed = false
+        problem.isHidden = true
+        let sha = tile.sha, video = tile.video, at = Double(tile.at)
+        movie.onReady = { [weak self] in
+            guard let self else { return }
+            self.patience?.cancel()
+            self.spinner.stopAnimating()
+            self.playback.update(sha, length: self.movie.length, ready: true)
+        }
+        movie.onFailed = { [weak self] in self?.cannotPlay() }
+        movie.onSize = { [weak self] in self?.fit($0) }
+        if video {
+            movie.onPlaying = { [weak self] on in self?.playback.update(sha, playing: on) }
+            movie.onTime = { [weak self] t in self?.playback.update(sha, time: t) }
+            movie.onWaiting = { [weak self] waiting in
+                if waiting { self?.spinner.startAnimating() } else { self?.spinner.stopAnimating() }
+            }
+            movie.onEnd = { [weak self] in self?.playback.update(sha, playing: false) }
+        } else {
+            movie.onEnd = { [weak self] in self?.letGo() }
+        }
+        Task { [weak self] in
+            var item: AVPlayerItem?
+            if LocalPhotos.id(sha) != nil {
+                if let asset = await LocalPhotos.shared.video(sha) { item = AVPlayerItem(asset: asset) }
+            } else if video {
+                item = AVPlayerItem(url: Server.video(sha))
+            } else if let clip = await self?.lookup(sha)?.live {
+                item = AVPlayerItem(url: Server.video(clip))
+            }
+            guard let self, self.up else { return }
+            guard let item else { if video { self.cannotPlay() }; return }
+            self.movie.load(item)
+            guard video else { return }
+            self.playback.attach(sha, self.movie, length: Double(self.tile.dur))
+            if at > 0.5 { self.movie.player?.seek(to: CMTime(seconds: at, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in } }
+            self.movie.player?.play()
+            // Asked of a server that isn't there, AVPlayer can wait a long time before it gives up: say so sooner.
+            self.patience?.cancel()
+            self.patience = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(12))
+                guard !Task.isCancelled, let self, self.up, !self.movie.isReady else { return }
+                self.cannotPlay()
+            }
+        }
+    }
+
+    private func cannotPlay() {
+        guard up else { return }
+        failed = true
+        patience?.cancel()
+        spinner.stopAnimating()
+        guard tile.video else { return }       // a Live Photo is still a photo: it says so only when held
+        movie.player?.pause()
+        problem.text = LocalPhotos.id(tile.sha) != nil ? "This video can’t be read from Photos."
+                     : "Videos play from your server, which isn’t reachable right now."
+        problem.isHidden = false
+        view.setNeedsLayout()
+    }
+
+    private func stop() {
+        up = false
+        patience?.cancel()
+        spinner.stopAnimating()
+        movie.release()
+        playback.detach(tile.sha)
+        if tile.live { held = false; movie.alpha = 0 }
+    }
+
+    @objc private func holding(_ g: UILongPressGestureRecognizer) {
+        switch g.state {
+        case .began:
+            if failed || !up {
+                flash("The moving part of a Live Photo plays from your server, which isn’t reachable.")
+                return
+            }
+            held = true
+            if movie.isReady { liveStart() } else {
+                movie.onReady = { [weak self] in if self?.held == true { self?.liveStart() } }      // as soon as it can
+            }
+        case .ended, .cancelled, .failed:
+            letGo()
+        default: break
+        }
+    }
+
+    private func liveStart() {
+        guard let p = movie.player else { return }
+        Haptics.tap()
+        p.seek(to: .zero)
+        p.play()
+        UIView.animate(withDuration: 0.12) { self.movie.alpha = 1 }
+    }
+
+    /// Back to the still: the hold ended, or the clip did.
+    private func letGo() {
+        held = false
+        movie.player?.pause()
+        UIView.animate(withDuration: 0.25) { self.movie.alpha = 0 }
+    }
+
+    private func flash(_ text: String) {
+        problem.text = text
+        problem.isHidden = false
+        view.setNeedsLayout()
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            self?.problem.isHidden = true
+        }
+    }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        spinner.center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+        if !problem.isHidden {
+            let s = problem.sizeThatFits(CGSize(width: view.bounds.width - 48, height: 0))
+            problem.frame = CGRect(x: (view.bounds.width - s.width) / 2, y: view.bounds.midY - s.height / 2, width: s.width, height: s.height)
+        }
         guard scroll.bounds.size != fitted, scroll.bounds.width > 0 else { return }
         fitted = scroll.bounds.size
         scroll.zoomScale = 1
-        let ar = CGFloat(max(tile.ar, 0.05))
+        let ar = aspect
         let size = fitted.width / fitted.height > ar ? CGSize(width: fitted.height * ar, height: fitted.height)
                                                      : CGSize(width: fitted.width, height: fitted.width / ar)
         imageView.frame = CGRect(origin: .zero, size: size)
@@ -627,6 +833,7 @@ final class PhotoPage: UIViewController, UIScrollViewDelegate {
         super.viewDidDisappear(animated)
         scroll.zoomScale = 1
         view.transform = .identity
+        if tile.video || tile.live { stop() }
     }
 
     private func centre() {
@@ -644,7 +851,7 @@ final class PhotoPage: UIViewController, UIScrollViewDelegate {
     }
 
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
-        guard scale > 1.6, !large else { return }      // zoomed in far enough to see more than 1600 px holds
+        guard scale > 1.6, !large, !tile.video else { return }      // zoomed in far enough to see more than 1600 px holds
         large = true
         let sha = tile.sha
         Task { [weak self] in
