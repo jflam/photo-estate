@@ -291,7 +291,8 @@ class Images:
                     print(f"copies: none while under {PREVIEW_ROOM >> 30} GB is free on {self.cache}", flush=True)
                     return
                 if pool is None:
-                    pool = ProcessPoolExecutor(1, mp_context=mp.get_context("forkserver"), initializer=_lower_priority)
+                    # (spawn, not forkserver: Apple's encoder does not open in a process that was forked and not exec'd)
+                    pool = ProcessPoolExecutor(1, mp_context=mp.get_context("spawn"), initializer=_lower_priority)
                 try:
                     pool.submit(video.stream_copy, str(src), str(d / f"{s}.mp4")).result()
                     ok += 1
