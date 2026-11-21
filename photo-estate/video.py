@@ -21,7 +21,11 @@ from typing import Any
 
 EVERY = 3.0      # seconds of video per frame
 CAP = 30         # frames from one video at most: a longer video is sampled more thinly
-ALIKE = 0.92     # cosine: a frame this close to the last one kept shows nothing new (see docs/notes/VIDEO-PLAN.md)
+# Cosine: a frame this close to the last one kept shows nothing new. Measured on 220 of the library's videos
+# (2,352 frames, docs/notes/VIDEO-PLAN.md): half of consecutive frames are above 0.955. Keeping only frames
+# under 0.96 keeps 63% of them and loses 3% of the (video, search) matches all the frames find; 0.92 keeps
+# 37% and loses 16%, which is too many to save 30 MB.
+ALIKE = 0.96
 POSTER_AT = 1.0  # seconds in: the first frame is often black, or a blur as the phone comes up
 
 
