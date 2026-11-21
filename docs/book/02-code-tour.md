@@ -397,7 +397,7 @@ running any script creates what it needs, and adding a table is adding a stateme
 batches, so an interruption loses at most one batch.
 
 **3. Never raise from a worker.** Image decoding runs in worker processes (`Pool`). Every worker
-function (`_decode`, `images._thumb`, `image_facts`) catches everything and returns an error string or
+function (`_decode`, `images._make`, `image_facts`) catches everything and returns an error string or
 `None`. One corrupt file must never stop an overnight run; it is recorded (`error` columns) and
 skipped.
 

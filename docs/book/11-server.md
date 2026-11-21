@@ -458,19 +458,25 @@ flowchart TD
   answered 404 for photos the catalog holds.
 - **Hash validation.** Every image route first matches `^[0-9a-f]{64}$` and a known photo: there is
   no way to ask the server for an arbitrary path. The same applies to `/original/`.
-- **Pre-generation.** At startup, and after each catalog reload, a background job makes what is
-  missing, in two passes (`Images.pregenerate`):
-  1. **Thumbnails.** It first copies what the seed has, newest first, then makes the rest in a pool of
-     `cpu_count - 2` workers. The pool uses the `forkserver` start method, so it never `fork()`s a
-     process that holds PyTorch threads. It logs "making N thumbnails in the background".
-  2. **The viewer's 1600 px previews**, newest photos first (since 2026-11-20, issue #26). Before
-     this, a preview was made the first time a photo was opened, and on the Mac mini that meant
-     decoding the original from the USB hard disk while the viewer waited. This pass uses a third of
-     the cores at low priority (`nice 10`), in batches of 2,000. Between batches it stops if the cache's
-     disk has less than 20 GB free (`PREVIEW_ROOM`). It also gives way if the job was asked to run again,
-     for example after a reload brought new photos, so their thumbnails never wait hours behind it. It
-     leaves out previews the seed already has; those are copied on first use. `/large/` (4096 px) is
-     still made on first use. All the previews for 113,000 photos take about 37 GB.
+- **Pre-generation.** At startup, and after each catalog reload, a background job makes every missing
+  thumbnail and 1600 px preview (`Images.pregenerate`). Making previews ahead started on 2026-11-20
+  (issue #26). Before that, a preview was made the first time a photo was opened, and on the Mac mini that
+  meant decoding the original from the USB hard disk while the viewer waited.
+  1. **Thumbnails.** It first copies what the seed has, newest first. Then it makes the rest, newest
+     first. When a photo's preview is missing too, both come from **one decode** of the original
+     (`_make`). Decoding is most of the cost: on the mini, 30 recent photos (mostly HEIC) took 424 ms
+     each with one decode, against 675 ms decoded once for each image. It logs "making N thumbnails in
+     the background".
+  2. **Previews** for the photos that already had a thumbnail, newest first.
+
+  Both passes run in `cpu_count - 2` worker processes at low priority (`nice 10`), so the app's own work
+  comes first. The pools use the `forkserver` start method, so they never `fork()` a process that holds
+  PyTorch threads. Work goes in batches of 2,000 (`BATCH`). Before each batch the job leaves previews out
+  if the cache's disk has less than 20 GB free (`PREVIEW_ROOM`). It also gives way if it was asked to run
+  again, for example after a reload brought new photos. The next run starts from the newest photos, so
+  new ones never wait hours behind the rest. Previews the seed already has are left out, since those are
+  copied on first use. `/large/` (4096 px) is still made on first use. All the previews for 113,000
+  photos take about 37 GB.
 
   `--no-pregenerate` turns off both passes.
 
@@ -625,7 +631,7 @@ follows has nothing left to do for it.
 | Mask building | `Browse.select`, `parse`, `read_words`, `view_masks`, `Browse.place_mask` in [browse.py](../../photo-estate/browse.py); `Catalog.person_mask` |
 | Ranking and paging | `Browse.search` (its `ranked`), `Browse.remember`, `Catalog.take`, `Catalog.browse_order` |
 | Text encoder | `Encoder` in [encoder.py](../../photo-estate/encoder.py) |
-| Images and caches | `Images.image`, `Images.pregenerate` (`_thumbs`, `_previews`), `write_image`, `THUMB_QUALITY` in [images.py](../../photo-estate/images.py); `image_size` in catalog.py |
+| Images and caches | `Images.image`, `Images.pregenerate` (`_thumbs`, `_previews`, `_make_all`, `_make`), `write_image`, `THUMB_QUALITY` in [images.py](../../photo-estate/images.py); `image_size` in catalog.py |
 | Uploads, ingest, restart, `/stats`, backups | `Admin` and `backups` in [admin.py](../../photo-estate/admin.py) |
 | HTTP | `make_handler` (`Handler.send`, `answer`, `upload`, `download`), `Server` in photo_app.py; `Response`, `read_body`, `int_param`, `Auth` in [http_util.py](../../photo-estate/http_util.py) |
 | Query log | `Browse.record`, `unlogged` in browse.py |
