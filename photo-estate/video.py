@@ -19,6 +19,7 @@ and a library with no videos never loads it.
 """
 from __future__ import annotations
 
+from fractions import Fraction
 from typing import Any
 
 EVERY = 3.0      # seconds of video per frame
@@ -187,11 +188,12 @@ def stream_copy(src: str, dest: str, side: int = COPY_SIDE, fps: float = COPY_FP
 
 def _in_order(frame: Any, heard: list[int]) -> Any:
     """Give a resampled sound frame its time by count: where the first one said the sound starts, then one
-    sample after another. An old .wmv's sound can step back in time part way through, which an .mp4 cannot
+    sample after another. An old .wmv's sound frames can overlap or step back in time, which an .mp4 cannot
     hold; counted, it plays on unbroken. `heard` holds the next sample's number between calls."""
+    rate = Fraction(1, frame.sample_rate)
     if not heard:
-        heard.append(max(0, frame.pts or 0))
-    frame.pts = heard[0]
+        heard.append(max(0, round((frame.pts or 0) * (frame.time_base or rate) / rate)))
+    frame.pts, frame.time_base = heard[0], rate      # a frame that needed no resampling still counts in the file's own units
     heard[0] += frame.samples
     return frame
 
@@ -199,7 +201,6 @@ def _in_order(frame: Any, heard: list[int]) -> Any:
 def _copy(src: str, dest: str, side: int, fps: float, hw: Any) -> int:
     import importlib
     import os
-    from fractions import Fraction
     av: Any = importlib.import_module("av")
     enc, pix = ("h264_videotoolbox", "nv12") if hw is not None else ("libx264", "yuv420p")
     with av.open(src, hwaccel=hw) as c:              # its first frame: the size and format frames come in, and which way up

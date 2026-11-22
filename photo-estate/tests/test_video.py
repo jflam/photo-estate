@@ -706,15 +706,15 @@ def test_stream_copy_of_sound_that_steps_back_in_time(tmp_path):
         with av.open(str(dest), "w", format="mpegts") as out:
             v = out.add_stream("mpeg2video", rate=10)
             v.width, v.height, v.pix_fmt = 64, 48, "yuv420p"
-            a = out.add_stream("mp2", rate=44100)
+            a = out.add_stream("aac", rate=44100)      # read back in the copy's own sample format, so not resampled
             a.layout = "stereo"
             for i in range(30):
                 f = av.VideoFrame.from_ndarray(np.full((48, 64, 3), 120, np.uint8), format="rgb24").reformat(format="yuv420p")
                 f.pts, f.time_base = int(v0 * 10) + i, Fraction(1, 10)
                 out.mux(v.encode(f))
-            for i in range(3 * 44100 // 1152):
-                f = av.AudioFrame.from_ndarray(np.zeros((1, 1152 * 2), np.int16), format="s16", layout="stereo")
-                f.sample_rate, f.pts, f.time_base = 44100, a0 * 44100 + i * 1152, Fraction(1, 44100)
+            for i in range(3 * 44100 // 1024):
+                f = av.AudioFrame.from_ndarray(np.zeros((2, 1024), np.float32), format="fltp", layout="stereo")
+                f.sample_rate, f.pts, f.time_base = 44100, a0 * 44100 + i * 1024, Fraction(1, 44100)
                 out.mux(a.encode(f))
             out.mux(v.encode())
             out.mux(a.encode())
@@ -729,7 +729,7 @@ def test_stream_copy_of_sound_that_steps_back_in_time(tmp_path):
     assert video.stream_copy(str(src), str(out)) == 60
     with av.open(str(out)) as c:
         sound = c.streams.audio[0]
-        assert abs(float(sound.duration * sound.time_base) - 6) < 0.2
+        assert abs(float(sound.duration * sound.time_base) - 6) < 0.2 and sound.frames < 300
     assert not list(tmp_path.glob("*.tmp"))
 
 
