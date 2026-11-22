@@ -21,6 +21,8 @@
  * @property {string} event    the photos of one event
  * @property {string} stack    the shots of one stack
  * @property {boolean} fav     favourites only
+ * @property {boolean} video   videos only (kind=video)
+ * @property {boolean} photo   photos only (kind=photo); never with `video`: the scope control sets one, the other or neither
  * @property {string} from     the first month, "YYYY-MM"
  * @property {string} to       the last month
  * @property {string} sort     "" (the server's choice), or an order by name
@@ -44,7 +46,7 @@ function facets(of) {
 }
 
 /** @returns {Query} */
-export const blank = () => ({ q: "", plain: false, sha: "", event: "", stack: "", fav: false, from: "", to: "", sort: "", f: facets(() => []) });
+export const blank = () => ({ q: "", plain: false, sha: "", event: "", stack: "", fav: false, from: "", to: "", sort: "", video: false, photo: false, f: facets(() => []) });
 
 /**
  * @param {Query} s
@@ -64,6 +66,8 @@ export function toParams(s) {
   for (const k of KEYS) for (const v of s.f[k]) p.append(k, v);
   for (const k of TEXT) if (s[k]) p.set(k, s[k]);
   if (s.fav) p.set("fav", "1");
+  if (s.video) p.set("kind", "video");
+  else if (s.photo) p.set("kind", "photo");
   return p;
 }
 
@@ -78,16 +82,19 @@ export function fromParams(p) {
   for (const k of TEXT) s[k] = p.get(k) || "";
   for (const k of KEYS) s.f[k] = p.getAll(k);
   s.fav = p.get("fav") === "1";
+  s.video = p.get("kind") === "video";
+  s.photo = p.get("kind") === "photo";
   s.plain = p.get("names") === "0";
   return s;
 }
 
 /**
- * Whether the question is narrowed by anything but its words: a facet, an event, a stack, favourites, dates.
+ * Whether the question is narrowed by anything but its words: a facet, an event, a stack, favourites,
+ * videos, dates.
  * @param {Query} s
  * @returns {boolean}
  */
-export const filtered = s => KEYS.some(k => s.f[k].length > 0) || !!(s.event || s.stack || s.fav || s.from || s.to);
+export const filtered = s => KEYS.some(k => s.f[k].length > 0) || !!(s.event || s.stack || s.fav || s.video || s.photo || s.from || s.to);
 
 /**
  * Whether the question asks nothing: no words, no photo to be like, no filter.

@@ -387,8 +387,12 @@ stack with no extra step.
 - **Pick the sharpest frame of a burst.** The scorers rate near-identical frames almost alike, so the
   top of a stack is not reliably the sharpest or the one with eyes open. Part B of issue 44
   (Laplacian sharpness inside the face box, eyes open from the face landmarks) is the fix.
-- **Score photos without an embedding.** About 2,800 images (RAW files, mostly) and all videos have
-  no score and sort last.
+- **Score photos without an embedding.** About 2,800 images (RAW files, mostly) have no score and sort
+  last.
+- **Judge a video as a video.** A video is scored like a photo, by its own vector, which is the mean of
+  its kept frames ([chapter 10](10-embeddings.md#videos)). The scorers were taught on photos, and a mean
+  of frames is not one; how well they rank videos has not been measured. A Live Photo is scored by its
+  still.
 - **Know anyone's taste but one person's.** The taste scorer is the author's. "People matter more
   than scenery" is probably a fair prior for family libraries, but this data does not show it.
 - **Let you set a stack's cover, or split one.** That needs a stacks table, which does not exist yet.

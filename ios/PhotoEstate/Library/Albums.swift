@@ -202,7 +202,7 @@ final class AlbumsModel: ObservableObject {
         guard g == gen else { return }
         var tiles: [Tile] = [], runs: [GridData.Run] = [], title = "", count = 0
         for m in list {
-            guard let t = known[m.sha] ?? served[m.sha].map({ Tile(sha: $0.sha, ar: Float($0.ar), when: $0.when, city: $0.city, fav: $0.fav) }) else { continue }
+            guard let t = known[m.sha] ?? served[m.sha].map({ var t = Tile($0); t.stack = 0; t.stackLive = false; return t }) else { continue }
             if count > 0 && m.section != title {
                 runs.append(.init(title: title, count: count))
                 count = 0

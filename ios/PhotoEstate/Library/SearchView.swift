@@ -16,6 +16,7 @@ struct SearchView: View {
     @State private var albumTitle = ""
     @State private var making = false
     @State private var problem: String?        // why the album could not be made
+    @State private var hasVideos = false       // the library has videos: the scope bar (All, Photos, Videos) is offered
 
     /// Typing something that is not yet the question: offer filters for it instead of the page behind.
     private var suggesting: Bool {
@@ -50,6 +51,9 @@ struct SearchView: View {
             Button("OK", role: .cancel) {}
         } message: { Text(problem ?? "") }
         .onAppear { model.reload(reset: false) }
+        .task(id: sync.revision) {
+            hasVideos = (try? await Catalog.shared.store.read { try $0.one("SELECT 1 FROM photos WHERE kind='video' LIMIT 1") { _ in true } ?? false }) ?? false
+        }
         .onChange(of: sync.revision) { _, _ in model.catalogChanged() }
         .onChange(of: LocalPhotos.shared.revision) { _, _ in model.catalogChanged() }
     }
@@ -132,6 +136,20 @@ struct SearchView: View {
             .padding(.horizontal, 14)
             .animation(.snappy(duration: 0.2), value: typing)
 
+            // The scope bar, as under a search field in Mail or Files: what kind of thing is looked for. It is there
+            // from the moment the field is tapped, so the kind can be chosen before the words are typed.
+            if hasVideos && (typing || !model.query.isEmpty) && model.query.similar == nil {
+                Picker("Search in", selection: Binding(get: { model.query.scope }, set: { new in
+                    Haptics.tick()
+                    var q = model.query
+                    q.scope = new
+                    model.query = q
+                })) {
+                    ForEach(Query.Scope.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 14)
+            }
             if !model.query.isEmpty && !suggesting {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) { ForEach(Pill.allCases.sorted { a, b in (a.value(model.query, trips: model.trips) != nil ? 0 : 1) < (b.value(model.query, trips: model.trips) != nil ? 0 : 1) }) { chip($0) } }
@@ -182,12 +200,12 @@ struct SearchView: View {
         let value = pill.value(model.query, trips: model.trips)
         return Button {
             Haptics.tick()
-            if pill == .fav { var q = model.query; q.fav.toggle(); model.query = q } else { sheet = pill }
+            if pill.isToggle { model.query = pill.toggled(model.query) } else { sheet = pill }
         } label: {
             HStack(spacing: 5) {
                 if let symbol = pill.symbol { Image(systemName: value == nil ? symbol : "\(symbol).fill").imageScale(.small) }
                 Text(value ?? pill.title).lineLimit(1)
-                if value != nil && pill != .fav {
+                if value != nil && !pill.isToggle {
                     Image(systemName: "xmark").font(.caption2.weight(.bold)).opacity(0.7)
                         .onTapGesture { model.query = pill.cleared(model.query) }
                         .accessibilityLabel("Clear \(pill.title)")
@@ -269,6 +287,7 @@ struct BrowseView: View {
 
     @State private var years: [(year: Int, count: Int)] = []
     @State private var favourites = 0
+    @State private var videos = 0
     private static let ideas = ["sunset over water", "dog on the beach", "birthday cake", "snowy mountains", "city at night", "a child laughing"]
 
     var body: some View {
@@ -290,23 +309,8 @@ struct BrowseView: View {
 
                 if !model.trips.isEmpty { trips }
                 if years.count > 1 { timeline }
-                if favourites > 0 {
-                    Button { model.go(Query(fav: true)) } label: {
-                        HStack(spacing: 14) {
-                            Image(systemName: "heart.fill").font(.title3).foregroundStyle(Color.sun)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Favourites").font(.title(19)).foregroundStyle(.primary)
-                                Text("\(favourites.formatted()) photos").font(.footnote).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                        }
-                        .padding(16)
-                        .background(Color.well, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 16)
-                }
+                if favourites > 0 { card("heart.fill", "Favourites", "\(favourites.formatted()) photos") { model.go(Query(fav: true)) } }
+                if videos > 0 { card("play.rectangle.fill", "Videos", "\(videos.formatted()) \(videos == 1 ? "video" : "videos")") { model.go(Query(videos: true)) } }
                 threads("Places", .place, .country)
                 threads("People", .people, .person)
                 threads("Albums", .albums, .album)
@@ -320,7 +324,27 @@ struct BrowseView: View {
             let months = await Catalog.shared.months(Plan())
             years = Dictionary(grouping: months, by: { $0.ym / 12 }).map { ($0.key, $0.value.reduce(0) { $0 + $1.count }) }.sorted { $0.0 < $1.0 }
             favourites = (try? await Catalog.shared.store.read { try $0.one("SELECT count(*) FROM photos WHERE fav=1") { Int($0.int(0)) } ?? 0 }) ?? 0
+            videos = (try? await Catalog.shared.store.read { try $0.one("SELECT count(*) FROM photos WHERE kind='video'") { Int($0.int(0)) } ?? 0 }) ?? 0
         }
+    }
+
+    /// A way into one set of photos, as a wide card: Favourites, Videos.
+    private func card(_ symbol: String, _ title: String, _ detail: String, _ go: @escaping () -> Void) -> some View {
+        Button(action: go) {
+            HStack(spacing: 14) {
+                Image(systemName: symbol).font(.title3).foregroundStyle(Color.sun).frame(width: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.title(19)).foregroundStyle(.primary)
+                    Text(detail).font(.footnote).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .background(Color.well, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
     }
 
     private func title(_ text: String, all: Pill? = nil) -> some View {
@@ -442,7 +466,7 @@ struct Cover: View {
 
 /// The filter chips above the grid.
 enum Pill: String, CaseIterable, Identifiable {
-    case place, people, albums, trips, dates, camera, fav
+    case place, people, albums, trips, dates, camera, fav      // (in the order the chips stand)
     var id: String { rawValue }
 
     var title: String {
@@ -458,6 +482,15 @@ enum Pill: String, CaseIterable, Identifiable {
     }
 
     var symbol: String? { self == .fav ? "heart" : nil }
+
+    /// A chip that is on or off, with no sheet behind it.
+    var isToggle: Bool { self == .fav }
+
+    func toggled(_ q: Query) -> Query {
+        var q = q
+        if self == .fav { q.fav.toggle() }
+        return q
+    }
 
     var facets: [Facet] {
         switch self {

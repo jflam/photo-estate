@@ -297,7 +297,7 @@ final class LibraryModel: ObservableObject {
             }
             guard g == gen else { return }
             // The count on a tile says "there are more behind this one": not so when stacks are spread out.
-            if !collapse { for i in tiles.indices where tiles[i].stack != 0 { tiles[i].stack = 0 } }
+            if !collapse { for i in tiles.indices where tiles[i].stack != 0 { tiles[i].stack = 0; tiles[i].stackLive = false } }
             self.plan = plan
             ranked = isRanked
             self.order = order
@@ -333,7 +333,7 @@ final class LibraryModel: ObservableObject {
             for p in page.photos { served[p.sha] = p }
             next = page.next
             var more = page.photos.map(LibraryModel.tile)
-            if !(hideDups && query.stack == nil) { for i in more.indices { more[i].stack = 0 } }
+            if !(hideDups && query.stack == nil) { for i in more.indices { more[i].stack = 0; more[i].stackLive = false } }
             grid = GridData(tiles: grid.tiles + more, grain: 0, id: grid.id + 1, reset: grid.reset)
         }
     }
@@ -417,15 +417,12 @@ final class LibraryModel: ObservableObject {
         return r.formatted(.number.notation(.compactName))
     }
 
-    private static func tile(_ p: Photo) -> Tile {
-        Tile(sha: p.sha, ar: Float(p.ar), when: p.when, city: p.city, fav: p.fav,
-             stack: Int32(p.stackN), best: p.best.map { Float($0) } ?? -.infinity)
-    }
+    private static func tile(_ p: Photo) -> Tile { Tile(p) }
 
     private func describe(_ q: Query, _ plan: Plan, _ scope: Scope?) {
         // What the view options hide (near-identical shots, screenshots) is said, so a count never reads as less than there is.
         let hidden = max(total - matching, 0)
-        let noun = { (k: Int) in k == 1 ? "photo" : "photos" }
+        let noun = { (k: Int) in q.videos ? (k == 1 ? "video" : "videos") : k == 1 ? "photo" : "photos" }
         let n = hidden > 0 ? "\(matching.formatted()) of \(total.formatted()) \(noun(total)) · \(hidden.formatted()) hidden"
                            : "\(matching.formatted()) \(noun(matching))"
         let both = { (xs: [String], word: String) -> String in
@@ -453,8 +450,9 @@ final class LibraryModel: ObservableObject {
             if q.from != nil || q.to != nil { range = Dates.range(q.from, q.to) }
             let bits = [q.picked(.person).joined(separator: " & "), places.joined(separator: ", "), q.picked(.album).joined(separator: ", "),
                         (q.picked(.camera) + q.picked(.lens)).joined(separator: ", "), range].filter { !$0.isEmpty }
-            title = bits.isEmpty ? (q.fav ? "Favourites" : "Photos") : bits.joined(separator: " · ")
-            parts = [n] + (q.fav && !bits.isEmpty ? ["favourites"] : [])
+            title = bits.isEmpty ? (q.fav && q.videos ? "Favourite videos" : q.fav ? "Favourites" : q.videos ? "Videos" : "Photos")
+                                 : bits.joined(separator: " · ")
+            parts = [n] + (q.fav && !bits.isEmpty ? ["favourites"] : []) + (q.videos && !bits.isEmpty ? ["videos"] : [])
         } else {
             title = "Library"
             parts = hidden > 0 ? ["\(LibraryModel.about(matching)) of \(LibraryModel.about(total)) photos", "\(LibraryModel.about(hidden)) hidden"]

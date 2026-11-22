@@ -73,7 +73,8 @@ Design points:
   its images are 256 px.)
 - **Progress** prints every minute: photos per second, faces found, undecodable count, ETA.
 - Videos, RAW and GIF are not scanned (`kind='image'` and `SKIP_EXT`, which is `FACES_SKIP_EXT` in
-  `core/media.py`; `embed.py` skips only RAW).
+  `core/media.py`; `embed.py` skips only RAW, and embeds a video's frames). A Live Photo's still is
+  scanned like any photo; its clip is not.
 
 ## Step 1: detection with SCRFD
 
@@ -203,7 +204,8 @@ regenerates a missing one from the original.
 - **Quality:** detection threshold 0.5 and NMS 0.4 are the usual SCRFD settings. The size limits are
   stricter downstream: seeding from Google's tags requires `score ≥ 0.6` and `px ≥ 40`; automatic
   naming requires `px ≥ 40`; grouping unknown people requires `score ≥ 0.65` and `px ≥ 56`.
-- **Honest limits:** no faces in RAW, GIF or video yet; faces turned away or masked produce weak
+- **Honest limits:** no faces in RAW, GIF or video yet (a video is searched by its frames, but no face
+  is looked for in them: a video is in a person's photos only when its source's metadata names them); faces turned away or masked produce weak
   vectors; and very young children change appearance quickly, which is why the next chapter's scoring
   is built around *time*.
 

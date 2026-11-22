@@ -31,6 +31,34 @@ dependencies, a plain HTTP server and SQLite), and an iPhone app in `ios/` (need
 - A change that adds a file, an endpoint or a feature updates the chapter that describes it, appendix B
   for an endpoint, and chapter 2's file list.
 
+## Deploying to the Mac mini (from the laptop)
+
+The real app runs on the owner's Mac mini from the checkout `~/src/photo-estate`; the runbook is
+`photo-estate/deploy/MAC-MINI.md`. Merging a pull request does not deploy. **When work is finished and
+its pull request is open, deploy its branch to the mini without being asked** (and say so), unless the
+owner said not to; when the pull request merges, put the mini back on `main`.
+
+- Reach it by its Tailscale address; the short name often does not resolve:
+  `ssh -o ConnectTimeout=15 -o HostKeyAlias=johns-mac-mini -o HostName=100.100.132.37 johns-mac-mini`.
+  A non-interactive shell there needs `export PATH=/opt/homebrew/bin:$PATH` for `uv`.
+- Look first: `git status -sb` in the checkout (it must be clean), the end of
+  `~/Library/Logs/photo-search.log`, and whether a background job is still running.
+- Get the code: `git fetch origin`, then `git checkout <branch> && git pull --ff-only` (or
+  `git checkout main && git pull --ff-only`).
+- A change to the catalog's schema, or a step that writes to it, takes a backup first:
+  `sqlite3 ~/estate/estate.db ".backup $HOME/photo-estate-lab/estate.db.before-<what>-$(date +%Y%m%d-%H%M)"`,
+  then `pragma quick_check` on the copy. The paths for scripts run by hand are
+  `DB=~/estate/estate.db STORE=/Volumes/estate/store`.
+- A change to a page or `app/*.js` only is live once the checkout moves. Anything in Python needs
+  `launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search`. A change to the plist needs
+  `bootout`/`bootstrap` (MAC-MINI.md).
+- Check it: `curl -s http://127.0.0.1:8766/api/info` on the mini, the main routes answer 200, and no
+  traceback in the log since the restart. It is up in about 20 seconds; `/people` takes up to a minute more.
+- Leave alone unless asked: the demo worktree `~/src/photo-estate-demo` (port 8767), the cloud preview
+  (port 8768, another user), and old files and backups on the mini, which are deleted only on the owner's word.
+- The iPhone: `ios/deploy.sh` from the laptop builds the next build number and installs it on the
+  phone, which must be unlocked and on the network.
+
 ## In a cloud session (Claude Code on the web)
 
 - `photo-estate/deploy/CLOUD-SESSIONS.md` says what a cloud session can and cannot do: it cannot reach

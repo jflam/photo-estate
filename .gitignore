@@ -14,6 +14,7 @@ __pycache__/
 ios/*.xcodeproj/xcuserdata/
 ios/build/
 ios/build-device/
+ios/build-sim/
 ios/PhotoEstateSim.xcodeproj/
 
 # TypeScript, for checking the pages' script modules (photo-estate/app: npm ci)

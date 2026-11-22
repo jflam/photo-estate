@@ -23,7 +23,7 @@ test("words alone: asked, not filtered", () => {
 
 test("every part of a question survives the address and back", () => {
   const s = blank();
-  Object.assign(s, { q: "kids at the lake & more", plain: true, event: "e12", stack: "abc", fav: true, from: "2015-06", to: "2016-08", sort: "best" });
+  Object.assign(s, { q: "kids at the lake & more", plain: true, event: "e12", stack: "abc", fav: true, from: "2015-06", to: "2016-08", sort: "best", video: true });
   s.f.person = ["Ada O'Neil", "Ben"];
   s.f.city = ["Paris, Île-de-France, France"];
   s.f.trip = ["7"];
@@ -85,4 +85,22 @@ test("blank() is a new question each time", () => {
   const a = blank(), b = blank();
   a.f.album.push("Summer");
   assert.deepEqual(b.f.album, []);
+});
+
+test("videos only: kind=video in the address, and a filter", () => {
+  const s = blank();
+  assert.equal(s.video, false);
+  s.video = true;
+  assert.equal(String(toParams(s)), "kind=video");
+  assert.equal(filtered(s), true);
+  assert.equal(isEmpty(s), false, "every video is a question by itself");
+  assert.equal(fromParams(new URLSearchParams("q=waterfall&kind=video")).video, true);
+  const stills = fromParams(new URLSearchParams("kind=photo"));
+  assert.deepEqual([stills.video, stills.photo], [false, true]);
+  assert.equal(String(toParams(stills)), "kind=photo");
+  assert.equal(filtered(stills), true);
+  assert.equal(isEmpty(stills), false);
+  assert.equal(fromParams(new URLSearchParams("kind=video")).photo, false);
+  const c = copy(s); c.video = false;
+  assert.equal(s.video, true);
 });

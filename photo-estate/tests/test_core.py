@@ -149,12 +149,18 @@ def test_fresh_databases_match_what_the_old_code_made(tmp_path):
     """schema_baseline.json is sqlite_master as the code before #85 left it, captured from that code's own
     open paths (estate/embed/faces.connect, Changes, Tasks, scores.SCHEMA, set_favorites' CREATE, Feed, Store)."""
     baseline = json.loads((FIXTURES / "schema_baseline.json").read_text())
-    assert every_open_path(tmp_path) == baseline
+    # Tables newer than the baseline: only ever added (the video area: live_pairs and video_frames). They
+    # must be there, and everything else must be as the old code made it.
+    since = {"live_pairs", "video_frames"}
+    old_only = lambda rows: [r for r in rows if r[2] not in since]
+    got = every_open_path(tmp_path)
+    assert since <= {r[1] for r in got["catalog"] if r[0] == "table"}
+    assert {**got, "catalog": old_only(got["catalog"])} == baseline
     one = tmp_path / "one.db"
     con = sqlite3.connect(one)
     schema.ensure(con, *schema.CATALOG_AREAS)
     con.close()
-    assert master(one) == baseline["catalog"]
+    assert old_only(master(one)) == baseline["catalog"]
 
 
 def test_old_change_tables_are_migrated_with_their_data(tmp_path):
@@ -280,3 +286,33 @@ def test_screen_sizes_match_the_fixture_and_the_iphone_app():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# -- videos ------------------------------------------------------------------------------------------
+
+def test_video_types_cover_every_video_and_send_quicktime_as_mp4():
+    """GET /video/<sha> sends a phone's .mov (and .m4v) as video/mp4, which Chrome plays; the rest as they are."""
+    assert set(media.VIDEO_TYPES) == media.VIDEO_EXT
+    assert media.VIDEO_TYPES[".mov"] == media.VIDEO_TYPES[".m4v"] == media.VIDEO_TYPES[".mp4"] == "video/mp4"
+    assert {e: t for e, t in media.VIDEO_TYPES.items() if e not in (".mov", ".m4v")} == \
+        {e: media.MIME[e] for e in media.VIDEO_EXT - {".mov", ".m4v"}}
+    assert not set(media.VIDEO_TYPES) & set(media.ORIGINAL_TYPES), "a video has no /original"
+
+
+def test_the_video_area(tmp_path):
+    """live_pairs and video_frames are made by estate.connect and embed.connect, and are in CATALOG_AREAS."""
+    import embed
+    import estate
+    assert "video" in schema.CATALOG_AREAS
+    for opener, name in ((estate.connect, "a.db"), (embed.connect, "b.db")):
+        opener(str(tmp_path / name)).close()
+        tables = {r[1] for r in master(tmp_path / name) if r[0] == "table"}
+        assert {"live_pairs", "video_frames"} <= tables, (opener, tables)
+    con = sqlite3.connect(tmp_path / "c.db")
+    schema.ensure(con, "video")
+    cols = {t: [r[1] for r in con.execute(f"PRAGMA table_info({t})")] for t in ("live_pairs", "video_frames")}
+    assert cols == {"live_pairs": ["clip", "still", "how", "paired_at"], "video_frames": ["sha256", "model", "t", "vec"]}
+    con.execute("INSERT INTO live_pairs VALUES ('c', 's', 'id', 'now')")
+    with pytest.raises(sqlite3.IntegrityError):
+        con.execute("INSERT INTO live_pairs VALUES ('c', 's2', 'id', 'now')")     # a clip has one still
+    con.close()

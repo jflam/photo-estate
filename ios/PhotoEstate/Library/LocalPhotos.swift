@@ -1,3 +1,4 @@
+import AVFoundation
 import Photos
 import SwiftUI
 import UIKit
@@ -10,8 +11,10 @@ import UIKit
 /// the same second (UTC, give or take one), or at the same wall-clock time to the second for the photos
 /// whose time zone was never known. Failing that, when the catalog has a file of the same name taken
 /// within a day: Google's copy of a photo is often a few seconds (or a time zone) away from the time
-/// Photos keeps, and a name like IMG_8492 comes round again only every 10,000 photos. The catalog holds
-/// stills only, so videos are left out.
+/// Photos keeps, and a name like IMG_8492 comes round again only every 10,000 photos. Videos are matched
+/// the same way (the server dates them from the same sidecars), but only once the catalog holds any: a
+/// server from before videos were catalogued would otherwise have every video on the phone counted as
+/// not yet uploaded. A Live Photo is one asset here, its clip part of it, as it is one row in the catalog.
 ///
 /// Their tiles are named `local:<PHAsset localIdentifier>` instead of by hash, and their images come from
 /// Photos, not from the server.
@@ -140,6 +143,7 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
         var utc = Set<Int>()
         var wall = Set<String>()
         var names: [String: [Int]] = [:]       // "IMG_8492" -> when each file of that name was taken
+        var videos = false                     // the catalog holds videos, so the phone's can be matched
     }
 
     private static func catalogTimes() async -> Known {
@@ -153,6 +157,7 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
                     for n in stems(path) { k.names[n, default: []].append(s) }
                 }
             }
+            k.videos = try db.one("SELECT 1 FROM photos WHERE kind='video' LIMIT 1") { _ in true } ?? false
             return k
         }) ?? Known()
     }
@@ -207,10 +212,12 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
         return days * 86400 + h * 3600 + mi * 60 + se - offset
     }
 
-    /// The still photos in the library that the catalog has no photo for, newest first.
+    /// The photos (and videos, once the catalog has any) in the library that the catalog has no row for, newest first.
     nonisolated private static func unmatched(_ known: Known) -> [PHAsset] {
         let opts = PHFetchOptions()
-        opts.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+        opts.predicate = known.videos
+            ? NSPredicate(format: "mediaType == %d OR mediaType == %d", PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
+            : NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
         opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         let all = PHAsset.fetchAssets(with: opts)
         let wall = DateFormatter()
@@ -229,7 +236,7 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
         return out.filter { a in
             let s = Int(a.creationDate!.timeIntervalSince1970)
             let rs = PHAssetResource.assetResources(for: a)
-            guard let name = (rs.first { $0.type == .photo } ?? rs.first)?.originalFilename else { return true }
+            guard let name = (rs.first { $0.type == .photo || $0.type == .video } ?? rs.first)?.originalFilename else { return true }
             let stem = (name as NSString).deletingPathExtension.uppercased()
             return !(known.names[stem] ?? []).contains { abs($0 - s) <= 26 * 3600 }
         }
@@ -245,7 +252,9 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
 
     private static func tile(_ a: PHAsset) -> Tile {
         let ar = a.pixelHeight > 0 ? Float(a.pixelWidth) / Float(a.pixelHeight) : 0.75
-        return Tile(sha: prefix + a.localIdentifier, ar: ar, when: a.creationDate.map { wallClock.string(from: $0) } ?? "", city: nil, fav: a.isFavorite)
+        var t = Tile(sha: prefix + a.localIdentifier, ar: ar, when: a.creationDate.map { wallClock.string(from: $0) } ?? "", city: nil, fav: a.isFavorite)
+        if a.mediaType == .video { t.video = true; t.dur = Float(a.duration) }
+        return t
     }
 
     // MARK: what the rest of the app asks
@@ -256,6 +265,8 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
         guard show, allowed, q.text.isEmpty, q.similar == nil, q.event == nil, q.stack == nil, !q.picks.values.contains(where: { !$0.isEmpty }) else { return [] }
         return pending.filter { t in
             if q.fav && !t.fav { return false }
+            if q.videos && !t.video { return false }
+            if q.stills && t.video { return false }
             if hideShots && screenshots.contains(t.sha) { return false }
             if q.from != nil || q.to != nil {
                 let ym = Catalog.monthNumber(t.when)
@@ -280,10 +291,22 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
         }
     }
 
+    /// A video on the phone, to play: from Photos, or iCloud if the phone keeps only a small copy.
+    func video(_ sha: String) async -> AVAsset? {
+        guard let id = LocalPhotos.id(sha), let asset = asset(id), asset.mediaType == .video else { return nil }
+        let o = PHVideoRequestOptions()
+        o.isNetworkAccessAllowed = true
+        o.deliveryMode = .automatic
+        return await withCheckedContinuation { (k: CheckedContinuation<AVAsset?, Never>) in
+            PHImageManager.default().requestAVAsset(forVideo: asset, options: o) { av, _, _ in k.resume(returning: av) }
+        }
+    }
+
     /// The original file, for sharing.
     func original(_ sha: String) async -> URL? {
         guard let id = LocalPhotos.id(sha), let asset = asset(id),
-              let r = PHAssetResource.assetResources(for: asset).first(where: { $0.type == .photo }) ?? PHAssetResource.assetResources(for: asset).first
+              let r = PHAssetResource.assetResources(for: asset).first(where: { $0.type == (asset.mediaType == .video ? .video : .photo) })
+                ?? PHAssetResource.assetResources(for: asset).first
         else { return nil }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("share-local-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -307,7 +330,8 @@ final class LocalPhotos: NSObject, ObservableObject, PHPhotoLibraryChangeObserve
         p.w = a.pixelWidth
         p.h = a.pixelHeight
         p.ar = Double(a.pixelHeight > 0 ? Double(a.pixelWidth) / Double(a.pixelHeight) : 0.75)
-        p.path = PHAssetResource.assetResources(for: a).first(where: { $0.type == .photo })?.originalFilename
+        p.path = PHAssetResource.assetResources(for: a).first(where: { $0.type == .photo || $0.type == .video })?.originalFilename
+        if a.mediaType == .video { p.video = true; p.dur = a.duration }
         return p
     }
 

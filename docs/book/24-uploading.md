@@ -197,6 +197,25 @@ from *ran and found nothing*. The extension writes each run to a small log in an
 note ("first run: watching for photos from now on", "job create failed: 5"). Back-to-back runs that did nothing
 are merged into one row ("Nothing new x7") so that real events aren't pushed out of its 50 rows.
 
+### What is on the phone and not yet on the server
+
+The Library also shows the photos in the phone's own Photos library that the catalog has no row for,
+each with a small up-arrow, so a photo just taken is there before it is uploaded
+([LocalPhotos.swift](../../ios/PhotoEstate/Library/LocalPhotos.swift)). A phone photo counts as on the
+server when the replica has a photo taken at the same second (UTC, give or take one), or at the same
+wall-clock time for one whose time zone was never known, or a file of the same name taken within a day.
+
+Videos are matched the same way, since the server dates them from the same sidecars, but only once the
+replica holds at least one video. A server from before videos were catalogued would otherwise have every
+video on the phone counted as not yet uploaded. A Live Photo is one asset here, its clip part of it, as it
+is one row in the catalog. A phone video not yet on the server shows its length like any video, and its
+page plays it from Photos (fetched from iCloud if the phone keeps only a small copy).
+
+Uploading itself did not change for videos: the extension and the foreground uploader already sent the
+original video, and a Live Photo's paired video beside its still. Both files of a Live Photo arrive with
+the same stem (`UploadRequest.path`), and the server pairs them when `exif` finishes
+([chapter 6](06-linking.md#step-2-live-photos-and-motion-photos)).
+
 ## Building and running it
 
 The extension needs iOS 27, so `project.yml` builds the app and the extension together, for a device. A
@@ -210,6 +229,7 @@ with. Everything in chapters 20-23 works in it; the background upload cannot be 
 |---|---|
 | The extension: change token, jobs, pending list | [UploadExtension.swift](../../ios/UploadExtension/UploadExtension.swift) |
 | The path, the headers, batches | [UploadRequest.swift](../../ios/Shared/UploadRequest.swift) |
+| The phone's photos and videos not yet on the server | [LocalPhotos.swift](../../ios/PhotoEstate/Library/LocalPhotos.swift) |
 | The foreground uploader and the Uploads screen | [ForegroundUploader.swift](../../ios/PhotoEstate/ForegroundUploader.swift), [UploadsView.swift](../../ios/PhotoEstate/UploadsView.swift) |
 | The activity log | [ExtensionStatus.swift](../../ios/Shared/ExtensionStatus.swift) |
 | The inbox: validation, staging, sidecars | [upload.py](../../photo-estate/upload.py) `save_upload`, `xmp_for` |
