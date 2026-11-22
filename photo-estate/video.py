@@ -19,6 +19,7 @@ and a library with no videos never loads it.
 """
 from __future__ import annotations
 
+from fractions import Fraction
 from typing import Any
 
 EVERY = 3.0      # seconds of video per frame
@@ -185,10 +186,21 @@ def stream_copy(src: str, dest: str, side: int = COPY_SIDE, fps: float = COPY_FP
     return _copy(src, dest, side, fps, None)
 
 
+def _in_order(frame: Any, heard: list[int]) -> Any:
+    """Give a resampled sound frame its time by count: where the first one said the sound starts, then one
+    sample after another. An old .wmv's sound frames can overlap or step back in time, which an .mp4 cannot
+    hold; counted, it plays on unbroken. `heard` holds the next sample's number between calls."""
+    rate = Fraction(1, frame.sample_rate)
+    if not heard:
+        heard.append(max(0, round((frame.pts or 0) * (frame.time_base or rate) / rate)))
+    frame.pts, frame.time_base = heard[0], rate      # a frame that needed no resampling still counts in the file's own units
+    heard[0] += frame.samples
+    return frame
+
+
 def _copy(src: str, dest: str, side: int, fps: float, hw: Any) -> int:
     import importlib
     import os
-    from fractions import Fraction
     av: Any = importlib.import_module("av")
     enc, pix = ("h264_videotoolbox", "nv12") if hw is not None else ("libx264", "yuv420p")
     with av.open(src, hwaccel=hw) as c:              # its first frame: the size and format frames come in, and which way up
@@ -231,6 +243,7 @@ def _copy(src: str, dest: str, side: int, fps: float, hw: Any) -> int:
                 aout.bit_rate, aout.layout = 128_000, "stereo"
                 res = av.AudioResampler(format=aout.format, layout="stereo", rate=aout.rate)
             seen = 0
+            heard: list[int] = []
             for packet in inp.demux(*([vin, ain] if ain is not None else [vin])):
                 try:
                     decoded = packet.decode()
@@ -241,7 +254,7 @@ def _copy(src: str, dest: str, side: int, fps: float, hw: Any) -> int:
                 if aout is not None and res is not None and packet.stream is ain:
                     for f in decoded:
                         for g in res.resample(f):
-                            for p in aout.encode(g):
+                            for p in aout.encode(_in_order(g, heard)):
                                 out.mux(p)
                     continue
                 for f in decoded:
@@ -262,7 +275,7 @@ def _copy(src: str, dest: str, side: int, fps: float, hw: Any) -> int:
                 out.mux(p)
             if aout is not None and res is not None:
                 for g in res.resample(None):
-                    for p in aout.encode(g):
+                    for p in aout.encode(_in_order(g, heard)):
                         out.mux(p)
                 for p in aout.encode():
                     out.mux(p)
