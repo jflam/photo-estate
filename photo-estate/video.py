@@ -185,6 +185,17 @@ def stream_copy(src: str, dest: str, side: int = COPY_SIDE, fps: float = COPY_FP
     return _copy(src, dest, side, fps, None)
 
 
+def _in_order(frame: Any, heard: list[int]) -> Any:
+    """Give a resampled sound frame its time by count: where the first one said the sound starts, then one
+    sample after another. An old .wmv's sound can step back in time part way through, which an .mp4 cannot
+    hold; counted, it plays on unbroken. `heard` holds the next sample's number between calls."""
+    if not heard:
+        heard.append(max(0, frame.pts or 0))
+    frame.pts = heard[0]
+    heard[0] += frame.samples
+    return frame
+
+
 def _copy(src: str, dest: str, side: int, fps: float, hw: Any) -> int:
     import importlib
     import os
@@ -231,6 +242,7 @@ def _copy(src: str, dest: str, side: int, fps: float, hw: Any) -> int:
                 aout.bit_rate, aout.layout = 128_000, "stereo"
                 res = av.AudioResampler(format=aout.format, layout="stereo", rate=aout.rate)
             seen = 0
+            heard: list[int] = []
             for packet in inp.demux(*([vin, ain] if ain is not None else [vin])):
                 try:
                     decoded = packet.decode()
@@ -241,7 +253,7 @@ def _copy(src: str, dest: str, side: int, fps: float, hw: Any) -> int:
                 if aout is not None and res is not None and packet.stream is ain:
                     for f in decoded:
                         for g in res.resample(f):
-                            for p in aout.encode(g):
+                            for p in aout.encode(_in_order(g, heard)):
                                 out.mux(p)
                     continue
                 for f in decoded:
@@ -262,7 +274,7 @@ def _copy(src: str, dest: str, side: int, fps: float, hw: Any) -> int:
                 out.mux(p)
             if aout is not None and res is not None:
                 for g in res.resample(None):
-                    for p in aout.encode(g):
+                    for p in aout.encode(_in_order(g, heard)):
                         out.mux(p)
                 for p in aout.encode():
                     out.mux(p)

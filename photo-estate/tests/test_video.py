@@ -696,6 +696,43 @@ def test_stream_copy(clips, tmp_path):
     assert not (tmp_path / "bad.mp4").exists() and not list(tmp_path.glob("*.tmp"))
 
 
+def test_stream_copy_of_sound_that_steps_back_in_time(tmp_path):
+    """An old .wmv's sound can go back in time part way through, which an .mp4 cannot hold. Made here as two
+    transport streams joined end to end: the picture carries on, the sound starts again two seconds
+    earlier. The copy keeps all the picture and all the sound, played on unbroken."""
+    import av
+
+    def part(dest: Path, v0: float, a0: int) -> bytes:
+        with av.open(str(dest), "w", format="mpegts") as out:
+            v = out.add_stream("mpeg2video", rate=10)
+            v.width, v.height, v.pix_fmt = 64, 48, "yuv420p"
+            a = out.add_stream("mp2", rate=44100)
+            a.layout = "stereo"
+            for i in range(30):
+                f = av.VideoFrame.from_ndarray(np.full((48, 64, 3), 120, np.uint8), format="rgb24").reformat(format="yuv420p")
+                f.pts, f.time_base = int(v0 * 10) + i, Fraction(1, 10)
+                out.mux(v.encode(f))
+            for i in range(3 * 44100 // 1152):
+                f = av.AudioFrame.from_ndarray(np.zeros((1, 1152 * 2), np.int16), format="s16", layout="stereo")
+                f.sample_rate, f.pts, f.time_base = 44100, a0 * 44100 + i * 1152, Fraction(1, 44100)
+                out.mux(a.encode(f))
+            out.mux(v.encode())
+            out.mux(a.encode())
+        return dest.read_bytes()
+
+    src = tmp_path / "joined.ts"
+    src.write_bytes(part(tmp_path / "a.ts", 0, 0) + part(tmp_path / "b.ts", 3.5, 1))
+    with av.open(str(src)) as c:
+        at = [p.pts for p in c.demux(c.streams.audio[0]) if p.pts is not None]
+    assert any(b < a for a, b in zip(at, at[1:]))                  # the sound does step back
+    out = tmp_path / "joined.mp4"
+    assert video.stream_copy(str(src), str(out)) == 60
+    with av.open(str(out)) as c:
+        sound = c.streams.audio[0]
+        assert abs(float(sound.duration * sound.time_base) - 6) < 0.2
+    assert not list(tmp_path.glob("*.tmp"))
+
+
 def test_copies_are_made_in_the_background(clips, tmp_path, monkeypatch):
     """_streams copies the videos that want one (here: everything with a known length), marks the one that
     cannot be read, and does neither again."""
