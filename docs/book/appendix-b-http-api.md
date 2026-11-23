@@ -21,6 +21,7 @@ each request to the module that answers it ([chapter 11](11-server.md)):
 | Routes | Answered by |
 |---|---|
 | `/`, the app files, `/api/info`, `/api/sync`, `/api/favorite`, `/api/albums/<id>/download`, `/request-access`, `/api/request-access`, `/api/me`, `/members`, `/api/members*` | `PhotoApp` in [photo_app.py](../../photo-estate/photo_app.py), with [members.py](../../photo-estate/members.py) |
+| `/api/lenses*`, `/api/albums/<id>/publish`, `/api/photos/<sha>/show`, `/api/photos/<sha>/why` | `PhotoApp`, with [lenses.py](../../photo-estate/lenses.py) |
 | `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log` | `Browse` in [browse.py](../../photo-estate/browse.py) |
 | `/thumb/`, `/preview/`, `/large/`, `/original/` | `Images` in [images.py](../../photo-estate/images.py) |
 | `/video/` | The HTTP handler in photo_app.py (`Handler.video`), which streams the file `Images.video_file` names |
@@ -31,7 +32,9 @@ each request to the module that answers it ([chapter 11](11-server.md)):
 | `/setup`, `/api/intake*` (not with `--demo`) | `IntakeAPI` in [intake/api.py](../../photo-estate/intake/api.py) |
 | `/compare`, `/api/compare*` (only with `--compare-vectors`) | `Compare` in [compare.py](../../photo-estate/compare.py) |
 
-All of them answer from the same in-memory catalog (`catalog.Live`, in [catalog.py](../../photo-estate/catalog.py)).
+All of them answer from the same in-memory catalog (`catalog.Live`, in [catalog.py](../../photo-estate/catalog.py)),
+as the member the request is for sees it (`Live.visible_for`: [What each member sees](#what-each-member-sees-lenses)
+below). Every count, list, cover, stack, trip card, favourite and sync row is that member's.
 
 ### Who may do what
 
@@ -172,43 +175,70 @@ none of these. A video's score in a ranking is its best frame's or its mean's, w
 | `GET /api/facets?...` (same filter parameters) | `{"facets": {country, region, city, camera, lens, trip, album, person: [[label, count], ...]}, "months": [counts], "fav": N, "matching": N}` (each facet's counts ignore its own selection; `person` counts include it) |
 | `GET /api/periods?...` (same filter parameters, plus `dedupe`, `shots`, `sort`) | The Library's Years and Months: `{"years": [...], "months": [...], "matching": N, "total": N}`, each card `{"key": "2019" or "2019-07", "n", "at", "cover", "ar", "places": [...]}`; `at` is where the card's photos start in `/api/search` with the same parameters (a `cursor`) |
 | `GET /api/layout?...` (same filter parameters, plus `sort`) | One byte per photo, in `/api/search`'s order with the same parameters: its aspect ratio between 0.5 and 2.6 in 255 steps, so the page can lay a month out before fetching it. `application/octet-stream` with an `ETag` |
-| `GET /api/info` | For a member: `{"total", "videos", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `videos` is how many of `total` are videos. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
+| `GET /api/info` | For a member: `{"total", "videos", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in, all of it what this member sees (`fav`: their own favourites). `videos` is how many of `total` are videos. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
 | `GET /stats` | The library info page ([stats.html](../../photo-estate/stats.html)) |
-| `GET /api/stats[?refresh=1]` | `{state: working\|ready\|error, library, disk, app}`: library figures from memory, disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
-| `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. `deleted` holds the deletions between the cursor sent and the one returned (each is sent once; none to a device that is up to date; apply them from every page). `limit` counts rows. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start |
+| `GET /api/stats[?refresh=1]` | `{state: working\|ready\|error, library, disk, app}`: library figures from memory (every photo in the catalog; `favourites` is the asking member's own), disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
+| `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. `deleted` holds the deletions between the cursor sent and the one returned (each is sent once; none to a device that is up to date; apply them from every page). `limit` counts rows. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start. Each member has their own feed, of what they see: the first sysadmin's is `sync-feed.db` beside the catalog, as before members; anyone else's is `sync-feed-<member id>.db`, made the first time one of their phones asks (that first answer takes as long as reading every row once, about a second for 100,000 photos) and kept up to date from then on |
 | `GET /api/log?ev=open\|share&sha=...&pos=N` plus the search's parameters | Appends an event to the query log; `204` |
 | `GET /api/layout?...` (same filter parameters, plus `sort`) | Every matching photo's shape, one byte each, in `/api/search`'s order: the aspect ratio between 0.5 and 2.6 in 255 steps (`application/octet-stream`, with an `ETag`). The page lays a month out from it before it knows which photos are in it |
-| `POST /api/favorite {sha, fav}` | Makes a photo a favourite, or not: `{sha, fav, favourites}`. Takes the write rule; `403` otherwise. It waits for the requests in flight, since it changes the catalog they read (the gate's write side, [chapter 11](11-server.md)) |
+| `POST /api/favorite {sha, fav}` | Makes a photo the member's favourite, or not (`member_favorites`; nobody else's changes): `{sha, fav, favourites}`, `favourites` their count. Takes the write rule; `403` otherwise. It waits for the requests in flight, since it changes the view they read (the gate's write side, [chapter 11](11-server.md)) |
 
 ### Albums and change sets
 
 Answered by [changes.py](../../photo-estate/changes.py) (chapter 26). Every `/api/changes` address
 also answers under `/api/albums`; `/api/changes` lists only the albums that are up for hiding.
 
+An album or set is its owner's. A member sees their own and the albums others have published as a
+series; anyone else's answers `404`, as if there were none. Only its owner changes one: a write to a
+series someone else published is `403 {"error": "this album is someone else's: ..."}` (its favourite is
+the exception: that is the member's own). Each listed album and set carries `owner` (members.id; one
+from before members is the first sysadmin's), `mine`, `lens` (the filter lens a hiding set hides for, or
+null), `series` (the album's lens once published, or null) and `published`.
+
 | Request | Does |
 |---|---|
 | `GET /changes`, `/changes/<id>` | The review page ([changes.html](../../photo-estate/changes.html)) |
-| `GET /api/albums` | Every album, newest first |
-| `GET /api/albums/<id>/photos?cursor=&limit=` | Its photos as `/api/search` gives them, each with its `section` and `reason` |
-| `GET /api/albums/<id>/download` | The album's original files as one zip, written as it is read |
+| `GET /api/albums` | `{sets, hidden, busy}`: every album the member sees, newest first (`n` and the cover are of the photos they see); `hidden`, how many photos their filters hide |
+| `GET /api/albums/<id>/photos?cursor=&limit=` | Its photos as `/api/search` gives them (`fav` the member's), each with its `section` and `reason`. An album or series lists only the photos the member sees, whoever made it; a set up for hiding (its owner's review) lists all of its photos, `hidden` on those it hides |
+| `GET /api/albums/<id>/download` | The same photos' original files as one zip, written as it is read |
 | `POST /api/albums {title, prompt?, query?, items?}` | A new album; with `query`, a live one (whatever that search finds) |
 | `POST /api/albums/<id>/items {items?: [{sha, section?, reason?, score?}], remove?: [sha]}` | Add photos, or take them out |
 | `POST /api/albums/<id>/rename {title?, prompt?}` | Change its title or note |
 | `POST /api/albums/<id>/query {query}` | What a live album searches for |
-| `POST /api/albums/<id>/favorite {fav}` | Make every photo in it a favourite, or not |
+| `POST /api/albums/<id>/favorite {fav}` | Make every photo in it the member sees their favourite, or not: `{id, photos, fav, changed}` |
+| `POST /api/albums/<id>/publish {on?}` | Publish an album of the member's as a series (its lens is made the first time), or take it back (`on: false`): `{album, lens, published, changed}`. `403` someone else's, `409` a set up for hiding |
 | `POST /api/albums/<id>/hide`, `/view` | Put it up for hiding (it becomes a change set), or take it down again |
 | `POST /api/albums/<id>/discard` | Put it away (it must hide nothing): marked `discarded`, its rows kept; it is in no listing and every address of it answers 404 |
 | `GET /api/changes/<id>`, `/api/changes/<id>/check` | One set and its photos; whether every photo is where the set says it should be |
 | `POST /api/changes {title, prompt?, op?, items}` | Propose a set |
 | `POST /api/changes/<id>/decide {shas, decision}` | Mark photos `accept`, `reject` (keep) or `pending` |
-| `POST /api/changes/<id>/apply {through?}` | Hide every photo not marked reject, and put back those that are; with `through`, only as far as that photo in the page's order |
+| `POST /api/changes/<id>/apply {through?, lens?}` | Hide every photo not marked reject, and put back those that are; with `through`, only as far as that photo in the page's order. They are hidden for the members who see through the set's lens, chosen at its first apply: `lens` `"mine"` (the default: the owner's own filter, "Ben's hidden photos", made then), `"estate"` (the Estate defaults: a sysadmin only, else `403`), or a filter lens's id (the owner's, or an estate default for a sysadmin). After that the set keeps its lens until it hides nothing (`409` for another). Answers the set with `hid`, `showed` and `lens` |
 | `POST /api/changes/<id>/revert`, `/commit`, `/reopen`, `/discard` | Undo everything the set did; mark it done; make a done set changeable again; put away a set that hides nothing (marked `discarded`, never deleted) |
+
+### What each member sees (lenses)
+
+Answered by `PhotoApp` with [lenses.py](../../photo-estate/lenses.py) ([chapter 11](11-server.md#what-each-member-sees-lenses)).
+All take the `MEMBER` rule; a body is a JSON object (`400` otherwise; `on` and `accept` are booleans,
+`true` when left out). A write that changes what someone sees is in every view before it answers; the
+sync feeds follow a moment later. Errors are `{"error"}` with the status given.
+
+| Request | Does |
+|---|---|
+| `GET /api/lenses` | `{lenses, mine, sysadmin, proposed}`: the member's own lenses, the estate defaults and every lens others have published, oldest first. A lens is `{id, title, kind: filter\|series, set_id, published, estate_default, created_at, owner: {id, name}, mine, subscription: live\|snapshot\|opted_out\|null, proposed}`, and a filter also `{on, photos}` (whether it hides for this member now; how many photos it hides) and, for its owner, `sets` (its hiding sets' ids). `mine` is the member's own filter (where their hides go by default) or null; `proposed` the ids of the filters proposed as estate defaults |
+| `POST /api/lenses {title}` | A new filter lens of the member's: `{lens, changed}`. `400` with no title |
+| `POST /api/lenses/<id>/subscribe {mode?: live\|snapshot, title?}` | Subscribe to a published lens of someone else's: `live` (the default: it follows the lens) or `snapshot` (a copy now, into a lens of the member's own, titled `title` or "<title> (a copy)": for a filter a new filter lens and one applied hiding set; for a series a new album of theirs with the photos they see of it). For an estate default, `live` takes back an opt-out. `{lens, mode, changed}`, and for a snapshot `{copy (a filter's new lens), album (the new set or album), photos}`. `400` another mode, `404` no such lens or not published, `409` their own lens (always on) |
+| `POST /api/lenses/<id>/unsubscribe` | Leave a lens (a snapshot's copy stays theirs); for an estate default, opt out of it: `{lens, mode: opted_out\|null, changed}`. `404` no such lens they can see |
+| `POST /api/lenses/<id>/publish {on?}` | Publish a lens of the member's, or take it back: `{lens, published, changed}`. `403` someone else's, `409` taking back an estate default |
+| `POST /api/lenses/<id>/propose` | Propose a filter of the member's as an estate default (it is published too): `{lens, proposed_at, changed}`. `409` a series, or one that is an estate default already. Nothing changes for anyone until a sysadmin decides (the inbox item that tells them is phase 4) |
+| `POST /api/lenses/<id>/decide {accept?}` | A sysadmin accepts a proposed filter as an estate default (every member then sees through it unless they opt out), or declines it (`accept: false`: it stays its owner's, published): `{lens, estate_default, changed}`. `403` not a sysadmin, `409` not proposed |
+| `POST /api/photos/<sha>/show {on?}` | "Show it anyway": a photo the member's filters hide is shown to them all the same, or no longer (`on: false`): `{sha, shown, changed}`. `404` for a photo they may not be shown |
+| `GET /api/photos/<sha>/why` | Why the member does not see a photo, from the state tables: `{sha, visible, hidden, shown_anyway, text, reasons: [{set: {id, title}, hidden_at, lens: {id, title, estate_default} or null (a set from before lenses, hiding for everyone), owner: {id, name}, mine}]}`, newest first, only the filters that are on for this member (another member's hides are not theirs to see). `text` says the first in words: "Hidden by Ada's Estate defaults lens on 2026-11-03", "Hidden by your No screenshots lens on ...", "Shown anyway; hidden by ...". `404` for a photo they may not be shown |
 
 ### Agents: MCP and tasks
 
 | Request | Does |
 |---|---|
-| `POST /mcp` | The [MCP](https://modelcontextprotocol.io/) endpoint ([estate_mcp.py](../../photo-estate/estate_mcp.py)): streamable HTTP in its simplest form, one JSON-RPC message (or a batch) per POST, answered with JSON, no stream and no session. Tools: `library_overview`, `search_photos`, `similar_photos`, `get_photos`, `list_albums`, `get_album`, `create_album`, `amend_album`, `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set`, `submit_task`, `get_task`, `cancel_task`. `search_photos` takes `kind` (`photo` or `video`), and its rows carry `kind`, `seconds` and `live_photo` |
+| `POST /mcp` | The [MCP](https://modelcontextprotocol.io/) endpoint ([estate_mcp.py](../../photo-estate/estate_mcp.py)): streamable HTTP in its simplest form, one JSON-RPC message (or a batch) per POST, answered with JSON, no stream and no session. Tools: `library_overview`, `search_photos`, `similar_photos`, `get_photos`, `list_albums`, `get_album`, `create_album`, `amend_album`, `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set`, `submit_task`, `get_task`, `cancel_task`. `search_photos` takes `kind` (`photo` or `video`), and its rows carry `kind`, `seconds` and `live_photo`. Every tool answers as a member sees the library, and what it makes is theirs: the caller's login's member; from this computer the sysadmin; and with `X-Estate-Task: <id>` (honoured only from this computer: the estate's agent) the member that task was submitted by (`acting_for`), whose writes are journaled with no actor, acting for them |
 | `GET /api/tasks` | Whether an agent can run on this computer, and every task, newest first ([tasks.py](../../photo-estate/tasks.py)) |
 | `GET /api/tasks/<id>?after=N` | One task, its events after event N, and the change set it made |
 | `POST /api/tasks {prompt}` | Start one: Claude Code, run headless with only the library's MCP tools. The task records who asked (`acting_for`, the member's id; the sysadmin's from this computer), which every task in these answers carries |
@@ -266,6 +296,11 @@ search is a 503. `GET /api/info` says `compare: true` when these routes exist.
 | `POST /api/compare/vote {q, winner: a\|b\|same, left, k, run?, overlap?, a_ms?, b_ms?}` | With `run`, that run's answer to one of its searches (`winner` may also be `skip`; answered again, it replaces the answer; 404 for a run not under way, 400 for a search not in it). Appends a line to the votes file (`--compare-votes`, default `DIR/votes.jsonl`) and returns `{ok, votes}`. Takes a member (or this computer, else 403), though it writes only that file |
 
 ### The People API (also on `faces.py serve`)
+
+People is built once, for every member, without the photos the estate defaults hide. In the photo app a
+member's own filters apply to what a GET lists: faces in photos they do not see are left out of each list
+(and a person's cover is one they see; a face of a photo they do not see is `404`), while the counts
+(`named`, `pending`, `total`, ...) stay People's own.
 
 | Request | Purpose |
 |---|---|

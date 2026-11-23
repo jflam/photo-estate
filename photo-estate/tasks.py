@@ -30,6 +30,9 @@ seconds (core.procs.stop), as the timeout does.
 The journal (journal.py) gets task.submitted (the actor is who asked) and task.finished when a task reaches
 done, failed or cancelled, in the transaction of that move: the actor is who cancelled it, or NULL for a
 run's own end (the agent is not a member yet), acting for whoever asked.
+
+The agent acts for whoever asked (acting_for): /mcp looks the task up from X-Estate-Task and answers every
+tool as that member sees the library (catalog.Live.visible_for), and what it makes is theirs (estate_mcp.py).
 """
 from __future__ import annotations
 

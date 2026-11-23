@@ -45,11 +45,15 @@ face, such that similar things have similar vectors.
 
 **Epoch (sync).** A random name for one `sync-feed.db`. A device that sees an epoch it doesn't know fetches everything again and drops what the new feed lacks ([20](20-sync.md)).
 
+**Estate default.** A published filter lens every member sees through unless they opt out (`lenses.estate_default`). The first, **Estate defaults**, is the owner's hiding from before lenses, named by `estate.py migrate`; any member may propose a filter of theirs as one, and a sysadmin accepts or declines ([11](11-server.md#what-each-member-sees-lenses)).
+
 **Event.** A burst of photos with no gap of more than 3 hours (configurable) between consecutive
 photos. Its id is its start time in epoch seconds.
 
 **EXIF.** Metadata a camera writes inside a photo file: camera, lens, exposure, often date and offset.
 Read with `exiftool`.
+
+**Filter (lens).** A lens that leaves photos out: the photos the hiding change sets that name it hide (`change_sets.lens_id`). Always on for its owner and for its subscribers, everywhere; a member's filters add their hides together ([11](11-server.md#what-each-member-sees-lenses)).
 
 **Facet.** A field you can filter by and count: country, region, city, person, album, camera, lens,
 trip.
@@ -77,6 +81,8 @@ hash and box.
 
 **Replica.** The phone's read-only copy of the catalog, in `catalog.db`; the server is the only writer ([20](20-sync.md)).
 
+**Lens.** A named view, a row of `lenses`, its owner's and private until published: a filter, or a series. Not a camera lens (the `lens` facet) ([11](11-server.md#what-each-member-sees-lenses)).
+
 **Live Photo.** A still and a clip taken together by an iPhone (or a Pixel's motion photo). Here the still is the photo and the clip is part of it: one item, searched, scored and counted by its still ([6](06-linking.md#step-2-live-photos-and-motion-photos)).
 
 **Local (request).** One from the computer the app runs on, not through `tailscale serve` (`is_local`). It is the sysadmin ([11](11-server.md#members-and-who-may-do-what)).
@@ -87,6 +93,8 @@ hash and box.
 
 **Match floor / match window.** The two constants (0.085 and 0.04) that decide which photos count as
 matching a typed search: at least the floor, and within the window of the best match.
+
+**Member view.** What one member sees of the catalog (`catalog.View`): the mask, and what is worked out from it for them (stacks and their tops, trip cards and covers, the counts in `/api/info`, their favourites). Asked of `Live.visible_for(member)`, the one way any route asks ([11](11-server.md#what-each-member-sees-lenses)).
 
 **Member.** Someone the estate knows and lets in, a row of `members`: a name, a role, a status (`pending`, `active`, `revoked`; never deleted), an upload policy, and the person in People they are, if linked. Not a person, which is someone *in* the photos ([11](11-server.md#members-and-who-may-do-what)).
 
@@ -121,6 +129,16 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 **Scrubber.** The handle at the iPhone grid's right edge that shows the month you are in and lets you drag to any date ([23](23-native-interface.md)).
 
 **Sharer.** A member who shared a photo (`sharers`: photo, member, when). A photo two members sent has two. `estate.py migrate` makes the sysadmin the sharer of every photo that has none; ingest records sharers from a later phase of the multiplayer plan on.
+
+**Series.** A lens that picks and orders photos: an album (`lenses.set_id`), given its lens when its owner publishes it. Opened, never on: subscribing puts it in the member's Albums, and its photos are listed through the viewer's own filters ([11](11-server.md#what-each-member-sees-lenses)).
+
+**Shared (for a member).** What a member may ever be shown (`Live.shared_for`): every photo, until private photos (phase 5 of the multiplayer plan). The pixel routes, `why` and "show it anyway" go by it ([11](11-server.md#what-each-member-sees-lenses)).
+
+**Show it anyway.** A member's word that one photo their filters hide is shown to them all the same (`shown`) ([11](11-server.md#what-each-member-sees-lenses)).
+
+**Snapshot (subscription).** A copy of what a lens holds now into a lens or album of the member's own; it does not follow later changes, as a live subscription does ([11](11-server.md#what-each-member-sees-lenses)).
+
+**Subscription.** A member and a lens of someone else's (`subscriptions`): `live`, `snapshot`, or for an estate default `opted_out` ([11](11-server.md#what-each-member-sees-lenses)).
 
 **Sidecar.** A small metadata file next to a photo. Google's is JSON; iCloud's (via `icloudpd`) is XMP.
 

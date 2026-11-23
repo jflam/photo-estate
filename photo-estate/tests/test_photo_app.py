@@ -49,7 +49,7 @@ def test_basic_gets_in_process(app):
     r = app.request("GET", "/")
     assert r.status == 200 and r.content_type.startswith("text/html") and r.cache == "no-cache" and r.etag
     info = app.request("GET", "/api/info").json()
-    assert info["total"] == app.live.cat.info["total"] > 0 and info["demo"] is True
+    assert info["total"] == app.live.visible_for(app.sysadmin.id).info["total"] > 0 and info["demo"] is True
     page = app.request("GET", "/api/search?limit=5&dedupe=0").json()
     assert len(page["results"]) == 5
     assert app.request("GET", "/api/sync?limit=3").json()["more"] is True
@@ -208,7 +208,7 @@ class StubPeople:
     def __init__(self):
         self.calls = []
 
-    def handle(self, method, path, qs, body, actor=None):   # actor: the member the journal names (members.id)
+    def handle(self, method, path, qs, body, actor=None, keep=None):   # actor: the member the journal names (members.id)
         self.calls.append((method, path, body, actor))
         return 200, b'{"ok":true}', "application/json", "no-store"
 
@@ -246,7 +246,8 @@ def test_favorite_albums_tasks_and_mcp_take_a_member(app, monkeypatch):
     assert made.status == 201 and made.json()["created_by"] == "ben"
     sid = made.json()["id"]
     assert app.request("POST", f"/api/albums/{sid}/discard", AS_STRANGER, body={}).status == 403
-    assert app.request("POST", f"/api/albums/{sid}/discard", {}, body={}, local=True).status == 200
+    assert app.request("POST", f"/api/albums/{sid}/discard", {}, body={}, local=True).status == 404   # Ben's: not the sysadmin's
+    assert app.request("POST", f"/api/albums/{sid}/discard", AS_BEN, body={}).status == 200
     # a task records the member who asked for it (agent_tasks.acting_for), from the page and from /mcp
     asked = []
     monkeypatch.setattr(app.tasks, "submit", lambda prompt, who="", acting_for=None: (asked.append((prompt, who, acting_for)),

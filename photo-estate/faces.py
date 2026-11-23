@@ -311,16 +311,29 @@ SRC = {None: NONE, "auto": AUTO_SRC, "google": GOOGLE, "you": YOU}
 SRC_NAME = {v: k for k, v in SRC.items()}
 
 
+def default_hidden(con) -> set[str]:
+    """The photos no face of is on People: what the estate defaults hide (lenses.py), and the hiding sets from
+    before lenses, which hide for everyone. People is built once, for every member, so a member's own filters
+    are not here: they apply as a person's faces are listed (People.handle's `keep`)."""
+    for q in ("SELECT DISTINCT h.sha256 FROM hidden h JOIN change_sets s ON s.id = h.set_id"
+              " LEFT JOIN lenses l ON l.id = s.lens_id WHERE s.lens_id IS NULL OR l.estate_default = 1",
+              "SELECT sha256 FROM hidden"):         # (a catalog from before lenses: every hiding set is for everyone)
+        try:
+            return {s for s, in con.execute(q)}
+        except sqlite3.OperationalError:
+            continue
+    return set()
+
+
 def face_rows(con) -> list[tuple]:
     """Every face of MODEL with its photo's date, people tags and extension, in id order:
     (id, sha256, idx, x, y, w, h, score, px, vec, person_id, source, taken_at, people, ext).
-    Faces in photos a change set hides (changes.py) are left out: nobody is asked who they are.
+    Faces in photos the estate defaults hide (default_hidden) are left out: nobody is asked who they are.
 
     Each table is read once, front to back, and they are put together here. Asked of SQLite as one join,
     every face is a lookup of its photo by sha256, somewhere else in `assets` each time: 120,000 of them
     took 38 s of a 41 s start on a catalog on a USB disk, where the three passes take under 4 s."""
-    hidden = ({s for s, in con.execute("SELECT sha256 FROM hidden")}
-              if con.execute("SELECT 1 FROM sqlite_master WHERE name='hidden'").fetchone() else set())
+    hidden = default_hidden(con)
     photo = {s: (t, p, e) for s, t, p, e in con.execute("SELECT sha256, taken_at, people, ext FROM assets")}
     return [r + photo[r[1]] for r in con.execute(
         "SELECT id, sha256, idx, x, y, w, h, score, px, vec, person_id, source FROM faces WHERE model=? ORDER BY id", (MODEL,))
@@ -614,7 +627,9 @@ class People:
                 "person": int(self.pid[k]), "sug": int(self.sug[k]), "far": bool(self.sug_far[k]),
                 "box": [round(float(v), 4) for v in self.box[k]]}
 
-    def overview(self) -> dict:
+    def overview(self, keep=None) -> dict:
+        """Everyone on the page, with their counts (over every face People holds) and a cover: with `keep`
+        (sha -> bool), a face in a photo it keeps, when the person has one."""
         np = self.np
         with self.lock:
             people = []
@@ -631,6 +646,12 @@ class People:
                 best = np.flatnonzero(mine & (self.src >= GOOGLE))
                 if not len(best):
                     best = np.flatnonzero(mine | pend | later)
+                if keep is not None:
+                    best = np.array([k for k in best if keep(self.sha[k])], np.int64) if len(best) else best
+                    if not len(best):
+                        best = np.array([k for k in np.flatnonzero(mine | pend | later) if keep(self.sha[k])], np.int64)
+                    if not len(best):
+                        continue            # every face of them is in a photo this member does not see
                 recent = best[self.year[best] >= self.year[best].max() - 1]
                 cover = recent[np.argmax(self.px[recent] * self.score[recent])]
                 people.append({"id": p, "name": info["name"], "born": info.get("born"),
@@ -937,13 +958,31 @@ class People:
         except Exception:
             return None
 
-    def handle(self, method: str, path: str, qs: dict, body: dict | None, actor: int | None = None):
+    @staticmethod
+    def only(o, keep):
+        """A GET's answer with the faces in photos `keep` (sha -> bool) does not keep left out: `faces` lists,
+        a timeline's `years`, the unnamed `groups`; a `face` that is not kept is not there at all (None)."""
+        if keep is None or not isinstance(o, dict):
+            return o
+        if isinstance(o.get("face"), dict) and not keep(o["face"]["sha"]):
+            return None
+        out = dict(o)
+        if isinstance(o.get("faces"), list):
+            out["faces"] = [f for f in o["faces"] if keep(f["sha"])]
+        if isinstance(o.get("years"), dict) and all(isinstance(v, list) for v in o["years"].values()):
+            out["years"] = {y: kept for y, fs in o["years"].items() if (kept := [f for f in fs if keep(f["sha"])])}
+        if isinstance(o.get("groups"), list):
+            out["groups"] = [g for g in (People.only(g, keep) for g in o["groups"]) if g and g.get("faces")]
+        return out
+
+    def handle(self, method: str, path: str, qs: dict, body: dict | None, actor: int | None = None, keep=None):
         """One request -> (status, body bytes, content type, Cache-Control), or None if it isn't ours. `actor`:
-        the member a write is for (members.id), for the journal."""
+        the member a write is for (members.id), for the journal. `keep` (sha -> bool): the photos the member
+        asking sees (photo_app.py); the faces of any other are left out of what a GET lists (only)."""
         one = lambda k, d="": (qs.get(k) or [d])[0]
         num = lambda k: int(one(k)) if one(k).lstrip("-").isdigit() else None
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":")).encode(), "application/json", "no-store")
-        found = lambda o: None if o is None else js(o)   # None: no such person or face (looked up under the lock)
+        found = lambda o: None if (o := self.only(o, keep)) is None else js(o)   # None: no such person or face (or not theirs to see)
         if method == "GET":
             if path in ("/people", "/people/"):
                 return 200, pages.page("people.html"), "text/html; charset=utf-8", "no-cache"
@@ -951,7 +990,7 @@ class People:
                 body_ = self.crop(int(path[6:])) if path[6:].isdigit() else None
                 return (200, body_, "image/jpeg", "public, max-age=86400") if body_ else (404, b"", "text/plain", "no-store")
             if path == "/api/people":
-                return js(self.overview())
+                return js(self.overview(keep))
             person, face = num("person"), num("face")
             if path == "/api/people/review" and person is not None:
                 return found(self.review(person, num("year"), min(num("limit") or 60, 400), one("skipped") == "1"))
@@ -960,7 +999,7 @@ class People:
             if path == "/api/people/odd" and person is not None:
                 return found(self.odd(person, num("year"), max(num("offset") or 0, 0), min(num("limit") or 60, 400)))
             if path == "/api/people/unknown":
-                return js(self.unknown(min(num("limit") or 12, 100)))
+                return js(self.only(self.unknown(min(num("limit") or 12, 100)), keep))
             if path == "/api/people/photo" and face is not None:
                 return found(self.photo(face))
         elif method == "POST" and body is not None:

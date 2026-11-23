@@ -10,19 +10,23 @@ The transport is MCP's streamable HTTP in its simplest form: each POST carries o
 and gives it `app` (an App: the Protocol below; PhotoApp passes an AppFacade), the handful of functions
 the tools are made of:
 
-  app.find(args)      -> (ids best first, their scores or None when ranked by date)
-  app.row(id)         -> what is known of one photo, or None
-  app.faces(ids)      -> {id: (faces found, faces named)} where faces have been looked for
-  app.overview()      -> the library in numbers
+  app.find(args, member)   -> (ids best first, their scores or None when ranked by date)
+  app.row(id, member)      -> what is known of one photo, or None
+  app.faces(ids)           -> {id: (faces found, faces named)} where faces have been looked for
+  app.overview(member)     -> the library in numbers
   app.changes         -> the change sets (changes.Changes)
   app.tasks           -> requests handed to the agent that runs on this computer (tasks.Tasks)
 
 That agent uses this same endpoint. It is told apart by a header (X-Estate-Task, honoured only from
 this computer): the change sets it makes carry its task's name, and it is not offered the task tools.
-Who may call it is the app's rule for every route (an active member, or this computer: photo_app.py); a
-task submitted here records the member it was submitted by (`acting_for`, agent_tasks.acting_for), and
-every tool that writes is journaled as that member (journal.py). A task's agent calls from this computer,
-so it writes as the sysadmin; its change sets carry the task's name (created_by task:<id>).
+Who may call it is the app's rule for every route (an active member, or this computer: photo_app.py).
+
+The tools answer for a member (`member` above): every search, photo and album is as that member sees the
+library (catalog.Live.visible_for), and what a tool makes is theirs. For a login that is its member; for a
+task's agent it is the member the task was submitted by (agent_tasks.acting_for, looked up from
+X-Estate-Task), never the sysadmin it calls as: a task Ben submits searches as Ben. A task's writes are
+journaled with no actor (the agent is no member yet) acting for that member (journal.py); anyone else's
+with them as the actor.
 """
 from __future__ import annotations
 
@@ -44,13 +48,13 @@ class App(Protocol):
     """What the tools are made of (the module docstring lists it). PhotoApp gives an AppFacade: its Browse's
     find, row, faces and overview, and its change sets and tasks. A test can give any object with these."""
     @property
-    def find(self) -> Callable[[dict], Found]: ...
+    def find(self) -> Callable[[dict, int | None], Found]: ...
     @property
-    def row(self) -> Callable[[str], dict[str, Any] | None]: ...
+    def row(self) -> Callable[[str, int | None], dict[str, Any] | None]: ...
     @property
     def faces(self) -> Callable[[list[str]], dict[str, tuple[int, int]]]: ...
     @property
-    def overview(self) -> Callable[[], dict[str, Any]]: ...
+    def overview(self) -> Callable[[int | None], dict[str, Any]]: ...
     @property
     def changes(self) -> Changes: ...
     @property
@@ -58,12 +62,22 @@ class App(Protocol):
 
 
 @dataclass(frozen=True)
+class Caller:
+    """Who a tool call is for. `viewer`: the member whose view it reads and whose albums it writes to; `actor`:
+    who the journal names (None for a task's agent); `acting_for`: the member a task's agent works for."""
+    who: str = ""                 # created_by: the login, or task:<id>
+    actor: int | None = None
+    acting_for: int | None = None
+    viewer: int | None = None
+
+
+@dataclass(frozen=True)
 class AppFacade:
     """The App that `embed.py serve` (PhotoApp) gives the server."""
-    find: Callable[[dict], Found]
-    row: Callable[[str], dict[str, Any] | None]
+    find: Callable[[dict, int | None], Found]
+    row: Callable[[str, int | None], dict[str, Any] | None]
     faces: Callable[[list[str]], dict[str, tuple[int, int]]]
-    overview: Callable[[], dict[str, Any]]
+    overview: Callable[[int | None], dict[str, Any]]
     changes: Changes
     tasks: Tasks
 
@@ -239,31 +253,31 @@ class Tools:
             out["events"] = [{"kind": e["kind"], "text": e["text"]} for e in t["events"][-40:]]
         return {k: v for k, v in out.items() if v is not None}
 
-    def submit_task(self, args, who="", actor=None):
-        got, code = self.app.tasks.submit(args.get("request"), who, actor)
+    def submit_task(self, args, cx: Caller):
+        got, code = self.app.tasks.submit(args.get("request"), cx.who, cx.viewer)
         if code >= 400:
             raise ValueError(got["error"])
         return {**self.task_brief(got), "next": "get_task shows how it is going; it usually takes a few minutes"}
 
-    def get_task(self, args):
+    def get_task(self, args, cx: Caller):
         got = self.app.tasks.get(int(args["task"]), max(0, int(args.get("after") or 0)))
         if not got:
             raise ValueError("no such task")
         return self.task_brief(got)
 
-    def cancel_task(self, args, who="", actor=None):
-        got, code = self.app.tasks.cancel(int(args["task"]), actor)
+    def cancel_task(self, args, cx: Caller):
+        got, code = self.app.tasks.cancel(int(args["task"]), cx.actor)
         if code >= 400:
             raise ValueError(got["error"])
         return self.task_brief(got)
 
     # -- finding ---------------------------------------------------------------------------------
 
-    def rows(self, ids, scores=None) -> list[dict]:
+    def rows(self, ids, cx: Caller, scores=None) -> list[dict]:
         faces = self.app.faces(ids)
         out = []
         for i, sha in enumerate(ids):
-            row = self.app.row(sha)
+            row = self.app.row(sha, cx.viewer)
             if row is None:
                 out.append({"id": sha, "error": "no such photo"})
                 continue
@@ -274,10 +288,10 @@ class Tools:
             out.append(row)
         return out
 
-    def summary(self, ids, scores) -> dict:
+    def summary(self, ids, scores, cx: Caller) -> dict:
         years, named = Counter(), 0
         for sha in ids:
-            row = self.app.row(sha) or {}
+            row = self.app.row(sha, cx.viewer) or {}
             years[(row.get("date") or "")[:4] or "undated"] += 1
             named += bool(row.get("people"))
         out = {"matching": len(ids), "with_named_people": named, "by_year": dict(sorted(years.items()))}
@@ -286,26 +300,26 @@ class Tools:
             out["score_at_rank"][str(len(scores))] = scores[-1]
         return out
 
-    def page(self, ids, scores, args) -> dict:
+    def page(self, ids, scores, args, cx: Caller) -> dict:
         limit = max(1, min(int(args.get("limit") or 20), 200))
         at = max(0, int(args.get("offset") or 0))
-        return {"summary": self.summary(ids, scores),
-                "photos": self.rows(ids[at:at + limit], scores[at:at + limit] if scores else None),
+        return {"summary": self.summary(ids, scores, cx),
+                "photos": self.rows(ids[at:at + limit], cx, scores[at:at + limit] if scores else None),
                 "next_offset": at + limit if at + limit < len(ids) else None}
 
-    def overview(self, args):
-        return self.app.overview()
+    def overview(self, args, cx: Caller):
+        return self.app.overview(cx.viewer)
 
-    def search(self, args):
-        ids, scores = self.app.find(args)
-        return self.page(ids, scores, args)
+    def search(self, args, cx: Caller):
+        ids, scores = self.app.find(args, cx.viewer)
+        return self.page(ids, scores, args, cx)
 
-    def similar(self, args):
-        ids, scores = self.app.find({**args, "like": args["id"], "query": None})
-        return self.page(ids, scores, args)
+    def similar(self, args, cx: Caller):
+        ids, scores = self.app.find({**args, "like": args["id"], "query": None}, cx.viewer)
+        return self.page(ids, scores, args, cx)
 
-    def photos(self, args):
-        return {"photos": self.rows([str(s) for s in args["ids"]][:200])}
+    def photos(self, args, cx: Caller):
+        return {"photos": self.rows([str(s) for s in args["ids"]][:200], cx)}
 
     # -- albums ----------------------------------------------------------------------------------
 
@@ -316,41 +330,43 @@ class Tools:
             out.update(up_for_hiding=True, state=s["state"], hidden_now=s["applied"], review=f"/changes/{s['id']}")
         return {k: v for k, v in out.items() if v is not None}
 
-    def albums(self, args):
-        return {"albums": [self.album_brief(s) for s in self.app.changes.listing(albums=True)["sets"]]}
+    def albums(self, args, cx: Caller):
+        return {"albums": [self.album_brief(s) for s in self.app.changes.listing(albums=True, viewer=cx.viewer)["sets"]]}
 
-    def get_album(self, args):
+    def get_album(self, args, cx: Caller):
         limit, at = max(1, min(int(args.get("limit") or 20), 200)), max(0, int(args.get("offset") or 0))
-        got = self.app.changes.photos(int(args["album"]), at, limit)
+        got = self.app.changes.photos(int(args["album"]), at, limit, cx.viewer)
         if got is None:
             raise ValueError("no such album")
         extra = {r["sha"]: {k: r[k] for k in ("section", "reason") if r.get(k)} for r in got["results"]}
         return {**self.album_brief(got["album"]), "prompt": got["album"]["prompt"], "sections": got["sections"],
-                "photos": [{**row, **extra.get(row["id"], {})} for row in self.rows([r["sha"] for r in got["results"]])],
+                "photos": [{**row, **extra.get(row["id"], {})} for row in self.rows([r["sha"] for r in got["results"]], cx)],
                 "next_offset": got["next"]}
 
-    def create_album(self, args, who="", actor=None):
+    def create_album(self, args, cx: Caller):
         got, code = self.app.changes.create({"title": args.get("title"), "prompt": args.get("prompt"), "op": "view",
-                                             **({"query": args["search"]} if args.get("search") is not None else {})}, who, actor)
+                                             **({"query": args["search"]} if args.get("search") is not None else {})},
+                                            cx.who, cx.actor, cx.acting_for)
         if code >= 400:
             raise ValueError(got["error"])
         return {**self.album_brief(got), "next": "amend_album adds photos; then give the person the view link"
                 if got["kind"] != "live" else "it holds what the search finds; give the person the view link"}
 
-    def amend_album(self, args, who="", actor=None):
+    def amend_album(self, args, cx: Caller):
         sid = int(args["album"])
         if args.get("title") or "prompt" in args:
-            got, code = self.app.changes.write(sid, "rename", {k: args[k] for k in ("title", "prompt") if k in args}, who, actor)
+            got, code = self.app.changes.write(sid, "rename", {k: args[k] for k in ("title", "prompt") if k in args},
+                                               cx.who, cx.actor, cx.acting_for)
             if code >= 400:
                 raise ValueError(got["error"].replace("change set", "album"))
             if not any(args.get(k) for k in ("add_ids", "add_search", "remove_ids", "remove_search")):
                 return self.album_brief(got)
-        out = self.amend_set({**args, "change_set": sid}, who, actor)
+        out = self.amend_set({**args, "change_set": sid}, cx)
         return {**{k: v for k, v in out.items() if k not in ("change_set", "state", "hidden_now", "kept_by_person", "review")},
                 "album": sid, "view": f"/?album={sid}"}
 
-    def hide_album(self, args, who="", actor=None):
-        got, code = self.app.changes.write(int(args["album"]), "hide", {}, who, actor)
+    def hide_album(self, args, cx: Caller):
+        got, code = self.app.changes.write(int(args["album"]), "hide", {}, cx.who, cx.actor, cx.acting_for)
         if code >= 400:
             raise ValueError(got["error"].replace("change set", "album"))
         return {**self.album_brief(got), "next": "give the person the review link: they look it over and apply it"}
@@ -361,50 +377,51 @@ class Tools:
         return {"change_set": s["id"], "title": s["title"], "state": s["state"], "photos": s["n"],
                 "hidden_now": s["applied"], "kept_by_person": s["reject"], "review": f"/changes/{s['id']}"}
 
-    def sets(self, args):
-        return {"change_sets": [self.brief(s) for s in self.app.changes.listing()["sets"]]}   # (albums up for hiding)
+    def sets(self, args, cx: Caller):
+        return {"change_sets": [self.brief(s) for s in self.app.changes.listing(viewer=cx.viewer)["sets"]]}   # (albums up for hiding)
 
-    def get_set(self, args):
-        d = self.app.changes.detail(int(args["change_set"]))
+    def get_set(self, args, cx: Caller):
+        d = self.app.changes.detail(int(args["change_set"]), cx.viewer)
         if d is None:
             raise ValueError("no such change set")
         kept = [it["sha"] for it in d["items"] if it["decision"] == "reject"]
         rest = [it["sha"] for it in d["items"] if it["decision"] != "reject"]
         reasons = {it["sha"]: it["reason"] for it in d["items"] if it["reason"]}
         def listed(ids):
-            return [{**row, **({"reason": reasons[row["id"]]} if row["id"] in reasons else {})} for row in self.rows(ids)]
+            return [{**row, **({"reason": reasons[row["id"]]} if row["id"] in reasons else {})} for row in self.rows(ids, cx)]
         out = {**self.brief(d), "prompt": d["prompt"], "kept": listed(kept[:200]), "kept_not_listed": max(0, len(kept) - 200)}
         n = max(0, min(int(args.get("sample") or 0), 200))
         if n:
             out["sample"] = listed(rest[::max(1, len(rest) // n)][:n])
         return out
 
-    def create_set(self, args, who="", actor=None):
-        got, code = self.app.changes.create({"title": args.get("title"), "prompt": args.get("prompt"), "op": "hide"}, who, actor)
+    def create_set(self, args, cx: Caller):
+        got, code = self.app.changes.create({"title": args.get("title"), "prompt": args.get("prompt"), "op": "hide"},
+                                            cx.who, cx.actor, cx.acting_for)
         if code >= 400:
             raise ValueError(got["error"])
         return {**self.brief(got), "next": "amend_change_set adds photos; then give the person the review link"}
 
-    def found(self, spec: dict, reason):
-        ids, scores = self.app.find(spec)
+    def found(self, spec: dict, reason, cx: Caller):
+        ids, scores = self.app.find(spec, cx.viewer)
         n = max(0, min(int(spec.get("max") or 20000), 20000))
         why = reason or (f"Matches \"{spec['query']}\"" if spec.get("query") else "Looks like a photo of the set" if spec.get("like") else None)
         return [{"sha": s, "score": scores[i] if scores else None, "reason": why} for i, s in enumerate(ids[:n])], len(ids)
 
-    def amend_set(self, args, who="", actor=None):
+    def amend_set(self, args, cx: Caller):
         sid, reason, section = int(args["change_set"]), args.get("reason"), args.get("section")
         items = [{"sha": str(s), "reason": reason} for s in args.get("add_ids") or []]
         out = {}
         if args.get("add_search"):
-            got, out["add_search_matched"] = self.found(args["add_search"], reason)
+            got, out["add_search_matched"] = self.found(args["add_search"], reason, cx)
             items += got
         remove = [str(s) for s in args.get("remove_ids") or []]
         if args.get("remove_search"):
-            got, out["remove_search_matched"] = self.found(args["remove_search"], None)
+            got, out["remove_search_matched"] = self.found(args["remove_search"], None, cx)
             remove += [it["sha"] for it in got]
         for it in items:
             it["section"] = section
-        got, code = self.app.changes.write(sid, "items", {"items": items, "remove": remove}, who, actor)
+        got, code = self.app.changes.write(sid, "items", {"items": items, "remove": remove}, cx.who, cx.actor, cx.acting_for)
         if code >= 400:
             raise ValueError(got["error"])
         return {**self.brief(got), **out, "added": got["added"], "already_in_set": len(items) - got["added"] - got["unknown"],
@@ -417,7 +434,7 @@ class Server:
     def __init__(self, app: App, name="photo-estate", version="1"):
         self.tools, self.info = Tools(app), {"name": name, "title": "Photo Estate", "version": version}
 
-    def call(self, msg, can_write: bool, who: str, in_task: bool = False, acting_for: int | None = None):
+    def call(self, msg, can_write: bool, cx: Caller, in_task: bool = False):
         if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method"), str):
             return {"jsonrpc": "2.0", "id": msg.get("id") if isinstance(msg, dict) else None,
                     "error": {"code": -32600, "message": "not a JSON-RPC 2.0 request"}}
@@ -445,7 +462,7 @@ class Server:
                     raise ValueError("arguments must be an object")
                 if writes and not can_write:
                     raise PermissionError("this caller may look but not propose changes")
-                out = fn(args, who, acting_for) if writes else fn(args)   # acting_for: the member, for the journal
+                out = fn(args, cx)
                 return ok({"content": [{"type": "text", "text": json.dumps(out, separators=(",", ":"), default=str)}],
                            "structuredContent": out, "isError": False})
             except (ValueError, KeyError, TypeError, PermissionError, Unavailable) as e:   # the agent can read it and try again
@@ -455,9 +472,9 @@ class Server:
         return err(-32601, f"method not found: {method}")
 
     def handle(self, method: str, headers, body, can_write: bool, who: str = "", local: bool = False,
-               acting_for: int | None = None):
-        """One HTTP request to /mcp -> (status, body bytes, content type, Cache-Control). `acting_for`: the
-        member making it (members.id), recorded on a task it submits."""
+               member: int | None = None):
+        """One HTTP request to /mcp -> (status, body bytes, content type, Cache-Control). `member`: the member
+        making it (members.id); for a task's agent (X-Estate-Task, from this computer) the task's acting_for."""
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":"), default=str).encode(), "application/json", "no-store")
         # A page on another site must not be able to drive this from someone's browser.
         origin, host = headers.get("Origin"), headers.get("Host") or ""
@@ -469,10 +486,13 @@ class Server:
             return js({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "the body is not JSON"}}, 400)
         task = headers.get("X-Estate-Task") or ""
         in_task = local and task.isdigit()
-        if in_task:
-            who = f"task:{task}"
+        cx = Caller(who, member, None, member)
+        if in_task:   # the estate's agent, working for whoever submitted the task: it sees what they see
+            t = self.tools.app.tasks.get(int(task), None) or {}
+            af = t.get("acting_for")       # (no such task: as the caller from this computer, acting for nobody)
+            cx = Caller(f"task:{task}", None, af, af if af is not None else member)
         if isinstance(body, list):
-            got = [r for r in (self.call(m, can_write, who, in_task, acting_for) for m in body) if r is not None]
+            got = [r for r in (self.call(m, can_write, cx, in_task) for m in body) if r is not None]
             return js(got) if got else (202, b"", "application/json", "no-store")
-        got = self.call(body, can_write, who, in_task, acting_for)
+        got = self.call(body, can_write, cx, in_task)
         return js(got) if got is not None else (202, b"", "application/json", "no-store")

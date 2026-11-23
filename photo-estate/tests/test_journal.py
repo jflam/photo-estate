@@ -110,10 +110,12 @@ def test_a_change_set_is_one_entry_per_action_by_the_member_it_was_for(app):
     call(app, "/api/favorite", {"sha": shas[0], "fav": False})
     call(app, f"/api/albums/{sid}/discard", {})
     a = f"album:{sid}"
+    lens = sqlite3.connect(db).execute("SELECT id FROM lenses WHERE owner=?", (ben,)).fetchone()[0]
     assert entries(db, start) == [
         (ben, None, "album.created", a, {"title": "Twelve", "op": "hide", "kind": "list", "added": 12}),
         (ben, None, "album.decided", a, {"decision": "reject", "decided": 2}),
-        (ben, None, "album.applied", a, {"hid": 10, "showed": 0, "through": None}),    # one entry, not one per photo
+        # one entry, not one per photo; it names the lens the set hides for: Ben's own, made by this apply
+        (ben, None, "album.applied", a, {"hid": 10, "showed": 0, "lens": lens, "through": None, "lens_made": True}),
         (ben, None, "album.committed", a, None),
         (ben, None, "album.reopened", a, None),
         (ben, None, "album.reverted", a, {"showed": 10}),

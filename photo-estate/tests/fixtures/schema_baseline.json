@@ -98,6 +98,12 @@
   ],
   [
    "index",
+   "sqlite_autoindex_member_favorites_1",
+   "member_favorites",
+   null
+  ],
+  [
+   "index",
    "sqlite_autoindex_member_logins_1",
    "member_logins",
    null
@@ -134,6 +140,12 @@
   ],
   [
    "index",
+   "sqlite_autoindex_shown_1",
+   "shown",
+   null
+  ],
+  [
+   "index",
    "sqlite_autoindex_sidecars_1",
    "sidecars",
    null
@@ -142,6 +154,12 @@
    "index",
    "sqlite_autoindex_sources_1",
    "sources",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_subscriptions_1",
+   "subscriptions",
    null
   ],
   [
@@ -196,7 +214,7 @@
    "table",
    "change_sets",
    "change_sets",
-   "CREATE TABLE change_sets(\n  id INTEGER PRIMARY KEY, title TEXT, prompt TEXT, op TEXT DEFAULT 'hide',\n  status TEXT DEFAULT 'open',        -- open | reverted | done\n  created_by TEXT, created_at TEXT, updated_at TEXT, applied_at TEXT, reverted_at TEXT, done_at TEXT, kind TEXT DEFAULT 'list', query TEXT)"
+   "CREATE TABLE change_sets(\n  id INTEGER PRIMARY KEY, title TEXT, prompt TEXT, op TEXT DEFAULT 'hide',\n  status TEXT DEFAULT 'open',        -- open | reverted | done\n  created_by TEXT, created_at TEXT, updated_at TEXT, applied_at TEXT, reverted_at TEXT, done_at TEXT, kind TEXT DEFAULT 'list', query TEXT, owner INT, lens_id INT)"
   ],
   [
    "table",
@@ -263,6 +281,18 @@
    "journal",
    "journal",
    "CREATE TABLE journal(      -- what happened, appended to and never changed\n  id INTEGER PRIMARY KEY, at TEXT,\n  actor INT,                             -- members.id of who did it; NULL: the app itself\n  acting_for INT,                        -- members.id when the actor is an agent\n  kind TEXT,                             -- member.added, member.requested, member.changed, ...\n  subject TEXT,                          -- what it is about: member:<id>, a sha, album:<id> ...\n  data TEXT)"
+  ],
+  [
+   "table",
+   "lenses",
+   "lenses",
+   "CREATE TABLE lenses(       -- a named view (lenses.py): a filter leaves photos out, a series is an album\n  id INTEGER PRIMARY KEY,\n  owner INT,                             -- members.id; NULL: the first sysadmin's\n  title TEXT,\n  kind TEXT DEFAULT 'filter',            -- filter | series\n  set_id INT,                            -- a series: its album (change_sets.id); NULL for a filter, whose hiding sets\n                                         --   name it (change_sets.lens_id)\n  published INT DEFAULT 0,\n  estate_default INT DEFAULT 0,          -- a published filter every member sees through unless they opt out\n  proposed_at TEXT,                      -- its owner proposed it as an estate default: a sysadmin decides\n  maintained_by INT,                     -- an agent member that keeps it up to date (multiplayer phase 7), or NULL\n  created_at TEXT)"
+  ],
+  [
+   "table",
+   "member_favorites",
+   "member_favorites",
+   "CREATE TABLE member_favorites(   -- each member's own favourites (`favorites` is no longer written)\n  sha256 TEXT, member_id INT, fav INT NOT NULL, set_at TEXT, PRIMARY KEY(sha256, member_id))"
   ],
   [
    "table",
@@ -344,6 +374,12 @@
   ],
   [
    "table",
+   "shown",
+   "shown",
+   "CREATE TABLE shown(        -- \"show it anyway\": a photo the member's filters hide, shown to them all the same\n  sha256 TEXT, member_id INT, at TEXT, PRIMARY KEY(sha256, member_id))"
+  ],
+  [
+   "table",
    "sidecars",
    "sidecars",
    "CREATE TABLE sidecars(\n  id INTEGER PRIMARY KEY, dir TEXT, filename TEXT, title TEXT, data TEXT, UNIQUE(dir, filename))"
@@ -353,6 +389,12 @@
    "sources",
    "sources",
    "CREATE TABLE sources(\n  name TEXT PRIMARY KEY, entries INT, media INT, new_assets INT, bytes_seen INT, bytes_new INT,\n  finished_at TEXT)"
+  ],
+  [
+   "table",
+   "subscriptions",
+   "subscriptions",
+   "CREATE TABLE subscriptions(   -- a member and a lens of someone else's\n  member_id INT, lens_id INT,\n  mode TEXT,                             -- live | snapshot (copied into one of their own) | opted_out (an estate default)\n  at TEXT, PRIMARY KEY(member_id, lens_id))"
   ],
   [
    "table",

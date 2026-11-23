@@ -52,11 +52,20 @@ Three ideas carry it:
 ## The data in memory
 
 `People.__init__` loads every face once, as parallel NumPy arrays indexed by a face's row number `k`.
-`face_rows()` reads `faces`, `assets` (for each photo's date, tags and extension) and `hidden` one
-after the other and puts them together in Python: as one SQL join, each face was a lookup of its photo
-somewhere else in `assets`, and 120,000 of those took 38 s of a 41 s load from a hard disk. A load
-writes only what it changes: a second load of an unchanged catalog writes nothing (a test holds it to
-that).
+`face_rows()` reads `faces`, `assets` (for each photo's date, tags and extension) and the photos the
+estate defaults hide (`default_hidden`) one after the other and puts them together in Python: as one SQL
+join, each face was a lookup of its photo somewhere else in `assets`, and 120,000 of those took 38 s of a
+41 s load from a hard disk. A load writes only what it changes: a second load of an unchanged catalog
+writes nothing (a test holds it to that).
+
+People is built once, for every member. It leaves out the faces of the photos the **estate defaults**
+hide (and of hiding sets from before lenses, which hide for everyone), and nothing else: one member's own
+filters are not in it. They apply as faces are listed to that member ([chapter 11](11-server.md#what-each-member-sees-lenses)):
+`People.handle(..., keep)` drops from a person's timeline, the review queue, Find mistakes, the unnamed
+groups and a photo's faces every face in a photo the member does not see, and picks a person's cover
+from the faces they do see (a person whose every face is in such a photo is not listed for them). The
+counts on the page (named, to review, per year) stay People's own, over all its faces. A member who opted
+out of an estate default still does not see its photos' faces here: People is not rebuilt per member.
 
 | Array | Meaning |
 |---|---|

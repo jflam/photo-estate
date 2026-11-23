@@ -395,3 +395,38 @@ Cautions:
   run here by the sysadmin: it backs the catalog up, journals it, leaves a tombstone so no source brings
   it back, clears the flag and removes the file and its cached copies; then restart the app. The photo
   stays in the catalog backups until they rotate out, and in the sources (it lists them).
+
+
+## Lenses: the one-off step (multiplayer phase 3)
+
+Since phase 3 what a photo hides is per member: a hiding set hides for the members who see through its
+lens (book chapter 11, "What each member sees"). The deploy needs nothing by hand until the migration:
+the app's first start on this code adds four tables (`lenses`, `subscriptions`, `shown`,
+`member_favorites`) and two columns (`change_sets.owner`, `lens_id`), and until the migration runs it
+shows exactly what it showed before (a set with no lens hides for everyone; an owner-less album, an old
+favourite and a photo with no sharer are the sysadmin's). Then, once, after a backup:
+
+```bash
+export PATH=/opt/homebrew/bin:$PATH
+DB=~/estate/estate.db
+cd ~/src/photo-estate/photo-estate
+
+# 1. A catalog backup, checked (the migration writes to the catalog)
+B=$HOME/photo-estate-lab/estate.db.before-lenses-$(date +%Y%m%d-%H%M)
+sqlite3 $DB ".backup $B" && sqlite3 $B "pragma quick_check"          # must print ok
+
+# 2. The hiding from before lenses becomes the lens "Estate defaults"; albums and sets become the sysadmin's;
+#    the old favourites are copied to the sysadmin's own. Safe to run again: it then changes nothing.
+uv run estate.py --db $DB migrate        # "sharers: 0 photos ..." then "lenses: N hiding sets put in the new lens ..."
+sqlite3 $DB "select id, title, owner, published, estate_default from lenses"                     # one row: Estate defaults
+sqlite3 $DB "select count(*) from change_sets where op='hide' and lens_id is null"               # 0
+sqlite3 $DB "select (select count(*) from favorites), (select count(*) from member_favorites)"   # the two agree
+
+# 3. The app keeps who sees what in memory: restart it, then check /api/info's total is what it was
+launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search
+```
+
+The owner's phone keeps `sync-feed.db`; another member's phone gets `sync-feed-<member id>.db` beside the
+catalog the first time it asks. Nothing else changes for the owner: his new hides go to his own filter
+lens ("John's hidden photos") unless he applies a set to the Estate defaults, and only he uses the app
+until phase 5 (open question 3 of the plan).

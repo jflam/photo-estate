@@ -102,8 +102,9 @@ The sysadmin lets people in on **`/members`** (members.html, its state machine i
 turn away, turn off, let in again; a role, an upload policy, a name, and the person in People they are.
 The estate always keeps an active sysadmin: a change that would leave none is refused. `GET /api/me`
 says who a request is for. A task records who asked for it (`agent_tasks.acting_for`), from the
-Changes page and from `/mcp`'s `submit_task`, so a later phase can make the agent see what that member
-sees; the agent itself still calls `/mcp` from this computer with `X-Estate-Task`, as the sysadmin.
+Changes page and from `/mcp`'s `submit_task`; the agent calls `/mcp` from this computer with
+`X-Estate-Task`, and is answered as that member sees the library (below, [What each member
+sees](#what-each-member-sees-lenses)).
 
 **The first start.** A catalog made before members has none. On the first start of the new code, the
 logins given by `--upload-user` become active members who may upload everything, the first of them the
@@ -136,9 +137,88 @@ the history beside them, and triggers refuse any `UPDATE` or `DELETE` of it.
 
 The actor reaches each write as a member id beside the login the code already passed: `PhotoApp`
 gives `m.id` to `Changes.handle`, `Tasks.handle`, `People.handle`, `set_favorites` and `/mcp` (whose
-tools that write pass it on). A task's agent calls from the Mac, so what it does is journaled as the
-sysadmin (its change sets still carry `created_by` `task:<id>`); a run's own end is `task.finished` with
-no actor, acting for whoever asked.
+tools that write pass it on). A task's agent is no member yet, so what it does is journaled with no actor,
+acting for the member who submitted the task (`acting_for`; its change sets still carry `created_by`
+`task:<id>`), as is a run's own end, `task.finished`. Phase 3 added the lens kinds: `lens.created`,
+`lens.subscribed`, `lens.unsubscribed`, `lens.published`/`unpublished`, `lens.proposed`,
+`lens.accepted`/`declined`, `album.published`/`unpublished`, `photo.shown`/`unshown` and
+`lenses.migrated`; `album.applied` names the lens a set hides for.
+
+### What each member sees: lenses
+
+One member's hidden photos are not everyone's (phase 3 of the plan). What a member sees is worked out
+from a handful of state tables ([lenses.py](../../photo-estate/lenses.py), in core/schema.py's `lenses`
+area), and asked of **one function**, `Live.visible_for(member)` (catalog.py): every route that answers
+from the catalog (search, similar, facets, Years and Months, the layout, `/api/info`, the sync feed,
+albums, People's lists, `/stats`, `/compare`, the MCP tools) reads the **member view** it returns, never a
+mask of its own. A test reads the code to keep it so (tests/test_multiplayer.py,
+`test_no_route_reads_a_mask_but_through_visible_for`): the `Catalog` has no `visible`, `fav`, stacks,
+trip cards or `info` any more, so a route that reached for them would fail, and the test also refuses
+reading the `hidden` table, or a photo's facts for a favourite, outside the modules that own them.
+
+- **A lens** is a named view, a row of `lenses`, its owner's, private until published. A **filter** leaves
+  photos out: its photos are what the hiding change sets that name it hide (`change_sets.lens_id`;
+  `hidden(sha256, set_id)` is as it was), each reviewed batch its own set, applied and reverted on its own.
+  A **series** is an album (`lenses.set_id`), given its lens when its owner first publishes it.
+- **Which filters are on** for member M (`State.on`): M's own; every **estate default** (a published filter
+  every member sees through) unless M has opted out (`subscriptions.mode` `opted_out`, or `snapshot`); and
+  any other published filter M subscribes to `live`. A filter is always on, everywhere; the filters add
+  their hides together. A series is never on: subscribing to one puts it in M's Albums and changes
+  nothing else.
+- **What M sees**: what M may be shown (`shared_for`: every photo, until private photos in phase 5), less
+  what M's filters hide, less nothing M has said to **show anyway** (`shown`). A hiding set with no lens
+  (from before lenses) hides for everyone, as all hiding did before.
+- **A snapshot** subscription copies what the lens holds now into one of M's own (a filter: a new filter
+  lens of M's with one applied set; a series: a new album of M's with the photos M sees of it); it does
+  not follow later changes. A live subscription does, at once.
+- **Applying** a hiding set hides for a lens chosen at its first apply: the owner's own filter by default
+  ("Ben's hidden photos", made then), or the Estate defaults, for a sysadmin who asks (`{lens: "estate"}`).
+  A set that hides something keeps its lens until it is reverted.
+- **Proposing** a filter as an estate default publishes it and marks it (`lenses.proposed_at`); a
+  sysadmin accepts (it becomes one) or declines. The inbox item that tells the sysadmin comes in phase 4.
+- **Favourites** are each member's own (`member_favorites`; the old `favorites` table is no longer
+  written). What a photo's source said (`assets.favorited`) is a favourite of its sharers only.
+
+**The member view** (`catalog.View`) is not a bare mask, because the catalog worked visibility into more
+than one thing: the mask; which photo of a stack is on top and how many it holds (stacks are grouped over
+the photos the member sees, so a stack whose best shot one member hid shows them its next best, while
+everyone else still sees the best); the trip cards and their covers; the counts in `info`; and the
+favourites. `Catalog.view` works all of it out in a few NumPy passes; `Live` keeps one per member until
+the catalog is replaced (`install`) or someone's hides change (`relook`, which reads the tables again:
+`lenses.read`), and a favourite is shown in the member's own view in place. `Browse.remember` has the
+member in its key. A row's `fav` is filled from the member's view as the row is sent (`View.row`,
+`View.feed_row`): a photo's facts (`Catalog.meta`) no longer carry one.
+
+The lens routes (`/api/lenses...`, `/api/albums/<id>/publish`, `/api/photos/<sha>/show`) are answered
+outside the gate, like a favourite: the change is in every view (`relook`, on the gate's write side)
+before the answer goes back, and the feeds and People follow in the background. An apply on the review
+page is taken in in the background as before (`busy` until it is). **Why** a member does not see a photo
+is `GET /api/photos/<sha>/why`, read from the state tables (the hidden rows, their sets, the sets' lenses
+and the lenses' owners), never the journal: "Hidden by Ada's Estate defaults lens on 2026-11-03".
+
+**Albums** are their owner's (`change_sets.owner`): a member lists and opens their own and the series
+others publish, and only the owner changes one. Inside any album or series, whoever made it, the photos are
+listed through the viewer's own view: a series never shows a member what their filters hide. A set up for
+hiding is its owner's review of what it hides, so it lists every photo of it (marked `hidden`).
+
+**People** stays built once, for everyone ([chapter 14](14-faces.md)): its faces leave out the photos the
+estate defaults hide (`faces.default_hidden`), not any member's own. A member's own filters apply as
+faces are listed: a person's faces, the review queue, the unnamed groups and a person's cover leave out
+faces in photos the member does not see (`People.handle`'s `keep`); the counts stay People's own.
+
+**The agent answers for a member.** The MCP tools read the view of the login that called, and for a
+task, of the member it was submitted by (`agent_tasks.acting_for`, looked up from `X-Estate-Task`): a task
+Ben submits searches as Ben, and the albums and change sets it makes are Ben's.
+
+**The sync feed** is one per member ([chapter 20](20-sync.md)).
+
+**Before `estate.py migrate`** (a catalog the phase-3 code opens before the migration has run, which is
+the Mac mini between the deploy and the migration): a hiding set with no lens hides for everyone; an album
+or set with no owner, a photo with no sharer, and a row of the old `favorites` table are the first
+sysadmin's. So the owner sees exactly what he saw before, and so does every member, with nothing to opt
+out of until the migration names the Estate defaults. The migration ([appendix A](appendix-a-commands.md))
+gives those sets the lens Estate defaults, those albums the sysadmin, and copies the old favourites to
+the sysadmin's own.
 
 ### Malformed requests
 
@@ -641,16 +721,18 @@ The server is multi-threaded but not multi-process. The relevant locks are small
 - `Live.gate` lets requests share the catalog and a reload swap it alone (writers first, so a stream
   of requests cannot starve a reload). It is not re-entrant: a thread inside it that asks for a swap
   would wait for itself once a writer waits, so `Gate.swap` raises `RuntimeError` instead.
-- `PhotoApp.fav_write` puts favourites one at a time; `PhotoApp.fav_lock` guards `fav_log`.
+- `PhotoApp.fav_write` puts favourites, and re-reading the looks (`relook`), one at a time.
+- `Live.views_lock` guards the member views being kept (catalog.py); a view worked out while the catalog or
+  the looks were being replaced is not kept.
 - `People` has its own `RLock`.
 
-**Lock order.** Take `live.gate` before any module's own lock (`Browse.lru_lock`, `PhotoApp.fav_lock`,
+**Lock order.** Take `live.gate` before any module's own lock (`Browse.lru_lock`, `Live.views_lock`,
 `Admin.st_lock`, ...), and never take the gate while holding one: a request holds the gate and then
 takes the others, so the opposite order could deadlock against it. The only lock taken before the gate
 is `fav_write` (below), and nothing that holds the gate takes it.
 
-**The catalog generation.** `Live.generation` counts every change to the catalog being served: an
-install and a favourite each add one, inside the gate's write side. `Browse.remember` keys its cache
+**The catalog generation.** `Live.generation` counts every change to the catalog being served, or to what
+anyone sees of it: an install, a relook and a favourite each add one, inside the gate's write side. `Browse.remember` keys its cache
 by the generation the entry was made in and keeps a value only if the generation is unchanged when it
 is done, so nothing worked out from an older catalog (a mask, a ranking sized to the old `N`) is ever
 used once a newer one is served, even in the moment between an install and `Browse.forget()`, which
@@ -659,19 +741,16 @@ now only frees memory. (`Admin`'s `/stats` numbers keep their own counter, `st_g
 
 **Favourites and reloads.** `PhotoApp.set_favorites`, called outside the gate:
 
-1. takes `fav_write`, so two calls reach the table and the catalog in the same order;
-2. writes the `favorites` table, outside the gate (a slow SQLite write holds up no request);
-3. in `Live.update` (the gate's write side) resolves `live.cat` there and then, shows the favourites
-   in it (`Catalog.show_favorites`), and, if a reload is reading the catalog, appends them to
-   `fav_log` under `fav_lock`.
+1. takes `fav_write`, so two calls reach the table and the views in the same order;
+2. writes `member_favorites`, outside the gate (a slow SQLite write holds up no request);
+3. in `Live.update` (the gate's write side) tells the looks (`lenses.State.set_favorites`, which every
+   view is worked out from) and shows the favourites in the member's view (`View.show_favorites`).
 
-`reload_catalog` sets `fav_log = []` (under `fav_lock`) before it reads the catalog; in the swap that
-installs the new one (`PhotoApp.caught_up`, under the gate and then `fav_lock`) it shows the new
-catalog everything in `fav_log` and sets it back to `None`. So the log holds only the favourites set
-during one read, and is empty between reloads. A favourite is never lost and never lands on a replaced
-catalog: if its step 3 comes before the swap, it is in the log (the read had begun) or in the table the
-read saw (it had not); if after, it is shown to the new catalog directly. Its step 2 comes before step
-3, so a favourite missing from the log was in the table before the read began.
+The catalog no longer reads favourites at all, so a reload cannot miss one: the view of the new catalog is
+worked out from the looks, which have it. (Until 2026-11-22 the catalog read the `favorites` table, and a
+log of the favourites set while a reload read it, `fav_log`, was shown to the new catalog as it was
+swapped in.) `relook` takes `fav_write` too, so the looks it reads from the tables are never read between
+a favourite's table write and its step 3.
 
 NumPy releases the GIL during large array operations, so concurrent searches overlap usefully, and
 for one household a handful of simultaneous requests is the realistic load.

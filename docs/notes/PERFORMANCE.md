@@ -360,6 +360,39 @@ keep it. The rebuild:
 The old JPEG thumbnails (2.75 GB on the SSD) are no longer read once a photo's WebP exists, and can be
 deleted after the rebuild (MAC-MINI.md).
 
+## What each member sees, per member (2026-11-22)
+
+Multiplayer phase 3 made what the catalog worked visibility into (the mask, stacks and their tops, trip
+cards and covers, the counts in `/api/info`, the favourites) one **member view** per member,
+`Live.visible_for` (book chapter 11), and the sync feed one per member. Measured with
+`tools/bench_views.py` on `bench_ingest.py`'s synthetic 100,000-photo estate (14,293 events, 257 trips) on
+the author's laptop (Apple M-series), in process, one run each, seconds:
+
+| | before (main) | phase 3 |
+|---|---|---|
+| Start: `PhotoApp()` reads the catalog | 3.33 | 2.92 |
+| First `/api/info` (works out the sysadmin's view: stacks, trips, counts) | 0.003 | 0.43 |
+| Start to the first answer, together | 3.33 | 3.35 |
+| `/api/search?limit=120` (browse, newest first), first / again | 0.001 / 0.001 | 0.002 / 0.001 |
+| `/api/periods` | 0.052 | 0.053 |
+| `feed_update`, the sysadmin's feed: first time / nothing changed | 1.43 / 1.17 | 1.40 / 1.18 |
+| A member's view after a change to what anyone hides (Ben, with an estate default of 5,000 and his own 2,000) | | 0.38 – 0.40 |
+| `lenses.State.masks` for Ben (his hides as a mask, and his favourites) | | 0.003 |
+| Ben's phone's first `/api/sync` (his feed made, 93,000 rows) | | 1.35 |
+| Ben hides 100 more: apply, relook, both feeds brought up to date | | 2.85 |
+| `feed_update` with two feeds, nothing changed | | 2.19 |
+
+So a single member's start and searches cost what they did: the work that `load()` did for everyone
+(stacks, trip cards, counts) moved into the first `visible_for`, at the same total. What is new is per
+member and per change: about 0.4 s to work a member's view out the first time they ask after someone's
+hides change (the stack grouping is most of it), and about 1.1 s of digests per member **who has a
+feed** each time anything changes, in a background thread; a member with no phone costs none. With a
+dozen members each with a phone, a change costs about 13 s of background feed work; if that grows
+uncomfortable, `Feed.update` could digest only the rows whose visibility or favourite changed. The
+synthetic estate has almost no stacks (its vectors are the demo's 104, at random hours); the real
+library's 13,200 stacks make the grouping a little dearer ("well under a second" for the whole library,
+chapter 25).
+
 ## Open tasks
 
 None at the moment. Reviewed on 2026-11-20: the two left were done the same day (above).

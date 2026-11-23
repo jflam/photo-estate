@@ -444,6 +444,31 @@ This phase is the easiest to over-build. Keep it to this list, each item as smal
 
 ### Phase 3: lenses and what each member sees
 
+*Built 2026-11-22, the server half (branch `multiplayer`); [chapter 11](../book/11-server.md#what-each-member-sees-lenses)
+describes it, appendix B lists its endpoints; the pages (the Albums tab's lenses, subscribing, the review
+page's choice of lens, the viewer's "why" line) come next, on these endpoints. Built in the order this
+phase asks: first every reader of `Catalog.visible` and of the baked stacks, trip cards, `info` and `fav`
+went through `Live.visible_for` with the same answers as before (the whole suite green), then what it
+computes changed. The choices: `visible_for` returns a `catalog.View`, and the `Catalog` no longer has
+those fields, so a route that reached for them fails (and tests/test_multiplayer.py reads the route
+modules' code to refuse the other ways round it). A photo's facts (`meta`) no longer carry `fav`; a row's
+is the member's. Views are kept per member until the catalog or the looks (`lenses.State`, read from the
+tables) change; a hide no longer reloads the catalog, only the looks. A snapshot is a copy into a lens or
+album of the subscriber's own (no table of its own). Proposing is a column, `lenses.proposed_at`; accept
+and decline are `POST /api/lenses/<id>/decide`. The lens a hiding set hides for is set by its first
+apply (`{lens: "mine" | "estate" | id}`), and the lens made on first use is recorded in that apply's
+journal entry (`album.applied {lens, lens_made}`), so it stays one entry per action. Before `estate.py
+migrate`, a set with no lens hides for everyone and an owner-less album, an old `favorites` row and a
+photo with no sharer are the first sysadmin's: the owner sees what he saw, so the app works between the
+deploy and the migration. A task's writes are journaled with no actor (the agent is no member yet),
+acting for whoever submitted it. People: built once without what the estate defaults hide; a member's own
+filters drop faces from what People lists to them and pick their covers, but its counts stay People's
+and a member who opted out of an estate default still sees none of its faces there. An album lists only
+what its viewer sees; a set up for hiding (its owner's review) lists all of its photos, marked. Not
+built: no inbox item for a proposal or a lens that changed (phase 4); `maintained_by` is a column
+nothing sets; the pixel routes ask `shared_for`, which is every photo until phase 5. The cost:
+docs/notes/PERFORMANCE.md (2026-11-22).*
+
 - `lenses.py` (unit-tested): a lens is a row of `lenses` over a change set (`changes.py` keeps doing
   the work of holding photos, sections, reasons and queries). A filter lens's photos are hidden from
   its subscribers: `hidden(sha256, set_id)` stays as it is, and what a member's filters hide is the rows

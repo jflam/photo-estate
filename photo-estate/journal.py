@@ -13,7 +13,9 @@ listeners of the multiplayer plan's phase 7 will, with `since`).
 
 `actor` is members.id of whoever did it: the member a request is for (PhotoApp.who), so a request from
 this computer itself is the first sysadmin; NULL when there is no member to name (no sysadmin yet, or the
-app itself, as when a task's run ends). `acting_for` is the member an agent's run works for. `data` is
+app itself, as when a task's run ends, or the estate's agent, which is no member yet). `acting_for` is the
+member an agent's run works for: every write a task's agent makes through /mcp is NULL acting for whoever
+submitted the task (agent_tasks.acting_for; estate_mcp.py). `data` is
 JSON, whatever else the kind needs, small: counts and titles, never a list of every photo.
 
 Kinds, with their subject and where each is appended:
@@ -22,14 +24,26 @@ Kinds, with their subject and where each is appended:
   album.created                    album:<id>   changes.py: an album or change set made {title, op, kind, added}
   album.items                      album:<id>   photos added or taken out {added, removed}
   album.decided                    album:<id>   marks on the review page {decision, decided}
-  album.applied                    album:<id>   {hid, showed, through}
+  album.applied                    album:<id>   {hid, showed, lens, through, lens_made?}: lens, the filter it hides
+                                                for (lenses.py); lens_made when this apply made the member's own
   album.reverted                   album:<id>   {showed}
   album.committed, album.reopened  album:<id>
   album.hidden, album.viewed       album:<id>   put up for hiding, or a plain album again {added}
   album.renamed                    album:<id>   {title, prompt}: [before, after] of what changed
   album.query                      album:<id>   a live album's search {query}
   album.discarded                  album:<id>   marked discarded: its rows are kept, it is in no listing
-  favorite.set                     <sha> or album:<id>   photo_app.set_favorites {fav, photos}
+  favorite.set                     <sha> or album:<id>   photo_app.set_favorites {fav, photos}: the actor's own
+                                                favourites (member_favorites)
+  lens.created                     lens:<id>    lenses.py: a filter lens made {title, kind, estate_default}
+  lens.subscribed                  lens:<id>    {mode: live | snapshot, copy?, album?, photos?}: a snapshot names the
+                                                lens and the album it was copied into
+  lens.unsubscribed                lens:<id>    {was, mode}: mode opted_out for an estate default
+  lens.published, lens.unpublished lens:<id>
+  lens.proposed                    lens:<id>    {title}: proposed as an estate default
+  lens.accepted, lens.declined     lens:<id>    {title}: a sysadmin's answer
+  album.published, album.unpublished  album:<id>   {lens}: an album published as a series
+  photo.shown, photo.unshown       <sha>        "show it anyway", and taking it back
+  lenses.migrated                  lenses       estate.py migrate {lens, made, hiding_sets, owned, favorites}
   faces.labeled                    people       faces.People: a page of names, "not them", "later", undo
                                                 {ops: [{op, faces, person}]}, beside face-labels.jsonl
   person.changed                   person:<id>  faces.People: renamed, merged, born {ops: [...]}

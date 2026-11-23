@@ -96,6 +96,18 @@ Two properties make this robust:
 
 `trips` is sent only on the last page, because it is small and always whole: the phone replaces its list.
 
+### One feed per member
+
+A phone keeps the photos its member sees, so each member has a feed of their own (multiplayer phase 3,
+[chapter 11](11-server.md#what-each-member-sees-lenses)): a photo one member's filters hide leaves only
+that member's phones, and a row's `fav` is that member's favourite. The first sysadmin's feed is
+`sync-feed.db`, as it was before members, so the owner's phone does not fetch the library again; anyone
+else's is `sync-feed-<member id>.db` beside it, made the first time one of their phones asks (the answer
+waits for it: about a second for 100,000 photos) and found again at the next start. `feed_update()`
+brings every member's feed up to date after a reload or a change to what anyone hides, and only those:
+a member with no phone costs nothing. Each `update()` digests every row the member sees, a little over a
+second for 100,000 photos on the author's laptop (tools/bench_views.py), in a background thread.
+
 ### The epoch
 
 Versions live in a file, and a file can be lost. If `sync-feed.db` is deleted, a new one starts again at

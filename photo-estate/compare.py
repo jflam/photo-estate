@@ -292,11 +292,12 @@ class Compare:
                 "both": covered, "votes": dict(self.tally), "terms": list(self.terms), "k": K,
                 "run": run, "reports": self.reports()}
 
-    def search(self, qs: dict) -> tuple:
-        c = self.live.cat
+    def search(self, qs: dict, member: int | None = None) -> tuple:
+        v = self.live.visible_for(member)   # the photos `member` sees, as every route has them
+        c = v.cat
         one = lambda k, d="": (qs.get(k) or [d])[0]
         k = int_param(qs, "k", 48, min=1, max=200)   # not a number: a 400 (http_util)
-        masks, text, applied, *_ = self.browse.select(c, qs)
+        masks, text, applied, *_ = self.browse.select(v, qs)
         if not text:
             return js({"error": "no words to rank by: the filters alone choose the same photos for both"}, 400)
         b = self.encoder.state.snapshot()   # don't wait for it here: a request holds the app's gate (catalog.Gate)
@@ -307,7 +308,7 @@ class Compare:
             return js({"error": "the second model is loading (it is let go when /compare has not been used"
                                 " for a while); try again in a minute"}, 503)
         rows = self.aligned(c)
-        mask = c.combine(masks) & (rows >= 0)
+        mask = v.combine(masks) & (rows >= 0)
         n = int(mask.sum())
         out = {"q": one("q"), "text": text, "applied": applied, "candidates": n}
         ids = np.flatnonzero(mask)
@@ -358,11 +359,11 @@ class Compare:
                 out.update(done=len(run["answers"]), of=len(run["terms"]))
         return js(out)
 
-    def handle(self, method: str, path: str, qs: dict, body, who: str = ""):
+    def handle(self, method: str, path: str, qs: dict, body, who: str = "", member: int | None = None):
         if method == "GET" and path == "/api/compare/info":
             return js(self.info())
         if method == "GET" and path == "/api/compare":
-            return self.search(qs)
+            return self.search(qs, member)
         if method == "GET" and path == "/api/compare/report":
             return self.report_of(qs)
         if method == "POST" and path == "/api/compare/vote":

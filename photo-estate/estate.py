@@ -18,7 +18,8 @@ estate.py — proof of concept for repatriating a Google Photos library.
   search  full-text search over filenames, albums, people, descriptions, captions, tags
   stats   summary of the estate
   purge   remove one photo for good, by hand (the sysadmin, on the computer that holds the estate)
-  migrate the one-off multiplayer migration: every photo with no sharer gets the first sysadmin
+  migrate the one-off multiplayer migration: every photo with no sharer gets the first sysadmin; the hiding
+          from before lenses becomes the lens Estate defaults; albums and old favourites become the sysadmin's
 
 Originals are never modified or deleted (except the source zip with --delete-after, and `purge`). The
 estate only grows: a source that loses a file changes nothing here, and triggers refuse a DELETE from
@@ -1324,9 +1325,19 @@ def unlink_original(f: Path) -> None:
 
 
 def cmd_migrate(a) -> None:
-    """The one-off multiplayer migration (docs/notes/MULTIPLAYER-PLAN.md), run once by hand after a backup:
-    every photo that has no sharer yet gets the first sysadmin. Safe to run again: it then adds nothing."""
+    """The one-off multiplayer migration (docs/notes/MULTIPLAYER-PLAN.md), run once by hand after a backup,
+    with the app stopped or restarted after it (the app keeps who sees what in memory). Two halves, each one
+    transaction and one journal entry, and safe to run again (they then change nothing):
+      sharers   every photo that has no sharer yet gets the first sysadmin;
+      lenses    the hiding from before lenses becomes the lens "Estate defaults" (the sysadmin's, published,
+                an estate default: every member sees through it unless they opt out): every hiding set with
+                no lens is given it; every album and set with no owner becomes the sysadmin's; and the old
+                `favorites` rows are copied to the sysadmin's own (member_favorites), which the app now writes.
+    Until it runs the app shows what it showed before: a hiding set with no lens hides for everyone, and an
+    owner-less album, an old favourite and a photo with no sharer are the first sysadmin's (lenses.py)."""
+    import lenses
     con = connect(a.db)
+    schema.ensure(con, "changes", "favorites", "lenses")
     admin = members.sysadmin(con)
     if admin is None:
         sys.exit("no active sysadmin yet: start the app once (it makes the members from --upload-user)")
@@ -1338,6 +1349,22 @@ def cmd_migrate(a) -> None:
             journal.append(con, admin.id, "sharers.migrated", "sharers", {"member": admin.id, "photos": n})
     total = con.execute("SELECT count(*) FROM assets").fetchone()[0]
     print(f"sharers: {n} photos given {admin.name} (member {admin.id}) as their sharer; {total} photos in all")
+    orphans = con.execute("SELECT count(*) FROM change_sets WHERE op='hide' AND lens_id IS NULL").fetchone()[0]
+    lens = con.execute("SELECT id FROM lenses WHERE kind='filter' AND estate_default=1 ORDER BY id LIMIT 1").fetchone()
+    with con:
+        made = lens is None and orphans > 0
+        lid = lenses.add(con, admin.id, "Estate defaults", published=True, estate_default=True, entry=False) if made \
+            else lens[0] if lens else None
+        sets = con.execute("UPDATE change_sets SET lens_id=? WHERE op='hide' AND lens_id IS NULL", (lid,)).rowcount if lid else 0
+        owned = con.execute("UPDATE change_sets SET owner=? WHERE owner IS NULL", (admin.id,)).rowcount
+        favs = con.execute("INSERT OR IGNORE INTO member_favorites(sha256, member_id, fav, set_at)"
+                           " SELECT sha256, ?, fav, set_at FROM favorites", (admin.id,)).rowcount
+        if made or sets or owned or favs:
+            journal.append(con, admin.id, "lenses.migrated", "lenses",
+                           {"lens": lid, "made": made, "hiding_sets": sets, "owned": owned, "favorites": favs})
+    print(f"lenses: {sets} hiding sets put in {'the new' if made else 'the'} lens Estate defaults"
+          f"{f' (lens {lid})' if lid else ' (none: nothing was hidden)'}; {owned} albums and sets given {admin.name};"
+          f" {favs} favourites copied to {admin.name}'s own")
 
 
 def main() -> None:
@@ -1418,11 +1445,12 @@ def main() -> None:
     s.add_argument("--backup-dir", help="where the backup goes (default: beside the catalog)")
     s.set_defaults(fn=cmd_purge)
 
-    s = sub.add_parser("migrate", help="one-off multiplayer migration: every photo with no sharer gets the first sysadmin",
+    s = sub.add_parser("migrate", help="one-off multiplayer migration: sharers, the Estate defaults lens, owners, favourites",
                        description="The one-off migration of the multiplayer plan, run once by hand after a catalog"
-                       " backup: every photo with no sharer gets the first active sysadmin as its sharer. Safe to run"
-                       " again. (Making the existing hiding sets the first estate default is not done here yet: it"
-                       " comes with lenses, phase 3, which adds it to this command.)")
+                       " backup, then restart the app: every photo with no sharer gets the first active sysadmin as its"
+                       " sharer; the hiding sets from before lenses become the lens Estate defaults (the sysadmin's,"
+                       " published, an estate default); every album and set with no owner becomes the sysadmin's;"
+                       " the old favourites are copied to the sysadmin's own. Safe to run again.")
     s.set_defaults(fn=cmd_migrate)
 
     a = p.parse_args()

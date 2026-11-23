@@ -24,6 +24,9 @@ Areas, and who opens them (each owner calls ensure when it opens the database, n
     members      members, member_logins and the journal (journal.py), with the triggers that keep them
                  append-only: photo_app.PhotoApp when it opens the catalog, and everything that appends to the
                  journal (estate.connect, faces.connect, changes.Changes, tasks.Tasks)
+    lenses       lenses.py: lenses, subscriptions, shown ("show it anyway") and member_favorites (each member's
+                 favourites): changes.Changes and photo_app.PhotoApp when they open the catalog, and
+                 `estate.py migrate`
 
 Protected tables (the multiplayer plan's Append-only): a DELETE from journal, assets, occurrences, sharers,
 tombstones, members or member_logins raises, as does any UPDATE of journal and an UPDATE that changes a key
@@ -213,6 +216,28 @@ CREATE TABLE IF NOT EXISTS scorers(
 FAVORITES = """
 CREATE TABLE IF NOT EXISTS favorites(sha256 TEXT PRIMARY KEY, fav INT NOT NULL, set_at TEXT, set_by TEXT);
 """
+LENSES = """
+CREATE TABLE IF NOT EXISTS lenses(       -- a named view (lenses.py): a filter leaves photos out, a series is an album
+  id INTEGER PRIMARY KEY,
+  owner INT,                             -- members.id; NULL: the first sysadmin's
+  title TEXT,
+  kind TEXT DEFAULT 'filter',            -- filter | series
+  set_id INT,                            -- a series: its album (change_sets.id); NULL for a filter, whose hiding sets
+                                         --   name it (change_sets.lens_id)
+  published INT DEFAULT 0,
+  estate_default INT DEFAULT 0,          -- a published filter every member sees through unless they opt out
+  proposed_at TEXT,                      -- its owner proposed it as an estate default: a sysadmin decides
+  maintained_by INT,                     -- an agent member that keeps it up to date (multiplayer phase 7), or NULL
+  created_at TEXT);
+CREATE TABLE IF NOT EXISTS subscriptions(   -- a member and a lens of someone else's
+  member_id INT, lens_id INT,
+  mode TEXT,                             -- live | snapshot (copied into one of their own) | opted_out (an estate default)
+  at TEXT, PRIMARY KEY(member_id, lens_id));
+CREATE TABLE IF NOT EXISTS shown(        -- "show it anyway": a photo the member's filters hide, shown to them all the same
+  sha256 TEXT, member_id INT, at TEXT, PRIMARY KEY(sha256, member_id));
+CREATE TABLE IF NOT EXISTS member_favorites(   -- each member's own favourites (`favorites` is no longer written)
+  sha256 TEXT, member_id INT, fav INT NOT NULL, set_at TEXT, PRIMARY KEY(sha256, member_id));
+"""
 MEMBERS = """
 CREATE TABLE IF NOT EXISTS members(      -- who the estate knows: not persons (who is *in* photos, faces.py)
   id INTEGER PRIMARY KEY, name TEXT,
@@ -278,10 +303,13 @@ CREATE INDEX IF NOT EXISTS events_job ON events(job_id, id);
 EXIF_APP_INDEX = "CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)"
 
 AREAS = {"catalog": CATALOG + APPEND_ONLY, "embeddings": EMBEDDINGS, "video": VIDEO, "faces": FACES, "changes": CHANGES, "tasks": TASKS,
-         "scores": SCORES, "favorites": FAVORITES, "members": MEMBERS, "sync": SYNC, "intake": INTAKE}
-CATALOG_AREAS = ("catalog", "embeddings", "video", "faces", "changes", "tasks", "scores", "favorites", "members")
+         "scores": SCORES, "favorites": FAVORITES, "members": MEMBERS, "lenses": LENSES, "sync": SYNC, "intake": INTAKE}
+CATALOG_AREAS = ("catalog", "embeddings", "video", "faces", "changes", "tasks", "scores", "favorites", "members", "lenses")
 ADDED = {
-    "changes": {"change_sets": (("done_at", "TEXT"), ("kind", "TEXT DEFAULT 'list'"), ("query", "TEXT")),
+    # owner: the member whose album or set it is (NULL: the first sysadmin's); lens_id: the filter lens a hiding
+    # set hides for (lenses.py; NULL: from before lenses, hiding for everyone until `estate.py migrate`)
+    "changes": {"change_sets": (("done_at", "TEXT"), ("kind", "TEXT DEFAULT 'list'"), ("query", "TEXT"),
+                                ("owner", "INT"), ("lens_id", "INT")),
                 "change_items": (("section", "TEXT"), ("position", "INTEGER"))},
     "tasks": {"agent_tasks": (("acting_for", "INT"),)},    # members.id of whoever submitted the task
 }

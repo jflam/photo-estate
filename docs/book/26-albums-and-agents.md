@@ -40,6 +40,14 @@ Albums are made in three places:
 
 An album's cover is a favourite from it, if it has one, as a month's is ([chapter 25](25-best-photos.md)).
 
+**Whose it is.** Every album and change set is its owner's (`change_sets.owner`; those from before members
+are the first sysadmin's). A member lists and opens their own, and the albums others have **published**
+as a **series** (`POST /api/albums/<id>/publish`, which gives it a row in `lenses`); only the owner changes
+one. Inside any album or series, whoever made it, a member sees only the photos their own filters let
+through: someone else's series never shows them what they hid ([chapter 11](11-server.md#what-each-member-sees-lenses)).
+Subscribing to a series puts it in the member's Albums, live, or as a snapshot copied into an album of
+their own.
+
 ## Change sets: proposed, looked at, applied
 
 ```mermaid
@@ -84,10 +92,13 @@ until it has; after two minutes it stops, says "Still updating" (the change itse
 **Check again**, instead of asking for ever.
 
 The first (and so far only) operation is **hide**: the photo stays in the store and the catalog and is
-left out of every view (search, the Library, People, and the copy a phone keeps). Files are never
-touched. The `hidden` table is keyed by photo *and* set, so a photo two sets hide stays hidden until
-both are undone, and hiding for one person only, once the app has users, is one more column
-([issue 47](https://github.com/jflam/photo-estate/issues/47)).
+left out of every view (search, the Library, People's lists, and the copy a phone keeps) of the members
+who see through the set's **lens**. Files are never touched. The `hidden` table is keyed by photo *and*
+set, so a photo two sets hide stays hidden until both are undone. A set's lens is chosen when it is first
+applied (`change_sets.lens_id`): by default the owner's own filter ("Ben's hidden photos", made then),
+so one member's hides hide nothing for anyone else; a sysadmin may apply to the Estate defaults instead,
+which every member sees through unless they opt out ([chapter 11](11-server.md#what-each-member-sees-lenses),
+[issue 47](https://github.com/jflam/photo-estate/issues/47)).
 
 ![A change set to review: six photos an agent proposed hiding](../screenshots/changes-review.jpg)
 
@@ -151,7 +162,10 @@ plainly covers them, and end with a plain report of what it did and what it is l
 
 Each task's progress is kept as a list of events, so the Changes page can show it working and keep what
 it did afterwards. The change sets it makes carry the task's name; the agent is told apart by a header
-honoured only from this computer, and is not offered the task tools itself. It signs in with a
+honoured only from this computer, and is not offered the task tools itself. It **acts for** the member who
+submitted the task (`agent_tasks.acting_for`, looked up from the header): every tool answers as that
+member sees the library, what it makes is theirs, and its writes are journaled acting for them. A task Ben
+submits searches as Ben, not as the sysadmin the agent calls as. It signs in with a
 long-lived token from `claude setup-token`, kept in `~/.config/photo-estate/agent.env` and put in the
 agent's environment and nowhere else. The model runs in the cloud; what reaches it is the request and
 what the tools return.

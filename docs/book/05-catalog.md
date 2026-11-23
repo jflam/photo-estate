@@ -285,13 +285,17 @@ USB hard disk, reading the `exif` table was 8.7 s of startup, a correlated subqu
 
 Every table of every database (the catalog, `sync-feed.db` beside it, the setup page's `intake.db`) is
 defined in [core/schema.py](../../photo-estate/core/schema.py), as areas: `catalog`, `embeddings`, `video`,
-`faces`, `changes`, `tasks`, `scores`, `favorites`, `members`, `sync`, `intake`. Each owner calls `schema.ensure(con, area)`
+`faces`, `changes`, `tasks`, `scores`, `favorites`, `members`, `lenses`, `sync`, `intake`. Each owner calls `schema.ensure(con, area)`
 when it opens its database (`estate.connect` and `embed.connect`, which both open `video`, `faces.connect`, `Changes`, `Tasks`,
 `PhotoApp` for `favorites`, `Feed`, the intake `Store`), never per request. The `members` area (members,
 their logins and the journal) is opened by `PhotoApp` and by everything that appends to the journal
-(`estate.connect`, `faces.connect`, `Changes`, `Tasks`). `ensure` runs the area's
+(`estate.connect`, `faces.connect`, `Changes`, `Tasks`). The `lenses` area (`lenses`, `subscriptions`,
+`shown`, `member_favorites`: what each member sees, [chapter 11](11-server.md#what-each-member-sees-lenses))
+is opened by `Changes`, `PhotoApp` and `estate.py migrate`. `ensure` runs the area's
 `CREATE ... IF NOT EXISTS` statements and then adds any column listed in `ADDED` that an older table lacks
-(`change_sets.done_at`, `kind`, `query`; `change_items.section`, `position`).
+(`change_sets.done_at`, `kind`, `query`, `owner`, `lens_id`; `change_items.section`, `position`;
+`agent_tasks.acting_for`). The old `favorites` table is still made and read (as the first sysadmin's
+favourites, until `estate.py migrate` copies it), but no longer written.
 
 The Mac mini's catalog was made by older code, so the rules are: additive only (nothing is dropped,
 renamed or rewritten; only `places.py` rebuilds the three tables it derives), idempotent, and no table

@@ -77,8 +77,10 @@ class Admin:
 
     # -- http -----------------------------------------------------------------------------------
 
-    def handle(self, method: str, path: str, qs: dict, body, who: str = "", allowed: bool = True):
-        """One request -> (status, body bytes, content type, Cache-Control[, headers]), or None if it isn't ours."""
+    def handle(self, method: str, path: str, qs: dict, body, who: str = "", allowed: bool = True,
+               member: int | None = None):
+        """One request -> (status, body bytes, content type, Cache-Control[, headers]), or None if it isn't ours.
+        `member` (members.id): whose favourites /api/stats counts."""
         if method == "OPTIONS" and path.startswith("/api/upload"):
             # The phone's background uploader asks first whether the server can resume interrupted uploads.
             # It can't: 501 means "send each file in one request".
@@ -93,7 +95,7 @@ class Admin:
         if path == "/api/ingest":
             return js(self.ingest.status() | {"can_restart": self.under_launchd} if self.ingest else {"enabled": False})
         if path == "/api/stats":
-            return js(self.stats_payload((qs.get("refresh") or [""])[0] == "1"))
+            return js(self.stats_payload((qs.get("refresh") or [""])[0] == "1", member))
         return None
 
     def admin(self, path: str, who: str, allowed: bool):
@@ -205,8 +207,9 @@ class Admin:
             self.st["lib"], self.st_gen = None, self.st_gen + 1
 
     def library_stats(self):
-        """The library numbers, from the catalog being served. The caller holds the catalog gate (a request
-        does; stats_job takes it just for this)."""
+        """The library numbers, from the catalog being served: every photo, the same for every member but for
+        the favourites, which stats_payload counts for the member asking. The caller holds the catalog gate
+        (a request does; stats_job takes it just for this)."""
         import stats
         c = self.live.cat
         return stats.library_stats(c.meta, list(c.when), c.people_ix, c.trips, c.events)
@@ -255,8 +258,9 @@ class Admin:
         except sqlite3.Error:
             return None
 
-    def stats_payload(self, refresh: bool):
-        """GET /api/stats, from a request (which holds the catalog gate). One reading of `st`, under st_lock."""
+    def stats_payload(self, refresh: bool, member: int | None = None):
+        """GET /api/stats for `member`, from a request (which holds the catalog gate). One reading of `st`, under
+        st_lock. The favourites are the member's own (catalog.View.fav), counted here."""
         st = self.st
         with self.st_lock:
             if st["lib"] is None:
@@ -265,6 +269,8 @@ class Admin:
                 st["running"] = True
                 threading.Thread(target=self.stats_job, daemon=True).start()
             snap = dict(st)
+        if isinstance(snap["lib"], dict) and "favourites" in snap["lib"]:
+            snap["lib"] = {**snap["lib"], "favourites": int(self.live.visible_for(member).fav.sum())}
         import stats
         qlines = qsize = None
         try:

@@ -73,8 +73,12 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             start from --upload-user, the demo's members; every change journaled (chapter 11)
   journal.py            63  the estate's append-only log: append(con, actor, kind, subject, data) in the caller's
                             transaction, since(con, id); the kinds, and where each is appended (chapter 11)
-  catalog.py           749  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
-                            clips), Live (chapter 11)
+  lenses.py            360  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
+                            out of an estate default), "show it anyway", each member's favourites, why a photo is
+                            hidden; State, the looks every member view is worked out from (chapter 11)
+  catalog.py           840  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
+                            clips, the same for every member), View (what one member sees: mask, stacks, trip
+                            cards, counts, favourites), Live and visible_for, the one way to ask (chapter 11)
   browse.py            389  search, similar, facets, Years and Months, layout; an agent's searches; kind and is:video
   images.py            251  thumbnails (WebP), previews, large images and originals, a video's from its poster;
                             making them in the background; which file /video/ sends
@@ -84,7 +88,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
   compare.py           340  an experiment: a fixed list of searches ranked by a second model beside the app's own, voted on, and a report, at /compare (chapter 10)
   compare-terms.txt     30  the searches a comparison asks, one a line
   estate.py          1,219  ingest, link, exif, live (Live Photo pairs), dupes, review, tag, search, stats; purge (one
-                            photo for good, by hand) and migrate (every photo's first sharer); the immutable flag (chapter 4)
+                            photo for good, by hand) and migrate (every photo's first sharer, the Estate defaults lens,
+                            owners and favourites); the immutable flag (chapter 4)
   faces.py             979  faces: run, serve, and the People class (who is who)
   changes.py           473  albums and change sets: proposed, reviewed, applied, reverted, discarded as a mark (chapter 26)
   places.py            388  place names, local time, events, trips
@@ -176,6 +181,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_members.py checks members.py and its journal entries on a scratch catalog;
                             test_journal.py checks journal.py and the one entry each write appends;
+                            test_lenses.py checks lenses.py's rules and writes on a scratch catalog;
+                            test_multiplayer.py checks, as the demo's three members, what each sees everywhere, and
+                            that no route asks it any way but Live.visible_for (it reads the code);
                             test_append_only.py checks the protected tables, the sources only adding, the
                             immutable flag, purge and migrate on scratch catalogs and stores;
                             test_core.py checks core/ against what the code before it did;
@@ -199,7 +207,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)
   uv.lock                   every dependency of those groups, pinned; CI installs from it (chapter 17)
-  tools/             3,506  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh,
+  tools/             3,506  demo builder, screenshots, icons, benchmarks (bench_views.py: the member views on a
+                            library of the real size), book site, aesthetics/, cloud-*.sh,
                             video_demo.py (a copy of the demo library with videos and Live Photos, chapter 17),
                             export_squares.py (the Library as square JPEGs in tar shards, for embedding experiments),
                             embed_squares.py (a second model's vectors for those shards, for /compare),
@@ -264,7 +273,7 @@ reading one shared state object instead of closing over variables.
 
 | Module | What it holds |
 |---|---|
-| `catalog.py` | `load()`: the catalog read into a `Catalog`, a slotted dataclass with every field typed (vectors, per-photo `PhotoMeta` dicts, columns, facets, stacks, the name and place vocabulary), its shared questions (`combine`, `facet_counts`, `take`, `periods`, `scored`, ...), and `Live`, the catalog being served, swapped under a gate after an ingest and changed under it for a favourite, with a `generation` that counts both |
+| `catalog.py` | `load()`: the catalog read into a `Catalog`, a slotted dataclass with every field typed (vectors, per-photo `PhotoMeta` dicts, columns, facets, the name and place vocabulary), the same for every member; a `View` of it per member (`Catalog.view`: the mask, stacks, trip cards, counts and favourites, with the questions every route asks: `combine`, `facet_counts`, `take`, `periods`, `row`, `feed_row`, ...); and `Live`, the catalog being served, swapped under a gate after an ingest, with `visible_for(member)`, the one way a route asks what a member sees, and a `generation` that counts every change |
 | `browse.py` | `Browse`: the search language and `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log`, plus the same searches for an agent (`/mcp`) |
 | `images.py` | `Images`: `/thumb/` (WebP), `/preview/`, `/large/`, `/original/`, and pre-generating thumbnails and previews; a video's are made from its poster frame, and `video_file` says which file `/video/` streams |
 | `admin.py` | `Admin`: phone uploads, the ingest, restart, the `/stats` page, preparing arrivals; catalog backups |

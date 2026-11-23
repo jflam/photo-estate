@@ -34,6 +34,23 @@ members (members.py):
   POST /api/members/<id> {name?, role?, status?, upload_policy?, person_id?}   (sysadmin) approve, revoke...
   GET  /members?be=<login>            --demo only: be that demo member in this browser (a cookie)
 
+and what each member sees through (lenses.py), outside the gate like a favourite, so a change is in every
+view before the answer:
+
+  GET  /api/lenses                    the member's lenses, the estate defaults, and those others publish
+  POST /api/lenses {title}            a new filter lens of the member's
+  POST /api/lenses/<id>/subscribe {mode: live | snapshot, title?}   (an estate default: back in)
+  POST /api/lenses/<id>/unsubscribe   (an estate default: opt out)
+  POST /api/lenses/<id>/publish {on}, /propose, /decide {accept} (a sysadmin)
+  POST /api/albums/<id>/publish {on}  an album of the member's as a series
+  POST /api/photos/<sha>/show {on}    "show it anyway"
+  GET  /api/photos/<sha>/why          why the member does not see a photo
+
+Every route answers for the member the request is for: what they see is catalog.Live.visible_for(member)
+(their filters; their favourites; their stacks, trips and counts), never one mask for everyone. /api/sync
+is the member's own feed (sync-feed.db for the first sysadmin, sync-feed-<id>.db for anyone else, made the
+first time one of their phones asks).
+
 Who may do what (http_util.py has the rule; ROUTE_AUTH below): only active members may do anything at all
 (Auth.MEMBER), and a request from this computer itself is the sysadmin. Letting people in, bringing photos
 in from a folder (/setup, /api/intake) and restarting take a sysadmin (Auth.SYSADMIN). Open to anyone who
@@ -72,6 +89,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import catalog
 import journal
+import lenses
 import members
 import pages   # the pages, with the shared stylesheet put in
 from admin import Admin, backups
@@ -110,6 +128,9 @@ DEMO_HEADER, DEMO_COOKIE = "X-Demo-Member", "demo_member"   # --demo only: which
 # Requests that don't hold the catalog gate: they read no catalog, or only briefly, and can be slow.
 UNGATED = ("/api/upload/", "/api/intake", "/setup")
 FAVORITE = re.compile(r"/api/favorite|/api/albums/\d+/favorite")   # (POST) the gate's write side, in set_favorites
+# (POST) what a member sees through, changed (lenses.py): the gate's write side, in relook
+LENS_WRITE = re.compile(r"/api/lenses(?:/(\d+)/(subscribe|unsubscribe|publish|propose|decide))?"
+                        r"|/api/albums/(\d+)/publish|/api/photos/([0-9a-f]{64})/show")
 APP_TYPES = {".webmanifest": "application/manifest+json", ".js": "text/javascript; charset=utf-8",
              ".png": "image/png"}
 
@@ -154,7 +175,7 @@ class PhotoApp:
         self.cache = cache = Path(a.fast_cache) if a.fast_cache else seed
         self.t0 = time.time()
         con = connect(a.db)               # the tables this app writes itself (core/schema.py), made when it opens
-        schema.ensure(con, "favorites", "members")
+        schema.ensure(con, "favorites", "members", "lenses")
         # Members (members.py). The demo makes its own in its scratch catalog; a catalog with none yet takes
         # the --upload-user logins, as they could write before.
         made = members.demo(con) if a.demo else members.first_start(con, a.upload_user, a.sysadmin)
@@ -165,7 +186,7 @@ class PhotoApp:
         if not self.roster and not a.demo:
             print("members: none yet, so only this computer can use the app (name one with --sysadmin LOGIN)", flush=True)
         try:
-            self.live = live = catalog.Live(self.load_catalog())
+            self.live = live = catalog.Live(self.load_catalog(), self.read_looks())
         except RuntimeError as e:
             sys.exit(str(e))
         print(f"{live.cat.N} images loaded in {time.time() - self.t0:.1f}s ({len(live.cat.events)} events,"
@@ -177,8 +198,19 @@ class PhotoApp:
         self.people, self.people_loading = Lifecycle("the People page"), threading.Lock()   # one load at a time
         self.encoder = Encoder(a.model, a.threads, images=bool(inbox), device=a.device)   # the image side too, for photos from the phone
         # Devices that keep their own copy of the catalog (the iPhone app) follow it through a change feed
-        # (sync.py). The feed's versions live beside the catalog, never in it.
-        self.feed = Feed(Path(a.db).resolve().parent / "sync-feed.db")
+        # (sync.py), one per member, of what that member sees: a photo one member's filters hide leaves only
+        # that member's phones. The feeds' versions live beside the catalog, never in it. The first sysadmin's
+        # is sync-feed.db, as before members (the owner's phone does not fetch the library again); anyone
+        # else's is sync-feed-<member id>.db, made the first time one of their phones asks (feed_of), and
+        # kept up to date from then on (feed_update), so the cost of a feed is paid only for members with one.
+        self.feed_dir = Path(a.db).resolve().parent
+        self.feed = Feed(self.feed_dir / "sync-feed.db")
+        self.feed_member = self.sysadmin.id if self.sysadmin else None   # whose view sync-feed.db is
+        self.feeds: dict[int | None, Feed] = {self.feed_member: self.feed}
+        for f in sorted(self.feed_dir.glob("sync-feed-*.db")):
+            if (mid := f.stem.removeprefix("sync-feed-")).isdigit() and int(mid) != self.feed_member:
+                self.feeds[int(mid)] = Feed(f)
+        self.feeds_lock = threading.Lock()
         # Home-screen app files (manifest, icons, service worker), served from the site root: a service
         # worker only controls pages at or below its own path.
         app_dir = HERE / "app"
@@ -189,7 +221,7 @@ class PhotoApp:
 
         self.qlog = qlog = Path(a.query_log or Path(a.db).resolve().parent / "query-log.jsonl")
         self.browse = browse = Browse(live, self.encoder, a.db, a.model, qlog, a.match_floor, a.match_window, a.best_window)
-        self.images = Images(live, store, cache, seed)
+        self.images = Images(live, store, cache, seed, may_see=self.may_see)
         self.admin = Admin(live, self.encoder, connect, now, db=a.db, model=a.model, store=store, cache=cache, seed=seed,
                            inbox=inbox, ingest=ingest, query_log=qlog, demo=a.demo,
                            faces_ready=lambda: self.people_state() == "ready")
@@ -211,13 +243,11 @@ class PhotoApp:
 
         # Favourites set in the app. The catalog's own flag (assets.favorited) is what the photo's source said,
         # and `estate.py link` writes it again on every ingest, so what a person says here is kept beside it
-        # (the `favorites` table) and wins. It shows at once: the photo's row, the count and every cached
-        # order and cover are brought up to date here rather than by re-reading the catalog (catalog.load reads
-        # the table too, so a reload agrees). While a reload is reading the catalog, `fav_log` is every one
-        # set since it began (None otherwise), so a reload that read the table a moment too early is put right
-        # as it is swapped in. fav_lock guards fav_log; fav_write puts one set_favorites at a time.
-        # Lock order: fav_write, then live.gate, then fav_lock (catalog.Gate).
-        self.fav_lock, self.fav_write, self.fav_log = threading.Lock(), threading.Lock(), None
+        # (the `favorites` table) and wins. It shows at once: the member's view (its rows, the count) and every
+        # cached order and cover are brought up to date here, and the looks (lenses.State, which every view is
+        # worked out from) are told, so a view worked out again agrees. fav_write puts one set_favorites, or
+        # one re-reading of the looks (relook), at a time. Lock order: fav_write, then live.gate (catalog.Gate).
+        self.fav_write = threading.Lock()
         # Re-reading the catalog is in one of three states: idle, running, or rerun (asked again while
         # running: when this run ends, another starts, so nothing that was asked for is missed).
         self.reload_state = {"state": "idle", "at": None, "seconds": None, "error": None}
@@ -229,7 +259,7 @@ class PhotoApp:
         self.changes = Changes(a.db, facts=lambda sha: self.live.cat.meta.get(sha), shown=self.shown,
                                busy=lambda: self.settling > 0 or self.reload_state["state"] != "idle",
                                on_change=self.on_hidden_change, find=browse.find, favorite=self.set_favorites,
-                               cover=lambda ids: self.live.cat.album_cover(ids))
+                               visible_for=self.live.visible_for, reading=self.reading)
         # Tasks (tasks.py): a request in words, worked on by an agent on this computer that uses the MCP
         # endpoint below like any other client, and ends in a change set.
         self.tasks = Tasks(a.db, config.mcp_url(self.port), command=a.agent_cmd, env_file=a.agent_env,
@@ -260,6 +290,26 @@ class PhotoApp:
 
     def load_catalog(self, prev: dict | None = None) -> catalog.Catalog:
         return catalog.load(connect(self.a.db), self.a.model, self.cache, self.seed, prev, demo=self.a.demo)
+
+    def read_looks(self) -> lenses.State:
+        """What the tables say about who sees what (lenses.py): every member's view is worked out from it."""
+        con = connect(self.a.db)
+        try:
+            return lenses.read(con)
+        finally:
+            con.close()
+
+    def relook(self) -> bool:
+        """What someone hides has changed: read the looks again, and every member's view is worked out anew.
+        Never from inside the gate (a request): it takes the write side. True if what the estate defaults
+        hide changed (People is built without those photos: faces.py)."""
+        with self.fav_write:     # not while a favourite is being shown: it would be lost from the looks
+            before = self.live.looks.default_hidden() if isinstance(self.live.looks, lenses.State) else None
+            looks = self.read_looks()
+            self.live.relook(looks)
+            self.browse.forget()
+            self.admin.forget_library()
+        return before != looks.default_hidden()
 
     def load_people(self) -> None:
         """Again after a reload: the one that is ready keeps answering until the new one is, and keeps
@@ -299,51 +349,69 @@ class PhotoApp:
         if not a.no_pregenerate:
             threading.Thread(target=self.images.pregenerate, daemon=True).start()
 
+    def feed_of(self, member: int | None, make: bool = False) -> Feed | None:
+        """`member`'s feed (None: the first sysadmin's, sync-feed.db); with `make`, made if they have none yet."""
+        key = self.feed_member if member is None else member
+        with self.feeds_lock:
+            feed = self.feeds.get(key)
+            if feed is None and make:
+                feed = self.feeds[key] = Feed(self.feed_dir / f"sync-feed-{key}.db")
+            return feed
+
+    @staticmethod
+    def feed_rows(v: catalog.View) -> dict:
+        """A feed's rows: every photo the member sees, as its search result plus View.feed_extra."""
+        return {s: v.feed_row(s) for s, ok in zip(v.cat.shas, v.visible) if ok}
+
     def feed_update(self) -> None:
-        """Tell the feed what the catalog now holds. A row is the photo's search result, plus Catalog.feed_extra."""
-        t, c = time.time(), self.live.cat
-        n = self.feed.update({s: c.feed_row(s) for s, v in zip(c.shas, c.visible) if v})
-        print(f"sync feed: version {self.feed.version}, {n} rows changed ({time.time() - t:.1f}s)", flush=True)
+        """Tell every member's feed what they now see (only members who have a feed: see feed_of)."""
+        for member, feed in list(self.feeds.items()):
+            t = time.time()
+            with self.live.gate:
+                rows = self.feed_rows(self.live.visible_for(member))
+            n = feed.update(rows)
+            print(f"sync feed{'' if feed is self.feed else f' of member {member}'}: version {feed.version}, {n} rows changed"
+                  f" ({time.time() - t:.1f}s)", flush=True)
 
     # -- favourites, reloads, change sets ----------------------------------------------------------
 
-    def set_favorites(self, shas, on: bool, who: str, actor: int | None = None, subject: str | None = None) -> int:
-        """Record them, show them, tell the phones. Returns how many photos it changed. Called outside the
-        gate (handle() lets the favourite routes through without it): showing them takes its write side.
-        One favorite.set journal entry by `actor` (members.id) about `subject` (the photo, or album:<id>)."""
+    def set_favorites(self, shas, on: bool, who: str, actor: int | None = None, subject: str | None = None,
+                      member: int | None = None) -> int:
+        """Record them as `member`'s favourites (by default the actor's), show them, tell the phones. Returns how
+        many photos it changed. Called outside the gate (handle() lets the favourite routes through without it):
+        showing them takes its write side. One favorite.set journal entry by `actor` (members.id) about
+        `subject` (the photo, or album:<id>)."""
+        member = actor if member is None else member
+        feed = self.feed_of(member)
         with self.fav_write:   # one at a time, so the table and the catalog end up with the same last word
             shas = [s for s in dict.fromkeys(shas) if s in self.live.cat.index]
             con = connect(self.a.db)   # the table first, outside the gate: requests aren't held up by SQLite
             try:
-                t = now()
-                con.executemany("INSERT OR REPLACE INTO favorites VALUES (?,?,?,?)", ((s, int(on), t, who or None) for s in shas))
+                lenses.set_favorites(con, member, shas, on)   # member_favorites: `favorites` is no longer written
                 if shas:
                     journal.append(con, actor, "favorite.set", subject or (shas[0] if len(shas) == 1 else "photos"),
-                                   {"fav": on, "photos": len(shas)})
+                                   {"fav": on, "photos": len(shas), **({"member": member} if member != actor else {})})
                 con.commit()
             finally:
                 con.close()
 
             def show(c: catalog.Catalog):   # the catalog being served now, no request reading it
-                changed = [s for s in shas if s in c.index and bool(c.fav[c.index[s]]) != on]
-                with self.fav_lock:
-                    if self.fav_log is not None:   # a reload is reading the catalog: it may have read the table too early
-                        self.fav_log.extend((s, on) for s in shas)
-                c.show_favorites((s, on) for s in shas)
+                v = self.live.visible_for(member)
+                changed = [s for s in shas if s in c.index and bool(v.fav[c.index[s]]) != on]
+                self.live.looks.set_favorites(member, shas, on)     # (lenses.State) a view worked out again agrees
+                for key, w in list(self.live.views.items()):        # this member's view (None: the first sysadmin's)
+                    if self.live.looks.who(key) == self.live.looks.who(member):
+                        w.show_favorites((s, on) for s in shas)
                 self.browse.forget()            # covers and "favourites only" lists were worked out without them
                 self.admin.forget_library()
-                return changed, {s: c.feed_row(s) for s in changed if c.visible[c.index[s]]} if self.feed.ready else {}
+                return changed, {s: v.feed_row(s) for s in changed if v.visible[c.index[s]]} if feed and feed.ready else {}
             changed, rows = self.live.update(show)
-        if rows:
-            self.feed.touch(rows)
+        if rows and feed:
+            feed.touch(rows)
         return len(changed)
 
     def caught_up(self, cat: catalog.Catalog) -> None:
-        """In the swap that installs a reloaded catalog: show it the favourites set while it was read, and
-        drop the log (the table had the ones before, so it now reflects them all)."""
-        with self.fav_lock:
-            cat.show_favorites(self.fav_log or ())
-            self.fav_log = None
+        """In the swap that installs a reloaded catalog: what was worked out from the old one is let go."""
         self.browse.forget()      # cached masks and rankings are the old catalog's
         self.admin.forget_library()
 
@@ -359,8 +427,6 @@ class PhotoApp:
         try:
             while True:
                 t = time.time()
-                with self.fav_lock:
-                    self.fav_log = []         # favourites set from here on are shown to the new catalog too
                 try:
                     fresh = self.load_catalog(self.live.cat.raw)
                     if os.environ.get("PHOTO_ESTATE_CHECK_RELOAD"):   # tools/bench_ingest.py --check
@@ -372,8 +438,6 @@ class PhotoApp:
                     if not self.a.no_pregenerate:
                         threading.Thread(target=self.images.pregenerate, daemon=True).start()
                 except Exception as e:   # keep serving the old catalog
-                    with self.fav_lock:
-                        self.fav_log = None
                     rs["error"] = f"{type(e).__name__}: {e}"
                     print(f"catalog reload failed: {rs['error']}", flush=True)
                 with self.reload_lock:
@@ -388,23 +452,43 @@ class PhotoApp:
         if self.ingest and not rs["error"]:
             self.ingest.fresh = False
 
-    def hidden_changed(self) -> None:
+    def hidden_changed(self, people: bool | None = None) -> None:
+        """After a change to what someone hides: every view anew (relook, unless done already: then `people`
+        says whether the estate defaults' hides changed), every member's feed, and People if they did."""
         try:
-            self.reload_catalog()
-            if self.live.cat.has_faces:
+            if people is None:
+                people = self.relook()
+            self.feed_update()
+            if people and self.live.cat.has_faces:
                 self.load_people()
         finally:
             with self.settling_lock:
                 self.settling -= 1
 
-    def on_hidden_change(self) -> None:
+    def on_hidden_change(self, people: bool | None = None) -> None:
+        """Changes.on_change (a change set applied or reverted) and the lens routes: hidden_changed, in the
+        background; `busy` (the review page's check) is true until it is done."""
         with self.settling_lock:
             self.settling += 1
-        threading.Thread(target=self.hidden_changed, daemon=True).start()
+        threading.Thread(target=self.hidden_changed, args=(people,), daemon=True).start()
 
-    def shown(self, sha: str) -> dict:
-        c = self.live.cat
-        return {"library": sha in c.index and bool(c.visible[c.index[sha]]), "sync": sha in self.feed.rows}
+    def reading(self, fn):
+        """fn(), as a request reads the catalog: inside the gate."""
+        with self.live.gate:
+            return fn()
+
+    def may_see(self, sha: str, member: int | None) -> bool:
+        """Whether `member` may be shown this photo at all (Live.shared_for), for the pixel routes (images.py)."""
+        i = self.live.cat.index.get(sha)
+        return i is not None and bool(self.live.shared_for(member)[i])
+
+    def shown(self, sha: str, viewer: int | None = None) -> dict:
+        """Where the running app shows a photo to `viewer`: in their library, and in their phones' feed (a
+        member with no feed yet: as in the library)."""
+        v = self.live.visible_for(viewer)
+        library = sha in v.cat.index and bool(v.visible[v.cat.index[sha]])
+        feed = self.feed_of(viewer)
+        return {"library": library, "sync": sha in feed.rows if feed else library}
 
     # -- who a request is for -----------------------------------------------------------------------
 
@@ -484,7 +568,7 @@ class PhotoApp:
         """Whether a request holds the catalog gate: not the slow ones (UNGATED, album downloads), nor
         setting favourites, which takes the gate's write side itself (set_favorites)."""
         return not (path.startswith(UNGATED) or path.endswith("/download")
-                    or method == "POST" and FAVORITE.fullmatch(path) is not None)
+                    or method == "POST" and (FAVORITE.fullmatch(path) or LENS_WRITE.fullmatch(path)) is not None)
 
     def route(self, req: Request) -> Response:
         method, headers, local = req.method, req.headers, req.local
@@ -527,6 +611,8 @@ class PhotoApp:
             return self.change_member(int(mid[1]), body, m)
         if path == "/api/favorite":
             return self.favorite(body, who, m.id if m else None)
+        if (lw := LENS_WRITE.fullmatch(path)) is not None:
+            return self.lens_write(lw, body, m)
         if self.compare and path.startswith("/api/compare"):
             got = self.compare.handle("POST", path, qs, body, who)   # a vote, or a run started or finished
             return Response.of(got) if got else NOT_FOUND
@@ -553,12 +639,14 @@ class PhotoApp:
         if re.fullmatch(r"/api/albums/(\d+)/download", path):
             return Response(501, b"the album download is streamed: ask the HTTP server", "text/plain")
         if path.startswith("/video/"):    # so a test, or a caller with no socket, can still ask whether it is there
-            got = self.images.video_file(path[len("/video/"):], one("original") == "1")
+            got = self.images.video_file(path[len("/video/"):], one("original") == "1", m.id if m else None)
             return Response(501, b"a video is streamed: ask the HTTP server", got[1]) if got else NOT_FOUND
         if self.intake and path.startswith(("/setup", "/api/intake")):
             return Response.of(self.intake.handle("GET", path, qs, None, req.local))
         who = m.login if m else ""
-        for got in (self.people_page("GET", path, qs, None), self.changes_route("GET", path, qs, None, who)):
+        for got in (self.people_page("GET", path, qs, None, viewer=m.id if m else None),
+                    self.changes_route("GET", path, qs, None, who, m.id if m else None),
+                    self.lens_read(path, m)):
             if got is not None:
                 return got
         if path == "/mcp":
@@ -568,26 +656,33 @@ class PhotoApp:
         if self.compare and path in ("/compare", "/compare.html"):
             return _etagged(pages.page("compare.html"), "text/html; charset=utf-8")
         if self.compare and path.startswith("/api/compare"):
-            got = self.compare.handle("GET", path, qs, None)
+            got = self.compare.handle("GET", path, qs, None, member=m.id if m else None)
             return Response.of(got) if got else NOT_FOUND
-        got = (self.browse.handle("GET", path, qs, None, req.headers)
-               or self.admin.handle("GET", path, qs, None, who, Auth.MEMBER.allows(m))
-               or self.images.handle("GET", path, qs, None))
+        viewer = m.id if m else None
+        got = (self.browse.handle("GET", path, qs, None, req.headers, viewer)
+               or self.admin.handle("GET", path, qs, None, who, Auth.MEMBER.allows(m), viewer)
+               or self.images.handle("GET", path, qs, None, viewer))
         if got:
             return Response.of(got)
-        c = self.live.cat
+        v = self.live.visible_for(viewer)
         if path == "/api/info":   # (compare: the experiment is on, so the Library's menu offers it)
-            return json_response({**c.info, "compare": True} if self.compare else c.info)
-        if path == "/api/sync":   # what changed since a device last asked (sync.py)
-            if not self.feed.ready:
+            return json_response({**v.info, "compare": True} if self.compare else v.info)
+        if path == "/api/sync":   # what changed since a device last asked (sync.py), in the member's own feed
+            feed = self.feed_of(viewer)
+            if feed is None:      # this member's first phone: their feed is made now, from what they see
+                limit = int_param(qs, "limit", 2000, min=1, max=10000)   # (a bad number is a 400 first)
+                feed = self.feed_of(viewer, make=True)
+                assert feed is not None
+                feed.update(self.feed_rows(v))
+            if not feed.ready:
                 return json_response({"error": "starting"}, 503, {"Retry-After": "5"})
             since, limit = one("since", "0"), int_param(qs, "limit", 2000, min=1, max=10000)
-            ids, deleted, (ver, after), more = self.feed.page(one("epoch"), int(since) if since.isdigit() else 0,
-                                                              one("after"), limit)
-            rows = [dict(sha=s, **c.feed_row(s)) for s in ids if s in c.meta]
-            return json_response({"epoch": self.feed.epoch, "photos": rows, "deleted": deleted, "since": ver,
-                                  "after": after, "more": more, "total": c.info["total"],
-                                  "trips": [] if more else c.trip_list})
+            ids, deleted, (ver, after), more = feed.page(one("epoch"), int(since) if since.isdigit() else 0,
+                                                         one("after"), limit)
+            rows = [dict(sha=s, **v.feed_row(s)) for s in ids if s in v.cat.meta]
+            return json_response({"epoch": feed.epoch, "photos": rows, "deleted": deleted, "since": ver,
+                                  "after": after, "more": more, "total": v.info["total"],
+                                  "trips": [] if more else v.trip_list})
         if path in self.app_files:
             f = self.app_files[path]
             return _etagged(f.read_bytes(), APP_TYPES[f.suffix])
@@ -595,9 +690,12 @@ class PhotoApp:
             return _etagged(mod, pages.MODULE_TYPE)
         return NOT_FOUND
 
-    def people_page(self, method: str, path: str, qs: dict, body, actor: int | None = None) -> Response | None:
+    def people_page(self, method: str, path: str, qs: dict, body, actor: int | None = None,
+                    viewer: int | None = None) -> Response | None:
         """A People page request (faces.py), or None if the path isn't one. Writes were authorized in route();
-        `actor` is the member they are journaled as."""
+        `actor` is the member they are journaled as. People is built once for everyone, without the photos the
+        estate defaults hide (faces.face_rows); `viewer`'s own filters apply as a person's faces are listed:
+        a face in a photo they do not see is left out (People.handle's `keep`), as is a cover of one."""
         if not self.live.cat.has_faces or not path.startswith(("/people", "/face/", "/api/people")):
             return None
         s = self.people.snapshot()
@@ -615,7 +713,11 @@ class PhotoApp:
             return Response(503, b"Faces are still loading; try again in a moment.", "text/plain")
         if method == "POST" and not isinstance(body, dict):
             return json_response({"error": "expected a JSON object"}, 400)
-        return Response.of(s.value.handle(method, path, qs, body, actor))
+        keep = None
+        if method == "GET":
+            v = self.live.visible_for(viewer)
+            keep = lambda sha: (i := v.cat.index.get(sha)) is not None and bool(v.visible[i])   # noqa: E731
+        return Response.of(s.value.handle(method, path, qs, body, actor, keep=keep))
 
     def changes_route(self, method: str, path: str, qs: dict, body, who: str, acting_for: int | None = None) -> Response | None:
         """Change sets (changes.py) and tasks (tasks.py): the review page and their API. Proposing, deciding
@@ -632,6 +734,78 @@ class PhotoApp:
         that member, a call from this computer the sysadmin (and the estate's agent, with X-Estate-Task)."""
         return Response.of(self.mcp.handle(method, req.headers, body, Auth.MEMBER.allows(m), m.login if m else "",
                                            req.local, m.id if m else None))
+
+    # -- lenses (lenses.py) -----------------------------------------------------------------------
+
+    def lens_read(self, path: str, m: Member | None) -> Response | None:
+        """GET /api/lenses (the member's lenses, the estate defaults, those others publish) and
+        GET /api/photos/<sha>/why (why the member does not see a photo), or None if the path is neither."""
+        viewer = m.id if m else None
+        why = re.fullmatch(r"/api/photos/([0-9a-f]{64})/why", path)
+        if path != "/api/lenses" and not why:
+            return None
+        con = connect(self.a.db)
+        try:
+            looks = lenses.read(con)     # the tables as they are now (the views follow them a moment later)
+            if why is None:
+                return json_response(lenses.listing(con, looks, viewer))
+            sha = why[1]
+            if not self.may_see(sha, viewer):   # (a photo they may not be shown is not there, as for /thumb/)
+                return json_response({"error": "no such photo"}, 404)
+            v = self.live.visible_for(viewer)
+            return json_response({**lenses.why(con, looks, viewer, sha), "visible": bool(v.visible[v.cat.index[sha]])})
+        finally:
+            con.close()
+
+    def lens_write(self, lw: re.Match, body, m: Member | None) -> Response:
+        """The POST routes of lenses.py (LENS_WRITE): a lens made, subscribed to or left, published, proposed
+        or decided; an album published as a series; a photo shown anyway. Outside the gate, like a favourite:
+        a change to what a member sees through is in every view (relook) before this answers; the feeds and
+        People follow in the background (on_hidden_change)."""
+        if not isinstance(body, dict):
+            return json_response({"error": "expected a JSON object"}, 400)
+        viewer = m.id if m else None
+        lid, what, album, sha = int(lw[1]) if lw[1] else None, lw[2], int(lw[3]) if lw[3] else None, lw[4]
+        flag = lambda k, d=True: body.get(k, d)   # noqa: E731
+        for k in ("on", "accept"):
+            if k in body and not isinstance(body[k], bool):
+                return json_response({"error": f"{k} is true or false"}, 400)
+        relook = True
+        con = connect(self.a.db)
+        try:
+            if sha is not None:
+                with self.live.gate:
+                    if not self.may_see(sha, viewer):
+                        return json_response({"error": "no such photo"}, 404)
+                got = lenses.show(con, viewer, sha, flag("on"))
+            elif album is not None:
+                got, relook = lenses.publish_album(con, viewer, album, flag("on")), False
+            elif lid is None:
+                got, relook = {"lens": lenses.create(con, viewer, body.get("title")), "changed": True}, False
+            else:
+                lens = lenses.get(con, lid)
+                relook = lens is not None and lens.kind == "filter"
+                if what == "subscribe":
+                    shas = None
+                    if lens is not None and lens.kind == "series" and body.get("mode") == "snapshot" and lens.set_id is not None:
+                        with self.live.gate:    # a series' photos, as this member sees them, are what is copied
+                            shas = (self.changes.shas(lens.set_id, viewer) or ("", []))[1]
+                    got = lenses.subscribe(con, viewer, lid, body.get("mode") or "live", shas, body.get("title"))
+                elif what == "unsubscribe":
+                    got = lenses.unsubscribe(con, viewer, lid)
+                elif what == "publish":
+                    got = lenses.publish(con, viewer, lid, flag("on"))
+                elif what == "propose":      # (it publishes the lens: a subscription to it may come on)
+                    got = lenses.propose(con, viewer, lid)
+                else:
+                    got = lenses.decide(con, viewer, lid, flag("accept"))
+        except lenses.LensError as e:
+            return json_response({"error": str(e)}, e.status)
+        finally:
+            con.close()
+        if got.get("changed") and relook:
+            self.on_hidden_change(self.relook())
+        return json_response(got)
 
     # -- members (members.py) ---------------------------------------------------------------------
 
@@ -717,6 +891,7 @@ class PhotoApp:
         finally:
             con.close()
         self.load_members()
+        self.on_hidden_change()    # (who the first sysadmin is decides whose an owner-less album, lens or favourite is)
         print(f"members: {row['name']} is now {row['status']}, {row['role']} (by {m.name if m else 'this computer'})", flush=True)
         return json_response({"member": row})
 
@@ -739,13 +914,14 @@ class PhotoApp:
             return json_response({"error": "say which photo (sha) and fav: true or false"}, 400)
         self.set_favorites([sha], on, who, actor, sha)
         with self.live.gate:
-            n = self.live.cat.info["fav"]
+            n = self.live.visible_for(actor).info["fav"]
         return json_response({"sha": sha, "fav": on, "favourites": n})
 
-    def album_files(self, sid: int):
-        """The album's title and its (original file, name in the zip) pairs, or None if there is no such album."""
+    def album_files(self, sid: int, viewer: int | None = None):
+        """The album's title and its (original file, name in the zip) pairs, as `viewer` sees the album (its
+        photos they see: Changes.shas), or None if there is no such album for them."""
         with self.live.gate:              # only to say which files; the copying must not hold up a reload
-            got, meta = self.changes.shas(sid), self.live.cat.meta
+            got, meta = self.changes.shas(sid, viewer), self.live.cat.meta
             if not got:
                 return None
             return got[0], [(self.images.original(s, meta[s]["ext"]),
@@ -830,10 +1006,11 @@ def make_handler(app: PhotoApp):
             streamed = method == "GET" and (re.fullmatch(r"/api/albums/\d+/download", path) or path.startswith("/video/"))
             if streamed and (no := app.refusal(Request(method, self.path, self.headers, b"", is_local(self)))) is not None:
                 return self.send(no)
+            viewer = (getattr(app.who(self.headers, is_local(self)), "id", None)) if streamed else None
             if method == "GET" and (m := re.fullmatch(r"/api/albums/(\d+)/download", path)):
-                return self.download(int(m[1]))
+                return self.download(int(m[1]), viewer)
             if method == "GET" and path.startswith("/video/"):
-                return self.video(path[len("/video/"):], parse_qs(urlparse(self.path).query).get("original") == ["1"])
+                return self.video(path[len("/video/"):], parse_qs(urlparse(self.path).query).get("original") == ["1"], viewer)
             body = b""
             if method == "POST":
                 try:
@@ -867,13 +1044,13 @@ def make_handler(app: PhotoApp):
             self.close_connection = client_closes or unread
             self.send(Response.of(got))
 
-        def video(self, sha: str, original: bool = False):
+        def video(self, sha: str, original: bool = False, viewer: int | None = None):
             """GET /video/<sha>: a video, or a Live Photo's clip, as stored, read from the disk as it is sent
             (a video can be gigabytes). Answers a Range request with 206 and just those bytes: a player asks
             for the start, then the index at the end, then wherever it is dragged to, and Safari plays nothing
             from a server that cannot. An unsatisfiable range is a 416."""
             with app.live.gate:              # which file: one look at the catalog, then the gate is let go
-                got = app.images.video_file(sha, original)
+                got = app.images.video_file(sha, original, viewer)
             if got is None:
                 return self.send(NOT_FOUND)
             src, ctype, name = got
@@ -912,11 +1089,11 @@ def make_handler(app: PhotoApp):
             if left:
                 self.close_connection = True
 
-        def download(self, sid: int):
+        def download(self, sid: int, viewer: int | None = None):
             """GET /api/albums/<id>/download: the album's original files as one zip, written as it is read
             (nothing is held in memory or on disk). Names are the files' own, numbered when two are alike."""
             import zipfile
-            got = app.album_files(sid)
+            got = app.album_files(sid, viewer)
             if not got:
                 return self.send(json_response({"error": "no such album"}, 404))
             title, files = got
