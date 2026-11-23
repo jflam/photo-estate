@@ -87,11 +87,12 @@ WHYS = ("new", "held", "withdrawn")
 # when any of them reaches HOLD_AT, or when catalog.is_screenshot says it is a screenshot. Set on the demo
 # library and on made receipts, screenshots and documents (docs/notes/MULTIPLAYER-PLAN.md, phase 5's Built
 # note): the demo's 104 photos score at most 0.058 on any prompt; made receipts 0.13-0.17 ("a receipt"),
-# documents 0.14 ("a document"), phone screenshots 0.096-0.134 ("a screenshot of a phone"). A search's own
-# floor is 0.085 (embed.MATCH_FLOOR); this is lower, leaning towards holding: a photo held by mistake is one
-# click to release, one shared by mistake has been seen. Check it on the real library with `library --dry-run`.
+# documents 0.14 ("a document"), phone screenshots 0.096-0.134 ("a screenshot of a phone"). It was first 0.075,
+# below a search's own floor (0.085, embed.MATCH_FLOOR); the dry run on the real library held 12,005 photos
+# there and 7,999 at 0.095, with no gap in the scores, and the owner chose 0.095 (2026-11-23): fewer to look
+# over, and a phone's screenshots are held by their mark whatever they score. Check a change with `library --dry-run`.
 PROMPTS = ("a receipt", "a screenshot of a phone", "a document")
-HOLD_AT = 0.075
+HOLD_AT = 0.095
 VECTORS = HERE / "hold-prompts.json"       # {model: {prompt: base64 float16 unit vector}}: embed.py hold-prompts
 KEEP = object()            # change(): leave `until` as it is
 

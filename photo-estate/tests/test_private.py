@@ -549,7 +549,7 @@ def test_the_prompts_vectors_are_the_prompts_and_the_demo_holds_nothing(app):
     con.close()
     assert len(judged) == app.live.cat.N and not any(why for why, _ in judged.values()), "the demo holds nothing"
     # a phone screenshot is held by its shape alone; a camera photo of that size is not
-    assert private.reasons([0, 0, 0], True) == ["is_screenshot"] and private.reasons([0.08, 0, 0], False) == ["a receipt"]
+    assert private.reasons([0, 0, 0], True) == ["is_screenshot"] and private.reasons([private.HOLD_AT, private.HOLD_AT - 0.001, 0], False) == ["a receipt"]
     from catalog import is_screenshot
     assert is_screenshot({"ext": ".png", "w": 1170, "h": 2532, "path": "m2/2026/11/14/IMG_0042.PNG"})
     assert not is_screenshot({"ext": ".heic", "w": 1170, "h": 2532, "camera": "iPhone 15", "path": "m2/x.HEIC"})
@@ -565,7 +565,7 @@ def test_the_one_off_run_dry_run_then_twice(app):
     got = private.library(con, ada, MODEL, dry_run=True, out=said.append)
     assert [con.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in ("private", "journal", "inbox_items")] == before
     assert got["held"] == 1 and got["by_reason"]["a document"] == 1 and got["photos"] == app.live.cat.N
-    assert [x["id"] for x in got["sample_held"]] == [r_sha] and sum(b["photos"] for b in got["near"]) >= 1
+    assert [x["id"] for x in got["sample_held"]] == [r_sha] and [b["from"] for b in got["near"]][6] == private.HOLD_AT
     text = "\n".join(said)
     assert r_sha in text and "nothing is changed" in text
     names = [fn for fn, in con.execute("SELECT filename FROM occurrences")]

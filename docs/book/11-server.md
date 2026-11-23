@@ -308,7 +308,7 @@ default does (`PhotoApp.relook` says whether `State.people_out` changed).
 the app (`catalog_ready`): each `new` row whose photo has a vector is scored against three prompts ("a
 receipt", "a screenshot of a phone", "a document": `private.PROMPTS`) with its SigLIP 2 vector, plus
 `catalog.is_screenshot` and the phone's own mark (an upload's `X-Screenshot`, which upload.py writes into its
-sidecar as the keyword `screenshot`, read back from the `xmp` table); one at or over `private.HOLD_AT` (0.075) on
+sidecar as the keyword `screenshot`, read back from the `xmp` table); one at or over `private.HOLD_AT` (0.095) on
 any prompt, or a screenshot, is **held**
 (one `photo.held` journal entry and one `held` inbox item per member and batch), and the rest are let go (their
 row goes: the photo is shared). The prompts' vectors are a file (`hold-prompts.json`, made once by `embed.py

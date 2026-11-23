@@ -453,7 +453,7 @@ sqlite3 $DB "select count(*) from private"                    # 0
 uv run private.py --db $DB check                              # "hold: nothing new to check"
 
 # 2. The dry run over the owner's library: changes nothing; prints how many each prompt would hold, the best
-#    scores near the threshold (0.075), and ids (never a file name). Open a few of the ids in the app
+#    scores near the threshold (0.095), and ids (never a file name). Open a few of the ids in the app
 #    (/preview/<id>), those held and those just below, to judge whether the threshold is right. To move it,
 #    change HOLD_AT in private.py on a branch (it is the one place), and run the dry run again.
 uv run private.py --db $DB library --member $ME --dry-run

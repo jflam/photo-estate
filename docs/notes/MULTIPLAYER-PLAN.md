@@ -597,7 +597,7 @@ hold and the one-off run. The choices:*
   `catalog.is_screenshot`. On the demo's 104 photos the highest score of any prompt is 0.058 (it holds none);
   receipts, phone screenshots and documents made with Pillow (a test in the model's environment makes and scores
   some) score 0.086-0.17 on their prompt. 0.075 sits below the search's own floor (0.085), leaning towards
-  holding. Not yet checked on a sample of the real library: that is the dry run's job (MAC-MINI.md).*
+  holding. (The owner moved it to 0.095 after the dry run on the real library: "Where it stands".) Not yet checked on a sample of the real library: that is the dry run's job (MAC-MINI.md).*
 - *A photo private to someone else does not exist for a member: every route answers it as a sha it does not have
   (the pixel routes, `why`, similar, a stack, the MCP tools, favourites, adding it to an album). Found while doing
   it and fixed, beyond the routes listed: an event's or trip's title, count and dates in a search's scope; a
