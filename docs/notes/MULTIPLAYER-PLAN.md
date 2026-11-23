@@ -56,9 +56,9 @@ Four ideas carry the design:
 | A **sysadmin** role (the owner, for now) | Someone approves new members, decides the estate's default lenses and holds the purge. Succession is a later plan; the role is a row, not code, so it can be handed on |
 | Agents: the **estate's agent** runs on the mini on the owner's subscription and does family work. A **personal agent** runs in the member's own harness, on their own account, and connects to `/mcp` over the tailnet | Clean from the beginning: the owner pays for family work; whoever wants a personal agent brings and pays for it |
 | An agent acts for someone: it can see only what that member can see, and writes only to what that member owns | Otherwise an agent can be used to reach what its user cannot |
-| New photos go straight into a story album, with no proposal step | A sensible start. More review can be added after some use |
+| New photos go straight into a series, with no proposal step | A sensible start. More review can be added after some use |
 | Answers to an agent's questions can be spoken; the recording is kept in the estate, transcribed on the mini with NVIDIA Parakeet TDT 0.6B v2 (what FluidVoice uses) | For an oral history the voice is worth more than the transcript. It need not be real time |
-| New photos for a member's own story go to *that member's agent*, which picks the request up when it connects; the estate's agent keeps only family stories going. Every estate-agent run, including the implicit ones, is recorded | The member's agent may know things the estate's agent does not. The records let spending be read off later |
+| New photos for a member's own series go to *that member's agent*, which picks the request up when it connects; the estate's agent keeps only family series going. Every estate-agent run, including the implicit ones, is recorded | The member's agent may know things the estate's agent does not. The records let spending be read off later |
 
 ## Words
 
@@ -72,7 +72,7 @@ These are new words in the code and the book. Some old ones are taken, so mind t
   several. Ingestion merges copies by content hash, so "who uploaded it" is a set, not one member.
 - **private**: a photo that is private to a sharer: only that sharer sees it. Reached by *held*
   (ingestion) or *withdrawn* (the sharer). Leaving it is *released* (optionally *until* a date).
-- **lens**: a named view. A *filter* lens leaves photos out; a *story* lens picks and orders photos
+- **lens**: a named view. A *filter* lens leaves photos out; a *series* picks and orders photos
   (an album). Live (follows a search, or is kept up to date by an agent) or a snapshot. Private or
   published. An **estate default** is a published filter lens every member is subscribed to unless they
   opt out.
@@ -84,6 +84,10 @@ These are new words in the code and the book. Some old ones are taken, so mind t
   `member_inbox.py` and the table `inbox_items`, so the two are never confused.
 - **tombstone**: the content hash of a photo a member opted out of, or one the sysadmin purged: never
   accepted again.
+- **series**: a lens that picks and orders photos and keeps growing: "Maya learning to walk", "my
+  skiing over the years". New photos are added to a series; they never change a story. The two meet
+  in three ways: a series shows the stories told about its photos, a gap in a series (photos nobody
+  has described) becomes a question whose answer is a story, and a story can start a series.
 - **story**: something a member said about one or more photos, attributed and dated: text, or a recording
   and its transcript. Several stories about the same moment are kept side by side; they are not
   corrections of each other.
@@ -157,7 +161,7 @@ CREATE TABLE tombstones(sha256 TEXT PRIMARY KEY, member_id INT, why TEXT, at TEX
 -- views
 CREATE TABLE lenses(
   id INTEGER PRIMARY KEY, owner INT, title TEXT,
-  kind TEXT,                                             -- filter | story
+  kind TEXT,                                             -- filter | series
   set_id INT,                                            -- change_sets.id holding its photos (and query)
   published INT DEFAULT 0, estate_default INT DEFAULT 0,
   maintained_by INT,                                     -- an agent member that keeps it up to date, or NULL
@@ -169,7 +173,7 @@ CREATE TABLE shown(sha256 TEXT, member_id INT, at TEXT, PRIMARY KEY(sha256, memb
 -- deciding and asking
 CREATE TABLE inbox_items(
   id INTEGER PRIMARY KEY, member_id INT, kind TEXT,      -- held | review | lens_proposed | lens_changed |
-                                                         --   binding | question | story_update | ...
+                                                         --   binding | question | series_update | ...
   ref TEXT, title TEXT, created_at TEXT, state TEXT, done_at TEXT);   -- open | done | dismissed
 CREATE TABLE questions(
   id INTEGER PRIMARY KEY, asked_by INT, acting_for INT,
@@ -214,7 +218,7 @@ that one member's lens hides leaves only that member's phones.
 |---|---|
 | The photos and their metadata, places, events, trips | Filter lenses and what they hide; "show it anyway" |
 | People: naming faces, merging persons | Favourites |
-| Stories, recordings, answers | Albums and story lenses (until published) |
+| Stories, recordings, answers | Albums and series (until published) |
 | Published lenses and estate defaults | Subscriptions |
 | | Private photos, their holds and releases |
 
@@ -316,7 +320,7 @@ This phase is the easiest to over-build. Keep it to this list, each item as smal
 
 - `lenses.py` (unit-tested): a lens is a row of `lenses` over a change set (`changes.py` keeps doing
   the work of holding photos, sections, reasons and queries). A filter lens's photos are hidden from
-  its subscribers; a story lens is an album with an owner.
+  its subscribers; a series is an album with an owner.
 - One function, `visible_for(member)`, the only way any route asks what a member sees, built from the
   rules in "What a member sees" above, cached per member, cleared by journal entries about
   visibility. First move every reader of `Catalog.visible` onto it with the same answer as today,
@@ -381,7 +385,7 @@ This phase is the easiest to over-build. Keep it to this list, each item as smal
 - `member_inbox.py` (unit-tested) and `inbox_items`. Items are made by the code that needs the
   decision: `held` (photos held at ingestion, grouped per batch), `review` (a change set to look over),
   `lens_proposed` (for the sysadmin), `lens_changed` (for subscribers), `binding` (phase 8),
-  `question` and `story_update` (phase 7), `member_request` (for the sysadmin). Each kind opens the review screen it
+  `question` and `series_update` (phase 7), `member_request` (for the sysadmin). Each kind opens the review screen it
   already has, or a new one, as an app of its own (the change set review page is the first).
 - `/inbox` on the web, with its state machine in `app/inbox-flow.js` (strict `flow()`, unit test in
   `app/tests/`), and an Inbox tab in the iPhone app with a badge. The phone's own upload batches show in
@@ -400,13 +404,13 @@ This phase is the easiest to over-build. Keep it to this list, each item as smal
   member's private ones), and publishes lenses that members may subscribe to.
 - **Listeners.** `listeners.py`: each listener has a cursor in `listener_cursors`, reads the journal from
   it, and acts; at-least-once, so each handler is idempotent. A rule decides first, cheaply, and wakes the
-  model only when the rule says yes. The first listener keeps story lenses up to date. When photos are
-  ingested, it runs each live story lens's search over the new photos only. If any match:
-  - for a **family story** (one the archivist keeps, or one made by a one-shot task whose person is not
+  model only when the rule says yes. The first listener keeps series up to date. When photos are
+  ingested, it runs each live series's search over the new photos only. If any match:
+  - for a **family series** (one the archivist keeps, or one made by a one-shot task whose person is not
     there to keep it going), a run of the estate's agent decides which photos belong and adds them to
     the album directly (no proposal: a sensible start);
-  - for a **member's own story**, it asks *that member's agent* to do it: a `story.update_requested`
-    journal entry naming the lens and the candidate photos, and a `story_update` inbox item. Their agent
+  - for a **member's own series**, it asks *that member's agent* to do it: a `series.update_requested`
+    journal entry naming the series and the candidate photos, and a `series_update` inbox item. Their agent
     picks it up with `journal_since` (phase 8) and adds what belongs. Their agent may know things the
     estate's agent does not, which is why it is asked rather than replaced. Until it runs, the
     candidates wait, and the member can add them by hand from the inbox.
@@ -416,7 +420,7 @@ This phase is the easiest to over-build. Keep it to this list, each item as smal
 - **Asking.** A new MCP tool `ask_member(shas, text, why, to?, group_key?)` files a question; the agent
   does not wait. A question may name only photos its recipient can see, or it would show a private
   photo in the question itself. The inbox, not the agent, decides how many questions a member sees: a
-  few a week, ranked (photos nobody has described, people who know most, gaps in a story lens),
+  few a week, ranked (photos nobody has described, people who know most, gaps in a series),
   grouped by event ("three questions about Thanksgiving 1998").
 - **Answering.** In the inbox, typed or **spoken**: the phone records, uploads the audio to the store
   (content-addressed, append-only, backed up like any original), and the mini transcribes it locally
@@ -439,8 +443,8 @@ This phase is the easiest to over-build. Keep it to this list, each item as smal
 - A personal agent gets the same tools as the estate's agent acting for its member, except
   `submit_task`: personal work runs in the member's own harness, on their own account, never on the
   owner's subscription. It also gets `journal_since(cursor)`: what changed in what its member can see,
-  including the `story.update_requested` entries for its member's stories (phase 7), so when it
-  connects it catches up and runs those stories. Marking the request done closes the inbox item.
+  including the `series.update_requested` entries for its member's series (phase 7), so when it
+  connects it catches up and updates those series. Marking the request done closes the inbox item.
 - **"Connect your agent"**, a page that shows the exact command with the mini's address filled in
   (`claude mcp add --transport http photo-estate https://<mini>.ts.net:8766/mcp`), a configuration file
   for other harnesses, what phase 0 found about where it can run, and the connection as it happens
