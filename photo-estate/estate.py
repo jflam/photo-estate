@@ -301,6 +301,7 @@ def cmd_ingest(a) -> None:
             print(f"skip {name}: already ingested at {row[0]}")
             continue
         t0 = time.time()
+        before = con.execute("SELECT coalesce(max(rowid), 0) FROM assets").fetchone()[0]   # (the new photos: after it)
         st = dict(entries=0, media=0, new=0, dup=0, sidecars=0, seen=0, new_bytes=0, unreadable=0, refused=0, held=0)
         for i, (path, opener) in enumerate(iter_entries(src), 1):
             st["entries"] += 1
@@ -364,8 +365,10 @@ def cmd_ingest(a) -> None:
         con.execute("INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?,?,?)",
                     (name, st["entries"], st["media"], st["new"], st["seen"], st["new_bytes"], now()))
         if st["new"] or st["dup"]:     # a run that added nothing (nothing unseen, or only purged photos) leaves none
-            journal.append(con, actor, "ingest.finished", f"source:{name}",
-                           {k: st[k] for k in ("new", "dup", "refused", "new_bytes")})
+            last = con.execute("SELECT coalesce(max(rowid), 0) FROM assets").fetchone()[0]
+            journal.append(con, actor, "ingest.finished", f"source:{name}",   # assets: the rowids it added (listeners.py)
+                           {**{k: st[k] for k in ("new", "dup", "refused", "new_bytes")},
+                            **({"assets": [before, last]} if st["new"] else {})})
         con.commit()
         done_before += st["media"]
         dt = max(time.time() - t0, 1e-6)
@@ -1246,7 +1249,8 @@ def cmd_stats(a) -> None:
 # ----------------------------------------------------------------------------- append-only: purge, migrate
 
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
-PURGE_TRIGGERS = ("assets_no_delete", "occurrences_no_delete", "sharers_no_delete")
+# (story_photos: the purged photo leaves the stories told about it; the stories stay, its teller's to read)
+PURGE_TRIGGERS = ("assets_no_delete", "occurrences_no_delete", "sharers_no_delete", "story_photos_no_delete")
 
 
 def cmd_purge(a) -> None:

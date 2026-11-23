@@ -5,7 +5,7 @@ wires the route modules together; make_handler() is the thin HTTP layer in front
   PhotoApp(a)                 set the app up from `embed.py serve`'s options (embed.parser()); reads the
                               catalog, starts no thread (with --demo, a scratch copy of demo/estate.db)
   .start()                    the background work: faces, the search model, the sync feed, thumbnails,
-                              the inbox sweep and backups
+                              the inbox sweep, backups, the release timer, the listeners and the transcription job
   .handle(Request) -> Response   one request, in process: every route but the album download
   .request(method, target, headers=, body=, local=) -> Response   the same, for tests and tools
   .make_server(host, port) -> Server   a ThreadingHTTPServer for it (port 0: any free port)
@@ -45,8 +45,19 @@ them is refused (admin.py)
   GET  /api/tombstones                the hashes they opted out of, not taken back
   POST /api/tombstones {add?: [sha256], lift?: [sha256]}   opt out, or take an opt-out back
 
-and what each member sees through (lenses.py), outside the gate like a favourite, so a change is in every
-view before the answer:
+questions and stories (stories.py; multiplayer phase 7): the member's questions, dealt by their inbox within a
+weekly allowance, answered typed or spoken; stories told about photos; a recording as its own body (an audio
+Content-Type, up to 8 MiB), kept in the store with no assets row and written out later by transcribe.py's job
+
+  GET  /api/questions                 the member's open questions, as their inbox items, each photo a search row
+  POST /api/questions/<id>/answer     {text}, or the recording as the body: a story (201)
+  POST /api/questions/<id>/dismiss    "I don't know": put away for good
+  POST /api/stories {photos, text}    a story with no question (a recording: the body, ?photos=<sha>,<sha>)
+  GET  /api/photos/<sha>/stories      a photo's stories the member may read; /api/albums/<id>/stories a series'
+  GET  /api/stories/<id>/recording    the recording, with Range, to a member who may read the story
+
+the listeners (listeners.py), one thread start() runs, and the transcription job (transcribe.Job); and what each
+member sees through (lenses.py), outside the gate like a favourite, so a change is in every view before the answer:
 
   GET  /api/lenses                    the member's lenses, the estate defaults, and those others publish
   POST /api/lenses {title}            a new filter lens of the member's
@@ -93,7 +104,7 @@ import threading
 import time
 from collections import Counter
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timezone
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -102,10 +113,12 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 import catalog
 import journal
 import lenses
+import listeners
 import member_inbox
 import members
 import pages   # the pages, with the shared stylesheet put in
 import private
+import stories
 from admin import Admin, backups
 from browse import Browse
 from changes import Changes
@@ -121,6 +134,7 @@ from intake.server import is_local
 from members import Member
 from sync import Feed
 from tasks import Tasks
+from transcribe import Job as TranscribeJob
 from upload import IngestJob
 
 HERE = Path(__file__).resolve().parent
@@ -192,11 +206,20 @@ class PhotoApp:
         # internal SSD, filled from the disk's cache (`seed`) on first use (images.py).
         self.cache = cache = Path(a.fast_cache) if a.fast_cache else seed
         self.t0 = time.time()
+        # Recordings of stories (stories.py) go into the store as originals do; the demo's store is checked in and
+        # never written to, so its recordings go beside its scratch catalog.
+        self.recordings = Path(a.db).resolve().parent / "recordings" if a.demo else store
+        # Listeners (listeners.py): one thread reads the journal and acts (start(): listen), every listen_every
+        # seconds, and at once when woken (a reload, a story told or written out).
+        self.listen_every, self.listen_wake, self.listen_stop = 30.0, threading.Event(), threading.Event()
         con = connect(a.db)               # the tables this app writes itself (core/schema.py), made when it opens
-        schema.ensure(con, "catalog", "favorites", "members", "lenses")   # (catalog: sharers and private, in a demo's scratch copy)
+        schema.ensure(con, "catalog", "favorites", "members", "lenses", "stories")   # (catalog: sharers and private, in a demo's scratch copy)
         # Members (members.py). The demo makes its own in its scratch catalog; a catalog with none yet takes
         # the --upload-user logins, as they could write before.
         made = members.demo(con) if a.demo else members.first_start(con, a.upload_user, a.sysadmin)
+        # The estate's agent, before the looks are read: as itself (the family archivist) it is shown only what is
+        # private to nobody (private.Private.agents)
+        self.agent = members.agent(con).id
         con.close()
         if made:
             print(f"members: {', '.join(f'{m.login} ({m.role})' for m in made)} let in", flush=True)
@@ -204,7 +227,9 @@ class PhotoApp:
         if not self.roster and not a.demo:
             print("members: none yet, so only this computer can use the app (name one with --sysadmin LOGIN)", flush=True)
         try:
+            mark = self.journal_end()
             self.live = live = catalog.Live(self.load_catalog(), self.read_looks())
+            self.loaded_through = mark       # the newest journal entry the catalog being served was read after
         except RuntimeError as e:
             sys.exit(str(e))
         print(f"{live.cat.N} images loaded in {time.time() - self.t0:.1f}s ({len(live.cat.events)} events,"
@@ -274,6 +299,7 @@ class PhotoApp:
         # `release_every` seconds whether a day has come, by `today` (the computer's own date: the family's).
         self.release_every, self.release_stop = 60.0, threading.Event()
         self.today = lambda: datetime.now().date().isoformat()
+        self.clock = lambda: datetime.now(timezone.utc)      # what the questions' weekly allowance counts by (stories.deal)
         # Change sets (changes.py). When one hides or shows photos, the catalog is re-read as after an ingest:
         # every view, count and cover is rebuilt without them, phones are told through the feed, and the
         # People page loads again without their faces. `settling` counts the moments before the reload starts.
@@ -290,7 +316,14 @@ class PhotoApp:
             import atexit
             atexit.register(self.tasks.stop)
         self.mcp = MCPServer(AppFacade(find=browse.find, row=browse.row, faces=browse.faces,
-                                       overview=browse.overview, changes=self.changes, tasks=self.tasks))
+                                       overview=browse.overview, changes=self.changes, tasks=self.tasks,
+                                       ask=self.ask, stories=self.told, family=self.family))
+        # A story's recording is written out on this computer by a queued job (transcribe.py, a uv script with its
+        # own environment: Parakeet on MLX), when one is uploaded and at start; then the listeners hear of it.
+        self.transcribe = TranscribeJob(["uv", "run", "--quiet", "--script", str(HERE / "transcribe.py"), "--db", a.db,
+                                         "--store", str(self.recordings), "run"],
+                                        waiting=self.recordings_waiting, then=self.listen_wake.set,
+                                        failed=self.recordings_failed, log=lambda msg: print(msg, flush=True))
         if ingest:
             ingest.on_added = self.reload_catalog
             ingest.before_run = self.admin.arrivals_prepared
@@ -379,6 +412,13 @@ class PhotoApp:
         if not a.no_pregenerate:
             threading.Thread(target=self.images.pregenerate, daemon=True).start()
         threading.Thread(target=self.release_timer, daemon=True, name="release timer").start()
+        con = connect(a.db)
+        try:
+            listeners.begin(con)      # a listener new to this catalog starts at the journal's end
+        finally:
+            con.close()
+        threading.Thread(target=self.listen, daemon=True, name="listeners").start()
+        self.transcribe.start()
 
     def release_due(self) -> dict[int, int]:
         """Release every private photo whose day (`until`) has come, by `today` (private.release_due); then every
@@ -401,6 +441,98 @@ class PhotoApp:
             except Exception as e:       # (a locked catalog, a disk gone): try again next time
                 print(f"private: release timer: {type(e).__name__}: {e}", flush=True)
             self.release_stop.wait(self.release_every)
+
+    # -- the journal's listeners, questions and stories (listeners.py, stories.py) -----------------------------
+
+    def journal_end(self) -> int:
+        con = connect(self.a.db)
+        try:
+            return con.execute("SELECT coalesce(max(id), 0) FROM journal").fetchone()[0]
+        finally:
+            con.close()
+
+    def listen_env(self) -> listeners.Env:
+        """What the listeners are given: the app's search as a member sees the library, what the catalog being
+        served was read after, and a run of the estate's agent (tasks.py), all outside any request."""
+        def find(search, member):
+            return self.reading(lambda: self.browse.find(search, member))[0]
+
+        def submit(prompt, acting_for, by):
+            got, code = self.tasks.submit(prompt, "", acting_for, started_by=by)
+            if code >= 400:
+                print(f"listeners: no run for {by}: {got.get('error')}", flush=True)
+                return None
+            return got["id"]
+        return listeners.Env(find=find, loaded=lambda: self.loaded_through, in_catalog=lambda sha: sha in self.live.cat.index,
+                             refused=lambda sha, m: self.reading(lambda: self.unseen(sha, m)), submit=submit)
+
+    def listen_once(self) -> dict[str, int]:
+        con = connect(self.a.db)
+        try:
+            return listeners.run(con, self.listen_env())
+        finally:
+            con.close()
+
+    def listen(self) -> None:
+        """The background thread start() runs: every listener, every listen_every seconds or when woken. A search
+        model still loading (Unavailable) waits for the next pass; any other failure is printed and tried again."""
+        while not self.listen_stop.is_set():
+            try:
+                self.listen_once()
+            except Unavailable:
+                pass
+            except Exception as e:
+                print(f"listeners: {type(e).__name__}: {e}", flush=True)
+            self.listen_wake.wait(self.listen_every)
+            self.listen_wake.clear()
+
+    def unseen(self, sha: str, member: int | None) -> bool:
+        """stories.Refused: `member` may not be shown this photo (not in the catalog served, or private to someone
+        else; for the estate's agent as itself and NOBODY, anything private to anyone). Inside the gate."""
+        return not self.may_see(sha, member)
+
+    def ask(self, *args) -> dict:
+        """The MCP tool ask_member (stories.ask): ValueError for what it refuses, for the agent to read."""
+        con = connect(self.a.db)
+        try:
+            return stories.ask(con, *args, refused=self.unseen)
+        except stories.StoryError as e:
+            raise ValueError(str(e)) from e
+        finally:
+            con.close()
+
+    def told(self, shas: list[str], member: int | None) -> dict:
+        con = connect(self.a.db)
+        try:
+            return stories.about(con, shas, member, self.unseen)
+        finally:
+            con.close()
+
+    def family(self) -> list[dict]:
+        """The family's members, for ask_member's `to`: name, id, and who they are in People."""
+        con = connect(self.a.db)
+        try:
+            names = dict(con.execute("SELECT id, name FROM persons")) if members._has(con, "persons") else {}
+            return [{"id": m.id, "name": m.name, **({"person": names[m.person_id]} if m.person_id in names else {})}
+                    for m in members.family(con)]
+        finally:
+            con.close()
+
+    def recordings_waiting(self) -> int:
+        con = connect(self.a.db)
+        try:
+            return len(stories.pending(con))
+        finally:
+            con.close()
+
+    def recordings_failed(self, why: str) -> None:
+        """The transcription job could not run at all: every recording waiting says why (it is tried again)."""
+        con = connect(self.a.db)
+        try:
+            for sid, _, _ in stories.pending(con):
+                stories.transcribed(con, sid, error=why)
+        finally:
+            con.close()
 
     def feed_of(self, member: int | None, make: bool = False) -> Feed | None:
         """`member`'s feed (None: the first sysadmin's, sync-feed.db); with `make`, made if they have none yet."""
@@ -496,10 +628,13 @@ class PhotoApp:
             while True:
                 t = time.time()
                 try:
+                    mark = self.journal_end()
                     fresh = self.load_catalog(self.live.cat.raw)
                     if os.environ.get("PHOTO_ESTATE_CHECK_RELOAD"):   # tools/bench_ingest.py --check
                         print(f"reload check: {fresh.differences(self.load_catalog()) or 'same as a full load'}", flush=True)
                     self.live.install(fresh, then=self.caught_up, looks=self.with_private)
+                    self.loaded_through = mark
+                    self.listen_wake.set()      # an ingest's new photos are searchable now: the series listener
                     rs.update(at=time.time(), seconds=time.time() - t, error=None)
                     print(f"catalog reloaded: {fresh.N} images in {time.time() - t:.1f}s", flush=True)
                     self.feed_update()
@@ -686,6 +821,8 @@ class PhotoApp:
             except HTTPError:
                 body = None
             return self.mcp_route("POST", req, body, m)
+        if (got := self.stories_route("POST", path, qs, req, m)) is not None:   # (a recording is its own body, not JSON)
+            return got
         body = parse_json(req.body)
         if (mid := re.fullmatch(r"/api/members/(\d+)", path)) is not None:
             return self.change_member(int(mid[1]), body, m)
@@ -736,6 +873,8 @@ class PhotoApp:
         if self.intake and path.startswith(("/setup", "/api/intake")):
             return Response.of(self.intake.handle("GET", path, qs, None, req.local))
         who = m.login if m else ""
+        if (got := self.stories_route("GET", path, qs, req, m)) is not None:
+            return got
         for got in (self.people_page("GET", path, qs, None, viewer=m.id if m else None),
                     self.changes_route("GET", path, qs, None, who, m.id if m else None),
                     self.lens_read(path, m)):
@@ -827,6 +966,87 @@ class PhotoApp:
         that member, a call from this computer the sysadmin (and the estate's agent, with X-Estate-Task)."""
         return Response.of(self.mcp.handle(method, req.headers, body, Auth.MEMBER.allows(m), m.login if m else "",
                                            req.local, m.id if m else None))
+
+    # -- questions and stories (stories.py) ----------------------------------------------------------------
+
+    STORY_ROUTE = re.compile(r"/api/questions(?:/(\d+)/(answer|dismiss))?|/api/stories(?:/(\d+)/recording)?"
+                             r"|/api/photos/([0-9a-f]{64})/stories|/api/albums/(\d+)/stories")
+
+    def stories_route(self, method: str, path: str, qs: dict, req: Request, m: Member | None) -> Response | None:
+        """The member's questions, answering one (typed: JSON {text}; spoken: the recording as the body, with its
+        audio Content-Type), telling a story about photos, and reading a photo's or a series' stories, or a story's
+        recording (with Range). None if the path is none of these. Inside the gate: every photo is asked may_see."""
+        r = self.STORY_ROUTE.fullmatch(path)
+        if r is None:
+            return None
+        qid, what, sid, sha, album = int(r[1]) if r[1] else None, r[2], int(r[3]) if r[3] else None, r[4], r[5]
+        viewer, recording = m.id if m else None, None
+        con = connect(self.a.db)
+        try:
+            if method == "GET" and path == "/api/questions":
+                stories.deal(con, viewer, self.clock(), self.unseen)
+                v = self.live.visible_for(viewer)
+                items = stories.waiting(con, viewer, self.unseen)
+                for it in items:
+                    for q in it["questions"]:
+                        q["photos"] = [v.row(x) for x in q["photos"]]
+                return json_response({"items": items, "questions": sum(len(it["questions"]) for it in items)})
+            if method == "GET" and sha is not None:
+                if not self.may_see(sha, viewer):
+                    return json_response({"error": "no such photo"}, 404)
+                return json_response({"sha": sha, "stories": stories.about(con, [sha], viewer, self.unseen).get(sha, [])})
+            if method == "GET" and album is not None:
+                got = self.changes.shas(int(album), viewer)
+                if got is None:
+                    return json_response({"error": "no such album"}, 404)
+                return json_response({"album": int(album), "stories": stories.album_stories(con, got[1], viewer, self.unseen)})
+            if method == "GET" and sid is not None:
+                return self.recording(con, sid, viewer, req)
+            if method != "POST" or not (qid is not None or path == "/api/stories"):
+                return NOT_FOUND
+            if qid is not None and what == "dismiss":
+                return json_response(stories.dismiss(con, viewer, qid))
+            ctype = (req.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            spoken = ctype.startswith("audio/")
+            body = {} if spoken else parse_json(req.body)
+            if not isinstance(body, dict):
+                return json_response({"error": "expected a JSON object, or a recording"}, 400)
+            recording = stories.save_recording(con, self.recordings, req.body, ctype) if spoken else None
+            if qid is not None:
+                got = stories.answer(con, viewer, qid, self.unseen, text=body.get("text"), recording=recording)
+            else:
+                photos = body.get("photos") if not spoken else [x for x in (qs.get("photos") or [""])[0].split(",") if x]
+                got = stories.tell(con, viewer, photos, self.unseen, text=body.get("text"), recording=recording)
+        except stories.StoryError as e:
+            return json_response({"error": str(e)}, e.status)
+        finally:
+            con.close()
+        if recording:
+            self.transcribe.wake.set()
+        self.listen_wake.set()
+        return json_response(got, 201)
+
+    def recording(self, con, sid: int, viewer: int | None, req: Request) -> Response:
+        """GET /api/stories/<id>/recording: the audio, to a member who may read the story (404 otherwise), with Range."""
+        got = stories.recording_of(con, sid, viewer, self.unseen)
+        f = stories.recording_path(self.recordings, *got) if got else None
+        if f is None or not f.exists():
+            return json_response({"error": "no such recording"}, 404)
+        data, ext = f.read_bytes(), got[1] if got else ""
+        etag = f'"{f.stem[:16]}"'
+        asked = req.headers.get("Range")
+        if asked and req.headers.get("If-Range") not in (None, etag):
+            asked = None
+        try:
+            span = byte_range(asked, len(data))
+        except ValueError:
+            return Response(416, b"", "text/plain", "no-store", {"Content-Range": f"bytes */{len(data)}"})
+        head = {"Accept-Ranges": "bytes", "Content-Disposition": f"inline; filename=story-{sid}{ext}"}
+        if span is None:
+            return Response(200, data, stories.TYPES.get(ext, "audio/mp4"), "private, max-age=86400", {**head, "ETag": etag})
+        a, b = span
+        return Response(206, data[a:b + 1], stories.TYPES.get(ext, "audio/mp4"), "private, max-age=86400",
+                        {**head, "Content-Range": f"bytes {a}-{b}/{len(data)}"})
 
     # -- lenses (lenses.py) -----------------------------------------------------------------------
 
@@ -945,10 +1165,12 @@ class PhotoApp:
         """GET /api/inbox: the member's open items; POST /api/inbox/<id>/dismiss: one of theirs put away. A
         member only ever sees and changes their own (this computer, with no members yet: the items of none)."""
         con = connect(self.a.db)
+        viewer = m.id if m else None
         try:
-            if dismiss is None:
-                return json_response(member_inbox.mine(con, m.id if m else None))
-            return json_response(member_inbox.dismiss(con, m.id if m else None, dismiss))
+            if dismiss is None:     # (the questions it has room for are dealt now: stories.deal)
+                stories.deal(con, viewer, self.clock(), self.unseen)
+                return json_response(member_inbox.mine(con, viewer, stories.keep_item(con, viewer, self.unseen)))
+            return json_response(member_inbox.dismiss(con, viewer, dismiss))
         except member_inbox.InboxError as e:
             return json_response({"error": str(e)}, e.status)
         finally:

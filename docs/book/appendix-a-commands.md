@@ -93,6 +93,28 @@ uv run private.py --db ~/estate/estate.db library --member 1 --dry-run
 uv run private.py --db ~/estate/estate.db library --member 1
 ```
 
+## transcribe.py: the recordings of stories
+
+```bash
+uv run transcribe.py [--db estate.db] [--store STORE] <command>
+```
+
+A uv script with its own environment (`parakeet-mlx`, `av`, `numpy`): NVIDIA Parakeet TDT 0.6B v2 through its MLX
+port, on Apple silicon only. It reads the audio with PyAV, which carries its own FFmpeg, so no system `ffmpeg` is
+needed.
+
+| Command | Options | Purpose | Chapter |
+|---|---|---|---|
+| `fetch` | none | By hand, once, with the network: the model (`mlx-community/parakeet-tdt-0.6b-v2`, its `config.json` and a 2.3 GB `model.safetensors`) into the Hugging Face cache of the user who runs the app; the first run also builds the script's environment (MLX, librosa). Nothing else ever downloads it: the app runs with `HF_HUB_OFFLINE=1` | [11](11-server.md#the-estates-agent-listeners-questions-and-stories) |
+| `run` | `--store DIR` (**required**: where the recordings are, the estate's store) | What the app runs as a queued job (`transcribe.Job`) when a recording is uploaded, and at start: every story whose recording has no transcript (a failed one again), each written once (`story.transcribed`). Without the model in the cache, each waiting story says how to fetch it, and it exits `2` | [11](11-server.md#the-estates-agent-listeners-questions-and-stories) |
+| `file` | `path` | Transcribe one audio file and print it: to try the model | |
+
+```bash
+uv run transcribe.py fetch
+uv run transcribe.py file story.m4a
+uv run transcribe.py --db ~/estate/estate.db --store /Volumes/estate/store run
+```
+
 ## faces.py: faces and people
 
 ```bash

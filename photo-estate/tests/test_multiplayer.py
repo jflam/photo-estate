@@ -358,7 +358,7 @@ def test_a_task_acts_for_the_member_who_submitted_it(app):
     tid = con.execute("INSERT INTO agent_tasks(prompt, status, created_by, created_at, acting_for) VALUES"
                       " ('find the beach', 'done', 'ben', '2026-01-01', ?)", (mid(app, BEN),)).lastrowid
     con.commit()
-    task = {"X-Estate-Task": str(tid)}             # honoured only from this computer, as the estate's agent calls
+    task = {"X-Estate-Agent": app.tasks.mint(tid)}   # a run's token: honoured only from this computer, while it lasts
     ids = [p["id"] for p in tool(app, {}, "search_photos", {"limit": 200}, headers=task, local=True)["photos"]]
     assert x not in ids and len(ids) == app.live.cat.N - 1, "the task searches as Ben, not as the sysadmin"
     assert tool(app, {}, "library_overview", headers=task, local=True)["hidden"] == 1
@@ -367,7 +367,8 @@ def test_a_task_acts_for_the_member_who_submitted_it(app):
     assert made["album"] in [a["id"] for a in call(app, "GET", "/api/albums", BEN)["sets"]], "the album is Ben's"
     assert made["album"] not in [a["id"] for a in call(app, "GET", "/api/albums", ADA)["sets"]]
     rows = con.execute("SELECT actor, acting_for, kind FROM journal WHERE subject=? ORDER BY id", (f"album:{made['album']}",)).fetchall()
-    assert rows == [(None, mid(app, BEN), "album.created"), (None, mid(app, BEN), "album.items")]
+    assert rows == [(app.agent, mid(app, BEN), "album.created"), (app.agent, mid(app, BEN), "album.items")], \
+        "the estate's agent did it, for Ben"
     # without the header, a call from this computer is the sysadmin, who sees the photo
     assert x in [p["id"] for p in tool(app, {}, "search_photos", {"limit": 200}, local=True)["photos"]]
 
@@ -426,7 +427,7 @@ def test_the_inbox_a_change_set_a_task_made_for_ben_is_bens_to_review(app):
     tid = con.execute("INSERT INTO agent_tasks(prompt, status, created_by, created_at, acting_for) VALUES"
                       " ('hide the blurry ones', 'running', 'ben', '2026-01-01', ?)", (mid(app, BEN),)).lastrowid
     con.commit()
-    task = {"X-Estate-Task": str(tid)}
+    task = {"X-Estate-Agent": app.tasks.mint(tid)}
     made = tool(app, {}, "create_change_set", {"title": "Blurry"}, headers=task, local=True)
     tool(app, {}, "amend_change_set", {"change_set": made["change_set"], "add_ids": list(app.live.cat.shas[40:43])},
          headers=task, local=True)
@@ -489,7 +490,8 @@ def test_before_and_after_migrate(tmp_path):
 # -- the one way to ask ----------------------------------------------------------------------------------
 
 ROUTES = ("browse.py", "photo_app.py", "images.py", "admin.py", "compare.py", "changes.py", "estate_mcp.py",
-          "faces.py", "tasks.py", "lenses.py", "sync.py", "stats.py", "pages.py", "upload.py", "embed.py", "private.py")
+          "faces.py", "tasks.py", "lenses.py", "sync.py", "stats.py", "pages.py", "upload.py", "embed.py", "private.py",
+          "stories.py", "listeners.py", "transcribe.py")
 
 
 def test_no_route_reads_a_mask_but_through_visible_for():
@@ -539,6 +541,20 @@ def test_no_route_reads_a_mask_but_through_visible_for():
     crop = inspect.getsource(faces.People.handle)
     if not re.search(r'startswith\("/face/"\).*\n.*\n.*see\(', crop):
         bad.append("faces.py: a face crop (/face/<id>) does not ask `see`")
+    # questions and stories (phase 7): every reader of a story or a question takes the app's word on each photo
+    # (`refused`: PhotoApp.unseen, which is may_see), and the routes give it that, never a rule of their own
+    import stories
+    for name in ("ask", "deal", "waiting", "keep_item", "answer", "tell", "story", "about", "recording_of", "album_stories"):
+        if "refused" not in inspect.signature(getattr(stories, name)).parameters:
+            bad.append(f"stories.py: {name} does not take `refused`")
+    import photo_app
+    for fn in (photo_app.PhotoApp.stories_route, photo_app.PhotoApp.recording, photo_app.PhotoApp.inbox_route,
+               photo_app.PhotoApp.ask, photo_app.PhotoApp.told):
+        src = inspect.getsource(fn)
+        if "self.unseen" not in src and "may_see" not in src:
+            bad.append(f"photo_app.py: {fn.__name__} reads stories or questions without asking may_see")
+    if "not self.may_see" not in inspect.getsource(photo_app.PhotoApp.unseen):
+        bad.append("photo_app.py: unseen is not may_see")
     # and each route module that answers from the catalog asks for the member's view
     for name in ("browse.py", "photo_app.py", "compare.py", "admin.py", "images.py", "changes.py"):
         src = (ROOT / name).read_text()

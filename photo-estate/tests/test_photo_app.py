@@ -250,7 +250,7 @@ def test_favorite_albums_tasks_and_mcp_take_a_member(app, monkeypatch):
     assert app.request("POST", f"/api/albums/{sid}/discard", AS_BEN, body={}).status == 200
     # a task records the member who asked for it (agent_tasks.acting_for), from the page and from /mcp
     asked = []
-    monkeypatch.setattr(app.tasks, "submit", lambda prompt, who="", acting_for=None: (asked.append((prompt, who, acting_for)),
+    monkeypatch.setattr(app.tasks, "submit", lambda prompt, who="", acting_for=None, **kw: (asked.append((prompt, who, acting_for)),
                                                                                        ({"error": "not here"}, 409))[1])
     ben = app.request("GET", "/api/me", AS_BEN).json()["id"]
     assert app.request("POST", "/api/tasks", AS_STRANGER, body={"prompt": "x"}).status == 403
@@ -260,7 +260,7 @@ def test_favorite_albums_tasks_and_mcp_take_a_member(app, monkeypatch):
     assert asked == [("x", "ben", ben), ("y", "ben", ben)]
     assert app.request("POST", "/mcp", AS_STRANGER, body=call).status == 403          # /mcp takes a member, as every route
     listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-    assert len(app.request("POST", "/mcp", AS_BEN, body=listing).json()["result"]["tools"]) == 16
+    assert len(app.request("POST", "/mcp", AS_BEN, body=listing).json()["result"]["tools"]) == 17   # (ask_member: phase 7)
 
 
 def test_a_task_keeps_who_it_acts_for(tmp_path):

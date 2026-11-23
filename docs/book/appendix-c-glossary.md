@@ -1,7 +1,13 @@
 # Appendix C: glossary
 
+**Acting for.** The member a run of the estate's agent works for (`agent_tasks.acting_for`): it sees what they see, writes to what is theirs, and every journal entry it writes names the agent as the actor and them as `acting_for`. Acting for no one, it is the family archivist ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
+**Allowance (questions).** How many question items a member's inbox is dealt in any 7 days: `stories.ALLOWANCE` (3), or the member's own `members.questions_per_week`; never while that many are open ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
 **Album.** A named group of photos. From Google: a Takeout folder with a `metadata.json`. From Flickr:
 the albums in a photo's JSON. iCloud's date folders are *not* albums.
+
+**Archivist (family).** The estate's agent acting for no one: it sees only photos private to nobody, with the estate defaults applied, and an album it makes is published at once as a family series it keeps (`lenses.maintained_by`) ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
 
 **Anchor.** A candidate position on a detector's grid. SCRFD has two per cell at each of three strides.
 
@@ -43,6 +49,8 @@ unrelated. Used for image-text matching, "more like this", and face matching.
 thumbnail is brighter than its right-hand neighbour. Similar images have hashes a few bits apart.
 
 **Cursor (sync).** The pair `(since, after)` a device sends to say "I have every row up to this version and hash" ([20](20-sync.md)).
+
+**Estate's agent.** The member of kind `agent` (`members.agent`): Claude Code run headless on the mini (tasks.py), on the owner's subscription, with a token per run. Every run is an `agent_tasks` row with who or what started it ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
 
 **Embedding.** A fixed-length list of numbers that represents the meaning of an image, a sentence or a
 face, such that similar things have similar vectors.
@@ -95,6 +103,8 @@ hash and box.
 
 **Lens.** A named view, a row of `lenses`, its owner's and private until published: a filter, or a series. Not a camera lens (the `lens` facet) ([11](11-server.md#what-each-member-sees-lenses)).
 
+**Listener.** A function of listeners.py that reads the journal from its own cursor (`listener_cursors`) and acts, at least once, each handler making nothing twice: the series listener and the stories listener ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
 **Live Photo.** A still and a clip taken together by an iPhone (or a Pixel's motion photo). Here the still is the photo and the clip is part of it: one item, searched, scored and counted by its still ([6](06-linking.md#step-2-live-photos-and-motion-photos)).
 
 **Local (request).** One from the computer the app runs on, not through `tailscale serve` (`is_local`). It is the sysadmin ([11](11-server.md#members-and-who-may-do-what)).
@@ -134,6 +144,8 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Purge.** `estate.py purge <sha> --reason "..."`: the one way a photo leaves the estate, run by hand by the sysadmin. It backs the catalog up, journals `photo.purged`, adds a tombstone for everyone and removes the photo's rows and file ([4](04-store-and-ingest.md#append-only-sources-only-add)).
 
+**Question.** What the estate's agent (or a member) asks one member or the whole family about photos they can see (`ask_member`, a `questions` row): queued until the member's inbox deals it, grouped by `group_key`; its answer is a story ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
 **Quality (score).** A photo's score from the general aesthetic scorer, about 1 to 7; at least 5.0 counts as a good photo ([25](25-best-photos.md)).
 
 **Request access.** What someone whose login is no member's does on the page they are shown (`/request-access`): it makes a `pending` member, whom a sysadmin lets in on `/members` ([11](11-server.md#members-and-who-may-do-what)).
@@ -142,9 +154,11 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Scrubber.** The handle at the iPhone grid's right edge that shows the month you are in and lets you drag to any date ([23](23-native-interface.md)).
 
+**Series update.** New photos that match a member's own series: a `series.update_requested` journal entry naming them, and a `series_update` inbox item, from which the owner adds them or none ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
 **Sharer.** A member who shared a photo (`sharers`: photo, member, when). A photo two members sent has two. Ingest records it: the member whose inbox folder a phone upload is in (`m<member id>/`), else the first sysadmin (bulk imports, uploads from before member folders); `estate.py migrate` made the sysadmin the sharer of every photo that had none ([4](04-store-and-ingest.md#who-shared-it)).
 
-**Series.** A lens that picks and orders photos: an album (`lenses.set_id`), given its lens when its owner publishes it. Opened, never on: subscribing puts it in the member's Albums, and its photos are listed through the viewer's own filters ([11](11-server.md#what-each-member-sees-lenses)).
+**Series.** A lens that picks and orders photos: an album (`lenses.set_id`), given its lens when its owner publishes it. Opened, never on: subscribing puts it in the member's Albums, and its photos are listed through the viewer's own filters ([11](11-server.md#what-each-member-sees-lenses)). One that keeps growing is a list album with a search it grows from (`change_sets.grows_from`): new photos it finds are added by the estate's agent (a family series) or offered to its owner (a member's own) ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
 
 **Shared (for a member).** What a member may ever be shown (`Live.shared_for`): every photo, until private photos (phase 5 of the multiplayer plan). The pixel routes, `why` and "show it anyway" go by it ([11](11-server.md#what-each-member-sees-lenses)).
 
@@ -177,6 +191,8 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Takeout.** Google's data-export service; the only complete export of a Google Photos library.
 
+**Story.** What a member said about photos, attributed and dated: typed text, or a recording (a file in the store with no `assets` row) and its transcript. Never edited: a second answer is a second story. Read by its teller and whoever may be shown every one of its photos ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
 **Tailscale.** A private network (a "tailnet") used here to reach the app from a phone, with
 `tailscale serve` providing HTTPS.
 
@@ -189,7 +205,11 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Tile.** What the iPhone grid needs to draw a photo and nothing else: its hash, aspect ratio, local time, city and favourite flag ([21](21-offline-search.md)).
 
+**Token (a run's).** The random capability `tasks.Tasks.mint` gives one run of the estate's agent, in its MCP config as `X-Estate-Agent`: this agent, acting for this member, for this task. Held in memory only, honoured only from the mini, forgotten when the run ends ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
 **Tombstone.** A photo the estate refuses, by its sha (`tombstones`): one the sysadmin purged (member 0: refused from every source, for good), or one a member opted out of (kept back) on their phone, which refuses that member's upload of those bytes and nobody else's (`GET`/`POST /api/tombstones`). Never deleted; an opt-out is taken back with `lifted_at`, by its member ([4](04-store-and-ingest.md#append-only-sources-only-add), [11](11-server.md#private-photos)).
+
+**Transcript.** A recording written out on the mini by transcribe.py (Parakeet TDT 0.6B v2 on MLX): the one change a story ever takes, written once ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
 
 **Trip.** A run of events more than 100 km (configurable) from home, spanning at least two dates.
 

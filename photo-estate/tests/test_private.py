@@ -407,7 +407,7 @@ def test_an_agent_acting_for_cleo_or_for_nobody(app):
     con.commit()
     total = app.live.cat.N
     for tid, want in ((cleo, {y}), (nobody, set())):
-        h = {"X-Estate-Task": str(tid)}
+        h = {"X-Estate-Agent": app.tasks.mint(tid)}
         ids = {p["id"] for p in tool(app, {}, "search_photos", {"limit": 200}, headers=h, local=True)["photos"]}
         assert x not in ids and (y in ids) == bool(want) and len(ids) == total - 1 - (not want)
         assert tool(app, {}, "get_photos", {"ids": [x]}, headers=h, local=True)["photos"] == [{"id": x, "error": "no such photo"}]

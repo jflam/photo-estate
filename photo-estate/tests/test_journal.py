@@ -180,6 +180,7 @@ def test_tasks_journal_who_asked_and_how_each_ended(tmp_path):
     Quiet(db, "http://127.0.0.1:1/mcp", command=sys.executable)                       # a restart: running -> failed
     why = "the app restarted while this was running"
     assert entries(db) == [
+        (None, None, "member.added", "member:1", {"name": "The estate's agent", "kind": "agent"}),   # made for the first run
         (5, None, "task.submitted", f"task:{one['id']}", {"prompt": "hide the blurry ones"}),
         (6, None, "task.submitted", f"task:{two['id']}", {"prompt": "and the dark ones"}),
         (5, None, "task.submitted", f"task:{three['id']}", {"prompt": "a third"}),

@@ -479,3 +479,41 @@ app's timer releases what is due every minute, by the mini's own date. To undo t
 (nothing else depends on it): release everything it held from the held view, or by hand,
 `sqlite3 $DB "update private set released_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') where why='held' and released_at is null"`
 then restart the app (the rows stay, released, so the run does not hold them again).
+
+## The estate's agent, questions and stories: the by-hand steps (multiplayer phase 7)
+
+Since phase 7 the estate's agent is a member (kind `agent`) whose runs carry a token instead of a task number,
+listeners keep series up to date as photos arrive, and members answer the agent's questions in their inbox, typed
+or spoken (book chapter 11, "The estate's agent, listeners, questions and stories"). The deploy is a schema change
+(the `stories` tables; `change_sets.grows_from`, `agent_tasks.started_by`, `members.questions_per_week`), so take
+the catalog backup CLAUDE.md gives first. The app makes the tables and the agent member on its first start. Two
+things by hand:
+
+- **A run in flight at the deploy.** A run carried `X-Estate-Task: <id>` before; `/mcp` now refuses that header
+  (403), and the restart marks the running task failed ("the app restarted while this was running"), as any
+  restart does. At most one task runs at a time, so at most one is lost: look first, and deploy between runs.
+- **The speech model, once.** Transcription runs on the mini as a queued job (`transcribe.py run`, started by the
+  app) with NVIDIA Parakeet TDT 0.6B v2 on MLX. The app runs with `HF_HUB_OFFLINE=1` and never downloads it: fetch
+  it by hand, as the user the app runs as, with the network. The first `uv run` also builds the script's own
+  environment (MLX, parakeet-mlx, librosa). No `ffmpeg` is needed: the audio is read with PyAV.
+
+```bash
+export PATH=/opt/homebrew/bin:$PATH
+DB=~/estate/estate.db
+cd ~/src/photo-estate/photo-estate
+B=$HOME/photo-estate-lab/estate.db.before-phase7-$(date +%Y%m%d-%H%M)
+sqlite3 $DB ".backup $B" && sqlite3 $B "pragma quick_check"            # must print ok
+sqlite3 $DB "select id, status from agent_tasks where status in ('queued','running')"   # deploy when nothing runs
+
+# after the deploy and restart
+sqlite3 $DB "select id, name, kind from members where kind='agent'"       # the estate's agent, made at start
+uv run transcribe.py fetch                                                 # once: ~2.3 GB into ~/.cache/huggingface
+say -o /tmp/story.m4a --data-format=aac "This is Grandma at Thanksgiving in 1998."
+HF_HUB_OFFLINE=1 uv run transcribe.py file /tmp/story.m4a                  # prints the sentence back
+```
+
+Without the model, a recording is kept and its story says how to fetch it (`transcript_error`); the next recording
+uploaded, or the next start of the app, tries every waiting one again. A transcription takes a few seconds once the
+model is loaded (about 5-20 seconds for a short recording on the laptop, most of it loading). The weekly allowance
+of questions is `ALLOWANCE` in stories.py (3); one member's own is a column:
+`sqlite3 $DB "update members set questions_per_week=5 where id=<member id>"` (NULL: the estate's).

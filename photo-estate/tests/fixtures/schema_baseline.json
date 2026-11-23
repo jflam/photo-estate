@@ -44,6 +44,12 @@
   ],
   [
    "index",
+   "sqlite_autoindex_asked_1",
+   "asked",
+   null
+  ],
+  [
+   "index",
    "sqlite_autoindex_assets_1",
    "assets",
    null
@@ -100,6 +106,12 @@
    "index",
    "sqlite_autoindex_hidden_1",
    "hidden",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_listener_cursors_1",
+   "listener_cursors",
    null
   ],
   [
@@ -170,6 +182,12 @@
   ],
   [
    "index",
+   "sqlite_autoindex_story_photos_1",
+   "story_photos",
+   null
+  ],
+  [
+   "index",
    "sqlite_autoindex_subscriptions_1",
    "subscriptions",
    null
@@ -193,6 +211,12 @@
    null
   ],
   [
+   "index",
+   "story_photos_sha",
+   "story_photos",
+   "CREATE INDEX story_photos_sha ON story_photos(sha256)"
+  ],
+  [
    "table",
    "agent_events",
    "agent_events",
@@ -202,13 +226,19 @@
    "table",
    "agent_tasks",
    "agent_tasks",
-   "CREATE TABLE agent_tasks(\n  id INTEGER PRIMARY KEY, prompt TEXT,\n  status TEXT DEFAULT 'queued',      -- queued | running | done | failed | cancelled\n  created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT,\n  result TEXT, error TEXT, turns INT, cost REAL, acting_for INT)"
+   "CREATE TABLE agent_tasks(\n  id INTEGER PRIMARY KEY, prompt TEXT,\n  status TEXT DEFAULT 'queued',      -- queued | running | done | failed | cancelled\n  created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT,\n  result TEXT, error TEXT, turns INT, cost REAL, acting_for INT, started_by TEXT)"
   ],
   [
    "table",
    "albums",
    "albums",
    "CREATE TABLE albums(dir TEXT PRIMARY KEY, title TEXT, data TEXT)"
+  ],
+  [
+   "table",
+   "asked",
+   "asked",
+   "CREATE TABLE asked(        -- a question dealt to a member's inbox (stories.deal): the waiting is this row\n  question_id INT, member_id INT,\n  item_id INT,                           -- inbox_items.id it is shown in (one item per group)\n  at TEXT, answered_at TEXT, dismissed_at TEXT,\n  PRIMARY KEY(question_id, member_id))"
   ],
   [
    "table",
@@ -226,7 +256,7 @@
    "table",
    "change_sets",
    "change_sets",
-   "CREATE TABLE change_sets(\n  id INTEGER PRIMARY KEY, title TEXT, prompt TEXT, op TEXT DEFAULT 'hide',\n  status TEXT DEFAULT 'open',        -- open | reverted | done\n  created_by TEXT, created_at TEXT, updated_at TEXT, applied_at TEXT, reverted_at TEXT, done_at TEXT, kind TEXT DEFAULT 'list', query TEXT, owner INT, lens_id INT)"
+   "CREATE TABLE change_sets(\n  id INTEGER PRIMARY KEY, title TEXT, prompt TEXT, op TEXT DEFAULT 'hide',\n  status TEXT DEFAULT 'open',        -- open | reverted | done\n  created_by TEXT, created_at TEXT, updated_at TEXT, applied_at TEXT, reverted_at TEXT, done_at TEXT, kind TEXT DEFAULT 'list', query TEXT, owner INT, lens_id INT, grows_from TEXT)"
   ],
   [
    "table",
@@ -308,6 +338,12 @@
   ],
   [
    "table",
+   "listener_cursors",
+   "listener_cursors",
+   "CREATE TABLE listener_cursors(name TEXT PRIMARY KEY, journal_id INT)"
+  ],
+  [
+   "table",
    "member_favorites",
    "member_favorites",
    "CREATE TABLE member_favorites(   -- each member's own favourites (`favorites` is no longer written)\n  sha256 TEXT, member_id INT, fav INT NOT NULL, set_at TEXT, PRIMARY KEY(sha256, member_id))"
@@ -322,7 +358,7 @@
    "table",
    "members",
    "members",
-   "CREATE TABLE members(      -- who the estate knows: not persons (who is *in* photos, faces.py)\n  id INTEGER PRIMARY KEY, name TEXT,\n  kind TEXT DEFAULT 'person',            -- person | agent | device\n  role TEXT DEFAULT 'member',            -- sysadmin | member | viewer\n  person_id INT,                         -- persons.id: who this member is in photos, if known\n  upload_policy TEXT DEFAULT 'review',   -- everything | review | review_flagged\n  joined_at TEXT,                        -- when first let in\n  status TEXT DEFAULT 'pending')"
+   "CREATE TABLE members(      -- who the estate knows: not persons (who is *in* photos, faces.py)\n  id INTEGER PRIMARY KEY, name TEXT,\n  kind TEXT DEFAULT 'person',            -- person | agent | device\n  role TEXT DEFAULT 'member',            -- sysadmin | member | viewer\n  person_id INT,                         -- persons.id: who this member is in photos, if known\n  upload_policy TEXT DEFAULT 'review',   -- everything | review | review_flagged\n  joined_at TEXT,                        -- when first let in\n  status TEXT DEFAULT 'pending', questions_per_week INT)"
   ],
   [
    "table",
@@ -347,6 +383,12 @@
    "private",
    "private",
    "CREATE TABLE private(      -- a photo private to one of its sharers (private.py says who may see it)\n  sha256 TEXT, member_id INT,\n  why TEXT,                              -- new (a phone upload not checked yet) | held | withdrawn\n  since TEXT,\n  until TEXT,                            -- a day (YYYY-MM-DD) it is released on by itself, or NULL\n  released_at TEXT,                      -- NULL while it is private\n  batch INT,                             -- held: the journal entry of the hold (its inbox item is held:<batch>)\n  PRIMARY KEY(sha256, member_id))"
+  ],
+  [
+   "table",
+   "questions",
+   "questions",
+   "CREATE TABLE questions(    -- what an agent (or a member) asks a member, or the whole family\n  id INTEGER PRIMARY KEY,\n  asked_by INT,                          -- members.id: the estate's agent, or a member\n  acting_for INT,                        -- members.id the asking agent's run acted for; NULL: no one (the archivist)\n  to_member INT,                         -- members.id; NULL: open to the family\n  shas TEXT,                             -- JSON list of the photos it is about\n  text TEXT, why TEXT,\n  group_key TEXT,                        -- questions with the same key are one inbox item (\"Thanksgiving 1998\")\n  priority REAL,                         -- the asker's, 0-1: the last of the inbox's ranking\n  follow_up INT DEFAULT 0,               -- 1: an answer starts a new run of the estate's agent (listeners.py)\n  task_id INT,                           -- agent_tasks.id of the run that asked\n  status TEXT DEFAULT 'queued',          -- queued | asked | answered | closed\n  created_at TEXT)"
   ],
   [
    "table",
@@ -413,6 +455,18 @@
    "sources",
    "sources",
    "CREATE TABLE sources(\n  name TEXT PRIMARY KEY, entries INT, media INT, new_assets INT, bytes_seen INT, bytes_new INT,\n  finished_at TEXT)"
+  ],
+  [
+   "table",
+   "stories",
+   "stories",
+   "CREATE TABLE stories(      -- what a member said about photos, attributed and dated, never edited\n  id INTEGER PRIMARY KEY,\n  member_id INT,                         -- who told it\n  question_id INT,                       -- the question it answers, or NULL\n  text TEXT,                             -- what they typed (NULL for a recording alone)\n  recording TEXT, recording_ext TEXT,    -- the sha256 of the audio: a file in the store with no assets row\n  told_at TEXT,\n  transcript TEXT,                       -- the recording, written out (transcribe.py): set once\n  transcribed_at TEXT, transcript_error TEXT)"
+  ],
+  [
+   "table",
+   "story_photos",
+   "story_photos",
+   "CREATE TABLE story_photos(story_id INT, sha256 TEXT, PRIMARY KEY(story_id, sha256))"
   ],
   [
    "table",
@@ -551,6 +605,42 @@
    "sharers_no_replace",
    "sharers",
    "CREATE TRIGGER sharers_no_replace BEFORE INSERT ON sharers\n  WHEN EXISTS (SELECT 1 FROM sharers WHERE sha256 = NEW.sha256 AND member_id = NEW.member_id)\n  BEGIN SELECT RAISE(IGNORE); END"
+  ],
+  [
+   "trigger",
+   "stories_no_delete",
+   "stories",
+   "CREATE TRIGGER stories_no_delete BEFORE DELETE ON stories\n  BEGIN SELECT RAISE(ABORT, 'a story is never deleted'); END"
+  ],
+  [
+   "trigger",
+   "stories_no_replace",
+   "stories",
+   "CREATE TRIGGER stories_no_replace BEFORE INSERT ON stories\n  WHEN EXISTS (SELECT 1 FROM stories WHERE id = NEW.id)\n  BEGIN SELECT RAISE(ABORT, 'a story is never replaced'); END"
+  ],
+  [
+   "trigger",
+   "stories_only_transcript",
+   "stories",
+   "CREATE TRIGGER stories_only_transcript BEFORE UPDATE ON stories\n  WHEN NEW.id IS NOT OLD.id OR NEW.member_id IS NOT OLD.member_id OR NEW.question_id IS NOT OLD.question_id\n    OR NEW.text IS NOT OLD.text OR NEW.recording IS NOT OLD.recording OR NEW.recording_ext IS NOT OLD.recording_ext\n    OR NEW.told_at IS NOT OLD.told_at OR (OLD.transcript IS NOT NULL AND (NEW.transcript IS NOT OLD.transcript\n    OR NEW.transcribed_at IS NOT OLD.transcribed_at))\n  BEGIN SELECT RAISE(ABORT, 'a story is never changed: only its transcript is written, once'); END"
+  ],
+  [
+   "trigger",
+   "story_photos_no_delete",
+   "story_photos",
+   "CREATE TRIGGER story_photos_no_delete BEFORE DELETE ON story_photos\n  BEGIN SELECT RAISE(ABORT, 'a story keeps its photos: removed only by estate.py purge'); END"
+  ],
+  [
+   "trigger",
+   "story_photos_no_replace",
+   "story_photos",
+   "CREATE TRIGGER story_photos_no_replace BEFORE INSERT ON story_photos\n  WHEN EXISTS (SELECT 1 FROM story_photos WHERE story_id = NEW.story_id AND sha256 = NEW.sha256)\n  BEGIN SELECT RAISE(IGNORE); END"
+  ],
+  [
+   "trigger",
+   "story_photos_no_update",
+   "story_photos",
+   "CREATE TRIGGER story_photos_no_update BEFORE UPDATE ON story_photos\n  BEGIN SELECT RAISE(ABORT, 'a story keeps its photos'); END"
   ],
   [
    "trigger",

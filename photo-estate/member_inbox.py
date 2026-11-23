@@ -8,7 +8,8 @@ An item is open, done (decided, or no longer waiting on anyone) or dismissed (pu
   OPENS                                  kind -> what an item opens, from its ref (a kind is a row here)
   put(con, members, kind, ref, title)    one open item per member, kind and ref: made, or brought up to date
   close(con, kind, ref, member=None)     every open item of that kind and ref (or that member's) is done
-  mine(con, member) -> {items, open}     GET /api/inbox: the member's open items, newest first
+  mine(con, member, keep=None) -> {items, open}   GET /api/inbox: the member's open items, newest first (keep: a
+                                         filter, for the questions: stories.keep_item)
   dismiss(con, member, id) -> dict       POST /api/inbox/<id>/dismiss (InboxError: not theirs, or not open)
   sysadmins(con) -> [members.id]         the active sysadmins, whom a request or a proposal is for
   lens_changed(con, actor, lens=, album=)   a published lens's photos changed: its live subscribers are told
@@ -35,6 +36,15 @@ The kinds, who each is for, what makes and closes it (all in the caller's transa
                                           none of that batch is still held (released, by hand or on its day).
                                           Opens the held view (/?q=is:held)
 
+  question        the member it is dealt to stories.deal (when their inbox is read): one item per group of
+                  ask:<group>             questions (a group_key, or q<id>), within their weekly allowance; done once
+                                          each question in it is answered or put away (stories.py). Not shown while
+                                          none of its questions may be shown to them. Opens /inbox?ask=<group>
+  series_update   a series' owner         listeners.py, when new photos match a member's own series (an album that
+                  album:<id>              grows from a search): its candidates are in series.update_requested; done
+                                          when the owner adds them, or none (POST /api/albums/<id>/candidates).
+                                          Opens the album with its candidates (/?album=<id>&candidates=1)
+
 Adding a kind (a later phase): a row in OPENS, and a put() and a close() in the code that makes and
 decides it. Nothing else.
 
@@ -47,6 +57,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import journal
 
@@ -62,6 +73,8 @@ OPENS = {
     "lens_proposed": lambda ref: "/?albums",
     "lens_changed": lambda ref: f"/?album={_num(ref)}" if ref.startswith("album:") else "/?albums",
     "held": lambda ref: "/?q=is:held",
+    "question": lambda ref: f"/inbox?ask={quote(ref.partition(':')[2])}",
+    "series_update": lambda ref: f"/?album={_num(ref)}&candidates=1",
 }
 STATES = ("open", "done", "dismissed")
 
@@ -112,12 +125,12 @@ def _item(row) -> dict:
             "opens": OPENS[kind](ref) if kind in OPENS else None}
 
 
-def mine(con: sqlite3.Connection, member: int | None) -> dict:
+def mine(con: sqlite3.Connection, member: int | None, keep=None) -> dict:
     """GET /api/inbox: `member`'s open items, newest first (an item brought up to date counts as new), each with
-    the address it opens; `open`, how many."""
+    the address it opens; `open`, how many. `keep(item)`: False leaves an item out (stories.keep_item)."""
     rows = con.execute("SELECT id, kind, ref, title, created_at, updated_at FROM inbox_items WHERE member_id IS ?"
                        " AND state='open' ORDER BY updated_at DESC, id DESC", (member,)).fetchall()
-    items = [_item(r) for r in rows]
+    items = [it for it in (_item(r) for r in rows) if keep is None or keep(it)]
     return {"items": items, "open": len(items)}
 
 

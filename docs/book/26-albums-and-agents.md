@@ -186,9 +186,10 @@ JSON, no stream and no session. The tools:
 
 | To... | Tools |
 |---|---|
-| Find photos | `library_overview`, `search_photos`, `similar_photos`, `get_photos` |
-| Keep them | `list_albums`, `get_album`, `create_album`, `amend_album` |
+| Find photos | `library_overview`, `search_photos`, `similar_photos`, `get_photos` (with the stories told about each) |
+| Keep them | `list_albums`, `get_album`, `create_album` (with `search` and `grow`, a series), `amend_album` |
 | Propose a change | `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set` |
+| Ask the family | `ask_member` |
 | Hand over a big job | `submit_task`, `get_task`, `cancel_task` |
 
 Two rules are built into the tools, not left to the agent's good behaviour:
@@ -196,8 +197,15 @@ Two rules are built into the tools, not left to the agent's good behaviour:
 - **The agent never sees a photo.** Every tool answers with ids, scores, dates, places, the names of
   people in it, albums and file paths. Nothing of what a photo shows leaves the computer, whichever model
   the agent is.
-- **The agent cannot change the library.** It can make albums, which change nothing else, and propose
-  change sets. No tool applies one.
+- **The agent cannot change the library.** It can make albums, which change nothing else, propose
+  change sets and ask questions. No tool applies anything.
+- **The agent sees what its member sees.** Every tool answers as one member sees the library: the caller's
+  login, or the member a run of the estate's agent acts for; acting for no one (the family archivist), only
+  what the whole family may see. A photo private to someone else is not there for it at all.
+
+The server's instructions text (`INSTRUCTIONS` in estate_mcp.py) says the same to any client: whose eyes it
+answers with, that hiding is the member's own, that private photos are never shown, how and when to ask a
+question, and that stories are what people said, attributed and never edited.
 
 Since the agent cannot look, `search_photos` tells it how to read a ranking: each answer carries a
 `summary` (how many match, the score at several ranks, the years they come from, how many have a named
@@ -236,10 +244,15 @@ photo with a click, but never sees one left out), leave the family's named peopl
 plainly covers them, and end with a plain report of what it did and what it is least sure of.
 
 Each task's progress is kept as a list of events, so the Changes page can show it working and keep what
-it did afterwards. The change sets it makes carry the task's name; the agent is told apart by a header
-honoured only from this computer, and is not offered the task tools itself. It **acts for** the member who
-submitted the task (`agent_tasks.acting_for`, looked up from the header): every tool answers as that
-member sees the library, what it makes is theirs, and its writes are journaled acting for them. A task Ben
+it did afterwards. The change sets it makes carry the task's name; the agent is told apart by its run's
+token (a random capability minted for the run, honoured only from this computer while the run lasts:
+[chapter 11](11-server.md#the-estates-agent-listeners-questions-and-stories)), and is not offered the task tools
+itself. It is a member, the estate's agent, and **acts for** the member who submitted the task
+(`agent_tasks.acting_for`, fixed by the token): every tool answers as that member sees the library, what it
+makes is theirs, and its writes are journaled by the agent, acting for them. With `family: true` a run acts for
+no one, as the family archivist; and the estate starts runs itself, when new photos match a family series or
+someone answers a question the agent wanted answered (below). Every run, those too, is a row with who or what
+started it (`started_by`). A task Ben
 submits searches as Ben, not as the sysadmin the agent calls as. It signs in with a
 long-lived token from `claude setup-token`, kept in `~/.config/photo-estate/agent.env` and put in the
 agent's environment and nowhere else. The model runs in the cloud; what reaches it is the request and
@@ -253,6 +266,33 @@ to done or failed) never overwrites a cancel that got there first. Cancelling, a
 stop the agent with SIGTERM and then SIGKILL ten seconds later, and a failed task's error ends with the
 last of what the agent wrote to stderr, read to the end. `Tasks.update` writes only the task's own
 columns, and never its status.
+
+## Series that grow
+
+A **series** is a list album with a search it grows from (`grows_from`): made with `POST /api/albums {title,
+grows_from}` or the MCP's `create_album` with `search` and `grow`, it starts as what the search finds and is
+added to as photos arrive, never worked out again, so what its owner took out stays out. (A live album is its
+search, and needs no one to keep it.) When an ingest has added photos, the series listener runs each series'
+search over them as its owner: for a **family series** (one the family archivist made and keeps) the estate's
+agent looks at the matches and adds those that belong; for a member's own, the matches wait in their inbox, and
+they add them, or none, from there (`/api/albums/<id>/candidates`). Their own agent picking that up is phase 8.
+
+## Questions and stories
+
+Some things only people know. The agent asks with `ask_member`: one member, or the whole family, about photos
+they can see, a few plain questions grouped by event. The **inbox decides how many** each member sees: three
+items a week (or their own number), photos nobody has told a story about first, then gaps in a series, then the
+agent's priority; "three questions about Thanksgiving 1998" is one item. A member answers in the inbox, typed or
+spoken (`POST /api/questions/<id>/answer`), or says "I don't know", which puts the question away for good. An
+answer is a **story**, attributed and dated; a second member's answer is a second story, never a correction, and
+a story can be told about any photo with no question (`POST /api/stories`). A spoken one is uploaded as the
+request's body (the iPhone's `.m4a`, a browser's `audio/mp4` or `audio/webm`), kept in the store with no photo
+row, and transcribed on the mini, later, by Parakeet (`transcribe.py`). The viewer shows a photo's stories
+(`GET /api/photos/<sha>/stories`: who told each, when, the text or the recording and its transcript), a series
+the stories told about its photos (`GET /api/albums/<id>/stories`), and plays a recording
+(`GET /api/stories/<id>/recording`, with Range). If the agent wanted the answer (`follow_up`), the story wakes
+a new run with the question and the answer. Appendix B has the requests exactly. *(The pages and the iPhone's
+recording are the next step of phase 7; this is the server they use.)*
 
 ## On the phone
 
@@ -272,7 +312,10 @@ own review page inside the app (`WebView.swift`); a native one is
 | Albums, change sets, the `hidden` table | [changes.py](../../photo-estate/changes.py) `Changes` |
 | The review page | [changes.html](../../photo-estate/changes.html) |
 | The MCP tools and their descriptions | [estate_mcp.py](../../photo-estate/estate_mcp.py) `Tools` |
-| Running the agent, its brief, its events | [tasks.py](../../photo-estate/tasks.py) `Tasks`, `BRIEF` |
+| Running the agent, its briefs, its token, its events | [tasks.py](../../photo-estate/tasks.py) `Tasks`, `BRIEF`, `WORK_BRIEF`, `mint` |
+| Listeners: series kept up to date, an answer that wakes the agent | [listeners.py](../../photo-estate/listeners.py) |
+| Questions, the inbox's allowance, stories, recordings | [stories.py](../../photo-estate/stories.py) |
+| Transcribing a recording (Parakeet on MLX) | [transcribe.py](../../photo-estate/transcribe.py) |
 | Albums on the phone | [Albums.swift](../../ios/PhotoEstate/Library/Albums.swift), [API.swift](../../ios/PhotoEstate/Catalog/API.swift) |
-| Tests | [test_albums.py](../../photo-estate/tests/test_albums.py), [test_changes.py](../../photo-estate/tests/test_changes.py), [test_mcp.py](../../photo-estate/tests/test_mcp.py), [test_tasks.py](../../photo-estate/tests/test_tasks.py) |
+| Tests | [test_albums.py](../../photo-estate/tests/test_albums.py), [test_changes.py](../../photo-estate/tests/test_changes.py), [test_mcp.py](../../photo-estate/tests/test_mcp.py), [test_tasks.py](../../photo-estate/tests/test_tasks.py), [test_agent.py](../../photo-estate/tests/test_agent.py), [test_listeners.py](../../photo-estate/tests/test_listeners.py), [test_stories.py](../../photo-estate/tests/test_stories.py) |
 | The HTTP API | [Appendix B](appendix-b-http-api.md#albums-and-change-sets) |

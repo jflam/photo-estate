@@ -106,9 +106,9 @@ The sysadmin lets people in on **`/members`** (members.html, its state machine i
 turn away, turn off, let in again; a role, an upload policy, a name, and the person in People they are.
 The estate always keeps an active sysadmin: a change that would leave none is refused. `GET /api/me`
 says who a request is for. A task records who asked for it (`agent_tasks.acting_for`), from the
-Changes page and from `/mcp`'s `submit_task`; the agent calls `/mcp` from this computer with
-`X-Estate-Task`, and is answered as that member sees the library (below, [What each member
-sees](#what-each-member-sees-lenses)).
+Changes page and from `/mcp`'s `submit_task`; the agent calls `/mcp` from this computer with its run's
+token, and is answered as that member sees the library (below, [What each member
+sees](#what-each-member-sees-lenses), and [the estate's agent](#the-estates-agent-listeners-questions-and-stories)).
 
 **The first start.** A catalog made before members has none. On the first start of the new code, the
 logins given by `--upload-user` become active members who may upload everything, the first of them the
@@ -215,8 +215,8 @@ faces are listed: a person's faces, the review queue, the unnamed groups and a p
 faces in photos the member does not see (`People.handle`'s `keep`); the counts stay People's own.
 
 **The agent answers for a member.** The MCP tools read the view of the login that called, and for a
-task, of the member it was submitted by (`agent_tasks.acting_for`, looked up from `X-Estate-Task`): a task
-Ben submits searches as Ben, and the albums and change sets it makes are Ben's.
+task, of the member it was submitted by (`agent_tasks.acting_for`, fixed by its run's token since phase 7): a
+task Ben submits searches as Ben, and the albums and change sets it makes are Ben's.
 
 **The sync feed** is one per member ([chapter 20](20-sync.md)).
 
@@ -353,6 +353,77 @@ member shared (for the first sysadmin, every image with no sharer too) the same 
 theirs: one `photo.held` entry with the count, one inbox item. With `--dry-run` it changes nothing and prints,
 with no pixels and no file names, how many each prompt would hold, the best scores near the threshold, and a
 sample of ids. It is safe to run twice, and never holds a photo the member released ([appendix A](appendix-a-commands.md)).
+
+### The estate's agent, listeners, questions and stories
+
+*(Multiplayer phase 7, the server half: tasks.py, estate_mcp.py, listeners.py, stories.py, transcribe.py.)*
+
+**The estate's agent is a member**: kind `agent`, made the first time anything needs it (`members.agent`; the
+app makes it at start, before it reads who sees what), never deleted, with no login. A run of it gets a
+capability, not a task number: `Tasks.run` mints a random token (`secrets.token_urlsafe(32)`) for *this agent,
+acting for this member (or no one), for this task*, puts it in the agent's MCP config as `X-Estate-Agent`, and
+forgets it in the run's `finally`. Tokens are held in the app's memory only (`Tasks.runs`), never written down,
+so a restart ends them all, and the run that was going is marked failed by `Tasks()` as before. `/mcp` honours a
+token only from this computer (`is_local`) and only while its run lasts; one from elsewhere, one that is no
+running task's, or a request still carrying `X-Estate-Task` (the task number runs carried before) is refused
+`403`, never answered as this computer's sysadmin. A run's writes are journaled with the agent as the actor and
+its member as `acting_for`. Acting for a member, it sees what they see (`visible_for(acting_for)`) and writes
+their albums and change sets; acting for no one it is **the family archivist**, which reads as itself, and an
+agent is shown what `NOBODY` is (`private.Private.agents`): only photos private to nobody, with the estate
+defaults applied. An album the archivist makes is published at once as a series it keeps
+(`lenses.maintained_by`). No tool applies anything.
+
+**Every run is recorded**, the ones a listener starts too: an `agent_tasks` row with `started_by`
+(`member:<id>` for a person; `journal:<entry>/album:<id>` or `journal:<entry>/story:<id>` for a listener).
+Any member may start a run (open question 4), for themselves, or with `family: true` for the archivist. A
+person's request to hide photos gets the old brief (`BRIEF`); a family request or a listener's run gets
+`WORK_BRIEF`.
+
+**Listeners** (listeners.py) read the journal, each from its own cursor (`listener_cursors`), in one thread of
+the app (every 30 seconds, and at once after a reload or a story). A rule decides first, from the tables; only a
+yes wakes the model. Delivery is at least once: the cursor moves past an entry once its handler is done, and each
+handler looks for what it would make before making it. A listener new to a catalog starts at the journal's end.
+
+- **Series.** A series, in the data, is a list album with a search it grows from (`change_sets.grows_from`):
+  chosen photos, added to and never worked out again, so what its owner took out stays out. A live album is
+  not one: it is its search, and holds new photos as soon as they are in the catalog. On `ingest.finished`
+  (whose data now says which rowids the run added), the series listener waits until the catalog being served
+  was read after the entry, then runs each series' search as its owner over the whole library, as the app
+  ranks it (a search's floor is relative to its best match, so it cannot be run over the new photos alone),
+  and keeps the new photos it finds that the album does not hold. For a family series a run of the archivist
+  looks at them and adds those that belong; for a member's own, a `series.update_requested` entry names them
+  and a `series_update` item waits in the owner's inbox (`GET`/`POST /api/albums/<id>/candidates`).
+- **Stories.** On `story.told` (with text) or `story.transcribed`: if the story answers a question the
+  estate's agent asked with `follow_up`, and the member that run acted for may read it, a new run acting for
+  them gets the question, the answer and the photos.
+
+**Questions** (stories.py; the MCP tool `ask_member`) may name only photos the asker sees and the recipient may
+be shown, and for the whole family only photos private to nobody: anything else is refused, never trimmed.
+They are queued; **the inbox decides how many a member sees**, when it is read: at most `ALLOWANCE` (3) new items
+in any 7 days, or the member's `members.questions_per_week`, and none while that many are open. A `group_key` is
+one item ("3 questions about Thanksgiving 1998"), which a later question of the group joins for nothing. Groups
+are dealt naming a photo nobody has told a story about first, then a photo of a series, then by the asker's
+priority, then oldest first. "I don't know" (dismissing a question, or its item) puts it away for that member
+for good; it counts against the week it was dealt in and nothing after. A question naming a photo the member may
+not be shown now waits, and one already dealt is left out of their inbox, item and all.
+
+**Stories** are what a member said, attributed and dated: typed, or a recording uploaded as the body of the
+request (an iPhone's AAC `.m4a`, a browser's `audio/mp4` or `audio/webm`, `.wav`, up to 8 MiB), stored in the
+store content-addressed with `estate.store_blob` (immutable in a marked store) and **no `assets` row**, so it is
+in no photo view; with `--demo`, beside the scratch catalog, never in the checked-in store. A story is read by its
+teller and by whoever may be shown every one of its photos (a story naming one photo private to its teller is
+theirs alone), and its recording by the same rule. `stories` and `story_photos` are protected like the other
+append-only tables: no delete, no replacing insert, no update but the transcript, written once. `estate.py purge`
+takes the purged photo out of the stories about it (it drops `story_photos_no_delete` in its transaction, as the
+others) and keeps the stories: one about that photo alone is then its teller's only.
+
+**Transcription** is a queued job (`transcribe.Job`), run when a recording is uploaded and at start:
+`uv run transcribe.py run`, a uv script with its own environment, NVIDIA Parakeet TDT 0.6B v2 through
+`parakeet-mlx`. Its own audio loader calls a system `ffmpeg`, which the mini does not have on the app's PATH, so
+transcribe.py decodes with PyAV (16 kHz mono) and hands the samples to the model. The model is fetched by hand
+(`transcribe.py fetch`, deploy/MAC-MINI.md), never by a request: the app runs with `HF_HUB_OFFLINE=1`. Without
+it, each waiting story says how to fetch it (`transcript_error`), and a job that cannot run at all (no MLX: not a
+Mac) says so on each; both are tried again on the next run. It need not be real time.
 
 ### Malformed requests
 

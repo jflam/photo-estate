@@ -12,11 +12,14 @@ appends its journal entry in the same transaction, and commits.
   request(con, login, name) -> Member       a login nobody has let in asks to be: a pending member, and an
                                             inbox item for every sysadmin (member_inbox.py: member_request)
   change(con, id, actor, **fields) -> Member   name, role, status, upload_policy, person_id; ValueError
-                                            when a value is not one of these, or it would leave no sysadmin;
+                                            when a value is not one of these, it would leave no sysadmin, or
+                                            the member is the estate's agent;
                                             a pending member let in or turned away closes their request's items
   first_start(con, logins, sysadmin=None) -> [Member]   no members yet: these logins become active members
   demo(con) -> [Member]                     the demo's three members (in its scratch catalog)
-  ROLES, STATUSES, POLICIES
+  agent(con) -> Member                      the estate's agent (kind agent), made the first time it is needed
+  family(con) -> [Member]                   the active members who are people (whom a question to the family is for)
+  ROLES, STATUSES, POLICIES, AGENT_NAME
 
 Words (docs/notes/MULTIPLAYER-PLAN.md). A member is not a `persons` row, which is someone *in* photos
 (faces.py); a member may be linked to one. A member is never deleted: revoked is a status (and triggers
@@ -24,6 +27,12 @@ refuse a DELETE of members or member_logins: core/schema.py). Logins are kept lo
 sysadmin and member (the plan's viewer is for devices, later). The journal kinds written here
 (journal.append), each with the subject member:<id>: member.added and member.requested (data: the
 login), member.changed (data: {field: [before, after]}).
+
+The estate's agent (multiplayer phase 7) is a member too: kind `agent`, role member, active, with no login (it
+never comes through `tailscale serve`; a run of it is known by the token tasks.py gives it). agent() makes it
+the first time something needs it (a run, a question) and it is never deleted. Acting for no member it is the
+family archivist; acting for a member it sees what they see (estate_mcp.py). first_start and demo count only
+people: a catalog with nothing but the agent has no members yet.
 """
 from __future__ import annotations
 
@@ -39,6 +48,8 @@ STATUSES = ("pending", "active", "revoked")
 POLICIES = ("everything", "review", "review_flagged")
 COLS = "m.id, m.name, m.role, m.status, m.upload_policy, m.person_id, m.kind, m.joined_at"
 DEMO = (("Ada", "sysadmin", "everything"), ("Ben", "member", "review"), ("Cleo", "member", "review_flagged"))
+AGENT_NAME = "The estate's agent"
+PEOPLE = "kind IS NOT 'agent'"      # (SQL) the members who are people
 
 
 @dataclass(frozen=True)
@@ -187,6 +198,8 @@ def change(con: sqlite3.Connection, mid: int, actor: int | None, **fields) -> Me
         m = get(con, mid)
         if m is None:
             raise ValueError("no such member")
+        if m.kind == "agent":
+            raise ValueError("the estate's agent is not changed on /members: it acts for whoever its run is for")
         new = {**asdict(m), **fields}
         new["name"] = " ".join(str(new["name"] or "").split())[:80] or m.name
         _check(new["role"], new["status"], new["upload_policy"])
@@ -216,7 +229,7 @@ def first_start(con: sqlite3.Connection, logins, sysadmin: str | None = None) ->
     sysadmin. Nothing happens once there is any member."""
     wanted = list(dict.fromkeys(norm(x) for x in ([sysadmin] if sysadmin else []) + list(logins) if norm(x)))
     with con:
-        if not wanted or con.execute("SELECT 1 FROM members LIMIT 1").fetchone():
+        if not wanted or con.execute(f"SELECT 1 FROM members WHERE {PEOPLE} LIMIT 1").fetchone():
             return []
         return [_add(con, login.split("@")[0], login, "sysadmin" if i == 0 else "member", "active", "everything", None)
                 for i, login in enumerate(wanted)]
@@ -226,6 +239,25 @@ def demo(con: sqlite3.Connection) -> list[Member]:
     """The demo's members, made in its scratch catalog at start: a sysadmin and two members, each with
     the lower-case name as its login (X-Demo-Member: ben)."""
     with con:
-        if con.execute("SELECT 1 FROM members LIMIT 1").fetchone():
+        if con.execute(f"SELECT 1 FROM members WHERE {PEOPLE} LIMIT 1").fetchone():
             return []
         return [_add(con, name, name.lower(), role, "active", policy, None) for name, role, policy in DEMO]
+
+
+def agent(con: sqlite3.Connection) -> Member:
+    """The estate's agent: the oldest member of kind agent, made (member.added, by no one) if there is none. Commits."""
+    row = con.execute(f"SELECT {COLS} FROM members m WHERE kind='agent' ORDER BY id LIMIT 1").fetchone()
+    if row:
+        return _member(row)
+    with con:
+        mid = con.execute("INSERT INTO members(name, kind, role, upload_policy, joined_at, status) VALUES (?,?,?,?,?,?)",
+                          (AGENT_NAME, "agent", "member", "everything", now(), "active")).lastrowid
+        journal.append(con, None, "member.added", f"member:{mid}", {"name": AGENT_NAME, "kind": "agent"})
+    got = get(con, mid) if mid is not None else None
+    assert got is not None
+    return got
+
+
+def family(con: sqlite3.Connection) -> list[Member]:
+    """The active members who are people, oldest first: whom a question to the whole family is for."""
+    return [_member(r) for r in con.execute(f"SELECT {COLS} FROM members m WHERE status='active' AND {PEOPLE} ORDER BY id")]

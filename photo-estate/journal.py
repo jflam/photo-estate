@@ -8,14 +8,14 @@ undoing something is a new entry, never a changed one. The state tables (change_
 faces, ...) stay the truth for what the app shows; the journal is the history beside them. One entry per
 action, not per photo: applying a set that hides 10,000 photos is one entry naming the set, and a write
 that changes nothing appends nothing. `append` never commits: the entry lands with the change it records,
-or not at all. Nothing reads the journal yet (the
-listeners of the multiplayer plan's phase 7 will, with `since`).
+or not at all. The listeners (listeners.py) read it with `since`, each from its own cursor.
 
 `actor` is members.id of whoever did it: the member a request is for (PhotoApp.who), so a request from
 this computer itself is the first sysadmin; NULL when there is no member to name (no sysadmin yet, or the
-app itself, as when a task's run ends, or the estate's agent, which is no member yet). `acting_for` is the
-member an agent's run works for: every write a task's agent makes through /mcp is NULL acting for whoever
-submitted the task (agent_tasks.acting_for; estate_mcp.py). `data` is
+app itself, as when a task's run ends or a listener writes). `acting_for` is the member an agent's run works
+for: every write a run of the estate's agent makes through /mcp names the agent (members.agent) as the actor,
+acting for the member the task is for (agent_tasks.acting_for; NULL for the family archivist; estate_mcp.py).
+Entries written before phase 7 by a task's agent have a NULL actor. `data` is
 JSON, whatever else the kind needs, small: counts and titles, never a list of every photo.
 
 Kinds, with their subject and where each is appended:
@@ -51,7 +51,8 @@ Kinds, with their subject and where each is appended:
   task.finished                    task:<id>    tasks.py {status, error?}: done, failed or cancelled (the
                                                 actor is who cancelled; NULL for a run's own end)
   ingest.finished                  source:<name>   estate.py ingest, a source that added anything
-                                                {new, dup, refused, new_bytes}
+                                                {new, dup, refused, new_bytes, assets?: [after, last]}: assets, the
+                                                rowids of the photos it added (after < rowid <= last; listeners.py)
   photo.purged                     <sha>        estate.py purge {reason, ext, kind, size, taken_at, first_seen,
                                                 sources: [[source, path]]}
   sharers.migrated                 sharers      estate.py migrate {member, photos}
@@ -63,6 +64,14 @@ Kinds, with their subject and where each is appended:
   photo.release_set                <sha> or photos   the day private photos are released on, set or cleared {photos, until}
   photo.released                   <sha> or photos   released by their sharer {photos}, or by the app's timer on their
                                                 day {photos, auto: true, until}: no actor, acting for the sharer
+  album.grows                      album:<id>   changes.py: the search a series grows from, set or cleared {grows_from}
+  series.update_requested          album:<id>   listeners.py: new photos match a member's own series {ingest, photos,
+                                                more?}: no actor, acting for its owner (their series_update item)
+  question.asked                   question:<id>  stories.ask {to, photos, group_key}: by the asker (the estate's
+                                                agent, acting for whom its run acts for; or a member)
+  question.dismissed               question:<id>  stories.dismiss {question}: "I don't know", by the member
+  story.told                       story:<id>   stories.tell {question, photos, recording, text}: by the teller
+  story.transcribed                story:<id>   stories.transcribed {chars}: no actor, acting for the teller
   inbox.dismissed                  inbox:<id>   member_inbox.dismiss {kind, ref}: an item put away by its member (an
                                                 item made or done is not journaled: the entry of what made or decided
                                                 it says so)

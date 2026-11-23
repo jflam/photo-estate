@@ -85,6 +85,13 @@ photo-estate/                  the server and the web app (Python run with uv; n
   member_inbox.py      110  each member's inbox (inbox_items; not the upload folder): put and close, called by the
                             code that makes and decides each kind, what an item opens, the member's list,
                             dismissing; a lens that changed tells its live subscribers once (chapter 11)
+  stories.py           486  questions and stories (chapter 11): ask (only photos the recipient may be shown), the
+                            inbox's weekly allowance, ranking and grouping (deal), answering typed or spoken,
+                            telling a story, who may read one, a recording into the store with no assets row
+  listeners.py         211  what the estate does by itself: listeners reading the journal from their cursors, at
+                            least once; series kept up to date as photos arrive, an answer that wakes the agent
+  transcribe.py        210  a story's recording written out on the mini (Parakeet TDT 0.6B v2 on MLX; PyAV reads
+                            the audio, no ffmpeg); `fetch` the model by hand; the app's queued job (chapter 11)
   catalog.py           840  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
                             clips, the same for every member), View (what one member sees: mask, stacks, trip
                             cards, counts, favourites), Live and visible_for, the one way to ask (chapter 11)
@@ -103,9 +110,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
   faces.py             979  faces: run, serve, and the People class (who is who)
   changes.py           473  albums and change sets: proposed, reviewed, applied, reverted, discarded as a mark (chapter 26)
   places.py            388  place names, local time, events, trips
-  estate_mcp.py        423  the library as MCP tools for an agent, at /mcp (chapter 26)
+  estate_mcp.py        423  the library as MCP tools for an agent, at /mcp: who a call is for (a login, a run's
+                            token), ask_member, stories in get_photos (chapter 26)
   upload.py            340  receives phone uploads into an inbox (chapter 24)
-  tasks.py             317  a request in words, worked on by Claude Code on the library's computer (chapter 26)
+  tasks.py             317  a request in words, worked on by Claude Code on the library's computer: the estate's
+                            agent, a token per run, who started each run (chapter 26)
   stats.py             181  the numbers behind the /stats page
   sync.py               98  the change feed a phone syncs from (chapter 20)
   scores.py             88  which photos are best: the two scorers (chapter 25)
@@ -201,6 +210,13 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_journal.py checks journal.py and the one entry each write appends;
                             test_lenses.py checks lenses.py's rules and writes on a scratch catalog;
                             test_member_inbox.py checks member_inbox.py and each kind's making and closing there;
+                            test_agent.py checks the estate's agent: a run's token (from this computer only, while
+                            the run lasts, for its member; X-Estate-Task refused) and each kind of MCP caller;
+                            test_listeners.py checks listeners.py with a stand-in app, then end to end with a
+                            stand-in agent: a family series and a member's own kept up to date, an answer waking a run;
+                            test_stories.py checks questions and stories: nothing private through a question, a story
+                            or a recording; the allowance, ranking and grouping on a fake clock; a spoken answer
+                            through upload, the queue and a stand-in transcriber; the triggers; a purge;
                             test_tombstones.py checks the phone gate's tombstones: the endpoints, an upload refused
                             before its body and dropped from staging, one member's opt-out against another's copy,
                             a purge, the phone's screenshot mark reaching the hold;

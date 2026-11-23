@@ -31,6 +31,9 @@ Areas, and who opens them (each owner calls ensure when it opens the database, n
     lenses       lenses.py: lenses, subscriptions, shown ("show it anyway") and member_favorites (each member's
                  favourites): changes.Changes and photo_app.PhotoApp when they open the catalog, and
                  `estate.py migrate`
+    stories      stories.py and listeners.py: questions, asked (a question dealt to a member), stories and
+                 story_photos (append-only: only a story's transcript is written later, once), listener_cursors:
+                 photo_app.PhotoApp, tasks.Tasks and transcribe.py when they open the catalog
 
 Protected tables (the multiplayer plan's Append-only): a DELETE from journal, assets, occurrences, sharers,
 tombstones, members or member_logins raises, as does any UPDATE of journal and an UPDATE that changes a key
@@ -40,7 +43,9 @@ key is already there never replaces the row (an INSERT OR REPLACE would otherwis
 delete trigger firing): it raises for journal, members and member_logins, which the code only plain-INSERTs,
 and is skipped (RAISE(IGNORE)) for assets, occurrences (the id, or the same source and path), sharers and
 tombstones, so INSERT OR IGNORE works as before and a REPLACE changes nothing. The triggers do not stop
-DROP TABLE or DROP TRIGGER: they are a guard against accidents, not against intent.
+DROP TABLE or DROP TRIGGER: they are a guard against accidents, not against intent. The stories area's
+stories and story_photos are protected the same way (no DELETE, no replacing INSERT, no UPDATE but a story's
+transcript, written once): its STORIES DDL.
   sync-feed.db   sync         sync.Feed: kv, rows (the phones' change feed, beside the catalog)
   intake.db      intake       intake.engine.Store: jobs, events (the setup page's jobs)
 
@@ -303,6 +308,62 @@ CREATE TABLE IF NOT EXISTS inbox_items(  -- what a member has to decide (member_
   done_at TEXT);
 CREATE INDEX IF NOT EXISTS inbox_member ON inbox_items(member_id, state);
 """
+# Questions and stories (stories.py; multiplayer phase 7), and where each listener has read the journal to
+# (listeners.py). A story is what a member said: append-only like the journal, but for its transcript, written
+# once when the recording has been transcribed (transcribe.py). Which photos a story is about is a row each in
+# story_photos, so a photo's stories are an index lookup, and `estate.py purge` (which deletes a photo's rows from
+# every table with a sha256 column, dropping the *_no_delete triggers in its transaction) takes the purged photo
+# out of the stories about it and leaves the stories.
+STORIES = """
+CREATE TABLE IF NOT EXISTS questions(    -- what an agent (or a member) asks a member, or the whole family
+  id INTEGER PRIMARY KEY,
+  asked_by INT,                          -- members.id: the estate's agent, or a member
+  acting_for INT,                        -- members.id the asking agent's run acted for; NULL: no one (the archivist)
+  to_member INT,                         -- members.id; NULL: open to the family
+  shas TEXT,                             -- JSON list of the photos it is about
+  text TEXT, why TEXT,
+  group_key TEXT,                        -- questions with the same key are one inbox item ("Thanksgiving 1998")
+  priority REAL,                         -- the asker's, 0-1: the last of the inbox's ranking
+  follow_up INT DEFAULT 0,               -- 1: an answer starts a new run of the estate's agent (listeners.py)
+  task_id INT,                           -- agent_tasks.id of the run that asked
+  status TEXT DEFAULT 'queued',          -- queued | asked | answered | closed
+  created_at TEXT);
+CREATE TABLE IF NOT EXISTS asked(        -- a question dealt to a member's inbox (stories.deal): the waiting is this row
+  question_id INT, member_id INT,
+  item_id INT,                           -- inbox_items.id it is shown in (one item per group)
+  at TEXT, answered_at TEXT, dismissed_at TEXT,
+  PRIMARY KEY(question_id, member_id));
+CREATE TABLE IF NOT EXISTS stories(      -- what a member said about photos, attributed and dated, never edited
+  id INTEGER PRIMARY KEY,
+  member_id INT,                         -- who told it
+  question_id INT,                       -- the question it answers, or NULL
+  text TEXT,                             -- what they typed (NULL for a recording alone)
+  recording TEXT, recording_ext TEXT,    -- the sha256 of the audio: a file in the store with no assets row
+  told_at TEXT,
+  transcript TEXT,                       -- the recording, written out (transcribe.py): set once
+  transcribed_at TEXT, transcript_error TEXT);
+CREATE TABLE IF NOT EXISTS story_photos(story_id INT, sha256 TEXT, PRIMARY KEY(story_id, sha256));
+CREATE INDEX IF NOT EXISTS story_photos_sha ON story_photos(sha256);
+CREATE TABLE IF NOT EXISTS listener_cursors(name TEXT PRIMARY KEY, journal_id INT);
+CREATE TRIGGER IF NOT EXISTS stories_no_delete BEFORE DELETE ON stories
+  BEGIN SELECT RAISE(ABORT, 'a story is never deleted'); END;
+CREATE TRIGGER IF NOT EXISTS stories_only_transcript BEFORE UPDATE ON stories
+  WHEN NEW.id IS NOT OLD.id OR NEW.member_id IS NOT OLD.member_id OR NEW.question_id IS NOT OLD.question_id
+    OR NEW.text IS NOT OLD.text OR NEW.recording IS NOT OLD.recording OR NEW.recording_ext IS NOT OLD.recording_ext
+    OR NEW.told_at IS NOT OLD.told_at OR (OLD.transcript IS NOT NULL AND (NEW.transcript IS NOT OLD.transcript
+    OR NEW.transcribed_at IS NOT OLD.transcribed_at))
+  BEGIN SELECT RAISE(ABORT, 'a story is never changed: only its transcript is written, once'); END;
+CREATE TRIGGER IF NOT EXISTS stories_no_replace BEFORE INSERT ON stories
+  WHEN EXISTS (SELECT 1 FROM stories WHERE id = NEW.id)
+  BEGIN SELECT RAISE(ABORT, 'a story is never replaced'); END;
+CREATE TRIGGER IF NOT EXISTS story_photos_no_delete BEFORE DELETE ON story_photos
+  BEGIN SELECT RAISE(ABORT, 'a story keeps its photos: removed only by estate.py purge'); END;
+CREATE TRIGGER IF NOT EXISTS story_photos_no_update BEFORE UPDATE ON story_photos
+  BEGIN SELECT RAISE(ABORT, 'a story keeps its photos'); END;
+CREATE TRIGGER IF NOT EXISTS story_photos_no_replace BEFORE INSERT ON story_photos
+  WHEN EXISTS (SELECT 1 FROM story_photos WHERE story_id = NEW.story_id AND sha256 = NEW.sha256)
+  BEGIN SELECT RAISE(IGNORE); END;
+"""
 SYNC = """
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS rows (sha TEXT PRIMARY KEY, digest BLOB, ver INTEGER, gone INTEGER DEFAULT 0);
@@ -327,15 +388,23 @@ CREATE INDEX IF NOT EXISTS events_job ON events(job_id, id);
 EXIF_APP_INDEX = "CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)"
 
 AREAS = {"catalog": CATALOG + APPEND_ONLY + PRIVATE, "embeddings": EMBEDDINGS, "video": VIDEO, "faces": FACES, "changes": CHANGES, "tasks": TASKS,
-         "scores": SCORES, "favorites": FAVORITES, "members": MEMBERS, "lenses": LENSES, "sync": SYNC, "intake": INTAKE}
-CATALOG_AREAS = ("catalog", "embeddings", "video", "faces", "changes", "tasks", "scores", "favorites", "members", "lenses")
+         "scores": SCORES, "favorites": FAVORITES, "members": MEMBERS, "lenses": LENSES, "stories": STORIES, "sync": SYNC, "intake": INTAKE}
+CATALOG_AREAS = ("catalog", "embeddings", "video", "faces", "changes", "tasks", "scores", "favorites", "members", "lenses",
+                 "stories")
 ADDED = {
     # owner: the member whose album or set it is (NULL: the first sysadmin's); lens_id: the filter lens a hiding
     # set hides for (lenses.py; NULL: from before lenses, hiding for everyone until `estate.py migrate`)
     "changes": {"change_sets": (("done_at", "TEXT"), ("kind", "TEXT DEFAULT 'list'"), ("query", "TEXT"),
-                                ("owner", "INT"), ("lens_id", "INT")),
+                                ("owner", "INT"), ("lens_id", "INT"),
+                                # grows_from: a list album's search that new photos are matched against (a series,
+                                # kept up to date by listeners.py): JSON as `query`; NULL for every other album
+                                ("grows_from", "TEXT")),
                 "change_items": (("section", "TEXT"), ("position", "INTEGER"))},
-    "tasks": {"agent_tasks": (("acting_for", "INT"),)},    # members.id of whoever submitted the task
+    # acting_for: members.id of whom the run works for; started_by: who or what started it (member:<id>, or for a
+    # run a listener started journal:<entry id>/<what it is about>: listeners.py)
+    "tasks": {"agent_tasks": (("acting_for", "INT"), ("started_by", "TEXT"))},
+    # questions_per_week: this member's own allowance of questions (stories.py: NULL, the estate's ALLOWANCE)
+    "members": {"members": (("questions_per_week", "INT"),)},
 }
 
 

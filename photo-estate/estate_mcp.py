@@ -16,20 +16,31 @@ the tools are made of:
   app.overview(member)     -> the library in numbers
   app.changes         -> the change sets (changes.Changes)
   app.tasks           -> requests handed to the agent that runs on this computer (tasks.Tasks)
+  app.ask(...)        -> a question filed (stories.ask)
+  app.stories(ids, member) -> {id: [stories]} that member may read (stories.about)
+  app.family()        -> the family's members: [{id, name, person}]
 
-That agent uses this same endpoint. It is told apart by a header (X-Estate-Task, honoured only from
-this computer): the change sets it makes carry its task's name, and it is not offered the task tools.
+That agent uses this same endpoint. A run of it carries a token (X-Estate-Agent: tasks.Tasks.mint), honoured only
+from this computer and only while the run lasts: it says *this agent, acting for this member (or no one), for this
+task*, and nothing about it can be chosen by the caller. A call with a token that is not a live run's, or from
+anywhere but this computer, is refused (403), as is one that still carries X-Estate-Task, the task number a run
+carried before phase 7: never answered as this computer's sysadmin. A run is not offered the task tools.
 Who may call it is the app's rule for every route (an active member, or this computer: photo_app.py).
 
 The tools answer for a member (`member` above): every search, photo and album is as that member sees the
-library (catalog.Live.visible_for), and what a tool makes is theirs. For a login that is its member; for a
-task's agent it is the member the task was submitted by (agent_tasks.acting_for, looked up from
-X-Estate-Task), never the sysadmin it calls as: a task Ben submits searches as Ben. A task's writes are
-journaled with no actor (the agent is no member yet) acting for that member (journal.py); anyone else's
-with them as the actor. A task's agent acting for no member reads as NOBODY: it is shown only photos private to
-nobody (private.py), with the estate defaults applied. A photo private to someone else does not exist for the
-member a tool answers for: get_photos says "no such photo", similar_photos "no photo has that id", as for an
-unknown id, and no count, place, person, album or neighbour comes from it.
+library (catalog.Live.visible_for), and what a tool makes is theirs. For a login that is its member; from this
+computer with no token, the sysadmin. For a run of the estate's agent (members.agent, kind agent) acting for a
+member, that member (agent_tasks.acting_for), never the sysadmin it calls as: a task Ben submits searches as Ben,
+and its writes go to Ben's albums and change sets, journaled with the agent as the actor acting for Ben. Acting
+for no one (the family archivist) it reads as itself, which is shown only photos private to nobody (private.py:
+Private.agents), with the estate defaults applied; what it makes is its own, and an album it makes is published
+at once as a family series it keeps (changes.py). It can propose change sets; nothing it can call applies one.
+A photo private to someone else does not exist for the member a tool answers for: get_photos says "no such
+photo", similar_photos "no photo has that id", as for an unknown id, and no count, place, person, album,
+neighbour, story or question comes from it.
+
+ask_member (multiplayer phase 7: stories.py) files a question for a member, or the family, and returns at once;
+the member's inbox decides when they see it. get_photos carries each photo's stories that the member may read.
 """
 from __future__ import annotations
 
@@ -44,7 +55,8 @@ if TYPE_CHECKING:     # for the types only: the tools reach these through `app`
     from changes import Changes
     from tasks import Tasks
 
-NOBODY = 0     # the member an agent acting for no one reads as (private.NOBODY): only photos private to nobody
+NOBODY = 0     # private.NOBODY: who is shown only photos private to nobody
+TOKEN_HEADER = "X-Estate-Agent"   # a run's token (tasks.Tasks.mint)
 Found = tuple[list[str], list[float] | None]   # ids best first, and their scores (None: ranked by date)
 
 
@@ -63,16 +75,24 @@ class App(Protocol):
     def changes(self) -> Changes: ...
     @property
     def tasks(self) -> Tasks: ...
+    @property
+    def ask(self) -> Callable[..., dict[str, Any]]: ...
+    @property
+    def stories(self) -> Callable[[list[str], int | None], dict[str, list[dict]]]: ...
+    @property
+    def family(self) -> Callable[[], list[dict[str, Any]]]: ...
 
 
 @dataclass(frozen=True)
 class Caller:
     """Who a tool call is for. `viewer`: the member whose view it reads and whose albums it writes to; `actor`:
-    who the journal names (None for a task's agent); `acting_for`: the member a task's agent works for."""
+    who the journal names (the estate's agent, for a run); `acting_for`: the member a run works for (None: no
+    one); `task`: the run's task (agent_tasks.id), or None for anyone else."""
     who: str = ""                 # created_by: the login, or task:<id>
     actor: int | None = None
     acting_for: int | None = None
     viewer: int | None = None
+    task: int | None = None
 
 
 @dataclass(frozen=True)
@@ -84,10 +104,19 @@ class AppFacade:
     overview: Callable[[int | None], dict[str, Any]]
     changes: Changes
     tasks: Tasks
+    ask: Callable[..., dict[str, Any]]                             # stories.ask, with the app's refused
+    stories: Callable[[list[str], int | None], dict[str, list[dict]]]   # stories.about
+    family: Callable[[], list[dict[str, Any]]]                     # the family's members, for ask_member's `to`
 
 
 VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
-INSTRUCTIONS = """Photo Estate: one family's photo library, with tools to find photos and to propose changes to it.
+INSTRUCTIONS = """Photo Estate: one family's photo library, with tools to find photos, make albums, propose what to hide, and ask the family what only they know.
+
+Whose eyes. Every tool answers as one member sees the library, and what you make is theirs: the person you are
+signed in as, or, for a run of the estate's agent, the member it acts for. Acting for no one, the estate's agent
+is the family archivist: it sees only what the whole family may see, and an album it makes is a family series,
+published for everyone. A photo private to its sharer is never shown to anyone else, by any tool: it is as if it
+did not exist (no id, count, place, person, story or question comes from it). Do not try to reach one.
 
 Finding. search_photos ranks photos against a description with an image-text model (SigLIP 2) and can
 narrow by person, place, album, camera and date. You never see a photo: you get ids, scores, dates,
@@ -97,27 +126,40 @@ library scores fall smoothly with no gap, so read the `summary` each search retu
 the score at several ranks, the years they come from, how many have a named person) before choosing a
 `min_score`. Describe what is in the picture ("young children in a forest"), not who or why; several
 plain descriptions find more than one clever one. similar_photos finds photos that look like one you
-have.
+have. get_photos tells everything known of a photo, with the stories people have told about it.
 
-Albums. An album is a named set of photos that the person sees in the app's Albums tab. Making one changes
+Albums. An album is a named set of photos that the member sees in the app's Albums tab. Making one changes
 nothing else about the library, so you make and fill albums directly: create_album, then amend_album to
 add photos by id or by search, each call optionally under a `section` (a heading in the album: a year, a
 person, a place) and with a `reason`. For "the best five of X for every year", search each year with
 order "best" and distinct true, and add the top five under that year's section. With a `search`,
-create_album makes a live album instead: whatever that search finds, now and later. Give the person the
-album's `view` link when it is ready.
+create_album makes a live album instead: whatever that search finds, now and later. With a `search` and
+`grow` true it makes a series: what the search finds now, chosen photos that you or the member can take out,
+and new photos that match are added as they arrive (for a family series by the estate's agent; for a member's
+own, the member is asked). Give the person the album's `view` link when it is ready.
 
-Changing. Nothing you do changes what the library shows. A change set is an album put up for hiding (propose_hiding does that
-to one you have made). To hide photos, create a change set, add
-photos to it (by id, or everything a search finds), and give the person its review link: they look it
-over, keep the photos that should not be hidden, and apply it themselves. Each photo you add should
-carry a short reason a person can read. If a set has been reviewed, get_change_set tells you which
-photos they kept: those are your mistakes, and the best guide to doing better.
+Hiding. Hiding is personal: what a member hides is hidden for them alone (their own filter), unless a sysadmin
+hides it for everyone. A change set is an album put up for hiding (propose_hiding does that to one you have made).
+To hide photos, create a change set, add photos to it (by id, or everything a search finds), and give the person
+its review link: they look it over, keep the photos that should not be hidden, and apply it themselves. You cannot
+apply one. Each photo you add should carry a short reason a person can read. If a set has been reviewed,
+get_change_set tells you which photos they kept: those are your mistakes, and the best guide to doing better.
+
+Asking. Some things only people know: who is in a photo, where it was, what happened. ask_member files a
+question for one member (`to`: a name library_overview lists under members) or, without `to`, for the whole
+family, about photos they can see (anything else is refused). It returns at once; nobody answers while you
+wait. Each member's inbox shows them only a few questions a week, photos nobody has told a story about first,
+so ask little and plainly, and give questions about one event the same `group_key` ("Thanksgiving 1998"): they
+are asked together. Say in `why` what the answer is for.
+
+Stories. A story is what a member said about photos, attributed to them and dated: typed, or spoken and
+transcribed. It is theirs: quote it, use it, never edit or correct it. Two people's stories of one moment are
+both kept, side by side.
 
 Handing it over. For a request that covers many photos or needs judgement ("hide the photos from the
-school"), submit_task gives it, in the person's own words, to an agent that runs on the computer the
-library is on and works through it with these same tools. It takes minutes and keeps going if this
-conversation ends. Check on it with get_task; when it is done, give the person its report and the
+school"), submit_task gives it, in the person's own words, to the estate's agent, which runs on the computer the
+library is on, acts for the person and works through it with these same tools. It takes minutes and keeps going
+if this conversation ends. Check on it with get_task; when it is done, give the person its report and the
 review link of the change set it made."""
 
 FILTERS = {
@@ -208,7 +250,10 @@ class Tools:
              "Make an album: a named set of photos the person sees in the Albums tab. Empty until amend_album adds photos. With `search`, a live album instead: whatever that search finds, now and later.",
              schema({"title": {"type": "string", "description": "A few words a person will recognise it by."},
                      "prompt": {"type": "string", "description": "What was asked for, and how you chose the photos, in a sentence or two. Shown under the title."},
-                     "search": {**schema(find), "description": "Makes it a live album of what this search finds."}},
+                     "search": {**schema(find), "description": "Makes it a live album of what this search finds."},
+                     "grow": {"type": "boolean", "description": "With `search`: a series instead of a live album. It starts as"
+                              " what the search finds now, its photos can be taken out, and new photos that match are added"
+                              " as they arrive."}},
                     ["title"]), self.create_album),
             ("amend_album", True,
              "Add photos to an album or take them out, by id or by search (the first `max` it finds, in its order). Photos added by one call go under `section`, if given, in the order given.",
@@ -228,6 +273,16 @@ class Tools:
             ("propose_hiding", True,
              "Put an album up for hiding: it becomes a change set the person reviews and applies. Nothing is hidden until they do.",
              schema({"album": {"type": "integer"}}, ["album"]), self.hide_album),
+            ("ask_member", True,
+             "Ask one member, or the whole family, a question about photos: who is in them, where, what happened. Returns at once: it waits in their inbox, which shows each member only a few questions a week, so ask little. Only photos they can see (for the family, photos everyone can see); a question naming any other photo is refused. The answer is a story, told later.",
+             schema({"photos": {"type": "array", "items": {"type": "string"}, "description": "1 to 20 photo ids the question is about."},
+                     "text": {"type": "string", "description": "The question, plainly, as the person will read it."},
+                     "why": {"type": "string", "description": "What the answer is for, in a sentence: shown with the question."},
+                     "to": {"type": "string", "description": "A member's name, as library_overview lists them. Without it, the whole family."},
+                     "group_key": {"type": "string", "description": "Questions about one event share it and are asked together, e.g. \"Thanksgiving 1998\"."},
+                     "priority": {"type": "number", "description": "0 to 1: how much this one matters beside your others (default 0)."},
+                     "follow_up": {"type": "boolean", "description": "true: when someone answers, start a new run of the estate's agent with the question and the answer, to act on it (say how in `why`)."}},
+                    ["photos", "text"]), self.ask_member),
             ("submit_task", True,
              "Hand a request to the agent that runs on the library's own computer. It works out which photos are meant and proposes a change set for the person to review. Returns at once with a task number; the work takes minutes. One task runs at a time.",
              schema({"request": {"type": "string", "description": "What the person wants, in their own words, with anything they said about which photos and which not."}},
@@ -312,7 +367,7 @@ class Tools:
                 "next_offset": at + limit if at + limit < len(ids) else None}
 
     def overview(self, args, cx: Caller):
-        return self.app.overview(cx.viewer)
+        return {**self.app.overview(cx.viewer), "members": self.app.family()}
 
     def search(self, args, cx: Caller):
         ids, scores = self.app.find(args, cx.viewer)
@@ -323,13 +378,27 @@ class Tools:
         return self.page(ids, scores, args, cx)
 
     def photos(self, args, cx: Caller):
-        return {"photos": self.rows([str(s) for s in args["ids"]][:200], cx)}
+        rows = self.rows([str(s) for s in args["ids"]][:200], cx)
+        told = self.app.stories([r["id"] for r in rows if "error" not in r], cx.viewer)
+        for r in rows:
+            if told.get(r["id"]):
+                r["stories"] = [{"told_by": b["told_by"]["name"], "told_at": b["told_at"],
+                                 **{k: b[k] for k in ("text", "transcript", "transcript_state") if b.get(k)},
+                                 **({"question": b["question"]["text"]} if b["question"] else {}),
+                                 **({"recording": True} if b["recording"] else {}),
+                                 "photos": b["photos"]} for b in told[r["id"]]]
+        return {"photos": rows}
+
+    def ask_member(self, args, cx: Caller):
+        return self.app.ask(cx.actor, cx.acting_for, args.get("photos"), args.get("text"), args.get("why"), args.get("to"),
+                            args.get("group_key"), args.get("priority"), bool(args.get("follow_up")), cx.task)
 
     # -- albums ----------------------------------------------------------------------------------
 
     def album_brief(self, s: dict) -> dict:
         out = {"album": s["id"], "title": s["title"], "photos": s["n"], "live": s["kind"] == "live" or None,
-               "search": s["query"], "view": f"/?album={s['id']}"}
+               "search": s["query"], "grows_from": s.get("grows_from"), "view": f"/?album={s['id']}",
+               "family_series": True if s.get("maintained_by") is not None else None}
         if s["op"] == "hide":
             out.update(up_for_hiding=True, state=s["state"], hidden_now=s["applied"], review=f"/changes/{s['id']}")
         return {k: v for k, v in out.items() if v is not None}
@@ -348,8 +417,11 @@ class Tools:
                 "next_offset": got["next"]}
 
     def create_album(self, args, cx: Caller):
+        search = args.get("search")
+        if args.get("grow") and search is None:
+            raise ValueError("grow makes a series from a search: give `search` too")
         got, code = self.app.changes.create({"title": args.get("title"), "prompt": args.get("prompt"), "op": "view",
-                                             **({"query": args["search"]} if args.get("search") is not None else {})},
+                                             **({"grows_from" if args.get("grow") else "query": search} if search is not None else {})},
                                             cx.who, cx.actor, cx.acting_for)
         if code >= 400:
             raise ValueError(got["error"])
@@ -478,25 +550,33 @@ class Server:
     def handle(self, method: str, headers, body, can_write: bool, who: str = "", local: bool = False,
                member: int | None = None):
         """One HTTP request to /mcp -> (status, body bytes, content type, Cache-Control). `member`: the member
-        making it (members.id); for a task's agent (X-Estate-Task, from this computer) the task's acting_for."""
+        making it (members.id). A run of the estate's agent carries its token (X-Estate-Agent, from this computer,
+        while the run lasts): then it is the agent, acting for the run's member (tasks.Run)."""
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":"), default=str).encode(), "application/json", "no-store")
+        refuse = lambda why: js({"jsonrpc": "2.0", "id": None, "error": {"code": -32001, "message": why}}, 403)   # noqa: E731
         # A page on another site must not be able to drive this from someone's browser.
         origin, host = headers.get("Origin"), headers.get("Host") or ""
         if origin and origin.split("://", 1)[-1] != host:
             return js({"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "cross-origin requests are refused"}}, 403)
         if method != "POST":         # no server-to-client stream, no session to end
             return 405, b"", "text/plain", "no-store"
+        if headers.get("X-Estate-Task") is not None:     # a run from before tokens: never answered as this computer
+            return refuse("X-Estate-Task is no longer honoured: a run of the estate's agent carries its own token")
+        token = headers.get(TOKEN_HEADER)
+        cx, in_task = Caller(who, member, None, member), False
+        if token is not None:
+            run = self.tools.app.tasks.run_of(token) if local else None
+            if run is None:
+                return refuse("this token is not a running task's (it ended, or this computer never gave it), or it came"
+                              " from another computer")
+            # the estate's agent, working for the task's member: it sees what they see; acting for no one, what is
+            # private to nobody (its own view: private.Private.agents)
+            viewer = run.acting_for if run.acting_for is not None else run.agent
+            cx, in_task = Caller(f"task:{run.task}", run.agent, run.acting_for, viewer, run.task), True
         if body is None:
             return js({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "the body is not JSON"}}, 400)
-        task = headers.get("X-Estate-Task") or ""
-        in_task = local and task.isdigit()
-        cx = Caller(who, member, None, member)
-        if in_task:   # the estate's agent, working for whoever submitted the task: it sees what they see
-            t = self.tools.app.tasks.get(int(task), None) or {}
-            af = t.get("acting_for")       # acting for nobody (no such task, or one from before members): it sees
-            cx = Caller(f"task:{task}", None, af, af if af is not None else NOBODY)   # what is private to nobody
         if isinstance(body, list):
-            got = [r for r in (self.call(m, can_write, cx, in_task) for m in body) if r is not None]
+            got = [r for r in (self.call(m, can_write or in_task, cx, in_task) for m in body) if r is not None]
             return js(got) if got else (202, b"", "application/json", "no-store")
-        got = self.call(body, can_write, cx, in_task)
+        got = self.call(body, can_write or in_task, cx, in_task)
         return js(got) if got is not None else (202, b"", "application/json", "no-store")

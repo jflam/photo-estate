@@ -24,6 +24,7 @@ each request to the module that answers it ([chapter 11](11-server.md)):
 | `/api/lenses*`, `/api/albums/<id>/publish`, `/api/photos/<sha>/show`, `/api/photos/<sha>/why` | `PhotoApp`, with [lenses.py](../../photo-estate/lenses.py) |
 | `/api/private`, `/api/tombstones` | `PhotoApp`, with [private.py](../../photo-estate/private.py) |
 | `/inbox`, `/api/inbox`, `/api/inbox/<id>/dismiss` | `PhotoApp`, with [member_inbox.py](../../photo-estate/member_inbox.py) |
+| `/api/questions*`, `/api/stories*`, `/api/photos/<sha>/stories`, `/api/albums/<id>/stories` | `PhotoApp` (`stories_route`), with [stories.py](../../photo-estate/stories.py) |
 | `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log` | `Browse` in [browse.py](../../photo-estate/browse.py) |
 | `/thumb/`, `/preview/`, `/large/`, `/original/` | `Images` in [images.py](../../photo-estate/images.py) |
 | `/video/` | The HTTP handler in photo_app.py (`Handler.video`), which streams the file `Images.video_file` names |
@@ -72,7 +73,7 @@ permission, and intake, the ingest, restart and uploads took a `--upload-user` l
 | `GET /api/me` | The member the request is for: `{id, name, role, status, upload_policy, person_id, kind, joined_at, login, local}`. From this computer `local` is true and `login` empty (`id` is null if the catalog has no sysadmin yet) |
 | `GET /members` | `members.html`, the sysadmin's page (with an `ETag`, `no-cache`) |
 | `GET /api/members` | `{members: [{id, name, kind, role, status, upload_policy, person_id, person, joined_at, logins: [{login, added_at}]}], persons: [{id, name}], me, demo, roles, policies}`: waiting members first, then active, then revoked; `persons` are the people named in People that a member can be linked to |
-| `POST /api/members/<id> {name?, role?, status?, upload_policy?, person_id?}` | Change a member: approve (`status: "active"`, which sets `joined_at` the first time), revoke (`"revoked"`), a role (`sysadmin`, `member`), an upload policy (`everything`, `review`, `review_flagged`; nothing reads it yet), a person (or `null`), a name. `{member}` as listed above; one `member.changed` journal entry naming what changed. Letting a pending member in, or turning them away, closes their request's inbox items. `400` for any other field or value, a person that does not exist, or a change that would leave no active sysadmin; `404` for no such member |
+| `POST /api/members/<id> {name?, role?, status?, upload_policy?, person_id?}` | Change a member: approve (`status: "active"`, which sets `joined_at` the first time), revoke (`"revoked"`), a role (`sysadmin`, `member`), an upload policy (`everything`, `review`, `review_flagged`; nothing reads it yet), a person (or `null`), a name. `{member}` as listed above; one `member.changed` journal entry naming what changed. Letting a pending member in, or turning them away, closes their request's inbox items. `400` for any other field or value, a person that does not exist, or a change that would leave no active sysadmin, or any change to the estate's agent (kind `agent`, listed with the others); `404` for no such member |
 | `GET /members?be=<login>` | `--demo` only: sets (or, with `be=` alone, clears) the `demo_member` cookie and answers `303` to `/members` for a sysadmin, `/` for anyone else |
 
 ### Malformed requests
@@ -223,6 +224,20 @@ null), `series` (the album's lens once published, or null) and `published`.
 | `POST /api/changes/<id>/apply {through?, lens?}` | Hide every photo not marked reject, and put back those that are; with `through`, only as far as that photo in the page's order. They are hidden for the members who see through the set's lens, chosen at its first apply: `lens` `"mine"` (the default: the owner's own filter, "Hidden photos", made then), `"estate"` (the Estate defaults: a sysadmin only, else `403`), or a filter lens's id (the owner's, or an estate default for a sysadmin). After that the set keeps its lens until it hides nothing (`409` for another). Answers the set with `hid`, `showed` and `lens`. An apply that leaves nothing to apply closes the set's `review` inbox item; one that changes what a published filter hides tells its live subscribers (`lens_changed`) |
 | `POST /api/changes/<id>/revert`, `/commit`, `/reopen`, `/discard` | Undo everything the set did; mark it done; make a done set changeable again; put away a set that hides nothing (marked `discarded`, never deleted) |
 
+**Series** (multiplayer phase 7): a list album that grows from a search, kept up to date as photos arrive
+([listeners.py](../../photo-estate/listeners.py)).
+
+| Request | Does |
+|---|---|
+| `POST /api/albums {title, grows_from: search}` | A series: a list album of what the search (as `query` takes it) finds now, as its owner sees the library, each photo with the reason "Matches …"; `grows_from` on the album from then on. New photos that match are added by the estate's agent (a family series) or wait for its owner (a `series_update` inbox item) |
+| `POST /api/albums/<id>/grow {grows_from: search \| null}` | Give a list album a search to grow from, or take it away (`album.grows`; taking it away closes its `series_update` item). `409` for a live album or a change set, `400` for a search that cannot be run |
+| `GET /api/albums/<id>/candidates` | Its owner's: `{album, grows_from, results}`, the new photos waiting for the series (named by `series.update_requested` since its `series_update` item opened, that they may be shown and the album does not hold), as `/api/search` rows; empty with no open item. `404` for anyone else |
+| `POST /api/albums/<id>/candidates {add: [sha]}` | Add those of them that are waiting (`added`; `not_candidates` counts the rest, which are not added) and the `series_update` item is done, whatever was added: an empty `add` says "none of these" |
+
+An album the estate's agent makes acting for no one is published at once as a series maintained by it
+(`lenses.maintained_by`): every member sees it in their Albums (`maintained_by` on the album, and `family_series`
+in the MCP's answer).
+
 ### What each member sees (lenses)
 
 Answered by `PhotoApp` with [lenses.py](../../photo-estate/lenses.py) ([chapter 11](11-server.md#what-each-member-sees-lenses)).
@@ -277,8 +292,13 @@ both; `403` for a request with no member.
 
 Answered by `PhotoApp` with [member_inbox.py](../../photo-estate/member_inbox.py) ([chapter 11](11-server.md#the-inbox)).
 All take the `MEMBER` rule, and a member only ever sees and changes their own items. The kinds are
-`member_request`, `review`, `lens_proposed`, `lens_changed` and `held` (photos kept private at ingestion, `held:<batch>`,
-opening `/?q=is:held`); each is closed by the decision it waits for, wherever that is made, not here.
+`member_request`, `review`, `lens_proposed`, `lens_changed`, `held` (photos kept private at ingestion, `held:<batch>`,
+opening `/?q=is:held`), `question` (a group of questions dealt to the member, `ask:<group>`, opening
+`/inbox?ask=<group>`: [questions and stories](#questions-and-stories)) and `series_update` (new photos that may
+belong in a series of the member's, `album:<id>`, opening `/?album=<id>&candidates=1`); each is closed by the
+decision it waits for, wherever that is made, not here. Reading the inbox first deals the member the questions
+their weekly allowance has room for (`stories.deal`), and leaves out a `question` item none of whose questions
+may be shown to them now.
 
 | Request | Does |
 |---|---|
@@ -286,14 +306,42 @@ opening `/?q=is:held`); each is closed by the decision it waits for, wherever th
 | `GET /api/inbox` | `{items: [{id, kind, ref, title, created_at, updated_at, opens}], open}`: the member's open items, newest first (by `updated_at`: a `lens_changed` item brought up to date moves to the top). `ref` is what it is about (`member:<id>`, `album:<id>`, `lens:<id>`); `opens` the address that decides it (`/members`, `/changes/<id>`, `/?albums`, `/?album=<id>`); `open` how many |
 | `POST /api/inbox/<id>/dismiss` | Put one of the member's own open items away: `{id, state: "dismissed", open}` (how many are left), and one `inbox.dismissed` journal entry. It decides nothing (a request to be let in stays pending). `404` for an item that is not theirs, `409` for one that is not open |
 
+### Questions and stories
+
+Answered by `PhotoApp.stories_route` with [stories.py](../../photo-estate/stories.py) ([chapter 11](11-server.md#the-estates-agent-listeners-questions-and-stories),
+[chapter 26](26-albums-and-agents.md#questions-and-stories)). All take the `MEMBER` rule. A photo the member may
+not be shown (`shared_for`: private to someone else, or not in the catalog) is answered as one that does not
+exist (`404`), wherever it is named.
+
+| Request | Does |
+|---|---|
+| `GET /api/questions` | Deals the member what their allowance has room for (as `GET /api/inbox` does), then `{items: [{item, group_key, questions: [{id, text, why, photos, asked_at, asked_by: {id, name, kind}, for, to}]}], questions}`: their open questions as their inbox items (newest item first; `item` is the inbox item's id), each photo a row as `/api/search` gives it, `asked_by.kind` `agent` or `person`, `for` the member an agent's run acted for (or `null`), `to` `"you"` or `"the family"`. A question naming a photo they may not be shown now is left out |
+| `POST /api/questions/<id>/answer` | Answer a question dealt to the member. Typed: JSON `{text}`. Spoken: the recording as the whole body, with its `Content-Type` (below). `201` with the story (as `GET /api/photos/<sha>/stories` lists one). Another answer, theirs or anyone's, is another story. `404` for a question not dealt to them, or naming a photo they may not be shown now |
+| `POST /api/questions/<id>/dismiss` | "I don't know": `{question, dismissed}`; put away for this member for good (a question to them alone is closed); `question.dismissed` in the journal. It counted against the week it was dealt in. Dismissing the whole inbox item (`POST /api/inbox/<id>/dismiss`) puts all of its questions away |
+| `POST /api/stories` | Tell a story with no question (the viewer's "tell a story about this photo"). Typed: JSON `{photos: [sha], text}` (1 to 20 photos). Spoken: the recording as the body with its `Content-Type`, and the photos in the query, `?photos=<sha>,<sha>`. `201` with the story; `story.told` in the journal. `404` for a photo the member may not be shown |
+| `GET /api/photos/<sha>/stories` | `{sha, stories: [{id, told_by: {id, name}, told_at, text, question: {id, text} \| null, photos, recording: {url, type} \| null, transcript, transcribed_at, transcript_state, transcript_error}]}`, oldest first: the stories about the photo the member may read (its teller; anyone else who may be shown every photo of it). `photos` lists those of its photos the member may be shown; `transcript_state` is `null` (no recording), `waiting`, `done` or `failed` (with `transcript_error`, tried again on the next run). `404` for a photo they may not be shown |
+| `GET /api/albums/<id>/stories` | A series' stories: `{album, stories}`, those told about any photo of the album that the member sees (as `GET /api/albums/<id>/photos` lists them), newest first, each once. `404` for an album they may not see |
+| `GET /api/stories/<id>/recording` | The recording, to a member who may read the story (else `404`), as its type (`audio/mp4` for `.m4a`, `audio/webm`, `audio/wav`, `audio/mpeg`, `audio/ogg`, `audio/aac`), with `Accept-Ranges: bytes`; a `Range` request is answered `206` with `Content-Range` (`416` when it cannot be met), `Cache-Control: private, max-age=86400` |
+
+**A recording upload**, exactly: `POST` with the audio file as the whole body (no form, no JSON, no base64),
+`Content-Type` one of `audio/mp4`, `audio/x-m4a`, `audio/m4a` (an iPhone's AVAudioRecorder AAC `.m4a`; Safari's
+MediaRecorder `audio/mp4`), `audio/webm` (Chrome and Firefox: Opus), `audio/ogg`, `audio/wav`, `audio/x-wav`,
+`audio/wave`, `audio/mpeg`, `audio/aac`; parameters such as `;codecs=opus` are ignored. At most 8 MiB
+(`stories.MAX_RECORDING`, the app's `MAX_BODY`: 15 minutes or more of AAC at 64 kbit/s): over it `413` (nothing
+read). `415` for another type, `400` for an empty body or one PyAV cannot read as sound. The bytes are stored
+in the store content-addressed (`<store>/<sha[:2]>/<sha[2:4]>/<sha><ext>`, immutable where the store is marked,
+in the demo's scratch folder with `--demo`), with **no `assets` row**, and transcribed later on the mini by a
+queued job ([appendix A](appendix-a-commands.md#transcribepy-the-recordings-of-stories)).
+
 ### Agents: MCP and tasks
 
 | Request | Does |
 |---|---|
-| `POST /mcp` | The [MCP](https://modelcontextprotocol.io/) endpoint ([estate_mcp.py](../../photo-estate/estate_mcp.py)): streamable HTTP in its simplest form, one JSON-RPC message (or a batch) per POST, answered with JSON, no stream and no session. Tools: `library_overview`, `search_photos`, `similar_photos`, `get_photos`, `list_albums`, `get_album`, `create_album`, `amend_album`, `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set`, `submit_task`, `get_task`, `cancel_task`. `search_photos` takes `kind` (`photo` or `video`), and its rows carry `kind`, `seconds` and `live_photo`. Every tool answers as a member sees the library, and what it makes is theirs: the caller's login's member; from this computer the sysadmin; and with `X-Estate-Task: <id>` (honoured only from this computer: the estate's agent) the member that task was submitted by (`acting_for`), whose writes are journaled with no actor, acting for them |
+| `POST /mcp` | The [MCP](https://modelcontextprotocol.io/) endpoint ([estate_mcp.py](../../photo-estate/estate_mcp.py)): streamable HTTP in its simplest form, one JSON-RPC message (or a batch) per POST, answered with JSON, no stream and no session. Tools: `library_overview` (with `members`: the family, `[{id, name, person?}]`), `search_photos`, `similar_photos`, `get_photos` (each photo with the `stories` the caller may read), `list_albums`, `get_album`, `create_album` (`search` and `grow: true`: a series), `amend_album`, `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set`, `ask_member`, `submit_task` (`family: true` is not offered here: `POST /api/tasks`), `get_task`, `cancel_task`. `search_photos` takes `kind` (`photo` or `video`), and its rows carry `kind`, `seconds` and `live_photo`. Every tool answers as a member sees the library, and what it makes is theirs: the caller's login's member; from this computer the sysadmin; and with a run's token, `X-Estate-Agent: <token>` (honoured only from this computer, while that run lasts), the estate's agent acting for the run's member, or for no one (the family archivist: only photos private to nobody; its albums are published family series), journaled with the agent as the actor. A token from another computer, one that is no running task's, or a request carrying `X-Estate-Task` (the task number runs carried before) is `403` with JSON-RPC error `-32001`. A run is not offered the task tools |
+| `ask_member` (MCP) | `{photos: [id] (1-20), text, why?, to?, group_key?, priority? (0-1), follow_up?}`: file a question for one member (`to`: a name or id from `library_overview`'s members) or, without `to`, the family; returns at once `{question, status: "queued", to, photos, group_key, follow_up}`. Refused (an error the agent reads, nothing filed) for a photo the caller does not see, one the recipient may not be shown, or, for the family, one private to anyone. `follow_up: true` on a question the estate's agent asks: an answer starts a new run acting for the same member, with the question and the answer |
 | `GET /api/tasks` | Whether an agent can run on this computer, and the member's own tasks (those acting for them; one from before members is the first sysadmin's), newest first ([tasks.py](../../photo-estate/tasks.py)) |
 | `GET /api/tasks/<id>?after=N` | One task, its events after event N, and the change set it made; `404` for a task acting for someone else (what its agent saw is what that member sees, their private photos too) |
-| `POST /api/tasks {prompt}` | Start one: Claude Code, run headless with only the library's MCP tools. The task records who asked (`acting_for`, the member's id; the sysadmin's from this computer), which every task in these answers carries |
+| `POST /api/tasks {prompt, family?}` | Start one: Claude Code, run headless with only the library's MCP tools. Any member may. The task records who asked (`started_by: "member:<id>"`) and whom it acts for (`acting_for`: the member, the sysadmin's from this computer; with `family: true`, `null`: the family archivist, which sees only photos private to nobody and makes family series). A run a listener starts is recorded the same way, `started_by: "journal:<entry>/album:<id>"` or `"…/story:<id>"`, every task in these answers carries both. A task acting for no one is read by whoever started it and the sysadmins |
 | When a task ends | Each hiding set its agent made that has photos and hides none yet becomes a `review` item in the inbox of whoever asked ([the inbox](#the-inbox)) |
 | `POST /api/tasks/<id>/cancel` | Stop a task that is queued or running: a queued one never starts, a running one's agent gets SIGTERM, then SIGKILL after ten seconds, and the task stays `cancelled` however the agent ends. Answers the task (`404` if there is none; for a task acting for someone else, only `{id, status, created_at, finished_at}`); one already finished is returned unchanged |
 

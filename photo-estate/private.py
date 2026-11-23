@@ -24,7 +24,7 @@ A photo is **private** to a sharer while a row of `private` names them and is no
 Who may be shown a photo (lenses.State.shared, from read() here): everyone, unless every one of its sharers
 holds it private (rule 1: a photo is shared for M if M is one of its sharers, or some sharer has it and has not
 made it private); then only its sharers. A photo with no sharer row is the first sysadmin's. The estate's agent
-acting for nobody (NOBODY) is shown only photos private to nobody. People is built without every photo that is
+acting for nobody (NOBODY, or the agent's own member id: Private.agents) is shown only photos private to nobody. People is built without every photo that is
 private to anyone (faces.default_hidden), its sharer included, until it is released.
 
 Released: by its sharer (now, or by itself on the day they set: `until`, released by the app's timer,
@@ -157,6 +157,7 @@ class Private:
     rows: dict[str, dict[int, tuple[str, str | None, str | None]]] = field(default_factory=dict)
     sharers: dict[str, frozenset[int]] = field(default_factory=dict)
     sysadmin: int | None = None
+    agents: frozenset[int] = frozenset()     # members of kind agent: each is shown what NOBODY is (the archivist)
 
     def to(self, sha: str) -> frozenset[int] | None:
         """Who may be shown the photo: None for everyone; else its sharers, every one of whom holds it private."""
@@ -167,8 +168,9 @@ class Private:
         return None if sharers - held.keys() else sharers
 
     def refused(self, sha: str, member: int | None) -> bool:
-        """`member` may not be shown this photo (None: the first sysadmin; NOBODY: what is private to nobody)."""
-        if member == NOBODY:
+        """`member` may not be shown this photo (None: the first sysadmin; NOBODY, or the estate's agent as itself:
+        what is private to nobody)."""
+        if member == NOBODY or member in self.agents:
             return sha in self.rows
         to = self.to(sha)
         m = member if member is not None else self.sysadmin
@@ -186,10 +188,14 @@ class Private:
 
 def read(con, sysadmin: int | None = None) -> Private:
     try:
+        agents = frozenset(m for m, in con.execute("SELECT id FROM members WHERE kind='agent'"))
+    except sqlite3.OperationalError:       # a catalog with no members table
+        agents = frozenset()
+    try:
         rows = con.execute("SELECT sha256, member_id, why, since, until FROM private WHERE released_at IS NULL").fetchall()
     except sqlite3.OperationalError:       # a catalog from before private photos
-        return Private(sysadmin=sysadmin)
-    p = Private(sysadmin=sysadmin)
+        return Private(sysadmin=sysadmin, agents=agents)
+    p = Private(sysadmin=sysadmin, agents=agents)
     for sha, m, why, since, until in rows:
         p.rows.setdefault(sha, {})[m] = (why, since, until)
     got: dict[str, set[int]] = {}

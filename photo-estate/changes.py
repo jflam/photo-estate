@@ -27,6 +27,19 @@ their original files downloaded as one zip (`embed.py serve` answers that: it ha
   POST /api/albums/<id>/hide | /view                 put it up for hiding, or take it down again
   POST /api/albums/<id>/discard                      put it away (it must hide nothing): marked discarded
 
+A **series** (multiplayer phase 7) is a list album that grows from a search (`grows_from`, a search as
+`query` is): made with POST /api/albums {title, grows_from} (it starts as what the search finds now), or given
+one later. It is added to, never worked out again, so what its owner took out stays out. When photos are
+ingested, listeners.py runs its search as its owner over the new photos only; what matches is added by the
+estate's agent (a family series: one the family archivist keeps, lenses.maintained_by) or waits for its owner
+(series.update_requested, a series_update inbox item):
+
+  POST /api/albums/<id>/grow {grows_from: search | null}   the search it grows from, or none (album.grows)
+  GET  /api/albums/<id>/candidates      the new photos waiting for it (its owner's), as /api/search rows
+  POST /api/albums/<id>/candidates {add: [sha]}   add those (only photos waiting), and the item is done
+An album the estate's agent makes acting for no one (the family archivist) is published as a series at once,
+maintained by it (lenses.maintained_by): the family's.
+
 Every /api/changes address below also answers under /api/albums. The tables keep their first names
 (change_sets, change_items): an album is a row of change_sets.
 
@@ -107,8 +120,9 @@ SHA = re.compile(r"^[0-9a-f]{64}$")
 # The journal kind of each write (journal.py); discard and favorite append their own.
 KINDS = {"rename": "album.renamed", "query": "album.query", "hide": "album.hidden", "view": "album.viewed",
          "items": "album.items", "decide": "album.decided", "apply": "album.applied", "revert": "album.reverted",
-         "commit": "album.committed", "reopen": "album.reopened"}
-ROUTE = re.compile(r"^/api/(changes|albums)(?:/(\d+)(?:/(items|decide|apply|revert|commit|reopen|discard|check|photos|rename|query|favorite|hide|view))?)?$")
+         "commit": "album.committed", "reopen": "album.reopened", "grow": "album.grows", "candidates": "album.items"}
+ROUTE = re.compile(r"^/api/(changes|albums)(?:/(\d+)(?:/(items|decide|apply|revert|commit|reopen|discard|check|photos|rename|query|"
+                   r"favorite|hide|view|grow|candidates))?)?$")
 
 
 def now() -> str:
@@ -167,18 +181,20 @@ class Changes:
         not yet applied, or from before lenses, when it hides for everyone); `series` the album's lens once
         published, and `published` whether it is now. With no viewer (no members yet), every set is mine."""
         row = con.execute("SELECT id, title, prompt, op, status, created_by, created_at, updated_at, applied_at,"
-                          " reverted_at, done_at, kind, query, owner, lens_id FROM change_sets WHERE id=? AND status IS NOT ?",
-                          (sid, ChangeStatus.DISCARDED)).fetchone()
+                          " reverted_at, done_at, kind, query, owner, lens_id, grows_from FROM change_sets WHERE id=?"
+                          " AND status IS NOT ?", (sid, ChangeStatus.DISCARDED)).fetchone()
         if not row:
             return None
         s: dict[str, Any] = dict(zip(("id", "title", "prompt", "op", "status", "created_by", "created_at", "updated_at",
-                      "applied_at", "reverted_at", "done_at", "kind", "query", "owner", "lens"), row))
+                      "applied_at", "reverted_at", "done_at", "kind", "query", "owner", "lens", "grows_from"), row))
         s["kind"] = s["kind"] or AlbumKind.LIST
         s["query"] = json.loads(s["query"]) if s["query"] else None
+        s["grows_from"] = json.loads(s["grows_from"]) if s["grows_from"] else None
         if s["owner"] is None:
             s["owner"] = lenses.sysadmin_id(con)
-        series = con.execute("SELECT id, published FROM lenses WHERE kind='series' AND set_id=?", (sid,)).fetchone()
+        series = con.execute("SELECT id, published, maintained_by FROM lenses WHERE kind='series' AND set_id=?", (sid,)).fetchone()
         s["series"], s["published"] = (series[0], bool(series[1])) if series else (None, False)
+        s["maintained_by"] = series[2] if series else None      # the estate's agent, for a family series
         s["mine"] = viewer is None or s["owner"] == viewer
         if not s["mine"] and not (s["published"] and s["op"] == ChangeOp.VIEW):
             return None
@@ -359,6 +375,37 @@ class Changes:
         busy = bool(self.busy())
         return {"id": sid, "busy": busy, "ok": not busy and not out["wrong"], "todo": s["todo"], "n": s["n"], **out}
 
+    def candidates(self, con, s: dict, viewer: int | None) -> list[str]:
+        """New photos waiting for a series of `viewer`'s (listeners.py): those the series.update_requested entries
+        about it name since their open series_update item was made, that they may be shown and the album does not
+        hold, in the order found. [] with no open item: nothing is waiting."""
+        row = con.execute("SELECT created_at FROM inbox_items WHERE member_id=? AND kind='series_update' AND ref=?"
+                          " AND state='open'", (s["owner"], f"album:{s['id']}")).fetchone()
+        if row is None or not s["mine"]:
+            return []
+        have = {x for x, in con.execute("SELECT sha256 FROM change_items WHERE set_id=?", (s["id"],))}
+        out: dict[str, None] = {}
+        for data, in con.execute("SELECT data FROM journal WHERE kind='series.update_requested' AND subject=? AND at >= ?"
+                                 " ORDER BY id", (f"album:{s['id']}", row[0])):
+            for x in (json.loads(data) or {}).get("photos") or []:
+                if x not in have and self.facts(x) is not None and not self.refused(x, viewer):
+                    out[x] = None
+        return list(out)
+
+    def candidate_photos(self, sid: int, viewer: int | None) -> dict | None:
+        """GET /api/albums/<id>/candidates: the series' waiting new photos as /api/search gives them (its owner only)."""
+        con = self.con()
+        try:
+            s = self.summary(con, sid, viewer)
+            if not s or not s["mine"]:
+                return None
+            got = self.candidates(con, s, viewer)
+        finally:
+            con.close()
+        assert self.visible_for is not None
+        v = self.visible_for(viewer)
+        return {"album": sid, "grows_from": s["grows_from"], "results": [v.row(x) for x in got if x in v.cat.index]}
+
     def when(self, sha: str) -> str:
         m = self.facts(sha) or {}
         return m.get("local") or m.get("taken") or ""
@@ -393,27 +440,45 @@ class Changes:
             return {"error": "an album needs a title" if op == ChangeOp.VIEW else "a change set needs a title"}, 400
         if op not in OPS:
             return {"error": f"unknown operation {op!r}; known: {', '.join(OPS)}"}, 400
-        query = body.get("query")
+        query, grows = body.get("query"), body.get("grows_from")
+        owner = acting_for if acting_for is not None else actor
         if query is not None:            # a live album: its search must be one that can be run
-            if op != ChangeOp.VIEW or body.get("items"):
+            if op != ChangeOp.VIEW or body.get("items") or grows is not None:
                 return {"error": "a live album is a search and nothing else: no items, and it is not up for hiding"}, 400
-            bad = self.bad_query(query, acting_for if acting_for is not None else actor)
+            bad = self.bad_query(query, owner)
             if bad:
                 return {"error": bad}, 400
+        items = body.get("items")
+        if grows is not None:            # a series: a list album of what the search finds now, that new photos join
+            if op != ChangeOp.VIEW or items:
+                return {"error": "a series starts from its search: no items, and it is not up for hiding"}, 400
+            bad = self.bad_query(grows, owner)
+            if bad:
+                return {"error": bad}, 400
+            assert self.find is not None
+            ids, scores = self.find(grows, owner)
+            why = f"Matches \"{grows['query']}\"" if grows.get("query") else None
+            items = [{"sha": x, "score": scores[i] if scores else None, "reason": why} for i, x in enumerate(ids[:LIVE_MAX])]
         with self.lock:
             con = self.con()
             try:
                 t = now()
-                owner = acting_for if acting_for is not None else actor
-                sid = con.execute("INSERT INTO change_sets(title, prompt, op, created_by, created_at, updated_at, kind, query, owner)"
-                                  " VALUES (?,?,?,?,?,?,?,?,?)",
+                sid = con.execute("INSERT INTO change_sets(title, prompt, op, created_by, created_at, updated_at, kind, query, owner,"
+                                  " grows_from) VALUES (?,?,?,?,?,?,?,?,?,?)",
                                   (title[:200], body.get("prompt"), op, who or None, t, t, AlbumKind.LIVE if query is not None else AlbumKind.LIST,
-                                   json.dumps(query) if query is not None else None, owner)).lastrowid
+                                   json.dumps(query) if query is not None else None, owner,
+                                   json.dumps(grows) if grows is not None else None)).lastrowid
                 assert sid is not None
-                got = self.add_items(con, sid, body.get("items"), owner)
+                got = self.add_items(con, sid, items, owner)
                 journal.append(con, actor, "album.created", f"album:{sid}",
                                {"title": title[:200], "op": op, "kind": AlbumKind.LIVE if query is not None else AlbumKind.LIST,
-                                "added": got["added"]}, acting_for)
+                                "added": got["added"], **({"grows_from": grows} if grows is not None else {})}, acting_for)
+                if op == ChangeOp.VIEW and acting_for is None and actor is not None and con.execute(
+                        "SELECT 1 FROM members WHERE id=? AND kind='agent'", (actor,)).fetchone():
+                    # the family archivist's album is the family's: a published series it keeps (lenses.maintained_by)
+                    lid = lenses.add(con, actor, title, "series", set_id=sid, published=True, entry=False)
+                    con.execute("UPDATE lenses SET maintained_by=? WHERE id=?", (actor, lid))
+                    journal.append(con, actor, "album.published", f"album:{sid}", {"lens": lid, "maintained_by": actor})
                 con.commit()
                 return {**(self.summary(con, sid, owner) or {}), **got}, 201
             finally:
@@ -475,6 +540,28 @@ class Changes:
                         return {"error": bad}, 409 if was["kind"] != AlbumKind.LIVE else 400
                     con.execute("UPDATE change_sets SET query=? WHERE id=?", (json.dumps(body["query"]), sid))
                     entry = {"query": body["query"]} if body["query"] != was["query"] else None
+                elif what == "grow":             # the search a list album grows from (a series), or none
+                    grows = body.get("grows_from")
+                    if was["op"] != ChangeOp.VIEW or was["kind"] != AlbumKind.LIST:
+                        return {"error": "only an album of chosen photos grows from a search (a live album is its search)"}, 409
+                    if grows is not None and (bad := self.bad_query(grows, viewer)):
+                        return {"error": bad}, 400
+                    con.execute("UPDATE change_sets SET grows_from=? WHERE id=?",
+                                (json.dumps(grows) if grows is not None else None, sid))
+                    entry = {"grows_from": grows} if grows != was["grows_from"] else None
+                    if grows is None:            # no longer a series: no new photos are waiting for it
+                        member_inbox.close(con, "series_update", f"album:{sid}")
+                elif what == "candidates":       # new photos the series' search found: the owner adds them, or none
+                    want = {x for x in body.get("add") or [] if isinstance(x, str)}
+                    if not isinstance(body.get("add", []), list):
+                        return {"error": "candidates takes {add: [sha, ...]}: those to add, or none"}, 400
+                    offered = set(self.candidates(con, was, viewer))
+                    extra = self.add_items(con, sid, [{"sha": x, "reason": "New, and matches the series' search"}
+                                                      for x in sorted(want & offered)], viewer)
+                    extra["not_candidates"] = len(want - offered)
+                    member_inbox.close(con, "series_update", f"album:{sid}", was["owner"])
+                    entry = {"added": extra["added"], "removed": 0, "candidates": True} if extra["added"] else None
+                    what = "items" if extra["added"] else what
                 elif what == "hide":             # the album becomes a change set: reviewed, then applied, as any other
                     if was["op"] != ChangeOp.HIDE:
                         if was["kind"] == AlbumKind.LIVE:    # fixed as what it finds now: a review needs photos that stay put
@@ -625,6 +712,7 @@ class Changes:
         if method == "GET":
             got = (self.listing(albums, actor) if sid is None else self.check(sid, actor) if what == "check"
                    else self.photos(sid, one("cursor", 0), max(1, min(one("limit", 150), 500)), actor) if what == "photos"
+                   else self.candidate_photos(sid, actor) if what == "candidates"
                    else self.detail(sid, actor) if not what else None)
             return js(got) if got is not None else js({"error": "not found"}, 404)
         if method == "POST":
@@ -632,6 +720,6 @@ class Changes:
                 return js({"error": "expected a JSON object"}, 400)
             if sid is None:
                 return js(*self.create({"op": ChangeOp.VIEW, **body} if albums else body, who, actor))
-            if what and what not in ("check", "photos"):
+            if what and what not in ("check", "photos"):    # (candidates: POST adds them)
                 return js(*self.write(sid, what, body, who, actor))
         return js({"error": "not found"}, 404)
