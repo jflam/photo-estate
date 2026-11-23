@@ -75,7 +75,12 @@ These are new words in the code and the book. Some old ones are taken, so mind t
 - **lens**: a named view. A *filter* lens leaves photos out; a *series* picks and orders photos
   (an album). Live (follows a search, or is kept up to date by an agent) or a snapshot. Private or
   published. An **estate default** is a published filter lens every member is subscribed to unless they
-  opt out.
+  opt out. The two kinds share everything (one table, one mechanism) except how they are used:
+  - a **filter is always on**: once subscribed, it changes what the member sees everywhere (search, the
+    grid, People, their phone), and the filters a member subscribes to add their hides together;
+  - a **series is opened**: a place to go and look, which changes nothing anywhere else, and is looked
+    at one at a time. Subscribing to a series puts it in the member's Albums and tells them when it
+    grows. A series is the existing albums, made live; the filter is the genuinely new kind.
 - **journal**: the append-only log. Not `events`: that name is taken three times already (the catalog's
   photo clusters in places.py, the setup page's job log in intake.db, and the pipeline protocol in
   `core/events.py`).
@@ -202,6 +207,11 @@ For member *M*, a photo is visible when all of these hold:
    "show it anyway" (`shown`);
 3. it is not a paired Live Photo clip, as today.
 
+The same rules hold inside a series, whoever made it. A photo *M*'s filters hide stays hidden when it
+is in Mom's series of the grandchildren, and a series published by someone else never shows *M* a photo
+that is private to anyone but *M*. A series view lists its photos through `visible_for(M)` like every
+other view; it never reads the album's photos unfiltered.
+
 `Catalog` keeps the photo arrays it has today. What changes is that `visible` becomes a mask per member,
 worked out once and cached until a journal entry that touches visibility arrives. A mask is one bit per
 photo, so 100k photos for a dozen members is about 150 KB. Every route that reads `visible` (search,
@@ -320,7 +330,7 @@ This phase is the easiest to over-build. Keep it to this list, each item as smal
 
 - `lenses.py` (unit-tested): a lens is a row of `lenses` over a change set (`changes.py` keeps doing
   the work of holding photos, sections, reasons and queries). A filter lens's photos are hidden from
-  its subscribers; a series is an album with an owner.
+  its subscribers; a series is an album with an owner, reusing the album code almost entirely.
 - One function, `visible_for(member)`, the only way any route asks what a member sees, built from the
   rules in "What a member sees" above, cached per member, cleared by journal entries about
   visibility. First move every reader of `Catalog.visible` onto it with the same answer as today,
@@ -330,7 +340,9 @@ This phase is the easiest to over-build. Keep it to this list, each item as smal
 - Personal hiding: the review page applies a change set to *my lens* (the default) or, for the
   sysadmin, to an estate default.
 - Subscriptions: subscribe to a published lens, live or as a snapshot (a snapshot copies its photos into
-  a lens of your own); opt out of an estate default; "show it anyway" for one photo. A live lens that
+  a lens of your own); opt out of an estate default; "show it anyway" for one photo. Say on the page
+  what subscribing does: to a filter, "this changes what you see everywhere"; to a series, "this adds
+  it to your Albums". A live lens that
   changes makes an inbox item for its subscribers in phase 6 (`lens_changed`), and the change applies
   at once.
 - **Explain it**: `GET /api/photos/<sha>/why` answers why a member does not see a photo ("hidden by
@@ -454,8 +466,9 @@ This phase is the easiest to over-build. Keep it to this list, each item as smal
 
 - Python: a unit test for each new module (`members`, `journal`, `lenses`, `member_inbox`, `listeners`),
   `tests/test_multiplayer.py` for the rules of what a member sees across members, lenses, sharers and
-  private photos (the riskiest code: test every row of the rules, and that every route uses
-  `visible_for`), the protected-table triggers, the purge tool on a scratch catalog, and the sources
+  private photos (the riskiest code: test every row of the rules, that every route uses `visible_for`,
+  and that someone else's series hides what my filters hide and what is private), the protected-table
+  triggers, the purge tool on a scratch catalog, and the sources
   only adding.
 - The MCP tools for each kind of caller: the estate's agent acting for a member, acting for no one, a
   personal agent bound and not yet bound, and that nothing private leaks through a question.
