@@ -15,7 +15,11 @@ struct WebView: UIViewRepresentable {
         let refresh = UIRefreshControl()
         refresh.addAction(UIAction { _ in view.reload(); refresh.endRefreshing() }, for: .valueChanged)
         view.scrollView.refreshControl = refresh
-        view.load(URLRequest(url: url))
+        if let c = Server.demoCookie {        // (a debug build as a demo member: Server.swift)
+            config.websiteDataStore.httpCookieStore.setCookie(c) { view.load(URLRequest(url: url)) }
+        } else {
+            view.load(URLRequest(url: url))
+        }
         return view
     }
 

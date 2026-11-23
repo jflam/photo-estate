@@ -645,6 +645,48 @@ hold and the one-off run. The choices:*
 
 ### Phase 6: the phone gate (iPhone app)
 
+*Built 2026-11-22 (branch `multiplayer`); [chapter 24](../book/24-uploading.md#the-phone-gate-looking-before-sharing)
+describes it, [chapter 19](../book/19-iphone-app.md#starting-up) the Inbox tab, [chapter 11](../book/11-server.md#private-photos)
+and appendix B the tombstones. The choices:*
+
+- *Server: `GET` and `POST /api/tombstones` in private.py (no new module; one `tombstones.changed` entry a call).
+  A refused upload is answered **200** with `X-Upload-Refused: opted_out | purged`, not a 4xx: the system uploader
+  marks a 4xx job failed and the extension retries a failed job (the bytes would cross again), and the build on
+  the owner's phone counts a 200 as "already there" and anything else as a failure it shows. With
+  `X-Content-SHA256` the answer comes before the body (the connection then closes; URLSession on the Simulator
+  read that answer correctly); without, the bytes are hashed as they arrive and the staging file removed. A purge
+  refuses uploads too now, not only ingest. A catalog that cannot be read while checking is a 500, never a yes.
+  `X-Screenshot` becomes the sidecar keyword `screenshot`; `private.judge` reads it (`phone_screenshot`).*
+- *The phone: the rules and the state are `Shared/PhoneGate.swift`, plain functions over one JSON file in the
+  app group under a file lock (the app and the extension are two processes), unit-tested on the Mac by
+  `ios/Tests/run.sh` (swiftc; no Xcode test target). iOS lets only the extension make upload jobs, so **applying a
+  batch sends the approved photos at once with the in-app uploader** (the app is open: the member just tapped);
+  what it could not send stays approved and the extension makes jobs for it on its next run. Until the app has
+  read the policy, the extension makes no job (candidates only): an owner's phone after this build is installed
+  sends its new photos when the app is next opened, not before. A server with no `/api/me` (404) is
+  `everything`.*
+- *Review flagged: PhotoKit's screenshot and screen-recording subtypes, then Vision's fast text recognition on a
+  900 px copy (six lines or 12% of the picture). Found while trying it: a review-flagged member's first batch asks
+  about everything, so nothing is shared before the line about withdrawing but not erasing has been shown.*
+- *The in-app uploader hashes every file it sends and keeps back, with no request, a hash in the member's
+  tombstones (read on every refresh) or their unsent opt-outs; the server's refusal by header is for a list
+  that is stale. A refused photo is kept back on that phone from then on (the identifier is learnt from the hash).*
+- *Joining: the extension starts at its own first run, after joining; everything older is offered in the Inbox
+  as "Since you joined" and then a year at a time (Share… makes a batch, Skip hides the chunk). "Upload recent
+  photos" is hidden for a gated member (it would go round the review). No ranges ("skip 2014–2016" is three skips).*
+- *Withdraw from the phone: the viewer's details have the web's row (Shared by you / Withdraw from the family,
+  Private to you / Release) and the caption a "Private to you" mark, from `/why`'s `private`. No release on a day.*
+- *A debug build launched with `-demoMember <name>` sets the `demo_member` cookie (for that launch) on every
+  request and in the web views; only a `--demo` server reads it.*
+- *The Simulator-only project now has the Inbox and the in-app uploader (only the Uploads screen and the
+  extension stay out).*
+- *Not built, or not tried: the extension recording candidates, PhotoKit's screenshot mark and a real library
+  (the Simulator cannot run the extension, and marks no imported PNG a screenshot); the system uploader meeting a
+  refusal; the Hidden album was tried once in the Simulator (a photo hidden in Photos was not offered or sent);
+  CI does not run the Swift tests. An opted-out photo still shows in the Library as "not yet on your server"
+  (LocalPhotos knows nothing of the gate). A mini item opens its page in the web view, whose own tab bar shows
+  under the app's.*
+
 - The app reads `/api/me`: its member and upload policy.
 - **Everything** (the owner): as today.
 - **Review** and **review flagged**: the upload extension no longer creates jobs for new photos. It

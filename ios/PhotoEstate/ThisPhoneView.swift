@@ -10,7 +10,7 @@ struct ThisPhoneView: View {
     @State private var usage = ImageStore.Usage()
     @State private var confirmClear = false
     #if !NO_BACKGROUND_UPLOAD
-    @StateObject private var uploader = ForegroundUploader()
+    @ObservedObject private var uploader = ForegroundUploader.shared
     #endif
 
     private var held: Double { downloads.thumbsWant > 0 ? Double(downloads.thumbsHave) / Double(downloads.thumbsWant) : 0 }

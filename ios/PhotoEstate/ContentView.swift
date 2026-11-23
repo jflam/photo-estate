@@ -1,9 +1,12 @@
 import SwiftUI
 
-/// Three places: the Library, which is every photo in time order; Albums, which are sets of them made
-/// on the server; and Search, which is finding some of them. What the phone keeps, and what it sends to the server, sit behind the Library's bar.
+/// Four places: the Library, which is every photo in time order; Albums, which are sets of them made
+/// on the server; the Inbox, what waits for this member to decide (the phone's own batches of photos to look
+/// over, and the server's items); and Search, which is finding some of them. What the phone keeps, and what
+/// it sends to the server, sit behind the Library's bar.
 struct ContentView: View {
     @StateObject private var router = Router()
+    @ObservedObject private var gate = GateModel.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -16,6 +19,10 @@ struct ContentView: View {
             Tab("Albums", systemImage: "rectangle.stack", value: Router.Tab.albums) {
                 AlbumsView(model: router.albums)
             }
+            Tab("Inbox", systemImage: "tray", value: Router.Tab.inbox) {
+                InboxView()
+            }
+            .badge(gate.badge)
             Tab(value: Router.Tab.search, role: .search) {
                 SearchView(model: router.search)
             }
@@ -29,6 +36,7 @@ struct ContentView: View {
                 await SyncEngine.shared.sync()
                 Downloader.shared.restart()
                 LocalPhotos.shared.refresh()
+                await GateModel.shared.refresh()     // who I am, the inbox, new photos to look over, what to send
             }
         }
     }

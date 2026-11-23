@@ -62,7 +62,9 @@ TAKEN = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(Z|[+-]\d\d:?\d\d)$")
 
 def xmp_for(meta: dict) -> str | None:
     """The sidecar `link` reads (flat tags, as icloudpd writes them) from what the phone sent about a
-    photo: {"taken": ISO 8601 with offset, "lat", "lon", "fav"}. None if nothing usable came."""
+    photo: {"taken": ISO 8601 with offset, "lat", "lon", "fav", "screenshot"}. None if nothing usable came.
+    A screenshot (PhotoKit says so: X-Screenshot) is the keyword `screenshot`, which the hold at ingestion
+    reads (private.py)."""
     tags = []
     if TAKEN.match(meta.get("taken") or ""):
         t = meta["taken"]
@@ -76,25 +78,32 @@ def xmp_for(meta: dict) -> str | None:
         pass
     if str(meta.get("fav")).lower() in ("1", "true", "yes"):
         tags.append("<xmp:Rating>5</xmp:Rating>")
+    if str(meta.get("screenshot")).lower() in ("1", "true", "yes"):
+        tags.append("<dc:subject><rdf:Bag><rdf:li>screenshot</rdf:li></rdf:Bag></dc:subject>")
     if not tags:
         return None
     return ('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
             '<rdf:Description xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/" '
-            'xmlns:exif="http://ns.adobe.com/exif/1.0/" xmlns:xmp="http://ns.adobe.com/xap/1.0/">'
+            'xmlns:exif="http://ns.adobe.com/exif/1.0/" xmlns:xmp="http://ns.adobe.com/xap/1.0/" '
+            'xmlns:dc="http://purl.org/dc/elements/1.1/">'
             + "".join(tags) + "</rdf:Description></rdf:RDF></x:xmpmeta>\n")
 
 
 def save_upload(inbox: Path, rel: str, fp, length: int, sha256: str | None = None,
-                meta: dict | None = None, stored: dict | None = None, stage: Path | None = None) -> tuple[int, str]:
+                meta: dict | None = None, stored: dict | None = None, stage: Path | None = None,
+                refuse: Callable[[str], str | None] | None = None) -> tuple[int, str]:
     """Stream `length` bytes from fp to <inbox>/<rel>. Returns (http status, message).
 
-    `meta` (taken/lat/lon/fav, from request headers) becomes the file's `.xmp` sidecar, written after
-    the file, because background uploads from the phone send one resource per request.
+    `meta` (taken/lat/lon/fav/screenshot, from request headers) becomes the file's `.xmp` sidecar, written
+    after the file, because background uploads from the phone send one resource per request.
 
     Idempotent: sending a file that is already there, with the same size, is a 200. The same path
     with a different size is a 409, because ingest keys on the path and must never see it change.
     `sha256`, when given, is checked against what arrived. On a 201, `stored` (if given) gets the file's
-    "path" and "sha256", which is the key the catalog will give it, so the app can prepare it early."""
+    "path" and "sha256", which is the key the catalog will give it, so the app can prepare it early.
+    `refuse(sha256)`, asked once the bytes are in and hashed, says why they must not be kept (a tombstone:
+    private.refused_upload): then the staging file is removed, nothing reaches the inbox, and the answer is
+    (200, "refused: <why>"), which every uploader takes as done (admin.py says why 200)."""
     p = clean_path(rel)
     if p is None:
         return 400, "bad path"
@@ -122,6 +131,8 @@ def save_upload(inbox: Path, rel: str, fp, length: int, sha256: str | None = Non
             return 400, f"connection ended after {got} of {length} bytes"
         if sha256 and h.hexdigest() != sha256.lower():
             return 400, "sha256 does not match the bytes received"
+        if refuse is not None and (why := refuse(h.hexdigest())):
+            return 200, f"refused: {why}"        # (the staging file goes in `finally`)
         dest.parent.mkdir(parents=True, exist_ok=True)
         os.replace(tmp, dest)
         if stored is not None:

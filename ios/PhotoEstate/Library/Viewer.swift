@@ -26,6 +26,7 @@ struct ViewerScreen: View {
     @State private var saving: Set<String> = []
     @State private var note: String?          // why a favourite (or a video's file) could not be had
     @State private var playback = Playback()  // the video that is up, for its controls; not observed here, only by them
+    @State private var priv: PrivateLine?     // whether the photo is private to this member, or theirs to withdraw (Private.swift)
 
     private var isFav: Bool { favs[tile.sha] ?? tile.fav }
 
@@ -58,8 +59,14 @@ struct ViewerScreen: View {
             }
         }
         .task(id: picked?.sha) { photo = await lookup(tile.sha) }
+        .task(id: tile.sha) {
+            priv = nil
+            guard !tile.isLocal else { return }
+            let sha = tile.sha, got = await PrivateLine.load(sha)
+            if !Task.isCancelled, tile.sha == sha { priv = got }
+        }
         .sheet(item: $info) { shown in
-            InfoView(photo: shown, reason: reason(shown.sha)) { q in
+            InfoView(photo: shown, reason: reason(shown.sha), priv: $priv) { q in
                 info = nil
                 session.close()
                 route(q)
@@ -85,6 +92,13 @@ struct ViewerScreen: View {
                         .filter { !$0.isEmpty }.joined(separator: "  ·  "))
                     .font(.caption).opacity(0.75)
                 if let note { Text(note).font(.caption.weight(.medium)).foregroundStyle(Color.sunLit) }
+                if priv?.isPrivate == true {
+                    Label("Private to you", systemImage: "lock.fill")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(.black.opacity(0.35), in: Capsule())
+                        .padding(.top, 3)
+                }
                 if tile.live && !tile.video {
                     Label("LIVE", systemImage: "livephoto")
                         .font(.caption2.weight(.semibold)).kerning(1)
@@ -251,6 +265,7 @@ extension UIApplication {
 struct InfoView: View {
     let photo: Photo
     var reason: String? = nil       // why it is in the album it was opened from
+    @Binding var priv: PrivateLine?  // private to this member, or theirs to withdraw
     var go: (Query) -> Void
 
     var body: some View {
@@ -270,6 +285,7 @@ struct InfoView: View {
                             .font(.footnote).foregroundStyle(.secondary).padding(.top, 6)
                     }
                 }
+                PrivateRow(sha: photo.sha, line: $priv)
                 if photo.video {
                     fact("play.rectangle", "Video", photo.dur.map { Tile.clock(Float($0)) } ?? "")
                 } else if photo.live != nil {

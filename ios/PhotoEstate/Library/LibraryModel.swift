@@ -473,7 +473,7 @@ final class LibraryModel: ObservableObject {
 /// goes through `find`, which shows that set in Search.
 @MainActor
 final class Router: ObservableObject {
-    enum Tab: Hashable { case library, albums, search }
+    enum Tab: Hashable { case library, albums, inbox, search }
     @Published var tab = Tab.library
     let library = LibraryModel(remembersOrder: true)
     let albums = AlbumsModel()

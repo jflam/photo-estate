@@ -16,7 +16,7 @@ flowchart LR
       CAT[("catalog.db<br/>a replica of the catalog")]
       TH[("thumbs.db<br/>every thumbnail")]
       FULL["full/preview, full/large<br/>kept photos, size-capped"]
-      UI["Library, Albums and Search<br/>(SwiftUI + UIKit)"]
+      UI["Library, Albums, Inbox and Search<br/>(SwiftUI + UIKit)"]
       EXT["Upload extension<br/>(iOS 27 background upload)"]
       UI --> CAT & TH & FULL
     end
@@ -73,10 +73,14 @@ server has all of it.
 ios/
   project.yml            the real project: the app and the upload extension (xcodegen)
   project-sim.yml        the app alone, for a Simulator older than the extension needs (iOS 27)
-  Shared/                Server.swift (the address), UploadRequest.swift, ExtensionStatus.swift
-  UploadExtension/       the background upload extension: queues a job per new photo
+  Shared/                Server.swift (the address), UploadRequest.swift, ExtensionStatus.swift,
+                         PhoneGate.swift (the phone gate's rules and its state, shared with the extension)
+  UploadExtension/       the background upload extension: queues a job per new photo (or, under a
+                         review policy, records it for the Inbox)
+  Tests/                 main.swift and run.sh: the phone gate's unit tests, compiled and run on the Mac
   PhotoEstate/
-    PhotoEstateApp, ContentView        three tabs: Library, Albums and Search
+    PhotoEstateApp, ContentView        four tabs: Library, Albums, Inbox and Search
+    Gate/      GateModel, InboxView               the Inbox tab, the phone gate (chapter 24), who I am
     Design.swift                       ink, paper, a low sun: the look
     Catalog/   SyncEngine, Catalog, SQLite, Query     the replica, and reading a search
                Screenshots, API                       which photos are screenshots; asking the server
@@ -85,20 +89,22 @@ ios/
                Movie                                  a video, and a Live Photo's clip, in the viewer
                Albums                                 the Albums tab (chapter 26)
                LocalPhotos, OnPhone                   the phone's own photos, in the Library and the viewer
+               Private                                the viewer's private mark; withdraw and release
     ThisPhoneView, UploadsView, ForegroundUploader    what the phone keeps, and sending
     WebView                                           a server page inside the app (an album's review)
 ```
 
 | Area | Files | Swift lines (code) |
 |---|---|---:|
-| Catalog (replica, SQL wrapper, query reading, screenshots, server API) | 6 | 959 |
+| Catalog (replica, SQL wrapper, query reading, screenshots, server API) | 6 | 985 |
 | Images (thumbnail store, downloader) | 2 | 306 |
-| Library (grid, viewer, videos, Library and Search tabs, albums, filters, the phone's own photos) | 10 | 3,887 |
-| Uploads (extension, request, foreground uploader, status, view) | 5 | 355 |
-| App shell, design, This iPhone, web view, server address | 6 | 227 |
-| **Total** | **29** | **5,734** (6,813 with comments and blanks) |
+| Library (grid, viewer, videos, Library and Search tabs, albums, filters, the phone's own photos, the private mark) | 11 | 4,066 |
+| Uploads and the phone gate (extension, request, gate, foreground uploader, status, view, the Inbox) | 8 | 1,082 |
+| App shell, design, This iPhone, web view, server address | 6 | 249 |
+| **Total** | **33** | **6,688** |
 
-Measured with `tokei` on 2026-11-21. When this chapter was first written (2026-11-14) the app was 23 files
+Measured with `tokei` on 2026-11-22 (multiplayer phase 6 added the phone gate and the Inbox: 954 lines);
+the gate's unit tests (`ios/Tests/`) are 170 more. When this chapter was first written (2026-11-14) the app was 23 files
 and 3,481 lines; the Albums tab, the phone's own photos in the Library, best first, stacks,
 favourites, and videos and Live Photos came after.
 
@@ -121,7 +127,8 @@ Two decisions about the code itself:
 There is no login and no server-picker screen. The address is a build setting,
 `SERVER_BASE` in `project.yml`, copied into the app's `Info.plist` as `BackgroundUploadURLBase` and read
 back by `Server.baseURL`. The upload extension reads the same key, which is why it lives in `Shared/`.
-For the Simulator against a local server:
+For the Simulator against a local server (the iOS 27 Simulator runs the real project, `project.yml`, too; only
+the background upload extension does not run there):
 
 ```bash
 cd photo-estate && uv run embed.py serve --demo --port 8791          # the 104-photo demo library
@@ -129,17 +136,34 @@ cd ios && xcodegen -s project-sim.yml && xcodebuild -project PhotoEstateSim.xcod
     -scheme PhotoEstate -sdk iphonesimulator -derivedDataPath build SERVER_BASE=http://127.0.0.1:8791 build
 ```
 
+**Who the phone is.** The phone sends no login: through `tailscale serve` the login comes with every request,
+and the server maps it to a member (chapter 11); the app asks `GET /api/me` and shows the answer in the Inbox
+and on Uploads. A demo server (`--demo`) takes the member from an `X-Demo-Member` header or a `demo_member`
+cookie instead, so a **debug build started with `-demoMember <name>`** (`xcrun simctl launch <device>
+com.jflam.photoestate -demoMember ben`) sets that cookie, for that launch only, on every request and in the web
+views (`Server.demoCookie`). A server without `--demo` ignores it; a release build has none.
+
 Because the web app has no authentication of its own (chapter 16), the app inherits the same rule:
 **the network is the access control.** The phone reaches the server only over the tailnet, and
 `NSAllowsLocalNetworking` permits plain HTTP only to local addresses for the Simulator.
 
 ## Starting up
 
-`ContentView` is three tabs (Library, Albums, Search). Every time the app becomes active it does three things in order:
+`ContentView` is four tabs (Library, Albums, Inbox, Search). Every time the app becomes active it does these
+things in order:
 
 1. `ImageStore.retryNetwork()`: forget that the server was unreachable a moment ago.
 2. `SyncEngine.sync()`: ask the server what changed (chapter 20).
 3. `Downloader.restart()`: fetch whatever the phone should hold but doesn't yet (chapter 22).
+4. `GateModel.refresh()`: who this phone's member is and their upload policy (`/api/me`), their opt-outs
+   (`/api/tombstones`), their inbox on the server (`/api/inbox`); new photos the extension recorded become a
+   batch to look over, and what was approved is sent (chapter 24).
+
+**The Inbox tab** carries a badge: the phone's own batches waiting to be looked over plus the server's open items.
+One list: *On this iPhone* (the batches, made on the phone: the server does not know the photos exist until they
+are shared), *From your library* (the server's items, each opening the page that decides it in the same web view
+as People; a notice, a lens that changed, is put away when opened, as on the web), *Older photos* a chunk at a
+time, and *Kept back on this iPhone*. Chapter 24 has the gate itself.
 
 Until the first sync has returned anything, the Library shows a welcome screen. After that it never
 waits for the network again: every screen reads the phone's own files, and anything the server adds
@@ -170,7 +194,9 @@ behaves.
 
 | Topic | File |
 |---|---|
-| The app's three tabs and what happens on launch | [ContentView.swift](../../ios/PhotoEstate/ContentView.swift) |
+| The app's four tabs and what happens on launch | [ContentView.swift](../../ios/PhotoEstate/ContentView.swift) |
+| The Inbox, who I am, the phone gate | [Gate/](../../ios/PhotoEstate/Gate/), [Shared/PhoneGate.swift](../../ios/Shared/PhoneGate.swift) (chapter 24) |
+| The viewer's private mark, withdraw and release | [Library/Private.swift](../../ios/PhotoEstate/Library/Private.swift) |
 | The server address | [Shared/Server.swift](../../ios/Shared/Server.swift) |
 | The project definitions | [project.yml](../../ios/project.yml), [project-sim.yml](../../ios/project-sim.yml) |
 | The SQLite wrapper | [Catalog/SQLite.swift](../../ios/PhotoEstate/Catalog/SQLite.swift) |

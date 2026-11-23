@@ -11,23 +11,23 @@ leaving out the checked-in demo library and every Markdown file:
 | **Server** (Python: `photo-estate/*.py`, `intake/` and `core/`) | 41 | 10,672 |
 | **Web pages** (seven pages, the shared stylesheet, the service worker) | 9 | 4,664 |
 | **The pages' script modules** (`app/*.js`, without their tests) | 21 | 1,132 |
-| **iPhone app** (Swift, plus `deploy.sh`) | 30 | 5,751 |
+| **iPhone app** (Swift, plus `deploy.sh`) | 34 | 6,705 |
 | Shell scripts the pipeline runs (`pull-drive.sh`, `pull-icloud.sh`, `ingest-iphone.sh`) | 3 | 130 |
 | Tests (`tests/`: 16 self-running scripts, 20 pytest files, `conftest.py`) | 37 | 7,741 |
 | The script modules' unit tests (`app/tests/`) | 22 | 2,619 |
 | Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts, square export and embedding, the video demo) | 27 | 3,506 |
 | The cloud preview on the Mac mini (`deploy/*.sh`) | 4 | 330 |
-| **Total** | **194** | **36,545** |
+| **Total** | **198** | **37,499** |
 
 The web pages' 4,664 lines are 3,085 of JavaScript, 950 of CSS and 629 of HTML markup (tokei counts
 the script of `setup.html`, a module it does not parse, as markup). What you run (the server, its pages
-and their modules, the iPhone app and the three pipeline scripts) is **22,349 lines of code**:
+and their modules, the iPhone app and the three pipeline scripts) is **23,303 lines of code**:
 
 ```mermaid
-pie showData title "What you run, by part (22,349 lines)"
+pie showData title "What you run, by part (23,303 lines)"
     "Server: Python (10,672)" : 10672
     "Web pages and their modules (5,796)" : 5796
-    "iPhone app: Swift (5,734)" : 5734
+    "iPhone app: Swift (6,688)" : 6688
     "Shell (147)" : 147
 ```
 
@@ -76,10 +76,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
   lenses.py            360  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
                             out of an estate default), "show it anyway", each member's favourites, why a photo is
                             hidden; State, the looks every member view is worked out from (chapter 11)
-  private.py           330  photos private to their sharer (chapter 11): who may be shown a photo, the sharer ingest
+  private.py           495  photos private to their sharer (chapter 11): who may be shown a photo, the sharer ingest
                             records from the inbox's member folder, withdrawing and releasing (now, or on a day:
-                            the app's timer), the hold at ingestion (PROMPTS and HOLD_AT, in one place) and the
-                            one-off run over the library (`private.py library --dry-run`)
+                            the app's timer), the hold at ingestion (PROMPTS and HOLD_AT, in one place, and the
+                            phone's screenshot mark) and the one-off run over the library (`private.py library
+                            --dry-run`); the phone gate's tombstones (a member's opt-outs, which refuse their uploads)
   hold-prompts.json         the hold's prompts as SigLIP text vectors, made once by `embed.py hold-prompts`
   member_inbox.py      110  each member's inbox (inbox_items; not the upload folder): put and close, called by the
                             code that makes and decides each kind, what an item opens, the member's list,
@@ -91,7 +92,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
   images.py            251  thumbnails (WebP), previews, large images and originals, a video's from its poster;
                             making them in the background; which file /video/ sends
   video.py             112  still frames out of a video with PyAV: when to look, frames, the poster, which to keep (chapter 10); a heavy video's copy to play from (chapter 11)
-  admin.py             276  phone uploads, the ingest, restart, /stats, backups
+  admin.py             326  phone uploads (a tombstoned one refused, before its body when its hash is sent), the
+                            ingest, restart, /stats, backups
   encoder.py           174  SigLIP's text (and image) side, for the photo app: loaded when asked for, let go when idle
   compare.py           340  an experiment: a fixed list of searches ranked by a second model beside the app's own, voted on, and a report, at /compare (chapter 10)
   compare-terms.txt     30  the searches a comparison asks, one a line
@@ -192,13 +194,16 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      49  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             7,741  16 self-running test scripts and 20 pytest files; conftest.py runs the scripts under pytest,
+  tests/             7,741  16 self-running test scripts and 21 pytest files; conftest.py runs the scripts under pytest,
                             test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_members.py checks members.py and its journal entries on a scratch catalog;
                             test_journal.py checks journal.py and the one entry each write appends;
                             test_lenses.py checks lenses.py's rules and writes on a scratch catalog;
                             test_member_inbox.py checks member_inbox.py and each kind's making and closing there;
+                            test_tombstones.py checks the phone gate's tombstones: the endpoints, an upload refused
+                            before its body and dropped from staging, one member's opt-out against another's copy,
+                            a purge, the phone's screenshot mark reaching the hold;
                             test_private.py checks private photos: who may be shown one with one to three sharers,
                             every way a photo leaves the app (over real HTTP too), People, release on a day, an
                             agent, ingest's sharers and the hold before any reload, and the one-off run;
@@ -239,14 +244,19 @@ photo-estate/                  the server and the web app (Python run with uv; n
   deploy/              330  launchd plists, the cloud preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
   demo/                     104 CC0 photos, their catalog, and credits
 
-ios/                 5,751  the iPhone app (chapters 19-24, 26)
-  PhotoEstate/Library/   3,887  grid, viewer, Library and Search tabs, albums, filter sheets, the phone's own photos,
-                                Movie.swift (178: a video and a Live Photo's clip in the viewer, its bar)
-  PhotoEstate/Catalog/     959  the replica of the catalog, reading a search, the server's JSON API
+ios/                 6,705  the iPhone app (chapters 19-24, 26)
+  PhotoEstate/Library/   4,066  grid, viewer, Library and Search tabs, albums, filter sheets, the phone's own photos,
+                                Movie.swift (178: a video and a Live Photo's clip in the viewer, its bar),
+                                Private.swift (71: the viewer's private mark, withdraw and release)
+  PhotoEstate/Catalog/     985  the replica of the catalog, reading a search, the server's JSON API
   PhotoEstate/Images/      306  thumbnails and kept photos
-  PhotoEstate/*.swift      398  the tab bar, the look, This iPhone, uploads, the in-app web view
-  UploadExtension/          94  the background upload extension
-  Shared/                   90  the server's address, the upload request, the extension's log
+  PhotoEstate/Gate/        446  the Inbox tab and the phone gate's half in the app: who I am, batches to look over,
+                                older photos by chunk, kept back and "share after all" (chapter 24)
+  PhotoEstate/*.swift      432  the tab bar, the look, This iPhone, uploads, the in-app web view
+  UploadExtension/         106  the background upload extension (jobs, or candidates for the Inbox)
+  Shared/                  347  the server's address (and a debug build's demo member), the upload request, the
+                                extension's log, PhoneGate.swift (217: the gate's rules and state, in the app group)
+  Tests/                   170  the phone gate's unit tests: run.sh compiles them with Shared/ for the Mac and runs them
   project.yml, project-sim.yml, deploy.sh, build-number   XcodeGen specs; build and install on the phone
 ```
 

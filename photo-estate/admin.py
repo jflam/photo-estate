@@ -3,7 +3,8 @@ admin.py — looking after the photo app (`embed.py serve`): photos arriving fro
 that catalogues them, restarting, the Library info page, and the catalog's backups.
 
   PUT|POST /api/upload/<YYYY/MM/DD/name.ext>   one file from the phone into the inbox (upload.py), in the folder
-                                               of the member it is for: <inbox>/m<member id>/YYYY/MM/DD/...
+                                               of the member it is for: <inbox>/m<member id>/YYYY/MM/DD/...; bytes
+                                               a tombstone refuses are not kept (200, X-Upload-Refused: Admin.upload)
   OPTIONS  /api/upload/...                     501: send each file in one request (no resumable uploads)
   GET      /api/ingest                         the ingest's state (upload.IngestJob)
   POST     /api/ingest                         run ingest-iphone.sh now
@@ -37,6 +38,7 @@ from urllib.parse import unquote
 from PIL import Image, ImageOps
 
 import pages
+import private
 from core.media import DECODABLE_EXT
 from catalog import Live
 from estate import facts_of as estate_facts
@@ -114,11 +116,32 @@ class Admin:
         threading.Timer(0.5, os._exit, (0,)).start()   # KeepAlive starts it again
         return js({"restarting": True}, 202)
 
-    def upload(self, method: str, path: str, headers, rfile, who: str, allowed: bool, folder: tuple[str, bool] = ("", True)):
+    def refused(self, sha: str, member: int | None) -> str | None:
+        """Why `member` may not upload these bytes (a tombstone: private.refused_upload), or None. A catalog that
+        cannot be read is an OSError (a 500, which a phone sends again later), never a yes."""
+        try:
+            con = sqlite3.connect(f"file:{self.db}?mode=ro", uri=True, timeout=10)
+            try:
+                return private.refused_upload(con, sha, member)
+            finally:
+                con.close()
+        except sqlite3.Error as e:
+            raise OSError(0, f"the catalog could not be read: {e}") from e
+
+    def upload(self, method: str, path: str, headers, rfile, who: str, allowed: bool, folder: tuple[str, bool] = ("", True),
+               member: int | None = None):
         """PUT or POST /api/upload/<YYYY/MM/DD/name.ext>: one file from the phone into the inbox (upload.py), in
         the folder of the member it is for (`folder`: ("m<id>", whether the inbox itself was theirs before member
         folders), PhotoApp.folder_of), which is how ingest knows who shared it. The phone's path is unchanged.
-        Returns the answer and whether to close the connection: every early answer leaves the body unread."""
+        Returns the answer and whether to close the connection: every early answer leaves the body unread.
+
+        A tombstone (`member`'s opt-out, or a purge) refuses the bytes: before the body is read when X-Content-SHA256
+        names them (the in-app uploader, which has the file), else once they are hashed, from the staging file (the
+        system uploader, whose extension never reads the file). Either way nothing reaches the inbox, and the answer is
+        200 {"status": "refused: opted_out" | "refused: purged"} with X-Upload-Refused: why. 200, not a 4xx: the
+        system uploader marks a job that got a 4xx as failed, and the extension retries a failed job, so the bytes
+        would cross again; an old build's in-app uploader counts a 200 as "already there" and anything else as a
+        failure it shows. A 200 is the one answer both take as done."""
         prefix = "/api/upload/"
         if not path.startswith(prefix) or self.inbox is None:
             return NOT_FOUND, True
@@ -131,24 +154,34 @@ class Admin:
         close = True
         try:
             h = headers
-            meta = {"taken": h.get("X-Taken"), "lat": h.get("X-Latitude"), "lon": h.get("X-Longitude"),
-                    "fav": h.get("X-Favorite")}
-            stored = {}
-            rel, (sub, old) = unquote(path[len(prefix):]), folder
-            if sub and old and clean_path(rel) is not None and (self.inbox / rel.strip("/")).exists():
-                sub = ""             # sent before member folders: it is there already (save_upload says 200, or 409)
-            code, msg = save_upload(self.inbox / sub if sub else self.inbox, rel, rfile, length,
-                                    h.get("X-Content-SHA256"), meta, stored, stage=staging_dir(self.inbox))
-            if stored and stored["path"].suffix.lower() in DECODABLE_EXT:   # an upload's stills, less DNG
-                self.arrivals.put((stored["sha256"], stored["path"]))
-            close = code >= 400   # a refused body may still be on the wire
+            said = (h.get("X-Content-SHA256") or "").lower()
+            if private.SHA.fullmatch(said) and (why := self.refused(said, member)):
+                code, msg = 200, f"refused: {why}"         # the body stays unread: close (`close` is True)
+            else:
+                meta = {"taken": h.get("X-Taken"), "lat": h.get("X-Latitude"), "lon": h.get("X-Longitude"),
+                        "fav": h.get("X-Favorite"), "screenshot": h.get("X-Screenshot")}
+                stored = {}
+                rel, (sub, old) = unquote(path[len(prefix):]), folder
+                if sub and old and clean_path(rel) is not None and (self.inbox / rel.strip("/")).exists():
+                    sub = ""             # sent before member folders: it is there already (save_upload says 200, or 409)
+                code, msg = save_upload(self.inbox / sub if sub else self.inbox, rel, rfile, length,
+                                        h.get("X-Content-SHA256"), meta, stored, stage=staging_dir(self.inbox),
+                                        refuse=lambda sha: self.refused(sha, member))
+                if stored and stored["path"].suffix.lower() in DECODABLE_EXT:   # an upload's stills, less DNG
+                    self.arrivals.put((stored["sha256"], stored["path"]))
+                close = code >= 400   # a refused body may still be on the wire
         except OSError as e:
             code, msg = 500, f"could not write: {e.strerror}"
         if code == 201:
             print(f"upload: {method} {path[len(prefix):]} ({length / 1e6:.1f} MB) from {who or 'local'}", flush=True)
+        refusal = msg[len("refused: "):] if code == 200 and msg.startswith("refused: ") else None
+        if refusal:
+            print(f"upload: refused {path[len(prefix):]} from {who or 'local'}: {refusal}"
+                  + (" (before its body)" if close else ""), flush=True)
         if self.ingest and code in (200, 201):
             self.ingest.poke(headers.get("X-Batch"), path[len(prefix):], new=code == 201)
-        return js({"status": msg}, code), close
+        got = js({"status": msg}, code)
+        return (got + ({"X-Upload-Refused": refusal},) if refusal else got), close
 
     # -- photos arriving from the phone ---------------------------------------------------------
     # A photo that just arrived from the phone is prepared now, while the file is still in the page

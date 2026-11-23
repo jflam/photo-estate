@@ -1,5 +1,5 @@
 # The app alone, for a Simulator older than the system upload extension needs (iOS 27): no extension,
-# no Uploads tab. Everything else is the real app.
+# no Uploads screen. Everything else is the real app, the Inbox and its in-app uploader included.
 #   xcodegen -s project-sim.yml && xcodebuild -project PhotoEstateSim.xcodeproj -scheme PhotoEstate \
 #     -sdk iphonesimulator -derivedDataPath build SERVER_BASE=http://127.0.0.1:8791 build
 name: PhotoEstateSim
@@ -21,9 +21,8 @@ targets:
     platform: iOS
     sources:
       - path: PhotoEstate
-        excludes: [UploadsView.swift, ForegroundUploader.swift, Info.plist]
+        excludes: [UploadsView.swift, Info.plist]
       - path: Shared
-        excludes: [UploadRequest.swift]
     info:
       path: build/sim-Info.plist
       properties:

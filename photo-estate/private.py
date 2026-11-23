@@ -16,8 +16,9 @@ A photo is **private** to a sharer while a row of `private` names them and is no
   new        a phone upload not checked yet. Ingest writes it in the transaction that records the photo, so no
              catalog the app loads, at any moment, has the photo without it: nobody but its sharer can be shown
              a new upload before `check` has scored it (ingest-iphone.sh runs it after the embeddings).
-  held       `check` found that it looks like a receipt, a screenshot or a document (PROMPTS, HOLD_AT, and
-             catalog.is_screenshot), or the one-off run over the library (`library`) did
+  held       `check` found that it looks like a receipt, a screenshot or a document (PROMPTS, HOLD_AT,
+             catalog.is_screenshot, and the phone's own mark: X-Screenshot on the upload, which upload.py writes
+             into its sidecar as the keyword `screenshot`), or the one-off run over the library (`library`) did
   withdrawn  its sharer took it back from the family (POST /api/private, from the viewer)
 
 Who may be shown a photo (lenses.State.shared, from read() here): everyone, unless every one of its sharers
@@ -39,6 +40,9 @@ release_due). The row stays, with released_at, so `library` never holds again wh
   library(con, member, model, dry_run, out)   the one-off run over a member's photos
   change(con, member, shas, private, until=KEEP)   withdraw, release, or set the day it is released on
   release_due(con, today)          the timer's: every row whose day has come is released
+  tombstones(con, member)          GET /api/tombstones: the member's own opt-outs, not lifted (hashes only)
+  change_tombstones(con, member, add, lift)   POST /api/tombstones: opt out of hashes, or take opt-outs back
+  refused_upload(con, sha, member) "opted_out" (that member's), "purged" (anyone's) or None: an upload refused
   PrivateError                     what a member may not do, with the HTTP status
 
   uv run private.py --db estate.db check                           (what ingest-iphone.sh runs)
@@ -51,6 +55,14 @@ no actor, acting for the sharer); subject the sha for one photo, else "photos". 
 was never private to anyone in a way anyone saw, and is not journaled (ingest.finished says the photo came).
 The inbox (member_inbox.py): a hold puts one `held` item, held:<batch>, in its sharer's inbox, opening the held
 view (/?q=is:held); it is done once nothing it held is still held.
+
+Tombstones (multiplayer phase 6, the phone gate): a photo a member opted out of on their phone is a row of
+`tombstones` (why opted_out) with their member id and the SHA-256 of the file, as the store keys it. It refuses
+*that member's* upload of those bytes (admin.py, before the body when X-Content-SHA256 names it, else dropped
+from the staging file once hashed), never another member's copy, and it is no withdraw: a photo already in the
+estate stays as it is. Only its member lifts it (lifted_at; opting out again clears it). A purge's (member 0)
+refuses everyone's and is never lifted (core/schema.py's triggers). Journaled once per call: tombstones.changed
+{opted_out, lifted}, by the member.
 """
 from __future__ import annotations
 
@@ -214,19 +226,32 @@ def scores(vecs, model: str, prompts=None):
     return np.asarray(vecs, np.float32) @ P.T
 
 
-def reasons(row, shot: bool) -> list[str]:
-    """Why a photo would be held, from its scores (one per prompt) and whether it is a screenshot: [] for none."""
+def reasons(row, shot: bool, marked: bool = False) -> list[str]:
+    """Why a photo would be held, from its scores (one per prompt), whether it is a screenshot (catalog.is_screenshot)
+    and whether the phone said it is one (`marked`: X-Screenshot on its upload, a keyword in its sidecar): [] for none."""
     out = [p for p, s in zip(PROMPTS, row) if s >= HOLD_AT]
-    return out + (["is_screenshot"] if shot else [])
+    return out + (["is_screenshot"] if shot else []) + (["phone_screenshot"] if marked else [])
+
+
+SCREENSHOT_KEYWORD = "screenshot"   # what upload.xmp_for writes for X-Screenshot, and estate.parse_xmp reads back
 
 
 def _facts(con, shas) -> dict[str, dict]:
-    """What catalog.is_screenshot reads, from the catalog's tables."""
+    """What catalog.is_screenshot reads, from the catalog's tables, and `marked`: a sidecar of one of its files
+    carries the phone's screenshot keyword."""
     out: dict[str, dict] = {}
     for part in chunks(shas):
         q = ",".join("?" * len(part))
         for sha, ext, w, h in con.execute(f"SELECT sha256, ext, width, height FROM assets WHERE sha256 IN ({q})", part):
-            out[sha] = {"ext": ext, "w": w, "h": h, "camera": None, "lens": None, "path": None}
+            out[sha] = {"ext": ext, "w": w, "h": h, "camera": None, "lens": None, "path": None, "marked": False}
+        for sha, data in con.execute(f"SELECT o.sha256, x.data FROM occurrences o JOIN xmp x ON x.dir = o.dir"
+                                     f" AND x.filename = o.filename || '.xmp' WHERE o.sha256 IN ({q})", part):
+            try:
+                words = json.loads(data).get("keywords") or []
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if sha in out and SCREENSHOT_KEYWORD in [str(w).lower() for w in words]:
+                out[sha]["marked"] = True
         try:
             for sha, camera, lens in con.execute(f"SELECT sha256, camera, lens FROM exif WHERE sha256 IN ({q})", part):
                 if sha in out:
@@ -258,7 +283,8 @@ def judge(con, model: str, shas) -> dict[str, tuple[list[str], list[float]]]:
     if not got:
         return {}
     S, facts = scores(M, model), _facts(con, got)
-    return {sha: (reasons(S[i], is_screenshot(facts.get(sha) or {})), [round(float(x), 4) for x in S[i]])
+    return {sha: (reasons(S[i], is_screenshot(facts.get(sha) or {}), bool((facts.get(sha) or {}).get("marked"))),
+                  [round(float(x), 4) for x in S[i]])
             for i, sha in enumerate(got)}
 
 
@@ -333,7 +359,7 @@ def library(con, member: int, model: str, dry_run: bool = False, out=print, samp
         found.update(judge(con, model, part))
     hold = sorted(s for s, (why, _) in found.items() if why)
     report = {"member": member, "photos": len(shas), "scored": len(found), "held": len(hold),
-              "by_reason": {r: sum(r in why for why, _ in found.values()) for r in (*PROMPTS, "is_screenshot")}}
+              "by_reason": {r: sum(r in why for why, _ in found.values()) for r in (*PROMPTS, "is_screenshot", "phone_screenshot")}}
     best = np.array([max(sc) for _, sc in found.values()]) if found else np.zeros(0)
     edges = [round(HOLD_AT + d / 1000, 3) for d in range(-30, 35, 5)]
     report["near"] = [{"from": a, "to": b, "photos": int(((best >= a) & (best < b)).sum())} for a, b in zip(edges, edges[1:])]
@@ -471,6 +497,63 @@ def release_due(con, today: str) -> dict[int, int]:
                            {"photos": len(shas), "auto": True, "until": today}, m)
             close_held(con, m)
     return {m: len(s) for m, s in by.items()}
+
+
+# -- tombstones: the phone gate's opt-outs ---------------------------------------------------------------
+
+SHA = re.compile(r"[0-9a-f]{64}")
+
+
+def tombstones(con, member: int) -> list[str]:
+    """GET /api/tombstones: the hashes `member` opted out of and has not taken back (a new phone's first read)."""
+    try:
+        return [s for s, in con.execute("SELECT sha256 FROM tombstones WHERE member_id=? AND why='opted_out'"
+                                        " AND lifted_at IS NULL ORDER BY sha256", (member,))]
+    except sqlite3.OperationalError:       # a catalog from before tombstones
+        return []
+
+
+def change_tombstones(con, member: int, add=(), lift=()) -> dict:
+    """POST /api/tombstones: `member` opts out of the hashes in `add` (a new row, or one they lifted made to stand
+    again) and takes back those in `lift` (lifted_at). Their own only: a purge (member 0) is never theirs.
+    ValueError for anything that is not a list of hashes, or a hash in both. One tombstones.changed entry when
+    anything changed."""
+    if not member:
+        raise PrivateError(403, "only a member opts out")
+    for xs in (add, lift):
+        if not isinstance(xs, (list, tuple)) or len(xs) > 20000 or not all(isinstance(s, str) and SHA.fullmatch(s) for s in xs):
+            raise ValueError("add and lift are lists of SHA-256 hashes (lower-case hex)")
+    add, lift = list(dict.fromkeys(add)), list(dict.fromkeys(lift))
+    if set(add) & set(lift):
+        raise ValueError("a hash cannot be opted out of and taken back at once")
+    t, added, lifted = now(), 0, 0
+    with con:
+        for sha in add:
+            row = con.execute("SELECT lifted_at FROM tombstones WHERE sha256=? AND member_id=?", (sha, member)).fetchone()
+            if row is None:
+                con.execute("INSERT INTO tombstones(sha256, member_id, why, at) VALUES (?,?,'opted_out',?)", (sha, member, t))
+                added += 1
+            elif row[0] is not None:
+                added += con.execute("UPDATE tombstones SET lifted_at=NULL WHERE sha256=? AND member_id=?", (sha, member)).rowcount
+        for sha in lift:
+            lifted += con.execute("UPDATE tombstones SET lifted_at=? WHERE sha256=? AND member_id=? AND lifted_at IS NULL",
+                                  (t, sha, member)).rowcount
+        if added or lifted:
+            one = (add + lift)[0] if len(add) + len(lift) == 1 else "photos"
+            journal.append(con, member, "tombstones.changed", one, {"opted_out": added, "lifted": lifted})
+    return {"opted_out": added, "lifted": lifted, "changed": bool(added or lifted)}
+
+
+def refused_upload(con, sha: str, member: int | None) -> str | None:
+    """Why an upload of these bytes from `member` is refused: "purged" (the sysadmin purged the photo: from anyone),
+    "opted_out" (this member opted out of it on their phone), or None."""
+    try:
+        rows = con.execute("SELECT member_id FROM tombstones WHERE sha256=? AND lifted_at IS NULL AND member_id IN (0, ?)",
+                           (sha.lower(), member if member is not None else 0)).fetchall()
+    except sqlite3.OperationalError:       # a catalog from before tombstones
+        return None
+    ms = {m for m, in rows}
+    return "purged" if 0 in ms else "opted_out" if ms else None
 
 
 def main() -> None:

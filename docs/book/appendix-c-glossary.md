@@ -19,6 +19,10 @@ exactly on at least one piece; used to find near-duplicates without comparing al
 
 **Batch (upload).** The files a phone sends together, named in an `X-Batch: <id>/<count>` header; when the last arrives, the server starts cataloguing at once ([24](24-uploading.md)).
 
+**Batch (to look over).** An item of the iPhone app's Inbox made on the phone (the phone gate): new photos, or a chunk of older ones, that a member with a review policy looks at before any is sent. Everything in it is shared unless marked; a mark keeps a photo back ([24](24-uploading.md#the-phone-gate-looking-before-sharing)).
+
+**Candidate.** A new photo the upload extension saw arrive and made no upload job for, because the member's policy is a review one (or not known yet); the app makes candidates a batch to look over ([24](24-uploading.md#the-phone-gate-looking-before-sharing)).
+
 **Best frame.** Of a video's kept frames, the one closest to a search. A video's score in a search is its best frame's, or its mean's when that is higher (`Catalog.sims`), and `at` on its row says where that frame is, in seconds ([10](10-embeddings.md#videos)).
 
 **Bradley–Terry model.** A model of pairwise choices: each item has a score, and the chance A is picked over B is `sigmoid(score A − score B)`. The taste scorer is one ([25](25-best-photos.md)).
@@ -76,7 +80,9 @@ trip.
 
 **Inbox.** The folder (`iphone/` next to the catalog) where phone uploads land, in the same shape as the iCloud mirror; `ingest-iphone.sh` catalogues it ([24](24-uploading.md)).
 
-**Inbox (a member's).** What waits for a member to decide (member_inbox.py, the table `inbox_items`, the page `/inbox`): someone asking to be let in, a change set an agent made for them, a filter proposed as an estate default, a lens they follow that changed, photos of theirs held as private. Each item is made by the code that needs the decision, opens the page that decides it, and is closed by that decision; a member can also dismiss one. Not the upload folder above, which only shares the word ([11](11-server.md#the-inbox)).
+**Inbox (a member's).** What waits for a member to decide (member_inbox.py, the table `inbox_items`, the page `/inbox`): someone asking to be let in, a change set an agent made for them, a filter proposed as an estate default, a lens they follow that changed, photos of theirs held as private. Each item is made by the code that needs the decision, opens the page that decides it, and is closed by that decision; a member can also dismiss one. Not the upload folder above, which only shares the word ([11](11-server.md#the-inbox)). The iPhone app's Inbox tab shows these beside the phone's own batches to look over ([19](19-iphone-app.md#starting-up)).
+
+**Kept back.** A photo a member marked in a batch on their phone: never sent from that phone, and its hashes are tombstones, so the server refuses it from any phone of theirs. **Share after all** takes it back ([24](24-uploading.md#the-phone-gate-looking-before-sharing)).
 
 **Journal.** The estate's append-only log of what happened (journal.py), one row of `journal` per action with who did it (`actor`), its `kind` (`album.applied`, `favorite.set`, `faces.labeled`, `task.finished`, `ingest.finished`, `photo.purged`, `member.changed`, ...) and what it is about (`subject`, such as `album:12` or a sha); one entry per action, never one per photo. Appended in the same transaction as the change; triggers refuse changing or deleting it; nothing reads it yet. Not the face journal below, nor the `events` tables ([11](11-server.md#the-journal)).
 
@@ -183,14 +189,14 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Tile.** What the iPhone grid needs to draw a photo and nothing else: its hash, aspect ratio, local time, city and favourite flag ([21](21-offline-search.md)).
 
-**Tombstone.** A photo the estate refuses, by its sha (`tombstones`): one the sysadmin purged (member 0: refused from every source, for good), or, in a later phase, one a member opted out of on their phone. Never deleted; an opt-out is taken back with `lifted_at` ([4](04-store-and-ingest.md#append-only-sources-only-add)).
+**Tombstone.** A photo the estate refuses, by its sha (`tombstones`): one the sysadmin purged (member 0: refused from every source, for good), or one a member opted out of (kept back) on their phone, which refuses that member's upload of those bytes and nobody else's (`GET`/`POST /api/tombstones`). Never deleted; an opt-out is taken back with `lifted_at`, by its member ([4](04-store-and-ingest.md#append-only-sources-only-add), [11](11-server.md#private-photos)).
 
 **Trip.** A run of events more than 100 km (configurable) from home, spanning at least two dates.
 
 **Trusted (face).** One whose name came from Google or from you. Only trusted faces build the reference
 faces everything else is compared with.
 
-**Upload policy.** What the iPhone app will ask a member before it shares their photos: `everything`, `review` (each batch) or `review_flagged` (only what may be private). Set on `/members`; nothing reads it yet ([11](11-server.md#members-and-who-may-do-what)).
+**Upload policy.** What the iPhone app asks a member before it shares their photos: `everything` (nothing: as before), `review` (each batch) or `review_flagged` (only what PhotoKit or Vision thinks may be private). Set on `/members`; the app reads it from `GET /api/me` ([24](24-uploading.md#the-phone-gate-looking-before-sharing)).
 
 **uv.** The Python package and script runner used to run each script with its inline dependencies.
 

@@ -39,6 +39,12 @@ the member's inbox (member_inbox.py): what waits for them to decide, each item o
   GET  /inbox, /api/inbox             the page; the member's open items, newest first, and how many
   POST /api/inbox/<id>/dismiss        put one of their own away (404 for anyone else's)
 
+the phone gate's opt-outs (private.py: tombstones), the member's own: an upload of an opted-out photo's bytes from
+them is refused (admin.py)
+
+  GET  /api/tombstones                the hashes they opted out of, not taken back
+  POST /api/tombstones {add?: [sha256], lift?: [sha256]}   opt out, or take an opt-out back
+
 and what each member sees through (lenses.py), outside the gate like a favourite, so a change is in every
 view before the answer:
 
@@ -652,7 +658,8 @@ class PhotoApp:
             # with its own 403, since the handler's streamed uploads never come through route().
             m = self.who(headers, local)
             got, _ = self.admin.upload(method, path, {**headers, "Content-Length": str(len(req.body))},
-                                       io.BytesIO(req.body), m.login if m else "", Auth.MEMBER.allows(m), self.folder_of(m))
+                                       io.BytesIO(req.body), m.login if m else "", Auth.MEMBER.allows(m), self.folder_of(m),
+                                       m.id if m else None)
             return Response.of(got)
         if self.a.demo and method == "GET" and path == "/members" and re.search(r"(?:^|&)be=", u.query):   # (be= alone: no cookie)
             return self.be(qs)
@@ -690,6 +697,8 @@ class PhotoApp:
             return self.private_write(body, m)
         if (ii := re.fullmatch(r"/api/inbox/(\d+)/dismiss", path)) is not None:
             return self.inbox_route(m, int(ii[1]))
+        if path == "/api/tombstones":
+            return self.tombstones_route(m, body, write=True)
         if self.compare and path.startswith("/api/compare"):
             got = self.compare.handle("POST", path, qs, body, who)   # a vote, or a run started or finished
             return Response.of(got) if got else NOT_FOUND
@@ -717,6 +726,8 @@ class PhotoApp:
             return _etagged(pages.page("inbox.html"), "text/html; charset=utf-8")
         if path == "/api/inbox":
             return self.inbox_route(m)
+        if path == "/api/tombstones":
+            return self.tombstones_route(m)
         if re.fullmatch(r"/api/albums/(\d+)/download", path):
             return Response(501, b"the album download is streamed: ask the HTTP server", "text/plain")
         if path.startswith("/video/"):    # so a test, or a caller with no socket, can still ask whether it is there
@@ -939,6 +950,31 @@ class PhotoApp:
                 return json_response(member_inbox.mine(con, m.id if m else None))
             return json_response(member_inbox.dismiss(con, m.id if m else None, dismiss))
         except member_inbox.InboxError as e:
+            return json_response({"error": str(e)}, e.status)
+        finally:
+            con.close()
+
+    # -- tombstones: the phone gate's opt-outs (private.py) ---------------------------------------------
+
+    def tombstones_route(self, m: Member | None, body=None, write: bool = False) -> Response:
+        """GET /api/tombstones: the member's own opt-outs, not lifted, as hashes (a new phone reads them before its
+        first upload); POST /api/tombstones {add?: [sha256], lift?: [sha256]}: opt out of hashes, or take opt-outs
+        back. A member's own only; this computer, with no member to be, has none."""
+        viewer = m.id if m else None
+        if not write:
+            con = connect(self.a.db)
+            try:
+                return json_response({"tombstones": private.tombstones(con, viewer) if viewer else []})
+            finally:
+                con.close()
+        if not isinstance(body, dict):
+            return json_response({"error": "expected a JSON object"}, 400)
+        con = connect(self.a.db)
+        try:
+            return json_response(private.change_tombstones(con, viewer or 0, body.get("add") or [], body.get("lift") or []))
+        except ValueError as e:
+            return json_response({"error": str(e)}, 400)
+        except private.PrivateError as e:
             return json_response({"error": str(e)}, e.status)
         finally:
             con.close()
@@ -1177,7 +1213,7 @@ def make_handler(app: PhotoApp):
             self.close_connection = True            # until admin says the body was read
             m = app.who(self.headers, is_local(self))
             got, unread = app.admin.upload(self.command, urlparse(self.path).path, self.headers, self.rfile,
-                                           m.login if m else "", Auth.MEMBER.allows(m), app.folder_of(m))
+                                           m.login if m else "", Auth.MEMBER.allows(m), app.folder_of(m), m.id if m else None)
             self.close_connection = client_closes or unread
             self.send(Response.of(got))
 

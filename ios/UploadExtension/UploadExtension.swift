@@ -6,6 +6,10 @@ import Photos
 ///
 /// Only photos taken after the first run are queued: the starting point is a PhotoKit change token,
 /// saved in this extension's own defaults. Older photos are sent from the app's "Upload recent" button.
+///
+/// The phone gate (PhoneGate.swift): unless the member's policy is `everything`, a new photo is not queued but
+/// recorded as a candidate for the app's Inbox, and what the member approved there and the app has not sent
+/// yet is queued instead. Before the app has read the policy, nothing new is queued.
 @main
 class UploadExtension: PHBackgroundResourceUploadJobExtension {
     required init() {}
@@ -33,19 +37,32 @@ class UploadExtension: PHBackgroundResourceUploadJobExtension {
             return .completed
         }
         var pending = defaults.stringArray(forKey: pendingKey) ?? []
+        var inserted: [String] = []
         do {
             var last = token
             for change in try library.fetchPersistentChanges(since: token) {
                 last = change.changeToken
                 if let d = try? change.changeDetails(for: .asset) {
-                    pending += d.insertedLocalIdentifiers.filter { !pending.contains($0) }
+                    inserted += d.insertedLocalIdentifiers.filter { !inserted.contains($0) }
                 }
             }
+            // The gate decides what becomes a job: everything new (as before), or only what the member approved.
+            var held = 0
+            let now = GateStore.update { s -> [String] in
+                let before = s.candidates.count
+                let out = Gate.route(inserted, &s)
+                held = s.candidates.count - before
+                return out
+            }
+            pending += now.filter { !pending.contains($0) }
+            if held > 0 { note = "\(held) new photo\(held == 1 ? "" : "s") waiting in the app's Inbox" }
             save(token: last)
         } catch {
             note = "could not read changes: \((error as NSError).code)"
             return .failure
         }
+        let kept = GateStore.read().optedOut
+        pending.removeAll { kept[$0] != nil }            // opted out on this iPhone: never a job
         pending = queue(pending, made: &made, note: &note)
         defaults.set(pending, forKey: pendingKey)
         return pending.isEmpty ? .completed : .processing

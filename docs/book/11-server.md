@@ -71,7 +71,8 @@ The catalog keeps its own table of members, and the logins that are them (`membe
 in core/schema.py's `members` area): the provider proves who someone is, the estate decides what they
 may do. A member has a **role** (`sysadmin` or `member`; more than one member may be a sysadmin), a
 **status** (`pending`, `active` or `revoked`: a member is never deleted), an **upload policy** that the
-iPhone app will read in a later phase (`everything`, `review`, `review_flagged`), and may be linked to a
+iPhone app reads from `GET /api/me` (`everything`, `review`, `review_flagged`: the phone gate,
+[chapter 24](24-uploading.md#the-phone-gate-looking-before-sharing)), and may be linked to a
 person in People. A member is not a `persons` row: those are the people *in* the photos. Triggers refuse
 deleting a member or a login ([chapter 5](05-catalog.md#protected-tables)).
 
@@ -306,7 +307,9 @@ default does (`PhotoApp.relook` says whether `State.people_out` changed).
 **The hold at ingestion.** ingest-iphone.sh runs `private.py check` after the embeddings and before it tells
 the app (`catalog_ready`): each `new` row whose photo has a vector is scored against three prompts ("a
 receipt", "a screenshot of a phone", "a document": `private.PROMPTS`) with its SigLIP 2 vector, plus
-`catalog.is_screenshot`; one at or over `private.HOLD_AT` (0.075) on any prompt, or a screenshot, is **held**
+`catalog.is_screenshot` and the phone's own mark (an upload's `X-Screenshot`, which upload.py writes into its
+sidecar as the keyword `screenshot`, read back from the `xmp` table); one at or over `private.HOLD_AT` (0.075) on
+any prompt, or a screenshot, is **held**
 (one `photo.held` journal entry and one `held` inbox item per member and batch), and the rest are let go (their
 row goes: the photo is shared). The prompts' vectors are a file (`hold-prompts.json`, made once by `embed.py
 hold-prompts`), so the check never loads the model and works whether the app runs or not; without them it
@@ -331,6 +334,18 @@ stays (`released_at`), so the one-off run never holds again what its sharer let 
 /api/photos/<sha>/why` carries `private`: whether the member shared the photo, whether it is private to them
 (why, since, until), and how many other sharers still share it. Search's `is:private`, `is:held` and
 `is:withdrawn` find the member's own; a row of theirs says `private` ([chapter 26](26-albums-and-agents.md#private-photos-on-the-pages)).
+
+**Tombstones: what a member keeps off the estate** (phase 6, the phone gate; [chapter 24](24-uploading.md#the-phone-gate-looking-before-sharing)).
+A photo a member opted out of on their phone is a row of `tombstones` with their member id and the SHA-256 of the
+file (`why` `opted_out`); a purge's is member 0's ([chapter 4](04-store-and-ingest.md)). `GET /api/tombstones`
+gives the member their own, not lifted (hashes only: a new phone reads them before it sends anything); `POST
+/api/tombstones {add?, lift?}` opts out of hashes or takes opt-outs back (`lifted_at`; opting out again clears
+it), the member's own only, one `tombstones.changed {opted_out, lifted}` journal entry a call
+(`private.change_tombstones`). An upload is refused when its bytes are tombstoned for the member sending them, or
+purged (`private.refused_upload`): with `X-Content-SHA256` before the body is read, without it once the bytes are
+in and hashed, from the staging file, so nothing reaches the inbox, the store, the catalog or a backup. The answer
+is a `200` with `X-Upload-Refused` ([chapter 24](24-uploading.md) says why). An opt-out refuses only that
+member's copy, and is no withdraw: a photo already in the estate, or shared by someone else, is untouched.
 
 **The one-off run over the library** (the plan's open question 3: nobody else is let in until it has run, as
 the owner's, and he has looked over what it held): `private.py library --member <id>` scores every image the

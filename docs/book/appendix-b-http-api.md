@@ -22,7 +22,7 @@ each request to the module that answers it ([chapter 11](11-server.md)):
 |---|---|
 | `/`, the app files, `/api/info`, `/api/sync`, `/api/favorite`, `/api/albums/<id>/download`, `/request-access`, `/api/request-access`, `/api/me`, `/members`, `/api/members*` | `PhotoApp` in [photo_app.py](../../photo-estate/photo_app.py), with [members.py](../../photo-estate/members.py) |
 | `/api/lenses*`, `/api/albums/<id>/publish`, `/api/photos/<sha>/show`, `/api/photos/<sha>/why` | `PhotoApp`, with [lenses.py](../../photo-estate/lenses.py) |
-| `/api/private` | `PhotoApp`, with [private.py](../../photo-estate/private.py) |
+| `/api/private`, `/api/tombstones` | `PhotoApp`, with [private.py](../../photo-estate/private.py) |
 | `/inbox`, `/api/inbox`, `/api/inbox/<id>/dismiss` | `PhotoApp`, with [member_inbox.py](../../photo-estate/member_inbox.py) |
 | `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log` | `Browse` in [browse.py](../../photo-estate/browse.py) |
 | `/thumb/`, `/preview/`, `/large/`, `/original/` | `Images` in [images.py](../../photo-estate/images.py) |
@@ -100,7 +100,7 @@ The setup server (`intake/server.py`) and `faces.py serve` read bodies the same 
 
 | Request | Returns |
 |---|---|
-| `PUT /api/upload/<YYYY/MM/DD/name.ext>` | Saves the body to the inbox (`--inbox`, default `<db dir>/iphone`; none with `--demo`), in the folder of the member the request is for: `<inbox>/m<member id>/YYYY/MM/DD/name.ext` (the path the phone sends is unchanged; ingest reads who shared it from the folder). For the first sysadmin, a file already at the inbox's top (sent before member folders) is found there. `Content-Length` is required; an optional `X-Content-SHA256` is checked against the bytes received. `201 {"status":"stored"}`; `200 "exists"` if the same path and size is already there (so retries are safe); `409` if the path exists with a different size; `400` for a bad path, short body or wrong checksum; `403` if the caller is not an active member and the request is not from this computer; `411` without a length |
+| `PUT /api/upload/<YYYY/MM/DD/name.ext>` | Saves the body to the inbox (`--inbox`, default `<db dir>/iphone`; none with `--demo`), in the folder of the member the request is for: `<inbox>/m<member id>/YYYY/MM/DD/name.ext` (the path the phone sends is unchanged; ingest reads who shared it from the folder). For the first sysadmin, a file already at the inbox's top (sent before member folders) is found there. `Content-Length` is required; an optional `X-Content-SHA256` is checked against the bytes received. Optional metadata headers, written into the `.xmp` sidecar: `X-Taken`, `X-Latitude`/`X-Longitude`, `X-Favorite`, and `X-Screenshot: 1` (PhotoKit's screenshot mark: the keyword `screenshot`, which the hold at ingestion reads); `X-Batch: <id>/<count>` for the ingest. `201 {"status":"stored"}`; `200 "exists"` if the same path and size is already there (so retries are safe); `200 {"status":"refused: opted_out" | "refused: purged"}` with `X-Upload-Refused: opted_out | purged` when the bytes are tombstoned for this member or purged: answered **before the body is read** (the connection then closes) when `X-Content-SHA256` names them, else after they are hashed, the staging file removed; nothing reaches the inbox (a 200, not a 4xx, because the system uploader and an old app retry or report anything else: [chapter 24](24-uploading.md)); `500` if the catalog cannot be read to check; `409` if the path exists with a different size; `400` for a bad path, short body or wrong checksum; `403` if the caller is not an active member and the request is not from this computer; `411` without a length |
 
 The extension must be a photo or video type, or `X.<media ext>.xmp` for a sidecar. The server never
 writes the catalog: `ingest-iphone.sh` ingests the inbox ([upload.py](../../photo-estate/upload.py)).
@@ -259,6 +259,20 @@ feeds and People follow.
 (as for an unknown sha); `403` for a photo they did not share, or a request for no member. A timer in the app
 releases photos whose day has come (`photo.released {auto: true}`, by no actor, acting for their sharer).
 
+### Tombstones (the phone gate)
+
+The member's own opt-outs: photos they kept back on their phone, by the SHA-256 of each file
+([chapter 11](11-server.md#private-photos), [chapter 24](24-uploading.md#the-phone-gate-looking-before-sharing)).
+The `MEMBER` rule. An opt-out refuses that member's upload of those bytes (above) and nobody else's.
+
+| Request | Does |
+|---|---|
+| `GET /api/tombstones` | `{tombstones: [sha256]}`: the member's opt-outs, not lifted (a purge, member 0's, is no member's and is not listed). Empty for a request with no member |
+| `POST /api/tombstones {add?: [sha256], lift?: [sha256]}` | Opt out of `add` (a new row, or a lifted one standing again) and take back `lift` (`lifted_at`; a purge is never lifted, and never the member's to lift). `{opted_out, lifted, changed}`: how many changed. One `tombstones.changed {opted_out, lifted}` journal entry a call, by the member, when anything changed |
+
+`400` when `add` or `lift` is not a list of lower-case hex SHA-256s (at most 20,000 each), or names a hash in
+both; `403` for a request with no member.
+
 ### The inbox
 
 Answered by `PhotoApp` with [member_inbox.py](../../photo-estate/member_inbox.py) ([chapter 11](11-server.md#the-inbox)).
@@ -403,7 +417,7 @@ Returns `{"ok": true, "pending": N}`.
 | 206 | `/video/<sha>` with a `Range` it can answer |
 | 204 | `/api/log` |
 | 304 | A conditional request matched the `ETag` |
-| 201 | `PUT /api/upload/...` stored a new file |
+| 201 | `PUT /api/upload/...` stored a new file (a `200` with `X-Upload-Refused` is a refused one: above) |
 | 400 | A malformed request (a number parameter, a body that isn't JSON, a bad `Content-Length`: above), a malformed review decision, or a refused upload |
 | 403 | A write from a caller who may not write (above) |
 | 404 | Unknown sha, unknown path, `/api/similar` with an unknown photo, or `/api/people/{review,person,odd}` with an unknown person (one just merged away included) and `/api/people/photo` with an unknown face |
