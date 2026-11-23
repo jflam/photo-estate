@@ -189,7 +189,10 @@ def tailscale_whois(addr: str) -> tuple[str, str] | None:
     # script with no usable first line, which a shell runs and exec does not).
     for exe in dict.fromkeys(x for x in (shutil.which("tailscale"), *TAILSCALE) if x and os.path.exists(x)):
         try:
-            got = subprocess.run([exe, "whois", "--json", addr], capture_output=True, text=True, timeout=4)
+            # SHLVL: the macOS app's binary is the CLI only when it looks started from a shell; under launchd,
+            # with no SHLVL, it tries to be the GUI and prints an error instead (found on the mini, 2026-11-23).
+            got = subprocess.run([exe, "whois", "--json", addr], capture_output=True, text=True, timeout=4,
+                                 env={**os.environ, "SHLVL": os.environ.get("SHLVL") or "1"})
             node = (json.loads(got.stdout) if got.returncode == 0 else {}).get("Node") or {}
         except (OSError, subprocess.SubprocessError, ValueError):
             continue
