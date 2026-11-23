@@ -353,8 +353,9 @@ told about is a lost photo.
    tailnet and signed in on a second, userspace `tailscaled` on the laptop (the test member's node,
    `estate-tester`; its proxy is `localhost:1055`). Through it the mini answers on 8766 and on no other
    port, so the `group:family` grant holds, and `tailscale whois` on the mini names the node's user by
-   its login. `tailscale serve` takes its header from the same lookup, but the header itself has not
-   been read yet: phase 1's request-access page will show it. Still to check: a node *shared* from
+   its login. `tailscale serve` takes its header from the same lookup. *Confirmed 2026-11-23 with phase 1
+   on the mini:* the request-access page shown to that account reads "You are signed in to the tailnet as"
+   its login, so serve does pass an invited user's `Tailscale-User-Login`. Still to check: a node *shared* from
    another tailnet, only if family will not be invited; and the plan's user limit.
 2. **Where personal agents can run.** A personal agent reaches `/mcp` only from a device on the tailnet
    (Claude Code; a desktop app with a local MCP configuration). Connectors added in claude.ai or the
@@ -953,3 +954,50 @@ answered three the same day:
      address families) on `tcp:8766`, with a test that the group reaches nothing else. The policy is
      already default-deny and grants by device (hardened 2026-10-25), so a new user reaches nothing
      until that grant names the group; each later member is one more address in the group.
+
+## Where it stands (2026-11-23)
+
+All eight phases are built, on the branch `multiplayer` (pull request 113), one or two commits a phase,
+and the mini's app runs that branch. Each phase's "Built" note above says what was built and what was
+left out. What is still to do is the owner's, or waits on him:
+
+1. **The hold over the existing library has not been run** (open question 3 decided it must be, before
+   anyone else is let in). The dry run on the real library (`private.py library --member 1 --dry-run`)
+   holds about a tenth of it at the built-in threshold, and the scores have no gap to put a threshold in:
+
+   | `HOLD_AT` | photos held | of them with a named face | already hidden by the owner |
+   |---|---|---|---|
+   | 0.075 (as built) | 12,005 | 262 | 371 |
+   | 0.085 | 9,737 | 190 | 332 |
+   | 0.095 | 7,999 | 129 | 322 |
+   | 0.105 | 6,449 | 74 | 319 |
+   | 0.12 | 4,648 | 59 | 313 |
+
+   Above the threshold the share of photos with a face falls from 42% to about 12% and a third are PNGs,
+   so it is mostly finding screenshots and documents; but a held photo leaves People for its sharer too
+   until released, and 12,000 is a lot to look over. The owner picks the threshold; the run takes seconds
+   (MAC-MINI.md has the steps). New phone uploads are already scored at 0.075 as they arrive.
+2. **Nobody but the owner is a member.** The test member's account is on the tailnet and is refused
+   everything but the request-access page; it has not asked to be let in. It asks, and the owner approves
+   it on `/members`, after item 1. Its red-team pass on the real library (open question 6) has therefore
+   not been run; the same attacks were run on the demo library after phases 5 and 8, as each demo member.
+3. **The iPhone app has not been installed** (`ios/deploy.sh`: the phone must be unlocked). After
+   installing, open the app once: until it has read its upload policy the extension sends nothing. The
+   phone's recorder, the upload extension's new routing and PhotoKit's screenshot mark have never run on
+   a device or the simulator; only their rules are unit-tested.
+4. **The owner's laptop agent is waiting to be allowed**: "An agent connected as you from drbeast" is in
+   his inbox, and must be allowed from another device (his phone). Until then Claude Code on the laptop
+   can read the estate and not write, and it no longer has the task tools (ask the estate's agent from
+   the Changes page).
+5. **The immutable flag is not set on the store** (`chflags uchg`, MAC-MINI.md "Append-only"). It should
+   wait for the backup plan: a backup that copies the flag cannot be pruned.
+6. **Known gaps**, none fixed here:
+   - a shared photo can carry a place or an event title that `places.py` worked out from a private photo
+     of the same event;
+   - a process on the mini itself can call the app on 127.0.0.1 with a forged `Tailscale-User-Login` and
+     be taken for any member; that includes the cloud preview's user, which runs pushed branches there.
+     Before multiplayer the same process could already read everything; now it is the one way around
+     membership, and worth closing (a secret header from `tailscale serve`, or a socket only the owner's
+     user can reach);
+   - `tests/test_connections.py` failed once in three of some thirty full runs and passed every time on
+     its own: a timing flake under load, not found.

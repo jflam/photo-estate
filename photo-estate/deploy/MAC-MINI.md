@@ -508,7 +508,8 @@ sqlite3 $DB "select id, status from agent_tasks where status in ('queued','runni
 # after the deploy and restart
 sqlite3 $DB "select id, name, kind from members where kind='agent'"       # the estate's agent, made at start
 uv run transcribe.py fetch                                                 # once: ~2.3 GB into ~/.cache/huggingface
-say -o /tmp/story.m4a --data-format=aac "This is Grandma at Thanksgiving in 1998."
+# make the recording on another Mac and copy it over: `say` over ssh writes an empty file
+# (laptop) say -o story.m4a --data-format=aac "This is Grandma at Thanksgiving in 1998." && scp story.m4a mini:/tmp/
 HF_HUB_OFFLINE=1 uv run transcribe.py file /tmp/story.m4a                  # prints the sentence back
 ```
 
