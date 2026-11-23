@@ -7,6 +7,10 @@ struct WebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
+        // A page shown inside the app (an Inbox item's) has the app's own tab bar under it: the web page's is hidden.
+        config.userContentController.addUserScript(WKUserScript(
+            source: "var s = document.createElement('style'); s.textContent = '.tabbar { display: none !important; }'; document.documentElement.appendChild(s);",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let view = WKWebView(frame: .zero, configuration: config)
         view.allowsBackForwardNavigationGestures = true
         view.scrollView.contentInsetAdjustmentBehavior = .never

@@ -9,6 +9,7 @@
 //   fromParams(p)        <- URLSearchParams (what toParams wrote, or an address typed by hand)
 //   filtered(s)          whether it is narrowed by anything but its words
 //   isEmpty(s)           whether it asks nothing at all
+//   growsFrom(s)         the question as a series grows from it (search_photos' arguments), or null if it can't
 //   FIELD_STEPS          the field the words are typed in: resting or typing
 
 /** @typedef {"country" | "region" | "city" | "person" | "album" | "camera" | "lens" | "trip"} Facet */
@@ -105,6 +106,35 @@ export const filtered = s => KEYS.some(k => s.f[k].length > 0) || !!(s.event || 
  * @returns {boolean}
  */
 export const isEmpty = s => !s.q && !s.sha && !filtered(s);
+
+/**
+ * The question as a series (an album that grows from a search: POST /api/albums {grows_from}) is given it: the
+ * arguments search_photos takes (browse.find). null for a question a series cannot grow from: nothing asked, a
+ * photo to be like, a stack, what the member's filters hide, a lens, an order, or more than one value where
+ * search_photos takes one (two places, two albums...). The words are taken as words (names in them are not read
+ * as people, as the search box does).
+ * @param {Query} s
+ * @returns {Record<string, any> | null}
+ */
+export function growsFrom(s) {
+  if (isEmpty(s) || s.sha || s.stack || s.hidden || s.sort || s.f.lens.length) return null;
+  const places = [...s.f.city, ...s.f.region, ...s.f.country];
+  if (places.length > 1 || s.f.album.length > 1 || s.f.camera.length > 1 || s.f.trip.length > 1) return null;
+  /** @type {Record<string, any>} */ const g = {};
+  if (s.q) g.query = s.q;
+  if (s.f.person.length) g.people = [...s.f.person];
+  if (places.length) g.place = places[0];
+  if (s.f.album.length) g.album = s.f.album[0];
+  if (s.f.camera.length) g.camera = s.f.camera[0];
+  if (s.f.trip.length) g.trip = +s.f.trip[0];
+  if (s.event) g.event = +s.event;
+  if (s.from) g.date_from = s.from;
+  if (s.to) g.date_to = s.to;
+  if (s.fav) g.favorite = true;
+  if (s.video) g.kind = "video";
+  else if (s.photo) g.kind = "photo";
+  return g;
+}
 
 /** @typedef {"resting" | "typing"} FieldState */
 

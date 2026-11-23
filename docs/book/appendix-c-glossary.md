@@ -200,6 +200,8 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Teacher (scorer).** Aesthetic Predictor V2.5, used only as a local tool to label photos for the quality scorer; never shipped ([25](25-best-photos.md)).
 
+**Teller.** The component that tells a story, typed or spoken, on the pages (`app/story-flow.js`) and the phone (`Teller.swift`): a field, Record (the microphone asked for only then), the clip listened to and redone before it is sent, and what failed sent again. The inbox answers a question with it; the viewer tells a story about a photo with it ([26](26-albums-and-agents.md#questions-and-stories)).
+
 **Thumbnail.** The 360 px image of a photo in a grid (`/thumb/<sha>`), a WebP at quality 78 since
 2026-11-20 (a JPEG before). Chapter 11.
 

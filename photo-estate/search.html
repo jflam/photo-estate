@@ -113,6 +113,27 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
   background: rgba(0,0,0,.55); font-size: 12.5px; font-weight: 600; }
 .head .why { margin-top: 8px; max-width: 70ch; font-style: italic; color: var(--ink-2); font-size: 15px; }
 .head .why:empty { display: none; }
+/* a series (an album that grows from a search): the new photos waiting for its owner, and the stories told about it */
+.cands { margin: 12px var(--pad) 8px; padding: 18px; border-radius: var(--r); background: var(--sun-wash); }
+.cands h2 { font-size: 19px; font-weight: 700; letter-spacing: -.015em; }
+.cands p { margin-top: 3px; color: var(--ink-2); font-size: 14px; }
+.cands .ctiles { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.cands .ct { position: relative; width: 96px; height: 96px; border-radius: 10px; overflow: hidden; background: var(--tile); transition: opacity .15s, transform .2s var(--ease); }
+.cands .ct img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cands .ct:not(.on) { opacity: .4; }
+.cands .ct .ck { position: absolute; right: 5px; bottom: 5px; width: 22px; height: 22px; padding: 3px; border-radius: 50%; background: var(--sun-lit); color: var(--on-sun); }
+.cands .ct:not(.on) .ck { display: none; }
+.cands .acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 14px; }
+.cands.busy { opacity: .6; pointer-events: none; }
+.sstories { margin: 12px var(--pad) 10px; }
+.sstories h2 { font-size: 19px; font-weight: 700; letter-spacing: -.015em; margin-bottom: 10px; }
+.sstories .list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
+.sstories .one { display: flex; gap: 12px; padding: 12px; border-radius: 18px; background: var(--well); }
+.sstories .one .story { flex: 1; min-width: 0; padding: 0; background: none; }
+.sstories .one img { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; flex: none; background: var(--tile); }
+.menu .mk label.grow { display: flex; gap: 10px; align-items: flex-start; padding: 4px 6px; font-size: 14px; cursor: pointer; }
+.menu .mk label.grow input { width: auto; flex: none; margin-top: 3px; accent-color: var(--sun); }
+.menu .mk label.grow small { display: block; color: var(--muted); font-size: 12.5px; }
 .srcs { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 var(--cpad); }
 .periods .bt { margin-top: 34px; }
 .t .hid { position: absolute; left: 6px; bottom: 6px; padding: 1px 8px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; font-weight: 600; }
@@ -440,6 +461,18 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
 .exp b { display: block; font: 500 15px var(--mono); color: #fff; }
 .exp small { display: block; margin-top: 3px; font-size: 9px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--vmuted); }
 .v-info .file { margin: 22px 2px 0; font-size: 12px; line-height: 1.5; color: #6f6c66; overflow-wrap: anywhere; }
+/* the photo's stories, and telling one (app/story-flow.js; estate.css has their look, here in the dark room) */
+.v-info .story { background: var(--vwell); color: #f4f2ee; }
+.v-info .story .told, .v-info .story .asked, .v-info .story .said.pending, .v-info .tell .clock { color: var(--vmuted); }
+.v-info audio { color-scheme: dark; }
+.v-info .tell { margin-top: 22px; padding: 14px; border-radius: 18px; background: var(--vwell); }
+.v-info .tell textarea { background: rgba(255,255,255,.08); color: #f4f2ee; }
+.v-info .tell textarea:focus { background: rgba(255,255,255,.12); box-shadow: 0 0 0 3px rgba(255,176,97,.22); }
+.v-info .tell textarea::placeholder { color: var(--vmuted); }
+.v-info .tell .btn { background: rgba(255,255,255,.1); color: #f4f2ee; }
+.v-info .tell .btn:hover { background: rgba(255,255,255,.16); }
+.v-info .tell .btn.pri { background: #ffb061; color: #2b1904; }
+.v-info .tell .err { color: #ff7a63; }
 
 @media (pointer: coarse) {
   #vPrev, #vNext { display: none; }                 /* swipe instead */
@@ -502,6 +535,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
   <div class="periods" id="albList"></div>
   <main id="albOne" hidden>
     <div class="head" id="albHead"><h1>&nbsp;</h1><p class="num">&nbsp;</p><p class="why"></p></div>
+    <div id="albCands"></div><div id="albStories"></div>
     <div class="grid" id="albGrid"></div>
     <div class="sentinel" id="albDown"></div>
   </main>
@@ -576,13 +610,15 @@ import { KEYS, FIELD_STEPS, blank, copy, toParams, fromParams, filtered as filte
 import { clampShape, shapeFromByte, packRows } from "/app/layout.js";
 import { gridFlow } from "/app/grid-flow.js";
 import { libraryFlow, SCALES } from "/app/library-flow.js";
-import { albumsFlow, albumMaker } from "/app/albums-flow.js";
+import { albumsFlow, albumMaker, candidatesFlow } from "/app/albums-flow.js";
 import { viewerFlow, GESTURE_STEPS } from "/app/viewer-flow.js";
 import { favourites } from "/app/favourite.js";
 import { videoFlow } from "/app/video-flow.js";
 import { lensesFlow, whyFlow, offers, says, said } from "/app/lens-flow.js";
 import { badge as inboxBadge } from "/app/inbox-flow.js";
 import { privateLine, heldView, barSays } from "/app/private-flow.js";
+import { photoStories, mountTeller, storyHtml, follow } from "/app/story-flow.js";
+import { growsFrom } from "/app/query.js";
 
 const EASE = "cubic-bezier(.2,.7,.2,1)";
 const svg = (d, w = 16, extra = "") => `<svg width="${w}" height="${w}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
@@ -615,6 +651,7 @@ const I = {
   filter: svg('<path d="M2.500 3.500h11l-4.200 5v4l-2.600 1.300V8.500Z"/>', 22),
   lock: svg('<rect x="3.500" y="7" width="9" height="6.500" rx="1.600"/><path d="M5.500 7V5.200a2.500 2.500 0 0 1 5 0V7"/>', 13, 'stroke-width="1.8"'),
   lockBig: svg('<rect x="3.500" y="7" width="9" height="6.500" rx="1.600"/><path d="M5.500 7V5.200a2.500 2.500 0 0 1 5 0V7"/>', 20),
+  story: svg('<path d="M3 3.500h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.200L5 14v-2.500H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z"/><path d="M5 6.500h6M5 8.800h4"/>', 20),
   inbox: svg('<path d="M2.500 9.500 4.300 3.800a1 1 0 0 1 1-.7h5.400a1 1 0 0 1 1 .7l1.800 5.700v3a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z"/><path d="M2.500 9.500h3.200l.8 1.600h3l.8-1.600h3.200"/>', 18),
 };
 // Photos private to this member (app/private-flow.js; private.py): the viewer's private line, beside the why line,
@@ -1229,10 +1266,11 @@ function albShow() {
   const id = ALB.id, one = id != null;
   $("#albList").hidden = one; $("#albOne").hidden = !one;
   $("#albBack").hidden = !one || coarse.matches; $("#albCaps").hidden = !one;
-  if (!one) return albList();
+  if (!one) { seriesOff(); return albList(); }
   if (LENS.page.is("idle", "failed")) LENS.load();     // whose a series is, and subscribing to it
   if (agrid.of === id && agrid.phase.is("loading", "ready")) return scrollTo(0, L.y[yKey()] || 0);   // still showing, or on its way: where it was left
   $("#albHead h1").innerHTML = "&nbsp;"; $("#albHead p").innerHTML = "&nbsp;"; $(".why", $("#albHead")).textContent = "";
+  seriesOff();
   agrid.clear(); scrollTo(0, 0);
   agrid.load(0, null, id).then(d => { if (d && !d.results.length) agrid.el.innerHTML = `<div class="blank">${MARK}<h3>Nothing in it yet</h3><p>${
     d.album.kind === "live" ? "Its search finds no photos now." : "Photos are added to an album by asking for them in a chat connected to this library, or from a search."}</p></div>`; });
@@ -1243,10 +1281,58 @@ function albHead(n) {
   const owner = !a.mine ? lensOf(a.series)?.owner.name : null;
   $("#albHead h1").textContent = a.title;
   $("#albHead p").textContent = [photos(n), a.kind === "live" ? "Live: whatever its search finds" : "",
-    !a.mine ? `${owner || "Someone else"}’s series` : a.published ? "Published: the family can subscribe to it" : "",
+    a.maintained_by != null ? "A family series: the estate’s agent adds new photos that belong"
+      : a.grows_from && a.mine ? "A series: new photos its search finds are offered to you" : "",
+    !a.mine ? a.maintained_by != null ? "" : `${owner || "Someone else"}’s series` : a.published ? "Published: the family can subscribe to it" : "",
     a.op === "hide" ? (a.applied ? `Hiding ${photos(a.applied)} from ${a.lens != null && lensOf(a.lens)?.estate_default ? "everyone" : "you"}` : a.state === "done" ? "Hidden" : "Up for hiding") : ""].filter(Boolean).join("  ·  ");
   $(".why", $("#albHead")).textContent = a.prompt || "";
   titleDoc();
+  seriesOn(a);
+}
+// A series (app/albums-flow.js, listeners.py): for its owner, the new photos its search found that wait to be added
+// (all chosen at first: a tap leaves one out), added or none, which closes the series_update inbox item; and for
+// anyone who sees it, the stories told about its photos (app/story-flow.js), newest first.
+const CANDS = candidatesFlow({
+  list: (id, signal) => api(`/api/albums/${id}/candidates`, undefined, { signal }),
+  add: (id, shas) => api(`/api/albums/${id}/candidates`, { add: shas }),
+  onChange: () => candsDraw(),
+});
+const SSTORIES = photoStories({ read: (key, signal) => api(`/api/albums/${key.slice(6)}/stories`, undefined, { signal }), onChange: () => sstoriesDraw() });
+let candsOf = null;                                  // the album whose candidates were asked for
+const isSeries = a => a.grows_from != null || a.series != null || a.maintained_by != null;
+function seriesOn(a) {
+  if (a.op === "hide" || !isSeries(a)) return seriesOff();
+  if (a.mine && a.grows_from && candsOf !== a.id) { candsOf = a.id; CANDS.load(a.id); }
+  SSTORIES.look(`album:${a.id}`);
+}
+function seriesOff() {
+  candsOf = null; CANDS.clear(); SSTORIES.clear();
+  $("#albCands").innerHTML = ""; $("#albStories").innerHTML = "";
+}
+function candsDraw() {
+  const p = CANDS.page, el = $("#albCands");
+  if (!p.is("ready", "saving") || p.data.album !== ALB.id) { el.innerHTML = ""; return; }
+  const d = p.data, n = d.chosen.size;
+  el.innerHTML = `<div class="cands${p.is("saving") ? " busy" : ""}"><h2>${plural(d.results.length, "new photo")} for this series</h2>
+    <p>${d.results.length === 1 ? "It was found" : "They were found"} by the series’ search as ${d.results.length === 1 ? "it" : "they"} came in. Those chosen are added; tap one to leave it out.</p>
+    <div class="ctiles">${d.results.map(r => `<button class="ct${d.chosen.has(r.sha) ? " on" : ""}" data-cand="${esc(r.sha)}" aria-pressed="${d.chosen.has(r.sha)}" aria-label="Add this photo"><img alt="" src="/thumb/${esc(r.sha)}">${I.check}</button>`).join("")}</div>
+    <div class="acts"><button class="btn" data-cands="none">None of these</button><button class="btn pri" data-cands="add"${n ? "" : " disabled"}>Add ${n === d.results.length && n > 1 ? `all ${fmt(n)}` : plural(n, "photo")}</button></div></div>`;
+}
+$("#albCands").addEventListener("click", async e => {
+  const t = e.target.closest("[data-cand]");
+  if (t) return CANDS.toggle(t.dataset.cand);
+  const b = e.target.closest("[data-cands]"); if (!b) return;
+  const id = ALB.id, got = await (b.dataset.cands === "add" ? CANDS.add() : CANDS.none());
+  if (!got.ok) return toast(`Couldn’t do that: ${got.error.message}`);
+  toast(got.added ? `Added ${plural(got.added, "photo")} to the series` : "None added: they stay out of the series");
+  inboxCount();                                      // (its series_update item is done)
+  if (got.added && ALB.id === id) { agrid.clear(); agrid.load(0, null, id); }
+});
+function sstoriesDraw() {
+  const p = SSTORIES.page, el = $("#albStories");
+  if (!p.is("known") || p.data.sha !== `album:${ALB.id}` || !p.data.stories.length) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="sstories"><h2>Stories</h2><div class="list">${p.data.stories.map(x =>
+    `<div class="one">${x.photos[0] ? `<img alt="" loading="lazy" src="/thumb/${esc(x.photos[0])}">` : ""}${storyHtml(x)}</div>`).join("")}</div></div>`;
 }
 async function albList() {
   const el = $("#albList");
@@ -1627,10 +1713,14 @@ function albumOpen(id) { ALB.go(id); if (TAB === "albums") { nav(); albShow(); }
 $("#sAlbum").onclick = e => openMenu(e.currentTarget, el => {
   if (!albumable()) return closeMenus();
   const mine = menu, key = Q.key, heading = $("#sHead h1").textContent;   // the answer showing now: what the album is made from
+  const grows = growsFrom(Q.s);                      // a series grows from it: new photos it finds later are offered (listeners.py)
   mine.onClose = () => MAKER.cancel();
-  menuForm(el, `<h5>New album from ${photos(D.matching)}</h5><input type="text" aria-label="Album title" maxlength="200" autocomplete="off" value="${esc(albumTitle())}">`,
+  menuForm(el, `<h5>New album from ${photos(D.matching)}</h5><input type="text" aria-label="Album title" maxlength="200" autocomplete="off" value="${esc(albumTitle())}">`
+    + (grows ? `<label class="grow"><input type="checkbox" data-series><span>Keep it growing<small>A series: new photos this search finds are offered to you as they come in</small></span></label>` : ""),
     "Create album", "Creating…", "Couldn’t make the album", async title => {   // if it fails the search stays as it was; the menu says why, and can be tried again
-      const a = await MAKER.make({ key, title, prompt: `From the search ${heading}` });
+      const a = grows && $("[data-series]", el)?.checked
+        ? await api("/api/albums", { title, prompt: `Grows from the search ${heading}`, grows_from: grows })   // the server finds its photos now
+        : await MAKER.make({ key, title, prompt: `From the search ${heading}` });
       if (a === STALE) { if (menu === mine) closeMenus(); return; }   // stopped before it was made: nothing is left saying "Creating…"
       if (menu === mine) { closeMenus(); albumOpen(a.id); }
       else toast(`Made the album “${title}”`, { action: { label: "Open", fn: () => albumOpen(a.id) } });   // made after the person had moved on: said, not gone to
@@ -2023,6 +2113,7 @@ function vChrome() {                                 // what and when, as a capt
   $("#vNote").textContent = note;
   WHY.look(r.sha);                                   // (the same photo again asks nothing)
   whyDraw(); privDraw();
+  if (infoOn()) STORIES.look(r.sha);                 // its stories, once its details show (the same photo again asks nothing)
 }
 // Why the photo showing is left out of what this member sees, when it is (app/lens-flow.js): a photo their filters
 // hide shows in a hiding set's review, in "show hidden" (hidden=1), and wherever else it is opened. Each photo that
@@ -2135,6 +2226,7 @@ function closeViewer(entry = "back", instant = false) {
   // either way what the viewer knew of the photo goes with the step, and `o` is the last of it.
   VW.close(entry);
   WHY.clear(); whyDraw(); PRIV.clear(); privDraw(); whyFed = null;
+  STORIES.clear(); untell(); for (const [, c] of following) c.abort(); following.clear();
   if (whyChanged || privChanged) { whyChanged = privChanged = false; seenChanged(); }   // a photo shown anyway, hidden again, withdrawn or released: the lists behind the viewer are asked for again
   const done = () => { if (!viewing()) { v.classList.remove("on"); document.documentElement.style.overflow = ""; } };
   if (instant) return done();
@@ -2304,6 +2396,7 @@ function drawInfo(r) {                               // what is known about it, 
   if (r.stack) h += `<div class="vcard">${row(`data-k="stack" data-v="${r.sha}"`, I.stack.replace(/1[3]"/g, '20"'), `Stack of ${r.stack}`, "Near-identical shots taken together")}</div>`;
   if (r.people?.length) h += `<h4>With</h4><div class="tags">${r.people.map(p => `<button class="tag" data-k="person" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
   if (r.albums?.length) h += `<h4>In</h4><div class="tags">${r.albums.map(p => `<button class="tag" data-k="album" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
+  h += `<div id="vStories"></div>`;                  // its stories, and telling one (storiesDraw)
   const n = x => +(+x).toFixed(1);
   const cells = [
     (r.focal35 || r.focal) && [`${n(r.focal35 || r.focal)} mm`, "Focal"],
@@ -2320,9 +2413,51 @@ function drawInfo(r) {                               // what is known about it, 
   h += `<div class="vcard" id="vPrivRow" hidden></div>`;   // a photo this member shared: withdraw it (privDraw)
   const name = (r.path || "").split("/").pop();
   h += `<div class="file num">${esc([name, r.w && r.h ? `${r.w} × ${r.h}` : ""].filter(Boolean).join("  ·  "))}</div>`;
+  untell();                                          // a teller open on the photo before goes with it
   const el = $("#vInfo"); el.innerHTML = h; el.scrollTop = 0;
-  privDraw();
+  privDraw(); storiesDraw();
 }
+// The stories told about the photo showing (app/story-flow.js; stories.py), in its details: who told each and when,
+// the words or the transcript, the recording to play; and one quiet row to tell a story, typed or spoken, which opens
+// the teller. A photo with no story shows only that row. A spoken story says it is being written down until the mini
+// has, asked again now and then while the viewer is open.
+const STORIES = photoStories({ read: (sha, signal) => api(`/api/photos/${sha}/stories`, undefined, { signal }), onChange: () => storiesDraw() });
+let telling = null;                                  // { el, mount }: the teller open in the details
+const following = new Map();                         // story id -> AbortController
+function untell() { if (telling) { telling.mount.unmount(); telling = null; } }
+function storiesDraw() {
+  const slot = $("#vStories"), p = STORIES.page, r = shown();
+  if (!slot) return;
+  if (!viewing() || !p.is("known") || p.data.sha !== r?.sha) { untell(); slot.innerHTML = ""; return; }
+  const d = p.data;
+  if (!$(".vstories", slot)) slot.innerHTML = `<div class="vstories"></div><div class="vtell"></div>`;
+  $(".vstories", slot).innerHTML = d.stories.length ? `<h4>Stories</h4>${d.stories.map(x => storyHtml(x)).join("")}` : "";
+  const el = $(".vtell", slot);
+  if (!d.telling) {
+    untell();
+    el.innerHTML = `<div class="vcard"><button class="vrow" data-tell-open>${I.story}<span><b>${d.stories.length ? "Tell another story" : "Tell a story about this photo"}</b><small>Typed or spoken: kept with your name and the day</small></span></button></div>`;
+    return;
+  }
+  if (telling?.el === el) return;
+  untell();
+  const sha = d.sha;
+  telling = { el, mount: mountTeller(el, {
+    dismiss: "Cancel", placeholder: "What do you remember about it? Type it, or record it", sendLabel: "Tell it",
+    send: what => "text" in what ? api("/api/stories", { photos: [sha], text: what.text }) : api(`/api/stories?photos=${sha}`, what.blob),
+    onSent: story => { STORIES.told(story); storyFollow(story); toast("Told: it is kept with this photo"); },
+    onDismiss: () => STORIES.tell(false),
+  }) };
+  setTimeout(() => $("textarea", el)?.focus());
+}
+function storyFollow(story) {                        // a spoken story: ask again, gently, until it is written down
+  if (!story.recording || story.transcript_state !== "waiting" || following.has(story.id)) return;
+  const ctl = new AbortController(), sha = story.photos[0];
+  following.set(story.id, ctl);
+  follow(async signal => (await api(`/api/photos/${sha}/stories`, undefined, { signal })).stories.find(x => x.id === story.id) || null, { signal: ctl.signal })
+    .then(x => { if (x) STORIES.told(x); }, () => {})
+    .finally(() => { if (following.get(story.id) === ctl) following.delete(story.id); });
+}
+$("#vInfo").addEventListener("click", e => { if (e.target.closest("[data-tell-open]")) STORIES.tell(true); });
 $("#vInfo").addEventListener("click", e => {
   const t = e.target.closest("[data-k]"); if (!t) return;
   const k = t.dataset.k, val = t.dataset.v, s = blank();
@@ -2567,6 +2702,7 @@ $("#sGrid").addEventListener("click", e => {
 document.addEventListener("keydown", e => {
   const inField = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
   if (viewing()) {
+    if (inField) { if (e.key === "Escape") document.activeElement.blur(); return; }   // typing a story: the keys are the field's
     if (e.key === "Escape") closeViewer();
     else if (e.key === " " && VIDEO.is("video", "failed")) { if (e.target !== vid) { e.preventDefault(); VIDEO.toggle(); } }   // a video showing: Space plays and pauses it (the video's own controls do, when it has the focus)
     else if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }

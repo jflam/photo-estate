@@ -33,6 +33,8 @@ main { padding: 12px calc(var(--pad) + env(safe-area-inset-right)) 120px calc(va
   font: 14px var(--sans); color: var(--ink); letter-spacing: 0; text-transform: none; min-width: 150px; }
 .ctl select:focus, .ctl input:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 4px var(--sun-wash); }
 .ctl select:disabled { opacity: .55; }
+.who.agent .what { margin-top: 6px; color: var(--muted); font-size: 14px; max-width: 72ch; }
+.pill.agent { background: var(--well-2); color: var(--ink-2); }
 .note { margin-top: 30px; font-size: 13.5px; max-width: 72ch; }
 @media (max-width: 760px) { .who .acts { margin-left: 0; width: 100%; } .ctl label, .ctl select, .ctl input { width: 100%; } }
 </style>
@@ -64,7 +66,13 @@ const members = membersFlow({
   onChange: () => draw(),
 });
 
+// The estate's agent is a member (members.py), but no person: it has no login, no role to give and nothing to change
+// here, so it is shown as what it is.
+const agentRow = m => `<div class="who agent" data-agent="${m.id}"><div class="head"><h3>${esc(m.name)}</h3><span class="pill agent">Agent</span></div>
+  <p class="what">It runs on this computer when a member asks it something, or when new photos may belong in a family series. Working for a member, it sees what they see and what it makes is theirs; for the family, it sees only what everyone can see and publishes family series. It is not changed here.</p></div>`;
+
 function row(m, d) {
+  if (m.kind === "agent") return agentRow(m);
   const busy = members.page.is("saving") && members.page.data.id === m.id;
   const persons = d.persons.length
     ? `<option value="">Nobody linked</option>${d.persons.map(p => `<option value="${p.id}"${p.id === m.person_id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}`
@@ -98,7 +106,7 @@ function draw() {
   }
   if (!p.is("ready", "saving")) return;
   const d = p.data, waiting = d.members.filter(m => m.status === "pending").length;
-  $("#sum").innerHTML = waiting ? `<b>${plural(waiting, "person", "people")} asking</b>` : plural(d.members.filter(m => m.status === "active").length, "member");
+  $("#sum").innerHTML = waiting ? `<b>${plural(waiting, "person", "people")} asking</b>` : plural(d.members.filter(m => m.status === "active" && m.kind !== "agent").length, "member");
   $("#main").innerHTML = `<h1 class="display">Members</h1>
     <p class="sub">Who may use this library. Someone new asks from the page they see when they first open it, and waits here until you let them in. A member is never removed: turning one off keeps who they were.</p>
     <div class="list" id="list">${d.members.map(m => row(m, d)).join("")}</div>

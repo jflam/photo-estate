@@ -31,6 +31,15 @@ h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032
 .ask { display: flex; gap: 10px; align-items: flex-end; margin-top: 22px; max-width: 900px; }
 .ask textarea { flex: 1; min-height: 60px; padding: 12px 16px; border-radius: 18px; border: 0; outline: 0; background: var(--well); font: inherit; color: inherit; resize: vertical; }
 .ask textarea:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 4px var(--sun-wash); }
+/* whom the agent works for: the member asking, or the family (the archivist: tasks.py) */
+.ask { flex-wrap: wrap; }
+.for { display: flex; gap: 8px; flex-wrap: wrap; flex: 1 1 100%; }
+.for label { flex: 1 1 260px; display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 16px; background: var(--well); cursor: pointer; transition: background .15s, box-shadow .15s; }
+.for label:has(input:checked) { background: var(--sun-wash); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sun) 45%, transparent); }
+.for input { margin-top: 3px; accent-color: var(--sun); }
+.for b { display: block; font-size: 14.5px; font-weight: 600; }
+.for small { display: block; margin-top: 1px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.task .pill.family { background: var(--well-2); color: var(--ink-2); margin-left: 6px; }
 .task { margin-top: 10px; padding: 16px 20px; border-radius: var(--r); background: var(--well); max-width: 900px; }
 .task .row { display: flex; gap: 12px; align-items: flex-start; }
 .task h3 { font-size: 16px; font-weight: 600; margin-right: auto; }
@@ -136,7 +145,7 @@ const said = e => !e ? "" : e.kind === "tool" ? "Looking: " + e.text.replace(/^(
   catch { return n.replace(/_/g, " "); } }) : e.text;
 function taskCard(t) {
   const live = t.status === "queued" || t.status === "running";
-  return `<div class="task ${t.status}"><div class="row"><h3>${esc(t.prompt.length > 140 ? t.prompt.slice(0, 140) + "…" : t.prompt)}<span class="pill ${live ? "review" : ""}">${TASK[t.status]}</span></h3>
+  return `<div class="task ${t.status}"><div class="row"><h3>${esc(t.prompt.length > 140 ? t.prompt.slice(0, 140) + "…" : t.prompt)}<span class="pill ${live ? "review" : ""}">${TASK[t.status]}</span>${t.acting_for == null ? `<span class="pill family">For the family</span>` : ""}</h3>
       ${live ? `<button class="btn" data-cancel="${t.id}">Stop</button>` : ""}</div>
     ${live ? `<p class="now">${esc(said(t.last) || "Starting…").slice(0, 220)}</p>` : ""}
     ${t.error ? `<p class="err">${esc(t.error)}</p>` : ""}
@@ -152,10 +161,15 @@ async function home(signal) {
   const counts = s => [s.applied && `${fmt(s.applied)} hidden`, s.n - s.reject - s.applied > 0 && `${fmt(s.n - s.reject - s.applied)} to hide`,
     s.reject && `${fmt(s.reject)} kept`].filter(Boolean).join(" · ");
   const draft = $("#ask")?.value ?? "", typing = document.activeElement?.id === "ask";
+  const family = !!$("#askForm input[name=for][value=family]:checked");     // (the list is drawn again every 2 s: the choice stays)
   $("#main").innerHTML = `<h1>Changes</h1>
     <p class="sub">Say what should go, and an agent on this computer works out which photos you mean. It proposes them as a change set; nothing is hidden until you have looked and applied it, and then only from you${d.sysadmin ? ", unless you hide them from everyone" : ""}. An applied set is then committed, or reverted to show every photo again.</p>
     <form class="ask" id="askForm"><textarea id="ask" rows="2" placeholder="Hide the photos from the school: young children nobody has named, outdoors or in a classroom" ${k.available ? "" : "disabled"}></textarea>
-      <button class="btn pri" ${k.available ? "" : "disabled"}>Ask</button></form>
+      <button class="btn pri" ${k.available ? "" : "disabled"}>Ask</button>
+      <div class="for" role="radiogroup" aria-label="Whom the agent works for">
+        <label><input type="radio" name="for" value="me"${family ? "" : " checked"}><span><b>For me</b><small>It sees what you see, your private photos too; what it makes is yours to look over.</small></span></label>
+        <label><input type="radio" name="for" value="family"${family ? " checked" : ""}><span><b>For the family</b><small>It sees only what everyone can see; what it makes is published as a family series.</small></span></label>
+      </div></form>
     ${k.available ? "" : `<p class="sub">${esc(k.why)}.</p>`}
     <div id="tasks">${k.tasks.map(taskCard).join("")}</div>
     ${d.sets.length ? `<div class="cards">${d.sets.map(s => `<a class="card" href="/changes/${s.id}">
@@ -169,7 +183,8 @@ async function home(signal) {
     e.preventDefault();
     const prompt = $("#ask").value.trim();
     if (!prompt) return;
-    try { await api("/api/tasks", { prompt }); $("#ask").value = ""; watching.now(); } catch (err) { toast(err.message); }
+    const family = !!$("#askForm input[name=for][value=family]:checked");
+    try { await api("/api/tasks", family ? { prompt, family: true } : { prompt }); $("#ask").value = ""; watching.now(); } catch (err) { toast(err.message); }
   };
   $("#ask").onkeydown = e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("#askForm").requestSubmit(); };
   $("#tasks").onclick = async e => {

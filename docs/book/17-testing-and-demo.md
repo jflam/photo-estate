@@ -269,6 +269,17 @@ held for him, he chooses one and releases it, then releases the other, and the i
 view holds nothing of his. The demo has no member's photos, so the test writes Ben's into the app's scratch
 catalog as ingest and the check would. Light and dark screenshots go to `PHOTO_ESTATE_SHOTS`.
 
+**Questions and stories in a browser.** [`tests/test_stories_browser.py`](../../photo-estate/tests/test_stories_browser.py)
+(slow tier), as Ada, Ben and Cleo, on the demo app in process with a stand-in agent and no background threads: a
+question to Ben is in his inbox only and he answers it typed (the microphone never asked for on load); Cleo answers
+a family question spoken, recording, redoing and sending, and the page shows the transcript once the test writes
+it, as transcribe.py would; the story is in the viewer's details for Ada and refused to Ben once Ada withdraws the
+photo; Cleo tells a story from the viewer and Ben says "I don't know"; Ben makes a series from a search, new photos
+arrive for another series of his (ingested and given vectors, as `test_listeners.py` does) and he adds one of two
+from the inbox; Ben asks the agent for the family, and `/members` shows the agent with nothing to change. Headless
+Chromium here gets no microphone, not even its fake one, so the test replaces `getUserMedia` with a WebAudio
+stream playing a WAV: the browser's own MediaRecorder records it, and everything after it is the page's own path.
+
 **Videos in a browser.** [`tests/test_video_browser.py`](../../photo-estate/tests/test_video_browser.py)
 (slow tier) plays them on `search.html`, on `tools/video_demo.py`'s library: the scope control's Videos shows only
 the videos, each tile with its length and a Live Photo's with LIVE; a video opens playing, Space pauses

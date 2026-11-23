@@ -303,9 +303,16 @@ def test_a_live_photos_clip_and_a_face_crop_follow_the_still(app, tmp_path):
             settle(app)
         finally:
             app.load_people = monkey
+        def timeless(r):                             # a search's answer says how long it took ("ms"): not part of it
+            if r[1] and r[1].startswith("application/json") and r[2]:
+                body = json.loads(r[2])
+                if isinstance(body, dict):
+                    body.pop("ms", None)
+                return r[0], r[1], body
+            return r
         for path in routes + ["/video/" + clip]:
-            got = get(path.format(s=x) if "{s}" in path else path, CLEO)
-            none = get(path.format(s=UNKNOWN) if "{s}" in path else path.replace(clip, UNKNOWN), CLEO)
+            got = timeless(get(path.format(s=x) if "{s}" in path else path, CLEO))
+            none = timeless(get(path.format(s=UNKNOWN) if "{s}" in path else path.replace(clip, UNKNOWN), CLEO))
             assert got == none, (path, got[:2], none[:2])
             if not path.startswith("/api/search"):
                 assert got[0] == 404, path

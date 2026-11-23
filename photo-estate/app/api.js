@@ -1,7 +1,8 @@
 // api.js: the one way a page asks the server for JSON.
 //
 //   api(path)                        GET; the answer's JSON
-//   api(path, body)                  POST `body` as JSON (any value but undefined: `{}` posts an empty object)
+//   api(path, body)                  POST `body` as JSON (any value but undefined: `{}` posts an empty object);
+//                                    a Blob (a recording) is posted as it is, with its own type as Content-Type
 //   api(path, body, options)         options: signal (AbortSignal), timeout (ms), method, headers, cache, keepalive
 //   createApi({ base, fetch })       the same function for paths under `base`, or with another fetch (tests)
 //   ApiError                         what a request that did not succeed throws; see below
@@ -111,9 +112,11 @@ export function createApi({ base = "", fetch: fetcher } = {}) {
     const stop = () => ctl.abort();
     signal?.addEventListener("abort", stop, { once: true });
     const timer = timeout ? setTimeout(() => { timedOut = true; ctl.abort(); }, timeout) : null;
+    const blob = typeof Blob !== "undefined" && body instanceof Blob;
+    const type = body === undefined ? null : blob ? /** @type {Blob} */ (body).type || "application/octet-stream" : "application/json";
     /** @type {RequestInit} */
-    const init = { method, signal: ctl.signal, headers: body === undefined ? headers : { "Content-Type": "application/json", ...headers } };
-    if (body !== undefined) init.body = JSON.stringify(body);
+    const init = { method, signal: ctl.signal, headers: type ? { "Content-Type": type, ...headers } : headers };
+    if (body !== undefined) init.body = blob ? /** @type {Blob} */ (body) : JSON.stringify(body);
     if (cache) init.cache = cache;
     if (keepalive) init.keepalive = true;
     try {

@@ -31,10 +31,11 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         NSPhotoLibraryUsageDescription: Photo Estate uploads the photos and videos you take to your own server.
+        NSMicrophoneUsageDescription: Photo Estate records you only when you tap Record, to keep a story you tell about your photos.
         BackgroundUploadURLBase: $(SERVER_BASE)
         NSAppTransportSecurity: { NSAllowsLocalNetworking: true }
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jflam.photoestate
         TARGETED_DEVICE_FAMILY: "1"
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: NO_BACKGROUND_UPLOAD
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) NO_BACKGROUND_UPLOAD   # (inherited: DEBUG, which -demoMember needs)

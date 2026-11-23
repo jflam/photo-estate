@@ -162,8 +162,20 @@ things in order:
 **The Inbox tab** carries a badge: the phone's own batches waiting to be looked over plus the server's open items.
 One list: *On this iPhone* (the batches, made on the phone: the server does not know the photos exist until they
 are shared), *From your library* (the server's items, each opening the page that decides it in the same web view
-as People; a notice, a lens that changed, is put away when opened, as on the web), *Older photos* a chunk at a
-time, and *Kept back on this iPhone*. Chapter 24 has the gate itself.
+as People, whose own tab bar is hidden there by a script the web view adds; a notice, a lens that changed, is put
+away when opened, as on the web), *Older photos* a chunk at a time, and *Kept back on this iPhone*. Chapter 24 has
+the gate itself.
+
+**A question** opens natively (`QuestionsView.swift`): the item's questions from `GET /api/questions`, each with
+who asks, why and its photos (a tap shows one bigger), and a teller (`Teller.swift`): a field, *Record*, *I don’t
+know*, *Send answer*. The microphone is asked for (and the system's prompt shown, with its usage string) only when
+Record is pressed. `AVAudioRecorder` records AAC, mono, 64 kbit/s, into an `.m4a` in the app's temporary folder,
+started off the main thread; the clip can be played, redone or thrown away, and is sent as the request's whole body,
+`audio/mp4`. An answered question shows the story under it, asking again every few seconds until the transcript is
+written. **The viewer's details** list the photo's stories (who, when, the words or the transcript, *Play the
+recording*: fetched from the server and played from memory) and one quiet row, *Tell a story*, which opens the same
+teller. What can be checked without a device (reading questions and stories, the words, the teller's table, the
+requests) is plain Swift in `StoryModel.swift`, checked by `ios/Tests/run.sh`.
 
 Until the first sync has returned anything, the Library shows a welcome screen. After that it never
 waits for the network again: every screen reads the phone's own files, and anything the server adds
@@ -196,6 +208,7 @@ behaves.
 |---|---|
 | The app's four tabs and what happens on launch | [ContentView.swift](../../ios/PhotoEstate/ContentView.swift) |
 | The Inbox, who I am, the phone gate | [Gate/](../../ios/PhotoEstate/Gate/), [Shared/PhoneGate.swift](../../ios/Shared/PhoneGate.swift) (chapter 24) |
+| Questions answered, stories told and played | [QuestionsView.swift](../../ios/PhotoEstate/Gate/QuestionsView.swift), [Teller.swift](../../ios/PhotoEstate/Gate/Teller.swift), [StoryModel.swift](../../ios/PhotoEstate/Gate/StoryModel.swift); the viewer's `StoriesSection` in [Viewer.swift](../../ios/PhotoEstate/Library/Viewer.swift) |
 | The viewer's private mark, withdraw and release | [Library/Private.swift](../../ios/PhotoEstate/Library/Private.swift) |
 | The server address | [Shared/Server.swift](../../ios/Shared/Server.swift) |
 | The project definitions | [project.yml](../../ios/project.yml), [project-sim.yml](../../ios/project-sim.yml) |

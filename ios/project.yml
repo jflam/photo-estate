@@ -27,6 +27,7 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         NSPhotoLibraryUsageDescription: Photo Estate uploads the photos and videos you take to your own server.
+        NSMicrophoneUsageDescription: Photo Estate records you only when you tap Record, to keep a story you tell about your photos.
         BackgroundUploadURLBase: $(SERVER_BASE)
         NSAppTransportSecurity: { NSAllowsLocalNetworking: true }
     entitlements:

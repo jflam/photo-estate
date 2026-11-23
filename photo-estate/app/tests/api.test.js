@@ -51,6 +51,17 @@ test("a body makes it a POST of JSON; {} is a body", async () => {
   assert.equal(calls[1].init.body, "{}");
 });
 
+test("a Blob (a recording) is posted as it is, with its own type", async () => {
+  const { api, calls } = stub(() => json({ id: 1 }, 201));
+  const sound = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/mp4" });
+  assert.deepEqual(await api("/api/questions/4/answer", sound), { id: 1 });
+  assert.equal(calls[0].init.method, "POST");
+  assert.equal(calls[0].init.body, sound);
+  assert.deepEqual(calls[0].init.headers, { "Content-Type": "audio/mp4" });
+  await api("/x", new Blob([new Uint8Array([1])]));
+  assert.deepEqual(calls[1].init.headers, { "Content-Type": "application/octet-stream" }, "a Blob with no type");
+});
+
 test("options: method, headers, cache and a base path", async () => {
   const { api, calls } = stub(() => json({}), "/api/intake");
   await api("/jobs/7", undefined, { method: "DELETE", headers: { "X-Why": "test" }, cache: "no-store" });

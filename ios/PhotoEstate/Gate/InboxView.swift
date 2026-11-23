@@ -3,7 +3,8 @@ import SwiftUI
 
 /// The Inbox tab: what waits for this member to decide, in one list. The phone's own batches (photos to look
 /// over before they are shared: the phone gate, PhoneGate.swift), the mini's items (`GET /api/inbox`), each
-/// opening the page that decides it, and the older photos offered a chunk at a time.
+/// opening the page that decides it (a question opens here, natively: QuestionsView.swift), and the older photos
+/// offered a chunk at a time.
 struct InboxView: View {
     @ObservedObject private var gate = GateModel.shared
     @ObservedObject private var uploader = ForegroundUploader.shared
@@ -35,7 +36,11 @@ struct InboxView: View {
                     if gate.items.isEmpty { Text("Nothing waiting for you.").foregroundStyle(.secondary) }
                     ForEach(gate.items) { item in
                         NavigationLink {
-                            page(item).onAppear { gate.opened(item) }
+                            if let g = item.group {
+                                QuestionsView(group: g) { gate.done(item) }       // answered here, on the phone
+                            } else {
+                                page(item).onAppear { gate.opened(item) }
+                            }
                         } label: {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(item.kindText.uppercased()).font(.caption2.weight(.semibold)).kerning(1).foregroundStyle(Color.sun)

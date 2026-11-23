@@ -41,11 +41,15 @@ final class GateModel: ObservableObject {
             case "lens_proposed": "Proposed estate default"
             case "lens_changed": "A lens you follow"
             case "held": "Kept private to you"
+            case "question": "A question for you"
+            case "series_update": "New for a series"
             default: kind
             }
         }
         /// A notice waits on nobody: opening it puts it away (as on the web's inbox).
         var notice: Bool { kind == "lens_changed" }
+        /// A question item opens natively (QuestionsView); its group, from its ref (`ask:<group>`).
+        var group: String? { kind == "question" ? StoryText.group(ref: ref) : nil }
     }
 
     /// Older photos not yet offered: since the member joined, then a year at a time.
@@ -235,6 +239,11 @@ final class GateModel: ObservableObject {
     }
 
     // MARK: the mini's items
+
+    /// A question item whose every question is answered or put away: done on the server too.
+    func done(_ item: Item) {
+        items.removeAll { $0.id == item.id }
+    }
 
     func opened(_ item: Item) {
         guard item.notice else { return }

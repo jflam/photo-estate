@@ -758,12 +758,30 @@ describes it, [chapter 26](../book/26-albums-and-agents.md#questions-and-stories
   a `say` AAC `.m4a` and a 16 kHz WAV came back word for word, and through the running demo app end to end
   (upload, the job, `uv run transcribe.py run`, the transcript in `GET /api/photos/<sha>/stories`). The model
   (2.3 GB) is fetched by hand (`transcribe.py fetch`); without it each recording says so and is tried again.*
-- *Not built: the pages and the phone (next); a member's own agent picking up `series.update_requested` (phase 8);
+- *Not built: a member's own agent picking up `series.update_requested` (phase 8);
   handing an existing series to the archivist (nothing sets `maintained_by` but the archivist's own albums); "a
   one-shot task whose person is not there"; "people who know most" in the ranking; series' other two meetings with
   stories (that is the agent's work with `ask_member` and `create_album`). Known: a family question naming a photo
   that some sharer holds private is refused with a message that says it is not one the whole family can see, which
   tells the asker (who sees it) that someone holds it private.*
+- *The pages and the phone, built 2026-11-23 ([chapter 26](../book/26-albums-and-agents.md#questions-and-stories),
+  [chapter 19](../book/19-iphone-app.md#starting-up)). No endpoint was added or changed. One component tells a story,
+  typed or spoken, on both pages: the teller in `app/story-flow.js` (a strict table: idle, asking, refused, recording,
+  recorded, sending, sent, failed), mounted by inbox.html for each question (`/inbox?ask=<group>`, `app/ask-flow.js`)
+  and by the viewer's details ("Tell a story about this photo", the one quiet row a photo with no story shows). The
+  browser's MediaRecorder is asked for AAC in MP4 first: Safari and Chrome both make it, so every story plays on the
+  iPhone; `api.js` now posts a Blob as the whole body. Transcripts are asked for again (`follow`: 3 s growing to 20 s,
+  ten minutes at most), never waited on. A search's album menu makes a series (`query.growsFrom`); a series shows its
+  stories, and its owner its waiting photos (`candidatesFlow`), added or none. The Ask box on `/changes` chooses for
+  me or for the family; `/members` shows the agent as itself. The phone answers a question natively
+  (`QuestionsView`, `Teller.swift`: AVAudioRecorder to AAC in an .m4a, `audio/mp4`, started off the main thread),
+  shows a photo's stories in the viewer and tells one; its plain logic is `StoryModel.swift`, checked by
+  `ios/Tests/run.sh`. The app's web views hide the page's own tab bar (a script the web view adds). Found doing it:
+  the Simulator-only project dropped `DEBUG` (its target set `SWIFT_ACTIVE_COMPILATION_CONDITIONS` without
+  `$(inherited)`), so `-demoMember` did nothing there. Not done: a spoken answer recorded on the Simulator (its
+  input never started on this Mac: the Mac's microphone permission for Simulator, not given); a native series or
+  candidates screen on the phone (those items open the web page); an answered question kept on screen after the
+  phone's question screen is opened again (the server no longer lists it).*
 
 - **The estate's agent is a member** (`kind='agent'`). Each run gets a capability, not a task number:
   `tasks.py` mints a random token for *this agent, acting for this member, for this task*, puts it in

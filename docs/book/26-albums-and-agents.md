@@ -277,6 +277,21 @@ search over them as its owner: for a **family series** (one the family archivist
 agent looks at the matches and adds those that belong; for a member's own, the matches wait in their inbox, and
 they add them, or none, from there (`/api/albums/<id>/candidates`). Their own agent picking that up is phase 8.
 
+On the pages: the album menu of a search (the button beside the field) has **Keep it growing** when the
+question is one a series can grow from (`query.js`'s `growsFrom`: the words, people, one place, album, camera,
+trip or event, dates, favourites, photos or videos; not "like this", a stack, a lens or two places at once), and
+makes the album with `grows_from` instead of collecting the photos itself. A series' heading says what it is ("A
+series: new photos its search finds are offered to you", or for a family series that the estate's agent adds
+them). For its owner, the new photos waiting for it are a panel above the photos (`candidatesFlow` in
+`albums-flow.js`): all chosen at first, a tap leaves one out, **Add** or **None of these**, which closes the
+`series_update` inbox item (its link, `/?album=<id>&candidates=1`, opens the album). Under the heading, the
+stories told about the series' photos, newest first, each with its first photo.
+
+**Asking the archivist.** The Ask box on `/changes` (`POST /api/tasks`) has a plain choice under it: **For me** (it
+sees what you see, your private photos too; what it makes is yours to look over) or **For the family** (`family:
+true`: it sees only what everyone can see; what it makes is published as a family series). A task the archivist
+works on says "For the family" in the list. `/members` lists the estate's agent as itself, with nothing to change.
+
 ## Questions and stories
 
 Some things only people know. The agent asks with `ask_member`: one member, or the whole family, about photos
@@ -291,8 +306,21 @@ row, and transcribed on the mini, later, by Parakeet (`transcribe.py`). The view
 (`GET /api/photos/<sha>/stories`: who told each, when, the text or the recording and its transcript), a series
 the stories told about its photos (`GET /api/albums/<id>/stories`), and plays a recording
 (`GET /api/stories/<id>/recording`, with Range). If the agent wanted the answer (`follow_up`), the story wakes
-a new run with the question and the answer. Appendix B has the requests exactly. *(The pages and the iPhone's
-recording are the next step of phase 7; this is the server they use.)*
+a new run with the question and the answer. Appendix B has the requests exactly.
+
+**On the pages.** A `question` item in the inbox says *Answer* and opens `/inbox?ask=<group>` (the same page,
+`ask-flow.js`): the item's questions, each with who asks and for whom ("The estate’s agent asks you, for the
+family"), why, and its photos (a tap shows one bigger), and a **teller** (`story-flow.js`, shared with the viewer):
+a field to type in, *Record*, *I don’t know*, *Send answer*. The microphone is asked for only when Record is
+pressed. Recording shows its clock and stops by itself at fifteen minutes; the clip can be listened to, redone or
+thrown away before it is sent. The browser's own `MediaRecorder` makes it, asked for AAC in MP4 first
+(`audio/mp4;codecs=mp4a.40.2`: Safari, and Chrome makes it too, so the iPhone plays every story), then any MP4,
+WebM or Ogg; it is sent as the request's whole body with its type (`api.js` posts a `Blob` as it is). An answered
+question stays on the page with the story under it: "Being written down…" until the mini has written it out, the
+page asking again every few seconds (and less often as it goes on) and when it is shown again, never holding a
+connection open. In the viewer, the details have the photo's stories (who, when, the words or the transcript, the
+recording to play) and one quiet row, **Tell a story about this photo**, which opens the same teller; a photo with
+no story shows only that row. While a field has the focus, the viewer's keys are the field's.
 
 ## On the phone
 
@@ -302,8 +330,10 @@ phone's own copy of the catalog. An album opens as a grid; a search becomes a ne
 and an album can be made favourites, put up for hiding or discarded. Because the phone never writes its
 copy of the catalog ([chapter 19](19-iphone-app.md)), each of those is a request to the server
 (`API.swift`), and what it changed arrives with the next sync. Reviewing a change set opens the server's
-own review page inside the app (`WebView.swift`); a native one is
-[issue 49](https://github.com/jflam/photo-estate/issues/49).
+own review page inside the app (`WebView.swift`, which hides the page's own tab bar under the app's); a native
+one is [issue 49](https://github.com/jflam/photo-estate/issues/49). Questions and stories are native
+([chapter 19](19-iphone-app.md#starting-up)): a question item opens `QuestionsView`, and the viewer's details
+show the photo's stories and **Tell a story**.
 
 ## Where to look
 
@@ -316,6 +346,8 @@ own review page inside the app (`WebView.swift`); a native one is
 | Listeners: series kept up to date, an answer that wakes the agent | [listeners.py](../../photo-estate/listeners.py) |
 | Questions, the inbox's allowance, stories, recordings | [stories.py](../../photo-estate/stories.py) |
 | Transcribing a recording (Parakeet on MLX) | [transcribe.py](../../photo-estate/transcribe.py) |
+| Answering and telling on the pages | [inbox.html](../../photo-estate/inbox.html), [app/ask-flow.js](../../photo-estate/app/ask-flow.js), [app/story-flow.js](../../photo-estate/app/story-flow.js); the viewer and series in [search.html](../../photo-estate/search.html), [app/albums-flow.js](../../photo-estate/app/albums-flow.js) `candidatesFlow` |
+| Answering and telling on the phone | [QuestionsView.swift](../../ios/PhotoEstate/Gate/QuestionsView.swift), [Teller.swift](../../ios/PhotoEstate/Gate/Teller.swift), [StoryModel.swift](../../ios/PhotoEstate/Gate/StoryModel.swift) |
 | Albums on the phone | [Albums.swift](../../ios/PhotoEstate/Library/Albums.swift), [API.swift](../../ios/PhotoEstate/Catalog/API.swift) |
-| Tests | [test_albums.py](../../photo-estate/tests/test_albums.py), [test_changes.py](../../photo-estate/tests/test_changes.py), [test_mcp.py](../../photo-estate/tests/test_mcp.py), [test_tasks.py](../../photo-estate/tests/test_tasks.py), [test_agent.py](../../photo-estate/tests/test_agent.py), [test_listeners.py](../../photo-estate/tests/test_listeners.py), [test_stories.py](../../photo-estate/tests/test_stories.py) |
+| Tests | [test_albums.py](../../photo-estate/tests/test_albums.py), [test_changes.py](../../photo-estate/tests/test_changes.py), [test_mcp.py](../../photo-estate/tests/test_mcp.py), [test_tasks.py](../../photo-estate/tests/test_tasks.py), [test_agent.py](../../photo-estate/tests/test_agent.py), [test_listeners.py](../../photo-estate/tests/test_listeners.py), [test_stories.py](../../photo-estate/tests/test_stories.py), [test_stories_browser.py](../../photo-estate/tests/test_stories_browser.py) |
 | The HTTP API | [Appendix B](appendix-b-http-api.md#albums-and-change-sets) |

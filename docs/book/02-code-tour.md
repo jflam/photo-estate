@@ -193,6 +193,12 @@ photo-estate/                  the server and the web app (Python run with uv; n
                               what each kind's button says, and the count the Library's menu shows
     private-flow.js    125    private photos on search.html: the viewer's private line (withdraw, release, a release
                               day) and the held view (`is:held`: release all, or those chosen)
+    story-flow.js      266    telling a story, typed or spoken (the teller: its strict machine, the browser's
+                              MediaRecorder and microphone, the component's HTML, mountTeller), a story's words and
+                              HTML, follow() (a transcript asked for again until it is written), and the viewer's
+                              stories of the photo showing; inbox.html and search.html share it
+    ask-flow.js         70    inbox.html's questions view (/inbox?ask=<group>): an item's questions, answered or put
+                              away one at a time, and who asks
     video-flow.js       63    what plays in search.html's viewer: still, video, failed, live; every step out of
                               video or live lets the element's stream go (chapter 13)
     tests/           2,800    their unit tests (video-flow.test.js, lens-flow.test.js among them), run by Node's own runner: `npm test` (chapter 17)
@@ -245,7 +251,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_video_browser.py (slow tier) plays videos and Live Photos in search.html, in Chrome;
                             test_lenses_browser.py (slow tier) uses the lenses on the pages as Ada, Ben and Cleo;
                             test_inbox_browser.py (slow tier) uses the inbox as them, and a stranger asking in;
-                            test_private_browser.py (slow tier) withdraws, releases and reviews held photos as Ben and Cleo
+                            test_private_browser.py (slow tier) withdraws, releases and reviews held photos as Ben and Cleo;
+                            test_stories_browser.py (slow tier) answers questions typed and spoken, tells stories,
+                            grows a series and asks the agent for the family, as them
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it, and the tables and columns
                             added since), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
@@ -266,13 +274,16 @@ ios/                 6,705  the iPhone app (chapters 19-24, 26)
                                 Private.swift (71: the viewer's private mark, withdraw and release)
   PhotoEstate/Catalog/     985  the replica of the catalog, reading a search, the server's JSON API
   PhotoEstate/Images/      306  thumbnails and kept photos
-  PhotoEstate/Gate/        446  the Inbox tab and the phone gate's half in the app: who I am, batches to look over,
-                                older photos by chunk, kept back and "share after all" (chapter 24)
+  PhotoEstate/Gate/      1,044  the Inbox tab and the phone gate's half in the app: who I am, batches to look over,
+                                older photos by chunk, kept back and "share after all" (chapter 24); a question
+                                answered natively, typed or spoken (QuestionsView.swift, Teller.swift: the recorder,
+                                a story's row and its player), StoryModel.swift (plain values and functions, checked on the Mac)
   PhotoEstate/*.swift      432  the tab bar, the look, This iPhone, uploads, the in-app web view
   UploadExtension/         106  the background upload extension (jobs, or candidates for the Inbox)
   Shared/                  347  the server's address (and a debug build's demo member), the upload request, the
                                 extension's log, PhoneGate.swift (217: the gate's rules and state, in the app group)
-  Tests/                   170  the phone gate's unit tests: run.sh compiles them with Shared/ for the Mac and runs them
+  Tests/                   220  the phone's unit tests (the gate, the upload request, questions and stories): run.sh
+                                compiles them with Shared/ and StoryModel.swift for the Mac and runs them
   project.yml, project-sim.yml, deploy.sh, build-number   XcodeGen specs; build and install on the phone
 ```
 
@@ -377,7 +388,7 @@ import { toast } from "/app/toast.js";
 | [app/grid-flow.js](../../photo-estate/app/grid-flow.js), [app/library-flow.js](../../photo-estate/app/library-flow.js), [app/albums-flow.js](../../photo-estate/app/albums-flow.js), [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js), [app/video-flow.js](../../photo-estate/app/video-flow.js), [app/favourite.js](../../photo-estate/app/favourite.js), [app/lens-flow.js](../../photo-estate/app/lens-flow.js) | `search.html`'s state over time: its machines, their tables, what each state owns, and the requests they make and cancel ([chapter 13](13-photo-app.md#the-machines), [issue #81](https://github.com/jflam/photo-estate/issues/81)). The page gives them its `fetch`es and is told what to draw |
 | [app/loop.js](../../photo-estate/app/loop.js) | `loop(step)`: asking the server again and again for as long as a page is open. One step at a time (a timer and a click can never both start one), the step says how long to wait, a failing step does not end it, `pause()`/`resume()` for a hidden page, `stop()` aborts the step under way. `until(step, options)`: `poll()` that resolves to `{ state: "done" \| "timeout" \| "error" }` for a page that shows how the wait ended |
 | [app/work.js](../../photo-estate/app/work.js) | `single()`: work that must not overlap itself, not busy any more when it fails; `batch(items, step)`: several requests in a row, and which were done when one failed; `serial({ settle })`: requests one at a time in the order asked, and one call to put the page right after a failure |
-| [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js), [app/members-flow.js](../../photo-estate/app/members-flow.js), [app/inbox-flow.js](../../photo-estate/app/inbox-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |
+| [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js), [app/members-flow.js](../../photo-estate/app/members-flow.js), [app/inbox-flow.js](../../photo-estate/app/inbox-flow.js), [app/ask-flow.js](../../photo-estate/app/ask-flow.js), [app/story-flow.js](../../photo-estate/app/story-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |
 
 The browser fetches each module as it is, from `/app/<name>.js`: [pages.py](../../photo-estate/pages.py)'s
 `module()` says which files those are (the modules, not their tests or `package.json`), and every server
@@ -407,6 +418,7 @@ that behaviour in the modules above, where each rule is a unit test, and ask the
 | `stats.html` | `statsWatch`: one `loop()` asks for the uploads and the figures in turn, so two requests are never in flight. A failed `/api/stats` is "Couldn't take stock" or "Can't reach the library" with **Try again**; a catalogue run or a restart that can not be started says why in the uploads panel | figures every 1.5 s while the server is measuring; uploads every 2 s during a run, else every 15 s; after a restart `/api/info` every 4 s for at most 5 minutes; paused while the page is hidden |
 | `members.html` | One strict machine from `members-flow.js`: `idle`, `loading`, `ready` (owning the server's answer), `saving` (that, and the member being changed: the page takes no other change until the server answers), `failed`. A change the server refuses (the last sysadmin turned off) goes back to `ready` with the members as they were, and the toast says why | none: it asks once, and again only when told to |
 | `inbox.html` | One strict machine from `inbox-flow.js`: `idle`, `loading`, `ready` (owning the server's answer), `dismissing` (that, and the item being put away: one at a time), `failed`. A dismissal the server refuses goes back to `ready` with the items as they were, and the toast says why. Opening a lens that changed puts it away first, then goes there | none: it asks once, and again only when told to |
+| `inbox.html?ask=<group>` | `ask-flow.js`'s strict machine: `idle`, `loading`, `ready` (owning the item's questions still waiting and those answered here, each with its story; a step `ready` to `ready` for an answer, or a transcript written down), `dismissing` ("I don't know", one at a time), `failed`. Each question has a teller (`story-flow.js`): `idle`, `asking` (the microphone, only when Record is pressed), `refused`, `recording` (owning the recorder and when it started), `recorded` (owning the clip: listened to, redone, or sent), `sending`, `sent`, `failed` (owning what to send again) | a spoken answer's transcript: `follow()`, every 3 s growing to 20 s, at most ten minutes, cancelled on leaving; asked again when the page is shown again |
 | `setup.html` | Two strict machines from `setup-flow.js`, each state owning its data. The page: `loading`, `place`, `idle`, `watching`, `answering` (the states in which `/api/intake` is asked), `opening` (waiting for the photo app), `stuck`, `app`. The source panel: `closed`, `open`, `checking`, `checked`, `starting`, with `{ id, config, preview }` handed from state to state, so a preview never outlives the text it was made for and an answer for a panel that has moved on is dropped | asked every 1.2 s while a job is live, else every 8 s; `opening` asks `/api/info` every 1.5 s for at most 10 minutes, then "Still not open" with **Try again** |
 
 `compare.html` is a run of the model comparison, held by one strict machine from

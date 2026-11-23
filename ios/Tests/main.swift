@@ -1,4 +1,5 @@
-// The phone gate's logic (Shared/PhoneGate.swift) and the upload request (Shared/UploadRequest.swift), on the Mac:
+// The phone gate's logic (Shared/PhoneGate.swift), the upload request (Shared/UploadRequest.swift), and questions and
+// stories (PhotoEstate/Gate/StoryModel.swift), on the Mac:
 // no device, no Simulator, no photo library. `ios/Tests/run.sh` compiles them with this file and runs it.
 import CryptoKit
 import Foundation
@@ -176,6 +177,67 @@ test("what an upload's answer means") {
     check(UploadRequest.answer(resp(200, [:])) == .exists, "200")
     check(UploadRequest.answer(resp(200, ["X-Upload-Refused": "opted_out"])) == .refused("opted_out"), "refused")
     check(UploadRequest.answer(resp(409, [:])) == .failed(409) && UploadRequest.answer(nil) == .failed(0), "failures")
+}
+
+test("a question item, read: its group, who asks, the title") {
+    let j: [String: Any] = ["items": [
+        ["item": 9, "group_key": "Thanksgiving 1998", "questions": [
+            ["id": 3, "text": "Who is this?", "why": "No one is named.", "photos": [["sha": "aa"], ["sha": "bb"]], "asked_at": "2026-11-23T10:00:00Z",
+             "asked_by": ["id": 4, "name": "The estate's agent", "kind": "agent"], "for": "Ben", "to": "you"],
+            ["id": 4, "text": "And this?", "photos": [["sha": "cc"]], "asked_by": ["id": 1, "name": "Ada", "kind": "person"], "to": "the family"]]],
+        ["item": 8, "group_key": NSNull(), "questions": [["id": 2, "text": "Where?", "photos": [], "asked_by": ["id": 1, "name": "Ada", "kind": "person"], "to": "you"]]],
+    ]]
+    let items = QuestionItem.list(j)
+    check(items.count == 2 && items[0].group == "Thanksgiving 1998" && items[1].group == "q2", "groups: \(items.map(\.group))")
+    let q = items[0].questions[0]
+    check(q.photos == ["aa", "bb"] && q.why == "No one is named." && q.askedAt != nil, "a question's photos, why, when")
+    check(StoryText.askedBy(q) == "The estate’s agent asks you, for Ben", StoryText.askedBy(q))
+    check(StoryText.askedBy(items[0].questions[1]) == "Ada asks the family", "a person asking the family")
+    check(StoryText.heading(items[0]) == "2 questions about Thanksgiving 1998" && StoryText.heading(items[1]) == "A question for you"
+          && StoryText.heading(nil) == "Nothing to answer here", "titles")
+    check(StoryText.group(ref: "ask:q2") == "q2" && StoryText.group(ref: "album:3") == nil, "an inbox item's group")
+}
+
+test("a story, read: who and when, and the transcript or where it is") {
+    let typed = Story(["id": 1, "told_by": ["id": 2, "name": "Ben"], "told_at": "2026-11-23T10:00:00Z", "text": "At the lake.", "photos": ["aa"]])
+    check(typed != nil && StoryText.toldBy(typed!) == "Ben · Nov 23, 2026" && StoryText.transcript(typed!) == nil, "typed")
+    var spoken = Story(["id": 2, "told_by": ["id": 3, "name": "Cleo"], "told_at": "2026-11-23T10:00:00Z", "photos": ["aa"],
+                        "recording": ["url": "/api/stories/2/recording", "type": "audio/mp4"], "transcript_state": "waiting",
+                        "question": ["id": 5, "text": "Who took it?"]])!
+    check(spoken.waiting && spoken.recording == "/api/stories/2/recording" && spoken.question == "Who took it?", "spoken, waiting")
+    check(StoryText.toldBy(spoken) == "Cleo · Nov 23, 2026 · spoken", StoryText.toldBy(spoken))
+    check(StoryText.transcript(spoken)! == ("Being written down…", false), "waiting")
+    spoken.transcriptState = "done"; spoken.transcript = "My brother took it."
+    check(StoryText.transcript(spoken)! == ("My brother took it.", true) && !spoken.waiting, "written down")
+    spoken.transcriptState = "failed"; spoken.transcript = nil
+    check(StoryText.transcript(spoken)!.final == false, "failed: tried again")
+    check(Story(["text": "no id"]) == nil, "no id, no story")
+    check(StoryText.clock(0) == "0:00" && StoryText.clock(7.9) == "0:07" && StoryText.clock(754) == "12:34", "the clock")
+}
+
+test("the teller's table: the web's, every pair") {
+    var legal = 0
+    for a in TellState.allCases { for b in TellState.allCases where a.can(b) { legal += 1 } }
+    check(legal == 19, "19 steps, as app/story-flow.js has: \(legal)")
+    check(TellState.idle.can(.asking) && !TellState.idle.can(.recording), "the microphone is asked for first")
+    check(TellState.recorded.can(.asking) && TellState.recorded.can(.sending) && !TellState.sending.can(.idle), "redo; sending ends sent or failed")
+}
+
+test("sending: an answer and a story, typed and spoken") {
+    let base = URL(string: "http://127.0.0.1:8791")!
+    let a = StorySend.text("At the lake.").request(base: base, question: 7, photo: nil)
+    check(a.url?.absoluteString == "http://127.0.0.1:8791/api/questions/7/answer" && a.httpMethod == "POST", "an answer's address")
+    check(a.value(forHTTPHeaderField: "Content-Type") == "application/json"
+          && (try? JSONSerialization.jsonObject(with: a.httpBody!)) as? [String: String] == ["text": "At the lake."], "typed: {text}")
+    let audio = Data([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70])
+    let s = StorySend.recording(audio).request(base: base, question: 7, photo: "aa")
+    check(s.url?.absoluteString == "http://127.0.0.1:8791/api/questions/7/answer" && s.httpBody == audio
+          && s.value(forHTTPHeaderField: "Content-Type") == "audio/mp4", "spoken: the recording is the body")
+    let t = StorySend.text("Grandma's garden").request(base: base, question: nil, photo: "bb")
+    let tb = (try? JSONSerialization.jsonObject(with: t.httpBody!)) as? [String: Any]
+    check(t.url?.absoluteString == "http://127.0.0.1:8791/api/stories" && tb?["photos"] as? [String] == ["bb"], "a story: its photo in the body")
+    let r = StorySend.recording(audio).request(base: base, question: nil, photo: "bb")
+    check(r.url?.absoluteString == "http://127.0.0.1:8791/api/stories?photos=bb" && r.httpBody == audio, "spoken: its photo in the query")
 }
 
 print(failures == 0 ? "ok: \(checks) checks passed" : "\(failures) of \(checks) checks failed")

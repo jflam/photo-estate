@@ -29,6 +29,7 @@ import { flow, latest, STALE } from "./fsm.js";
  * @property {number | null} person_id
  * @property {string | null} person      that person's name
  * @property {string | null} joined_at
+ * @property {string} [kind]             person | agent (the estate's agent: shown, never changed)
  * @property {{ login: string, added_at: string }[]} logins
  */
 /**

@@ -1,11 +1,12 @@
 // albums-flow.js: the Albums tab, and an album made from a search (issue #81): cancelled by moving
-// on, it makes no album, asks for no further page, and never reads the page for its name.
+// on, it makes no album, asks for no further page, and never reads the page for its name. And the new photos
+// waiting for a series: chosen, added, or none.
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { albumsFlow, albumMaker } from "../albums-flow.js";
-import { STALE } from "../fsm.js";
-import { deferred, settled } from "./helpers.js";
+import { albumsFlow, albumMaker, candidatesFlow, CANDIDATES_STEPS } from "../albums-flow.js";
+import { STALE, flow } from "../fsm.js";
+import { deferred, everyPair, settled } from "./helpers.js";
 
 /** A search of `pages` pages answered by hand, and the albums made. */
 function maker() {
@@ -135,4 +136,48 @@ test("the Albums tab: the list or an album; the list asked twice shows the last 
   asked[2].d.reject(new Error("offline"));
   assert.equal(await third, "failed");
   assert.equal(a.listing.data.error.message, "offline");
+});
+
+// ── the new photos waiting for a series ─────────────────────────────────────────────────────────
+
+test("the candidates' machine: every legal step is taken, every other pair throws TransitionError", () => {
+  assert.deepEqual(everyPair(CANDIDATES_STEPS, (/** @type {any} */ s, /** @type {any} */ from) => flow("t", s, from), assert.throws),
+    { legal: 13, refused: 12 });
+});
+
+test("candidates: all chosen at first, one taken out, the rest added; nothing waiting is idle", async () => {
+  /** @type {any[]} */ const sent = [];
+  let waiting = [{ sha: "a" }, { sha: "b" }, { sha: "c" }];
+  const c = candidatesFlow({ list: async () => ({ results: waiting }), add: async (album, shas) => { sent.push([album, shas]); return { added: shas.length }; } });
+  assert.equal(await c.load(5), "ready");
+  assert.equal(c.album, 5);
+  assert.deepEqual([...c.page.data.chosen], ["a", "b", "c"]);
+  assert.equal(c.toggle("b"), false);
+  assert.equal(c.toggle("c"), false);
+  assert.equal(c.toggle("c"), true);
+  const got = await c.add();
+  assert.deepEqual(got, { ok: true, added: 2 });
+  assert.deepEqual(sent, [[5, ["a", "c"]]], "in the order shown");
+  assert.equal(c.page.state, "idle");
+  waiting = [];
+  assert.equal(await c.load(5), "none");
+  assert.equal(c.page.state, "idle");
+});
+
+test("candidates: none of these is an empty add; a refusal goes back to ready as it was", async () => {
+  /** @type {any[]} */ const sent = [];
+  let fail = false;
+  const c = candidatesFlow({ list: async () => ({ results: [{ sha: "a" }] }),
+    add: async (album, shas) => { sent.push(shas); if (fail) throw new Error("not yours"); return { added: 0 }; } });
+  await c.load(1);
+  fail = true;
+  const before = c.page.data;
+  assert.equal((await c.none()).ok, false);
+  assert.equal(c.page.data, before);
+  fail = false;
+  assert.equal((await c.none()).ok, true);
+  assert.deepEqual(sent, [[], []]);
+  assert.equal((await c.add()).ok, false, "nothing waiting now");
+  c.clear();
+  assert.equal(c.page.state, "idle");
 });

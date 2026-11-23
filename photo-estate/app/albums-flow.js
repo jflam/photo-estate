@@ -26,9 +26,19 @@
 //               half asked for is worse than one the person has moved on from. make() resolves to
 //               it, and the page says so wherever the person now is.
 //
+// The new photos waiting for a series of the member's (multiplayer phase 7: listeners.py offers them, a
+// series_update inbox item opens the series): added, those that belong, or none.
+//
+//   idle ──► loading ──► ready ──► saving ──► idle
+//               └──────► idle (nothing waiting) | failed ──► loading
+//   ready  owns { album, results, chosen }: the photos, and the shas chosen to add (all of them at first).
+//          ready ──► ready: one more chosen, or one fewer
+//   saving owns the same: the one request that adds them (an empty add says "none of these")
+//
 //   albumsFlow({ list })           -> { where, listing, id, go, load }
 //   albumMaker({ page, create })   -> { job, make, cancel }
-//   ALBUMS_STEPS, LISTING_STEPS, MAKING_STEPS
+//   candidatesFlow({ list, add })  -> { page, load(album), toggle(sha), add(), none() }
+//   ALBUMS_STEPS, LISTING_STEPS, MAKING_STEPS, CANDIDATES_STEPS
 
 import { flow, latest, STALE } from "./fsm.js";
 
@@ -142,5 +152,77 @@ export function albumMaker({ page, create }) {
       job.to("idle");
       return true;
     },
+  };
+}
+
+/** @typedef {"idle" | "loading" | "ready" | "saving" | "failed"} CandidatesState */
+
+export const CANDIDATES_STEPS = /** @type {Record<CandidatesState, readonly CandidatesState[]>} */ ({
+  idle: ["loading"],
+  loading: ["loading", "ready", "idle", "failed"],
+  ready: ["ready", "saving", "loading", "idle"],
+  saving: ["idle", "ready"],
+  failed: ["loading", "idle"],
+});
+
+/**
+ * @param {{ list: (album: number, signal: AbortSignal) => Promise<{ results: { sha: string }[] }>,
+ *   add: (album: number, shas: string[]) => Promise<{ added: number }>,
+ *   onChange?: (to: CandidatesState, from: CandidatesState) => void }} options
+ *   list: GET /api/albums/<id>/candidates; add: POST it {add}
+ */
+export function candidatesFlow({ list, add, onChange }) {
+  const page = flow("candidates", CANDIDATES_STEPS, /** @type {CandidatesState} */ ("idle"), (to, from) => onChange?.(to, from));
+  const asking = latest();
+  /** @param {string[]} shas */
+  async function save(shas) {
+    if (!page.is("ready")) return { ok: false, error: new Error("Nothing is waiting.") };
+    const d = page.data;
+    page.to("saving", d);
+    try {
+      const got = await add(d.album, shas);
+      page.to("idle");
+      return { ok: true, added: got?.added ?? 0 };
+    } catch (error) {
+      page.to("ready", d);
+      return { ok: false, error };
+    }
+  }
+  return {
+    page,
+    /** The album the flow is about, or null. @returns {number | null} */
+    get album() { return page.is("ready", "saving", "loading") ? page.data.album ?? null : null; },
+    /**
+     * What waits for series `album`. Never rejects: "ready" (something waits), "none", "failed", or STALE.
+     * @param {number} album
+     */
+    async load(album) {
+      if (page.is("saving")) return "busy";
+      page.to("loading", { album });
+      try {
+        const d = await asking.run(signal => list(album, signal));
+        if (d === STALE) return STALE;
+        if (!d.results.length) { page.to("idle"); return "none"; }
+        page.to("ready", { album, results: d.results, chosen: new Set(d.results.map(r => r.sha)) });
+        return "ready";
+      } catch (error) {
+        if (page.is("loading")) page.to("failed", { error, album });
+        return "failed";
+      }
+    },
+    /** Choose a photo to add, or not. @param {string} sha @returns {boolean} whether it is chosen now */
+    toggle(sha) {
+      if (!page.is("ready")) return false;
+      const chosen = new Set(page.data.chosen);
+      if (chosen.has(sha)) chosen.delete(sha); else chosen.add(sha);
+      page.to("ready", { ...page.data, chosen });
+      return chosen.has(sha);
+    },
+    /** Add the chosen ones (in the order they are shown). Never rejects. */
+    add() { return page.is("ready") ? save(page.data.results.map((/** @type {{ sha: string }} */ r) => r.sha).filter((/** @type {string} */ s) => page.data.chosen.has(s))) : save([]); },
+    /** None of these belong. Never rejects. */
+    none() { return save([]); },
+    /** Another album, or the list: what was shown is let go. */
+    clear() { asking.cancel(); if (!page.is("idle", "saving")) page.to("idle"); },
   };
 }
