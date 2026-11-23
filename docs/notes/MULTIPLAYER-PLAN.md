@@ -8,6 +8,21 @@ When a phase lands, the book describes the result and this note keeps the reason
 Read [CLAUDE.md](../../CLAUDE.md) first: how to run the app on the demo library, the tests, the rules for
 the script modules and for the docs, and how a branch reaches the Mac mini.
 
+## How to build it: fast, and small
+
+**This matters more than anything else in this note.** Build for maximum velocity, and do not
+over-engineer. Multiplayer must not bloat the code base.
+
+- Take the smallest version of each piece that does the job for one family on one Mac mini: a table
+  and a function before a framework, a plain string before a registry, a line in a runbook before a
+  tool. Nothing here needs to scale past a dozen members.
+- Reuse what exists: change sets for every review, `agent_tasks` and `agent_events` for agent runs,
+  the existing pages and flows. A new module only when no existing one is the home for it.
+- Build nothing ahead of need: no options, abstraction layers or endpoints for later phases or
+  hypothetical uses. Where this note describes more than a phase needs, build less and say so in the
+  pull request.
+- Each phase should add little code. If a phase is growing large, stop and cut scope before going on.
+
 ## What multiplayer is
 
 Until now there has been one user: the owner. Multiplayer lets the family use the estate, each person
@@ -42,7 +57,8 @@ Four ideas carry the design:
 | Agents: the **estate's agent** runs on the mini on the owner's subscription and does family work. A **personal agent** runs in the member's own harness, on their own account, and connects to `/mcp` over the tailnet | Clean from the beginning: the owner pays for family work; whoever wants a personal agent brings and pays for it |
 | An agent acts for someone: it can see only what that member can see, and writes only to what that member owns | Otherwise an agent can be used to reach what its user cannot |
 | New photos go straight into a story album, with no proposal step | A sensible start. More review can be added after some use |
-| Answers to an agent's questions can be spoken; the recording is kept in the estate | For an oral history the voice is worth more than the transcript |
+| Answers to an agent's questions can be spoken; the recording is kept in the estate, transcribed on the mini with NVIDIA Parakeet TDT 0.6B v2 (what FluidVoice uses) | For an oral history the voice is worth more than the transcript. It need not be real time |
+| New photos for a member's own story go to *that member's agent*, which picks the request up when it connects; the estate's agent keeps only family stories going. Every estate-agent run, including the implicit ones, is recorded | The member's agent may know things the estate's agent does not. The records let spending be read off later |
 
 ## Words
 
@@ -153,7 +169,7 @@ CREATE TABLE shown(sha256 TEXT, member_id INT, at TEXT, PRIMARY KEY(sha256, memb
 -- deciding and asking
 CREATE TABLE inbox_items(
   id INTEGER PRIMARY KEY, member_id INT, kind TEXT,      -- held | review | lens_proposed | lens_changed |
-                                                         --   binding | question | ...
+                                                         --   binding | question | story_update | ...
   ref TEXT, title TEXT, created_at TEXT, state TEXT, done_at TEXT);   -- open | done | dismissed
 CREATE TABLE questions(
   id INTEGER PRIMARY KEY, asked_by INT, acting_for INT,
@@ -216,8 +232,8 @@ that one member's lens hides leaves only that member's phones.
   deleting its rows. The face labels' undo in `faces.py` stays as it is (it is shared state), and is
   journaled.
 - **Immutable originals.** Ingestion sets the user-immutable flag (`chflags uchg`) on each file it writes
-  to the store, so even `rm -rf` in the wrong folder fails. A tool for setting it on the files already
-  in the store runs once on the mini, after a backup.
+  to the store, so even `rm -rf` in the wrong folder fails. The files already in the store get it from
+  one `chflags` command run once on the mini, after a backup.
 - **Deletions upstream never propagate.** A photo deleted on an iPhone, in iCloud or in the OneDrive
   mirror stays in the estate. Sources only add. Write a test for each source that removes a file and
   re-ingests, and checks the catalog and the store are unchanged.
@@ -236,7 +252,7 @@ endpoint, chapter 2's file list, the glossary), and a deploy of its branch to th
 describes. Every phase that touches the catalog's schema takes the backup CLAUDE.md gives first. Phases
 1 and 2 come first and in that order; 3 to 6 follow, and 7 and 8 need 6.
 
-### Phase 0: check three things first (a day, no code)
+### Phase 0: check two things first (a day, no code)
 
 1. **The identity header for every way in.** Tailscale offers two ways to let family reach the mini:
    inviting them as users of the owner's tailnet, or *sharing* the mini with their own tailnets. Check
@@ -244,15 +260,14 @@ describes. Every phase that touches the catalog's schema takes the backup CLAUDE
    what it sets for the owner's own tagged devices (if any). The plan assumes invitations, with a
    `group:family` in the tailnet's default-deny policy granting only the app's port, and needs the
    header to be there. Check the plan's user limit too.
-2. **The estate's agent subscription.** The estate's agent runs on the owner's Claude subscription
-   (`~/.config/photo-estate/agent.env`). Read Anthropic's current terms for a subscription used for
-   work done for other people; if it does not fit, the estate's agent uses an API key, and `tasks.py`
-   reads either.
-3. **Where personal agents can run.** A personal agent reaches `/mcp` only from a device on the tailnet
+2. **Where personal agents can run.** A personal agent reaches `/mcp` only from a device on the tailnet
    (Claude Code; a desktop app with a local MCP configuration). Connectors added in claude.ai or the
    Claude iPhone app are expected to be called from Anthropic's servers, which are not on the tailnet.
    Confirm, and write the answer into the "Connect your agent" page. The tailnet stays closed: no
    Tailscale Funnel, no public `/mcp`.
+
+Not checked, on purpose: whether the owner's Claude subscription may run the estate's agent for the
+family. While this is being proved out the tokens are few; leave `tasks.py` as it is.
 
 ### Phase 1: members and identity
 
@@ -280,16 +295,20 @@ describes. Every phase that touches the catalog's schema takes the backup CLAUDE
 
 ### Phase 2: the journal and append-only
 
-- The `journal` table and `journal.py` (unit-tested): `append(con, actor, kind, subject, data,
-  acting_for=None)` in the caller's transaction, and `since(id, kinds=None)` for listeners. A
-  catalog of the kinds in one place (like `core/states.py`'s StrEnums).
-- Journal every write that exists today: change sets (propose, items, decide, apply, revert, commit,
-  reopen, discard), albums, favourites, People (name, merge, not, later), tasks, uploads arriving,
-  ingest finishing. Each change set row's "created by" becomes the journal's actor.
-- The protected-table triggers, discard-as-mark, the immutable flag at ingest and the one-off tool for
-  the existing store, the purge tool, and the "upstream deletions never propagate" tests.
-- `GET /api/journal?since=&kinds=` (sysadmin; members get their own entries and those about photos they
-  can see).
+This phase is the easiest to over-build. Keep it to this list, each item as small as it can be:
+
+- `journal.py` (unit-tested): two functions, `append(con, actor, kind, subject, data, acting_for=None)`
+  in the caller's transaction, and `since(id)` for listeners. Kinds are plain strings, listed in the
+  module's docstring; no registry, no classes, no event-sourcing. State tables stay the truth for what
+  the app shows; the journal is the history beside them.
+- One `append` call at each write that exists today: change sets and albums, favourites, People, tasks,
+  ingest finishing. No new endpoint: nothing reads the journal until phase 3's "why" line and phase 7's
+  listeners.
+- The protected-table triggers, and discard-as-mark in `changes.py`.
+- The immutable flag: set at ingest; for the files already in the store, one `chflags` command in
+  MAC-MINI.md, run once after a backup, not a tool.
+- The purge: one small `estate.py purge` command, as described in Append-only.
+- One test that a source losing a file changes nothing in the estate.
 - On the mini: the migration that gives every existing photo the sysadmin as its sharer (shared), and
   makes the existing hiding sets the first estate default (see phase 3), runs after a backup.
 
@@ -362,7 +381,7 @@ describes. Every phase that touches the catalog's schema takes the backup CLAUDE
 - `member_inbox.py` (unit-tested) and `inbox_items`. Items are made by the code that needs the
   decision: `held` (photos held at ingestion, grouped per batch), `review` (a change set to look over),
   `lens_proposed` (for the sysadmin), `lens_changed` (for subscribers), `binding` (phase 8),
-  `question` (phase 7), `member_request` (for the sysadmin). Each kind opens the review screen it
+  `question` and `story_update` (phase 7), `member_request` (for the sysadmin). Each kind opens the review screen it
   already has, or a new one, as an app of its own (the change set review page is the first).
 - `/inbox` on the web, with its state machine in `app/inbox-flow.js` (strict `flow()`, unit test in
   `app/tests/`), and an Inbox tab in the iPhone app with a badge. The phone's own upload batches show in
@@ -381,11 +400,19 @@ describes. Every phase that touches the catalog's schema takes the backup CLAUDE
   member's private ones), and publishes lenses that members may subscribe to.
 - **Listeners.** `listeners.py`: each listener has a cursor in `listener_cursors`, reads the journal from
   it, and acts; at-least-once, so each handler is idempotent. A rule decides first, cheaply, and wakes the
-  model only when the rule says yes. The first listener keeps story lenses up to date: when photos are
-  ingested, it runs each live story lens's search over the new photos only; if any match, a run of the
-  estate's agent decides which belong and adds them to the album directly (no proposal: a sensible
-  start). That run acts for the lens's owner. (This spends the owner's subscription on personal lenses:
-  see Open questions.)
+  model only when the rule says yes. The first listener keeps story lenses up to date. When photos are
+  ingested, it runs each live story lens's search over the new photos only. If any match:
+  - for a **family story** (one the archivist keeps, or one made by a one-shot task whose person is not
+    there to keep it going), a run of the estate's agent decides which photos belong and adds them to
+    the album directly (no proposal: a sensible start);
+  - for a **member's own story**, it asks *that member's agent* to do it: a `story.update_requested`
+    journal entry naming the lens and the candidate photos, and a `story_update` inbox item. Their agent
+    picks it up with `journal_since` (phase 8) and adds what belongs. Their agent may know things the
+    estate's agent does not, which is why it is asked rather than replaced. Until it runs, the
+    candidates wait, and the member can add them by hand from the inbox.
+- **Every run of the estate's agent is recorded,** the implicit ones a listener starts as well as the
+  ones a person submits: each is an `agent_tasks` row (its tool calls in `agent_events`, its turns and
+  cost already in the row), so spending can be read off later. No cost reporting now.
 - **Asking.** A new MCP tool `ask_member(shas, text, why, to?, group_key?)` files a question; the agent
   does not wait. A question may name only photos its recipient can see, or it would show a private
   photo in the question itself. The inbox, not the agent, decides how many questions a member sees: a
@@ -393,7 +420,9 @@ describes. Every phase that touches the catalog's schema takes the backup CLAUDE
   grouped by event ("three questions about Thanksgiving 1998").
 - **Answering.** In the inbox, typed or **spoken**: the phone records, uploads the audio to the store
   (content-addressed, append-only, backed up like any original), and the mini transcribes it locally
-  (the model is the phase's choice: it must run on the mini, offline). The answer is a `story`,
+  with **NVIDIA Parakeet TDT 0.6B v2**, the open-weights model FluidVoice uses on the owner's laptop
+  (FluidAudio's Core ML build, `parakeet-tdt-0.6b-v2-coreml`, or an MLX port, whichever fits the Python
+  server more simply). It need not be real time: a queued job after the upload is fine. The answer is a `story`,
   attributed and dated; a second member's answer is a second story. `story.told` in the journal wakes a
   fresh run of the agent with the question, the answer and the context. No session waits for the
   answer; the waiting is the question's row.
@@ -409,8 +438,9 @@ describes. Every phase that touches the catalog's schema takes the backup CLAUDE
   approved it writes, in the journal, as that member's agent; the member can revoke it.
 - A personal agent gets the same tools as the estate's agent acting for its member, except
   `submit_task`: personal work runs in the member's own harness, on their own account, never on the
-  owner's subscription. It also gets `journal_since(cursor)` (what changed in what its member can see),
-  so it can catch up when it connects.
+  owner's subscription. It also gets `journal_since(cursor)`: what changed in what its member can see,
+  including the `story.update_requested` entries for its member's stories (phase 7), so when it
+  connects it catches up and runs those stories. Marking the request done closes the inbox item.
 - **"Connect your agent"**, a page that shows the exact command with the mini's address filled in
   (`claude mcp add --transport http photo-estate https://<mini>.ts.net:8766/mcp`), a configuration file
   for other harnesses, what phase 0 found about where it can run, and the connection as it happens
@@ -445,14 +475,6 @@ describes. Every phase that touches the catalog's schema takes the backup CLAUDE
 
 ## Open questions
 
-1. **Who pays to keep a personal story lens up to date?** The decision is that the owner's subscription
-   pays for family work and members bring their own agent for personal work, but a personal agent in
-   someone's harness on their laptop cannot be woken by the mini when new photos arrive. Choices: (a) the
-   estate's agent keeps every story lens up to date (cheap with the rule first, but it is personal work
-   on the owner's subscription); (b) the mini's rule adds candidates to the member's inbox and their own
-   agent decides when it next connects (`journal_since`); (c) story lenses the family shares are family
-   work, private ones wait for (b). Phase 7 builds (a) behind a switch; decide before phase 8.
-2. **The categories held at ingestion** beyond receipts, screenshots and documents (gifts and medical
+1. **The categories held at ingestion** beyond receipts, screenshots and documents (gifts and medical
    photos are harder to tell).
-3. **How many questions a week**, and whether an elder gets more.
-4. **The transcription model** for spoken answers.
+2. **How many questions a week**, and whether an elder gets more.
