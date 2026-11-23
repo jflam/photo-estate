@@ -46,6 +46,10 @@ of M's and one applied hiding set; a series: a new album of M's): later changes 
   day(at)                        a day as the pages say it: "Nov 3", or "Nov 3, 2025" in another year
   LensError                      what a member may not do, with the HTTP status to answer it with
 
+The inbox (member_inbox.py), in the same transactions: proposing puts a lens_proposed item in every other
+sysadmin's inbox, and deciding it (or taking the filter back) closes it; leaving a lens (unsubscribing, or a
+snapshot instead) closes the member's lens_changed item about it.
+
 Every write appends one journal entry (journal.py) in the same transaction and commits: lens.created,
 lens.subscribed {mode, copy?, album?, photos?}, lens.unsubscribed {mode}, lens.published / lens.unpublished,
 lens.proposed, lens.accepted / lens.declined (the sysadmin), album.published / album.unpublished {lens},
@@ -59,6 +63,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import journal
+import member_inbox
 
 KINDS = ("filter", "series")
 MODES = ("live", "snapshot")              # what a member asks for; 'opted_out' is an estate default left
@@ -296,6 +301,11 @@ def _theirs(con, lid, member) -> Lens:
     return lens
 
 
+def _ref(lens: Lens) -> str:
+    """What an inbox item about this lens's photos changing names (member_inbox.lens_changed)."""
+    return f"album:{lens.set_id}" if lens.kind == "series" else f"lens:{lens.id}"
+
+
 def _visible(con, lid, member) -> Lens:
     """A lens `member` may see: their own, or a published one."""
     lens = get(con, lid)
@@ -352,6 +362,8 @@ def subscribe(con, member: int | None, lid, mode: str, shas=None, title: str | N
             if was is not None and was[0] == mode and mode == "live":
                 return {"lens": lens.id, "mode": mode, "changed": False}
             con.execute("INSERT OR REPLACE INTO subscriptions VALUES (?,?,?,?)", (m, lens.id, mode, t))
+        if mode == "snapshot":           # a copy instead of following it: what it does next is not theirs to hear of
+            member_inbox.close(con, "lens_changed", _ref(lens), m)
         journal.append(con, member, "lens.subscribed", f"lens:{lens.id}", data)
     return {"lens": lens.id, **data, "changed": True}
 
@@ -373,6 +385,7 @@ def unsubscribe(con, member: int | None, lid) -> dict:
                 return {"lens": lens.id, "mode": None, "changed": False}
             con.execute("DELETE FROM subscriptions WHERE member_id=? AND lens_id=?", (m, lens.id))
             mode = None
+        member_inbox.close(con, "lens_changed", _ref(lens), m)     # (no longer following it: nothing to tell them)
         journal.append(con, member, "lens.unsubscribed", f"lens:{lens.id}", {"was": was[0] if was else None, "mode": mode})
     return {"lens": lens.id, "mode": mode, "changed": True}
 
@@ -386,6 +399,8 @@ def publish(con, member: int | None, lid, on: bool) -> dict:
     with con:
         con.execute("UPDATE lenses SET published=?, proposed_at=CASE WHEN ? THEN proposed_at END WHERE id=?",
                     (int(on), int(on), lens.id))
+        if not on and lens.proposed_at:    # a proposal taken back with it: nothing is left for a sysadmin to decide
+            member_inbox.close(con, "lens_proposed", f"lens:{lens.id}")
         journal.append(con, member, "lens.published" if on else "lens.unpublished", f"lens:{lens.id}")
     return {"lens": lens.id, "published": on, "changed": True}
 
@@ -425,6 +440,9 @@ def propose(con, member: int | None, lid) -> dict:
     with con:
         con.execute("UPDATE lenses SET published=1, proposed_at=? WHERE id=?", (t, lens.id))
         journal.append(con, member, "lens.proposed", f"lens:{lens.id}", {"title": lens.title})
+        name = (con.execute("SELECT name FROM members WHERE id=?", (owner_of(con, lens),)).fetchone() or ["Someone"])[0]
+        member_inbox.put(con, [a for a in member_inbox.sysadmins(con) if a != owner_of(con, lens)], "lens_proposed",
+                         f"lens:{lens.id}", f"{name} proposes the filter “{lens.title}” as an estate default")
     return {"lens": lens.id, "proposed_at": t, "changed": True}
 
 
@@ -443,6 +461,7 @@ def decide(con, member: int | None, lid, accept: bool) -> dict:
             con.execute("UPDATE lenses SET estate_default=1, published=1, proposed_at=NULL WHERE id=?", (lens.id,))
         else:
             con.execute("UPDATE lenses SET proposed_at=NULL WHERE id=?", (lens.id,))
+        member_inbox.close(con, "lens_proposed", f"lens:{lens.id}")
         journal.append(con, member, "lens.accepted" if accept else "lens.declined", f"lens:{lens.id}", {"title": lens.title})
     return {"lens": lens.id, "estate_default": accept, "changed": True}
 

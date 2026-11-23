@@ -162,14 +162,23 @@ export function lensesFlow({ list, onChange }) {
 export const lensName = lens => `${lens.mine ? "your" : `${esc(lens.owner.name || "someone")}’s`} lens <i>${esc(lens.title)}</i>`;
 
 /**
- * A day as the pages say it: "Nov 3", with the year when it is not this one ("Nov 3, 2025"); "" for none.
- * @param {string | null | undefined} when   "YYYY-MM-DD…"
+ * A day as the pages say it: "Nov 3", with the year when it is not this one ("Nov 3, 2025"); "" for none. A
+ * moment the server wrote ("2026-11-23T03:00:00Z", UTC) is the day it was where the page is looked at (or in
+ * `timeZone`); a bare day ("2026-11-23") is that day.
+ * @param {string | null | undefined} when   "YYYY-MM-DD", or "YYYY-MM-DDTHH:MM…Z"
  * @param {Date} [today]
+ * @param {string} [timeZone]   (for the tests) an IANA zone in place of the browser's own
  * @returns {string}
  */
-export function day(when, today = new Date()) {
-  const m = /^(\d{4})-(\d\d)-(\d\d)/.exec(when || "");
+export function day(when, today = new Date(), timeZone = undefined) {
+  const m = /^(\d{4})-(\d\d)-(\d\d)(T.+)?/.exec(when || "");
   if (!m) return "";
+  const at = m[4] ? new Date(/** @type {string} */ (when)) : null;
+  if (at && !Number.isNaN(at.getTime())) {
+    const zone = timeZone ? { timeZone } : {};
+    const year = (/** @type {Date} */ d) => d.toLocaleDateString("en-US", { year: "numeric", ...zone });
+    return at.toLocaleDateString("en-US", { month: "short", day: "numeric", ...zone, ...(year(at) === year(today) ? {} : { year: "numeric" }) });
+  }
   const d = new Date(+m[1], +m[2] - 1, +m[3]);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(+m[1] === today.getFullYear() ? {} : { year: "numeric" }) });
 }
@@ -177,17 +186,19 @@ export function day(when, today = new Date()) {
 /**
  * Why a photo is hidden, as HTML, from GET /api/photos/<sha>/why: "Hidden by your lens <i>Hidden photos</i> on
  * Nov 23", "Shown anyway. Hidden by Ada's lens <i>Estate defaults</i> on Nov 3", "…, and by 1 more". "" when
- * nothing that is on for the member hides it.
+ * nothing that is on for the member hides it. Built from `reasons`, not the server's `text` (which says the
+ * day in UTC): the day is the viewer's own (day()).
  * @param {Why} why
  * @param {Date} [today]
+ * @param {string} [timeZone]   (for the tests) as day()'s
  * @returns {string}
  */
-export function whySays(why, today = new Date()) {
+export function whySays(why, today = new Date(), timeZone = undefined) {
   const r = why.reasons[0];
   if (!r) return "";
   const by = r.lens ? lensName({ title: r.lens.title, mine: r.mine, owner: r.owner })
     : `${r.mine ? "your" : `${esc(r.owner.name || "someone")}’s`} change set <i>${esc(r.set.title)}</i>`;
-  const on = day(r.hidden_at, today), more = why.reasons.length - 1;
+  const on = day(r.hidden_at, today, timeZone), more = why.reasons.length - 1;
   return `${why.shown_anyway ? "Shown anyway. Hidden" : "Hidden"} by ${by}${on ? ` on ${on}` : ""}${more ? `, and by ${more} more` : ""}`;
 }
 

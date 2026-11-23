@@ -128,6 +128,19 @@ test("the words: a lens, a day, why a photo is hidden", () => {
   assert.equal(whySays(why({ reasons: [] }), TODAY), "");
 });
 
+test("a day the server wrote in UTC is the viewer's own day: the why line says it in local time", () => {
+  const late = "2026-11-23T03:00:00Z";                     // 7 in the evening of Nov 22 in California
+  assert.equal(day(late, TODAY, "UTC"), "Nov 23");
+  assert.equal(day(late, TODAY, "America/Los_Angeles"), "Nov 22");
+  assert.equal(day("2026-01-01T05:00:00Z", new Date("2026-06-01T12:00:00Z"), "America/Los_Angeles"), "Dec 31, 2025",
+    "the year is the viewer's too");
+  assert.equal(day("2026-11-23", TODAY, "America/Los_Angeles"), "Nov 23", "a bare day is that day anywhere");
+  const w = why();
+  w.reasons[0].hidden_at = late;
+  assert.equal(whySays(w, TODAY, "America/Los_Angeles"), "Hidden by your lens <i>Hidden photos</i> on Nov 22");
+  assert.equal(whySays(w, TODAY, "Asia/Tokyo"), "Hidden by your lens <i>Hidden photos</i> on Nov 23");
+});
+
 test("the why line: asked about once the photo has stayed; one left behind is never answered", async () => {
   /** @type {string[]} */ const asked = [];
   const answers = new Map([["a", deferred()], ["b", deferred()]]);

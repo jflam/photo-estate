@@ -519,6 +519,33 @@ subscription, as the server keeps one mode per member and lens.*
 
 ### Phase 4: the inbox
 
+*Built 2026-11-22, the web and server half (branch `multiplayer`); [chapter 11](../book/11-server.md#the-inbox)
+describes it, [chapter 26](../book/26-albums-and-agents.md#the-inbox) the page, appendix B its endpoints. One
+table (`inbox_items` in the `members` area, so everything that writes the journal has it) and one small
+module of functions: `put` (one open item per member, kind and ref, brought up to date rather than repeated)
+and `close` (every open item of a kind and ref, or one member's), called in the transaction of what made or
+decided the item. The kinds and their triggers: `member_request` from `members.request`, for every active
+sysadmin, closed by `members.change` moving the member out of pending (let in or turned away);
+`lens_proposed` from `lenses.propose`, for every other active sysadmin, closed by `decide` or by the owner
+unpublishing; `review` from `Tasks.move` when a task ends (and a run the app restarted under), for whom it
+acted, one per hiding set its agent made that has photos and hides none yet, closed when the set is applied
+in full, taken down to an album or discarded: the end of the task and not the set's creation, because an
+agent fills a set over many calls; `lens_changed` from changes.py, for the live subscribers of a published
+filter whose hides changed (apply, revert, a hidden photo taken out) or a published series whose photos or
+search did, never its owner or whoever changed it, one item per member and lens updated in place, closed
+by unsubscribing or keeping a copy instead. Estate defaults tell nobody: they have no subscription rows,
+and the sysadmin's everyday hiding would reach every member. Only dismissing is journaled
+(`inbox.dismissed`): the entry of what made or decided an item already says that. Endpoints: `GET /inbox`,
+`GET /api/inbox`, `POST /api/inbox/<id>/dismiss`, nothing else. The page is `inbox.html` with
+`app/inbox-flow.js`; the count is on the Library's ⋯ button and its new Inbox row (no tab: the tab bar is
+the iPhone app's two places and Search). A lens that changed asks for no decision, so opening it from the
+inbox dismisses it. The request-access page says the sysadmin has been told. With it, two cleanups from
+phase 3: the viewer's why line says the day in the viewer's time zone (`why.text` stays UTC), and a hiding
+set's photos in Albums say "Hidden from you" or "Hidden from everyone". And a test-only fault: a demo
+app's tasks worker outlived its scratch catalog at exit (the "disk I/O error" after the summary), so
+`Tasks.stop()` now ends it first. Not built: the iPhone app's Inbox tab (phase 6), any kind of a later
+phase, a list of done or dismissed items, push notifications.*
+
 - `member_inbox.py` (unit-tested) and `inbox_items`. Items are made by the code that needs the
   decision: `held` (photos held at ingestion, grouped per batch), `review` (a change set to look over),
   `lens_proposed` (for the sysadmin), `lens_changed` (for subscribers), `binding` (phase 8),

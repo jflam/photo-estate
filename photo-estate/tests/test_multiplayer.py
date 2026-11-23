@@ -370,6 +370,75 @@ def test_a_task_acts_for_the_member_who_submitted_it(app):
     assert x in [p["id"] for p in tool(app, {}, "search_photos", {"limit": 200}, local=True)["photos"]]
 
 
+# -- the inbox (multiplayer phase 4: member_inbox.py) ---------------------------------------------------
+
+def inbox(app, who) -> list[tuple]:
+    got = call(app, "GET", "/api/inbox", who)
+    assert got["open"] == len(got["items"])
+    return [(x["kind"], x["ref"], x["opens"]) for x in got["items"]]
+
+
+def test_the_inbox_a_request_to_be_let_in_until_ada_lets_them_in(app):
+    dana = {"X-Demo-Member": "dana@example.com"}
+    call(app, "GET", "/api/inbox", dana, expect=403)                      # not a member: no inbox
+    assert call(app, "POST", "/api/request-access", dana, {"name": "Dana"}) == {"status": "pending"}
+    page = call(app, "GET", "/request-access", dana)
+    assert b"Ada has been told: it is in their inbox." in page.body
+    con = sqlite3.connect(app.a.db)
+    did = con.execute("SELECT member_id FROM member_logins WHERE login='dana@example.com'").fetchone()[0]
+    assert inbox(app, ADA) == [("member_request", f"member:{did}", "/members")]
+    assert inbox(app, BEN) == [] and inbox(app, CLEO) == []
+    iid = call(app, "GET", "/api/inbox", ADA)["items"][0]["id"]
+    call(app, "POST", f"/api/inbox/{iid}/dismiss", BEN, expect=404)       # only ever one's own
+    call(app, "POST", f"/api/members/{did}", ADA, {"status": "active"})
+    assert inbox(app, ADA) == [], "letting Dana in on /members closes it"
+    call(app, "POST", f"/api/inbox/{iid}/dismiss", ADA, expect=409)
+    assert not con.execute("SELECT 1 FROM journal WHERE kind LIKE 'inbox.%'").fetchone()
+    assert call(app, "GET", "/inbox", ADA).body.startswith(b"<!doctype html>")
+
+
+def test_the_inbox_a_proposal_for_the_sysadmin_and_a_lens_that_changed_for_its_subscribers(app):
+    x, y, z = app.live.cat.shas[30:33]
+    hide(app, BEN, [x])
+    lid = call(app, "GET", "/api/lenses", BEN)["mine"]
+    call(app, "POST", f"/api/lenses/{lid}/publish", BEN, {"on": True})
+    call(app, "POST", f"/api/lenses/{lid}/subscribe", CLEO, {"mode": "live"})
+    hide(app, BEN, [y])
+    hide(app, BEN, [z])
+    assert inbox(app, CLEO) == [("lens_changed", f"lens:{lid}", "/?albums")], "once, however often it changes"
+    assert call(app, "GET", "/api/inbox", CLEO)["items"][0]["title"] == "Ben’s lens “Hidden photos” changed: it hides 3 photos now"
+    assert inbox(app, BEN) == [] and inbox(app, ADA) == []
+    call(app, "POST", f"/api/lenses/{lid}/propose", BEN)
+    assert inbox(app, ADA) == [("lens_proposed", f"lens:{lid}", "/?albums")]
+    call(app, "POST", f"/api/lenses/{lid}/decide", ADA, {"accept": True})
+    assert inbox(app, ADA) == []
+    iid = call(app, "GET", "/api/inbox", CLEO)["items"][0]["id"]
+    assert call(app, "POST", f"/api/inbox/{iid}/dismiss", CLEO) == {"id": iid, "state": "dismissed", "open": 0}
+    con = sqlite3.connect(app.a.db)
+    assert con.execute("SELECT actor, subject FROM journal WHERE kind='inbox.dismissed'").fetchall() == \
+        [(mid(app, CLEO), f"inbox:{iid}")]
+
+
+def test_the_inbox_a_change_set_a_task_made_for_ben_is_bens_to_review(app):
+    con = sqlite3.connect(app.a.db)
+    tid = con.execute("INSERT INTO agent_tasks(prompt, status, created_by, created_at, acting_for) VALUES"
+                      " ('hide the blurry ones', 'running', 'ben', '2026-01-01', ?)", (mid(app, BEN),)).lastrowid
+    con.commit()
+    task = {"X-Estate-Task": str(tid)}
+    made = tool(app, {}, "create_change_set", {"title": "Blurry"}, headers=task, local=True)
+    tool(app, {}, "amend_change_set", {"change_set": made["change_set"], "add_ids": list(app.live.cat.shas[40:43])},
+         headers=task, local=True)
+    assert inbox(app, BEN) == [], "nothing until the task has ended"
+    assert app.tasks.move(tid, "done", "running")
+    sid = made["change_set"]
+    assert inbox(app, BEN) == [("review", f"album:{sid}", f"/changes/{sid}")]
+    assert inbox(app, ADA) == [] and inbox(app, CLEO) == []
+    call(app, "POST", f"/api/changes/{sid}/decide", BEN, {"shas": [app.live.cat.shas[40]], "decision": "reject"})
+    call(app, "POST", f"/api/changes/{sid}/apply", BEN, {})
+    settle(app)
+    assert inbox(app, BEN) == [], "applied in full on its review page: looked over"
+
+
 # -- a catalog from before lenses, and the migration ----------------------------------------------------
 
 def test_before_and_after_migrate(tmp_path):

@@ -74,6 +74,8 @@ trip.
 
 **Inbox.** The folder (`iphone/` next to the catalog) where phone uploads land, in the same shape as the iCloud mirror; `ingest-iphone.sh` catalogues it ([24](24-uploading.md)).
 
+**Inbox (a member's).** What waits for a member to decide (member_inbox.py, the table `inbox_items`, the page `/inbox`): someone asking to be let in, a change set an agent made for them, a filter proposed as an estate default, a lens they follow that changed. Each item is made by the code that needs the decision, opens the page that decides it, and is closed by that decision; a member can also dismiss one. Not the upload folder above, which only shares the word ([11](11-server.md#the-inbox)).
+
 **Journal.** The estate's append-only log of what happened (journal.py), one row of `journal` per action with who did it (`actor`), its `kind` (`album.applied`, `favorite.set`, `faces.labeled`, `task.finished`, `ingest.finished`, `photo.purged`, `member.changed`, ...) and what it is about (`subject`, such as `album:12` or a sha); one entry per action, never one per photo. Appended in the same transaction as the change; triggers refuse changing or deleting it; nothing reads it yet. Not the face journal below, nor the `events` tables ([11](11-server.md#the-journal)).
 
 **Journal (face).** `face-labels.jsonl`: an append-only record of your face decisions, keyed by photo

@@ -231,7 +231,9 @@ def test_ada_publishes_an_album_and_ben_opens_and_subscribes(app, be):
     q.locator("#albGrid .t").first.wait_for()
     assert q.locator("#albHead p.num").inner_text().split("·")[:2] == ["2 photos ", " Ada’s series"], "not the photo Ben hid"
     assert q.locator("#albGrid .t").count() == 2
-    q.go_back()
+    # back to the list, which is asked for again: its old rows show meanwhile, and take no offer until the lenses come
+    with q.expect_response(lambda r: "/api/lenses" in r.url and r.request.method == "GET"):
+        q.go_back()
     q.locator("#albList .bt h2", has_text="Filters").wait_for()
     offer(q, lens, "Subscribe")
     q.locator(f'#albList .cards .card[data-album="{aid}"]').wait_for()

@@ -29,7 +29,9 @@ seconds (core.procs.stop), as the timeout does.
 
 The journal (journal.py) gets task.submitted (the actor is who asked) and task.finished when a task reaches
 done, failed or cancelled, in the transaction of that move: the actor is who cancelled it, or NULL for a
-run's own end (the agent is not a member yet), acting for whoever asked.
+run's own end (the agent is not a member yet), acting for whoever asked. In that transaction too, each
+hiding set the task's agent made (with photos, hiding none yet) becomes a `review` item in the inbox of
+whoever asked (member_inbox.py), opening its review page; reviewing it there closes the item.
 
 The agent acts for whoever asked (acting_for): /mcp looks the task up from X-Estate-Task and answers every
 tool as that member sees the library (catalog.Live.visible_for), and what it makes is theirs (estate_mcp.py).
@@ -50,6 +52,7 @@ from pathlib import Path
 from typing import Any
 
 import journal
+import member_inbox
 from core import schema
 from core.procs import stop
 from core.states import TASK_ACTIVE, TASK_MOVES, TaskStatus, check_move
@@ -110,8 +113,18 @@ class Tasks:
             for tid, af in con.execute("SELECT id, acting_for FROM agent_tasks WHERE status='running'").fetchall():
                 con.execute("UPDATE agent_tasks SET status='failed', error=?, finished_at=? WHERE id=?", (why, now(), tid))
                 journal.append(con, None, "task.finished", f"task:{tid}", {"status": TaskStatus.FAILED, "error": why}, af)
+                self.to_review(con, tid, af)
             con.commit()
-        threading.Thread(target=self.worker, daemon=True).start()
+        self.stopping = threading.Event()
+        self.thread = threading.Thread(target=self.worker, daemon=True, name="tasks worker")
+        self.thread.start()
+
+    def stop(self, wait: float = 5.0) -> None:
+        """Let the worker end, waiting at most `wait` seconds (a task it is running finishes first): before the
+        catalog it reads goes away, as the demo's scratch copy does at exit."""
+        self.stopping.set()
+        self.wake.set()
+        self.thread.join(wait)
 
     def con(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.db, timeout=60)
@@ -200,7 +213,23 @@ class Tasks:
                 af = con.execute("SELECT acting_for FROM agent_tasks WHERE id=?", (tid,)).fetchone()[0]
                 journal.append(con, actor, "task.finished", f"task:{tid}",
                                {"status": to, **({"error": fields["error"]} if fields.get("error") else {})}, af)
+                self.to_review(con, tid, af)
             return cur.rowcount == 1
+
+    @staticmethod
+    def to_review(con, tid: int, acting_for: int | None) -> None:
+        """A task has ended: each hiding set its agent made that has photos and hides none yet is waiting for
+        the member it acted for to look it over (member_inbox.py: a `review` item, opening /changes/<id>), in
+        the transaction of the task's last move. A task from before members acted for the first sysadmin."""
+        who = acting_for if acting_for is not None else (member_inbox.sysadmins(con) or [None])[0]
+        for sid, title, n in con.execute(
+                "SELECT s.id, s.title, (SELECT count(*) FROM change_items WHERE set_id=s.id) FROM change_sets s"
+                " WHERE s.created_by=? AND s.op='hide' AND s.status IS NOT 'discarded'"
+                " AND NOT EXISTS (SELECT 1 FROM change_items WHERE set_id=s.id AND applied=1) ORDER BY s.id",
+                (f"task:{tid}",)).fetchall():
+            if n:
+                member_inbox.put(con, [who], "review", f"album:{sid}",
+                                 f"“{title}”: {n} photo{'' if n == 1 else 's'} the agent proposes to hide, for you to look over")
 
     def submit(self, prompt, who: str = "", acting_for: int | None = None) -> tuple[dict, int]:
         """A task for the agent; `acting_for` is the member (members.id) who asked for it."""
@@ -239,7 +268,7 @@ class Tasks:
     # -- running ---------------------------------------------------------------------------------
 
     def worker(self) -> None:
-        while True:
+        while not self.stopping.is_set():
             with closing(self.con()) as con:
                 row = con.execute("SELECT id, prompt FROM agent_tasks WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
             if not row:

@@ -20,6 +20,12 @@
   ],
   [
    "index",
+   "inbox_member",
+   "inbox_items",
+   "CREATE INDEX inbox_member ON inbox_items(member_id, state)"
+  ],
+  [
+   "index",
    "occ_sha",
    "occurrences",
    "CREATE INDEX occ_sha ON occurrences(sha256)"
@@ -275,6 +281,12 @@
    "hidden",
    "hidden",
    "CREATE TABLE hidden(   -- a photo is hidden while any row names it\n  sha256 TEXT, set_id INT, hidden_at TEXT, PRIMARY KEY(sha256, set_id))"
+  ],
+  [
+   "table",
+   "inbox_items",
+   "inbox_items",
+   "CREATE TABLE inbox_items(  -- what a member has to decide (member_inbox.py; not the upload folder)\n  id INTEGER PRIMARY KEY, member_id INT,\n  kind TEXT,                             -- member_request | review | lens_proposed | lens_changed\n  ref TEXT,                              -- what it is about, as the journal names it: member:<id>, album:<id>, lens:<id>\n  title TEXT, created_at TEXT, updated_at TEXT,\n  state TEXT DEFAULT 'open',             -- open | done | dismissed\n  done_at TEXT)"
   ],
   [
    "table",

@@ -76,6 +76,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
   lenses.py            360  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
                             out of an estate default), "show it anyway", each member's favourites, why a photo is
                             hidden; State, the looks every member view is worked out from (chapter 11)
+  member_inbox.py      110  each member's inbox (inbox_items; not the upload folder): put and close, called by the
+                            code that makes and decides each kind, what an item opens, the member's list,
+                            dismissing; a lens that changed tells its live subscribers once (chapter 11)
   catalog.py           840  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
                             clips, the same for every member), View (what one member sees: mask, stacks, trip
                             cards, counts, favourites), Live and visible_for, the one way to ask (chapter 11)
@@ -126,6 +129,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   setup.html           429  bringing photos in, at /setup
   stats.html           282  library info, at /stats
   members.html         128  the sysadmin's members: let in, turn off, role, upload policy, person, at /members
+  inbox.html           102  a member's inbox: what waits for them, each opening the page that decides it, at /inbox
   review.html          255  the near-duplicate review page
   compare.html         226  a run of the model comparison: two unlabelled columns a search, a vote, and the report, at /compare
   app/estate.css        97  the stylesheet every page shares
@@ -169,6 +173,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
     lens-flow.js       165    lenses on the pages: search.html's Albums tab (the lenses, one change at a time;
                               what each row says and offers), the viewer's "why" line (asked once a photo
                               stays, "show it anyway"), and the words for a lens that changes.html shares
+    inbox-flow.js       60    inbox.html's strict machine (loading, ready, dismissing one item at a time, failed),
+                              what each kind's button says, and the count the Library's menu shows
     video-flow.js       63    what plays in search.html's viewer: still, video, failed, live; every step out of
                               video or live lets the element's stream go (chapter 13)
     tests/           2,800    their unit tests (video-flow.test.js, lens-flow.test.js among them), run by Node's own runner: `npm test` (chapter 17)
@@ -185,6 +191,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_members.py checks members.py and its journal entries on a scratch catalog;
                             test_journal.py checks journal.py and the one entry each write appends;
                             test_lenses.py checks lenses.py's rules and writes on a scratch catalog;
+                            test_member_inbox.py checks member_inbox.py and each kind's making and closing there;
                             test_multiplayer.py checks, as the demo's three members, what each sees everywhere, and
                             that no route asks it any way but Live.visible_for (it reads the code);
                             test_append_only.py checks the protected tables, the sources only adding, the
@@ -205,7 +212,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_pages_browser.py (734 lines, slow tier) drives the secondary pages in a real
                             browser with Playwright and makes their requests fail or never end (issue #80);
                             test_video_browser.py (slow tier) plays videos and Live Photos in search.html, in Chrome;
-                            test_lenses_browser.py (slow tier) uses the lenses on the pages as Ada, Ben and Cleo
+                            test_lenses_browser.py (slow tier) uses the lenses on the pages as Ada, Ben and Cleo;
+                            test_inbox_browser.py (slow tier) uses the inbox as them, and a stranger asking in
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it, and the tables and columns
                             added since), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
@@ -307,7 +315,7 @@ everything on each run, in seconds.
 
 ### The web pages
 
-Each page (`search.html`, `people.html`, `changes.html`, `setup.html`, `stats.html`, `review.html`, `compare.html`, `members.html`) is one HTML file with its CSS and its own JavaScript inline: no build step, no
+Each page (`search.html`, `people.html`, `changes.html`, `setup.html`, `stats.html`, `review.html`, `compare.html`, `members.html`, `inbox.html`) is one HTML file with its CSS and its own JavaScript inline: no build step, no
 framework, no dependencies, no bundler. The server reads the file from disk on every request for `/`
 (with an ETag), so editing a page and reloading shows the change at once.
 
@@ -332,7 +340,7 @@ import { toast } from "/app/toast.js";
 | [app/grid-flow.js](../../photo-estate/app/grid-flow.js), [app/library-flow.js](../../photo-estate/app/library-flow.js), [app/albums-flow.js](../../photo-estate/app/albums-flow.js), [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js), [app/video-flow.js](../../photo-estate/app/video-flow.js), [app/favourite.js](../../photo-estate/app/favourite.js), [app/lens-flow.js](../../photo-estate/app/lens-flow.js) | `search.html`'s state over time: its machines, their tables, what each state owns, and the requests they make and cancel ([chapter 13](13-photo-app.md#the-machines), [issue #81](https://github.com/jflam/photo-estate/issues/81)). The page gives them its `fetch`es and is told what to draw |
 | [app/loop.js](../../photo-estate/app/loop.js) | `loop(step)`: asking the server again and again for as long as a page is open. One step at a time (a timer and a click can never both start one), the step says how long to wait, a failing step does not end it, `pause()`/`resume()` for a hidden page, `stop()` aborts the step under way. `until(step, options)`: `poll()` that resolves to `{ state: "done" \| "timeout" \| "error" }` for a page that shows how the wait ended |
 | [app/work.js](../../photo-estate/app/work.js) | `single()`: work that must not overlap itself, not busy any more when it fails; `batch(items, step)`: several requests in a row, and which were done when one failed; `serial({ settle })`: requests one at a time in the order asked, and one call to put the page right after a failure |
-| [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js), [app/members-flow.js](../../photo-estate/app/members-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |
+| [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js), [app/members-flow.js](../../photo-estate/app/members-flow.js), [app/inbox-flow.js](../../photo-estate/app/inbox-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |
 
 The browser fetches each module as it is, from `/app/<name>.js`: [pages.py](../../photo-estate/pages.py)'s
 `module()` says which files those are (the modules, not their tests or `package.json`), and every server
@@ -361,6 +369,7 @@ that behaviour in the modules above, where each rule is a unit test, and ask the
 | `changes.html` | Marks, apply, revert, commit and reopen go one at a time in the order made (`edits`, over `serial()`). If one fails, the set is read again from the server once nothing more is on its way and the page shows that; if it can not be read either, the page says it may be wrong, with **Read it again**. After apply or revert, `settle` asks the set's check until the app has taken the change in | `settle`: every 700 ms for at most 2 minutes, then "Still updating" with **Check again**; cancelled by a newer change, by leaving, and while the page is hidden |
 | `stats.html` | `statsWatch`: one `loop()` asks for the uploads and the figures in turn, so two requests are never in flight. A failed `/api/stats` is "Couldn't take stock" or "Can't reach the library" with **Try again**; a catalogue run or a restart that can not be started says why in the uploads panel | figures every 1.5 s while the server is measuring; uploads every 2 s during a run, else every 15 s; after a restart `/api/info` every 4 s for at most 5 minutes; paused while the page is hidden |
 | `members.html` | One strict machine from `members-flow.js`: `idle`, `loading`, `ready` (owning the server's answer), `saving` (that, and the member being changed: the page takes no other change until the server answers), `failed`. A change the server refuses (the last sysadmin turned off) goes back to `ready` with the members as they were, and the toast says why | none: it asks once, and again only when told to |
+| `inbox.html` | One strict machine from `inbox-flow.js`: `idle`, `loading`, `ready` (owning the server's answer), `dismissing` (that, and the item being put away: one at a time), `failed`. A dismissal the server refuses goes back to `ready` with the items as they were, and the toast says why. Opening a lens that changed puts it away first, then goes there | none: it asks once, and again only when told to |
 | `setup.html` | Two strict machines from `setup-flow.js`, each state owning its data. The page: `loading`, `place`, `idle`, `watching`, `answering` (the states in which `/api/intake` is asked), `opening` (waiting for the photo app), `stuck`, `app`. The source panel: `closed`, `open`, `checking`, `checked`, `starting`, with `{ id, config, preview }` handed from state to state, so a preview never outlives the text it was made for and an answer for a panel that has moved on is dropped | asked every 1.2 s while a job is live, else every 8 s; `opening` asks `/api/info` every 1.5 s for at most 10 minutes, then "Still not open" with **Try again** |
 
 `compare.html` is a run of the model comparison, held by one strict machine from

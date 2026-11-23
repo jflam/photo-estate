@@ -22,8 +22,10 @@ Areas, and who opens them (each owner calls ensure when it opens the database, n
     scores       scores.save: scorers ("Best first")
     favorites    photo_app.PhotoApp, when it opens the catalog: favourites set in the app
     members      members, member_logins and the journal (journal.py), with the triggers that keep them
-                 append-only: photo_app.PhotoApp when it opens the catalog, and everything that appends to the
-                 journal (estate.connect, faces.connect, changes.Changes, tasks.Tasks)
+                 append-only, and inbox_items (member_inbox.py: each member's inbox, which the code that makes
+                 or decides an item writes in its own transaction): photo_app.PhotoApp when it opens the
+                 catalog, and everything that appends to the journal (estate.connect, faces.connect,
+                 changes.Changes, tasks.Tasks)
     lenses       lenses.py: lenses, subscriptions, shown ("show it anyway") and member_favorites (each member's
                  favourites): changes.Changes and photo_app.PhotoApp when they open the catalog, and
                  `estate.py migrate`
@@ -278,6 +280,14 @@ CREATE TRIGGER IF NOT EXISTS member_logins_keep_key BEFORE UPDATE OF login, memb
 CREATE TRIGGER IF NOT EXISTS member_logins_no_replace BEFORE INSERT ON member_logins
   WHEN EXISTS (SELECT 1 FROM member_logins WHERE login = NEW.login)
   BEGIN SELECT RAISE(ABORT, 'a login is never replaced: it stays its member''s'); END;
+CREATE TABLE IF NOT EXISTS inbox_items(  -- what a member has to decide (member_inbox.py; not the upload folder)
+  id INTEGER PRIMARY KEY, member_id INT,
+  kind TEXT,                             -- member_request | review | lens_proposed | lens_changed
+  ref TEXT,                              -- what it is about, as the journal names it: member:<id>, album:<id>, lens:<id>
+  title TEXT, created_at TEXT, updated_at TEXT,
+  state TEXT DEFAULT 'open',             -- open | done | dismissed
+  done_at TEXT);
+CREATE INDEX IF NOT EXISTS inbox_member ON inbox_items(member_id, state);
 """
 SYNC = """
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);

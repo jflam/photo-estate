@@ -34,6 +34,11 @@ members (members.py):
   POST /api/members/<id> {name?, role?, status?, upload_policy?, person_id?}   (sysadmin) approve, revoke...
   GET  /members?be=<login>            --demo only: be that demo member in this browser (a cookie)
 
+the member's inbox (member_inbox.py): what waits for them to decide, each item opening the screen that decides it
+
+  GET  /inbox, /api/inbox             the page; the member's open items, newest first, and how many
+  POST /api/inbox/<id>/dismiss        put one of their own away (404 for anyone else's)
+
 and what each member sees through (lenses.py), outside the gate like a favourite, so a change is in every
 view before the answer:
 
@@ -90,6 +95,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 import catalog
 import journal
 import lenses
+import member_inbox
 import members
 import pages   # the pages, with the shared stylesheet put in
 from admin import Admin, backups
@@ -264,6 +270,9 @@ class PhotoApp:
         # endpoint below like any other client, and ends in a change set.
         self.tasks = Tasks(a.db, config.mcp_url(self.port), command=a.agent_cmd, env_file=a.agent_env,
                            model=a.agent_model, log=lambda msg: print(msg, flush=True))
+        if a.demo:   # its worker stops before the scratch catalog it reads is removed at exit (atexit: last in, first out)
+            import atexit
+            atexit.register(self.tasks.stop)
         self.mcp = MCPServer(AppFacade(find=browse.find, row=browse.row, faces=browse.faces,
                                        overview=browse.overview, changes=self.changes, tasks=self.tasks))
         if ingest:
@@ -613,6 +622,8 @@ class PhotoApp:
             return self.favorite(body, who, m.id if m else None)
         if (lw := LENS_WRITE.fullmatch(path)) is not None:
             return self.lens_write(lw, body, m)
+        if (ii := re.fullmatch(r"/api/inbox/(\d+)/dismiss", path)) is not None:
+            return self.inbox_route(m, int(ii[1]))
         if self.compare and path.startswith("/api/compare"):
             got = self.compare.handle("POST", path, qs, body, who)   # a vote, or a run started or finished
             return Response.of(got) if got else NOT_FOUND
@@ -636,6 +647,10 @@ class PhotoApp:
             return _etagged(pages.page("members.html"), "text/html; charset=utf-8")
         if path == "/api/members":
             return self.members_listing(m)
+        if path in ("/inbox", "/inbox.html"):
+            return _etagged(pages.page("inbox.html"), "text/html; charset=utf-8")
+        if path == "/api/inbox":
+            return self.inbox_route(m)
         if re.fullmatch(r"/api/albums/(\d+)/download", path):
             return Response(501, b"the album download is streamed: ask the HTTP server", "text/plain")
         if path.startswith("/video/"):    # so a test, or a caller with no socket, can still ask whether it is there
@@ -807,6 +822,21 @@ class PhotoApp:
             self.on_hidden_change(self.relook())
         return json_response(got)
 
+    # -- the inbox (member_inbox.py) -----------------------------------------------------------------
+
+    def inbox_route(self, m: Member | None, dismiss: int | None = None) -> Response:
+        """GET /api/inbox: the member's open items; POST /api/inbox/<id>/dismiss: one of theirs put away. A
+        member only ever sees and changes their own (this computer, with no members yet: the items of none)."""
+        con = connect(self.a.db)
+        try:
+            if dismiss is None:
+                return json_response(member_inbox.mine(con, m.id if m else None))
+            return json_response(member_inbox.dismiss(con, m.id if m else None, dismiss))
+        except member_inbox.InboxError as e:
+            return json_response({"error": str(e)}, e.status)
+        finally:
+            con.close()
+
     # -- members (members.py) ---------------------------------------------------------------------
 
     def door(self, req: Request, m: Member | None, status: int = 200) -> Response:
@@ -823,7 +853,8 @@ class PhotoApp:
             title, why = "You are in", f"You are {html.escape(m.name)}, a member of this library."
             more = '<a class="btn pri" href="/">Open the library</a>'
         elif m is not None and m.status == "pending":
-            title, why = f"{ask} will let you in", f"You have asked, as {you}. Once {ask} has said yes, the library opens here."
+            told = f" {ask} has been told: it is in their inbox." if self.sysadmin else ""
+            title, why = f"{ask} will let you in", f"You have asked, as {you}.{told} Once {ask} has said yes, the library opens here."
             more = '<a class="btn" href="/">Try again</a>'
         elif m is not None:
             title, why = "You are not let in", f"{ask} has turned off {you}&rsquo;s way in to this library."

@@ -173,7 +173,9 @@ which needs a browser or builds anything:
   (`loop.test.js`); the setup machines take every step in their tables and refuse every other
   (`setup-flow.test.js`); and the `/members` page takes one change at a time, puts the server's answer
   in place of the one member it changed, goes back to the members as they were when a change is refused,
-  and offers each member what its status allows (`members-flow.test.js`). The photo app's machines
+  and offers each member what its status allows (`members-flow.test.js`); the `/inbox` page puts one item
+  away at a time, goes back to the items as they were when that is refused, and says what each kind's
+  button does (`inbox-flow.test.js`). The photo app's machines
   ([issue #81](https://github.com/jflam/photo-estate/issues/81), [chapter 13](13-photo-app.md#the-machines))
   are tested the same way. `machines.test.js` tries every pair of states of every table: the steps in
   the table are taken, every other pair throws a `TransitionError` and leaves the machine and its data
@@ -246,6 +248,16 @@ subscribes again and unsubscribes; Ada publishes an album and Ben opens the seri
 hid) and subscribes; Ada hides a photo from everyone with the review page's choice; Ben proposes his
 filter, Ada makes it an estate default, Cleo opts out; and the Library's menu names the member and offers
 Members to a sysadmin only.
+
+**The inbox in a browser.** [`tests/test_inbox_browser.py`](../../photo-estate/tests/test_inbox_browser.py)
+(slow tier) does the same for the inbox, with a stand-in for Claude Code (`--agent-cmd`, as
+`test_tasks.py` has): a stranger asks to be let in and is told Ada has been told; Ada's Library menu shows a
+count, her inbox the request, which opens `/members`, and letting them in closes it; Cleo subscribes to
+Ben's published filter, Ben hides more twice and Cleo's inbox says so once, opening it puts it away, and the
+next one she dismisses; Ben proposes his filter and Ada decides it from her inbox; a task Ben submits ends
+with a change set that is in Ben's inbox only and closes when he applies it; and a hiding set's photos in
+Albums say whom they are hidden from. The server's half, kind by kind, is `tests/test_member_inbox.py` on a
+scratch catalog and the inbox tests of `tests/test_multiplayer.py` in process.
 
 **Videos in a browser.** [`tests/test_video_browser.py`](../../photo-estate/tests/test_video_browser.py)
 (slow tier) plays them on `search.html`, on `tools/video_demo.py`'s library: the scope control's Videos shows only

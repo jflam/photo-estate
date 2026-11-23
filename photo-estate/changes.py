@@ -64,7 +64,10 @@ Nothing is deleted from an album's history. Discarding marks the set `discarded`
 its rows stay, and it is in no listing and answers no request, as if it were gone. Every write that changes
 something appends one journal entry (journal.py: album.created, album.items, album.applied, ...) in its
 own transaction, naming the set (album:<id>) and the member it was done for (`actor`, members.id), never
-one per photo; a write that changes nothing appends nothing.
+one per photo; a write that changes nothing appends nothing. The inbox (member_inbox.py) in the same
+transaction: applying a set in full, taking it down to an album or discarding it closes its `review` items,
+and a change to what a published filter hides, or to a published series' photos or search, tells the
+lens's live subscribers (`lens_changed`).
 
 Like faces.People and intake's API it is one object with a `handle` method, mounted by `embed.py serve`.
 The tables live in the catalog. `hidden` is keyed by photo and set, so a photo two sets hide stays
@@ -91,6 +94,7 @@ from typing import Any
 
 import journal
 import lenses
+import member_inbox
 import pages
 from core import schema
 from core.states import AlbumKind, ChangeOp, ChangeStatus, Decision, SetState
@@ -531,11 +535,13 @@ class Changes:
                     if con.execute("SELECT 1 FROM hidden WHERE set_id=? LIMIT 1", (sid,)).fetchone():
                         return {"error": "this set is hiding photos; undo it first"}, 409
                     con.execute("UPDATE change_sets SET status=?, updated_at=? WHERE id=?", (ChangeStatus.DISCARDED, t, sid))
+                    member_inbox.close(con, "review", f"album:{sid}")     # put away: nothing is left to look over
                     journal.append(con, actor, "album.discarded", f"album:{sid}", {"title": was["title"]}, acting_for)
                     con.commit()
                     return {"discarded": sid}, 200
                 else:
                     return {"error": "not found"}, 404
+                self.tell(con, sid, what, was, extra, changed, entry is not None, viewer, actor)
                 if entry is not None:
                     journal.append(con, actor, KINDS[what], f"album:{sid}", entry or None, acting_for)
                 con.execute("UPDATE change_sets SET updated_at=? WHERE id=?", (t, sid))
@@ -546,6 +552,21 @@ class Changes:
         if changed:
             self.on_change()
         return {**out, "busy": bool(self.busy())}, 200
+
+    def tell(self, con, sid: int, what: str, was: dict, extra: dict, changed: bool, wrote: bool, viewer, actor) -> None:
+        """The inbox (member_inbox.py), in the write's transaction: a hiding set applied in full, or taken down
+        to an album, has been looked over (its `review` items are done); a published filter whose hides changed,
+        or a published series whose photos or search did, tells its live subscribers (`lens_changed`)."""
+        if was["op"] == ChangeOp.HIDE and what in ("apply", "view"):
+            now_ = self.summary(con, sid, viewer)
+            if what == "view" or now_ is not None and now_["state"] != SetState.REVIEW:
+                member_inbox.close(con, "review", f"album:{sid}")
+        if was["op"] == ChangeOp.HIDE and changed:            # apply, revert, or a hidden photo taken out of the set
+            lens = extra.get("lens") if what == "apply" else was["lens"]
+            if lens is not None:
+                member_inbox.lens_changed(con, actor if actor is not None else viewer, lens=lens)
+        elif was["op"] == ChangeOp.VIEW and what in ("items", "query") and wrote:
+            member_inbox.lens_changed(con, actor if actor is not None else viewer, album=sid)
 
     def lens_for(self, con, was: dict, want, viewer: int | None) -> tuple[int | None, bool, tuple | None]:
         """(the lens an apply hides for, whether it was made just now, None) or (None, False, an error answer). A set that hides photos keeps its lens

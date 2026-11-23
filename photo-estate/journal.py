@@ -55,6 +55,9 @@ Kinds, with their subject and where each is appended:
   photo.purged                     <sha>        estate.py purge {reason, ext, kind, size, taken_at, first_seen,
                                                 sources: [[source, path]]}
   sharers.migrated                 sharers      estate.py migrate {member, photos}
+  inbox.dismissed                  inbox:<id>   member_inbox.dismiss {kind, ref}: an item put away by its member (an
+                                                item made or done is not journaled: the entry of what made or decided
+                                                it says so)
 """
 from __future__ import annotations
 

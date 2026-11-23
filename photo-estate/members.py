@@ -9,9 +9,11 @@ appends its journal entry in the same transaction, and commits.
   everyone(con) -> [dict]                   every member with its logins, waiting first (/members)
   persons(con) -> [{id, name}]              the people in photos (faces.py) a member can be linked to
   add(con, name, login=, role=, status=, upload_policy=, actor=) -> Member
-  request(con, login, name) -> Member       a login nobody has let in asks to be: a pending member
+  request(con, login, name) -> Member       a login nobody has let in asks to be: a pending member, and an
+                                            inbox item for every sysadmin (member_inbox.py: member_request)
   change(con, id, actor, **fields) -> Member   name, role, status, upload_policy, person_id; ValueError
-                                            when a value is not one of these, or it would leave no sysadmin
+                                            when a value is not one of these, or it would leave no sysadmin;
+                                            a pending member let in or turned away closes their request's items
   first_start(con, logins, sysadmin=None) -> [Member]   no members yet: these logins become active members
   demo(con) -> [Member]                     the demo's three members (in its scratch catalog)
   ROLES, STATUSES, POLICIES
@@ -30,6 +32,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 
 import journal
+import member_inbox
 
 ROLES = ("sysadmin", "member")
 STATUSES = ("pending", "active", "revoked")
@@ -165,7 +168,9 @@ def request(con: sqlite3.Connection, login: str, name: str | None = None) -> Mem
         if got := lookup(con, login):
             return got
         name = " ".join(str(name or "").split())[:80] or login.split("@")[0]
-        return _add(con, name, login, "member", "pending", "review", None, entry="member.requested")
+        m = _add(con, name, login, "member", "pending", "review", None, entry="member.requested")
+        member_inbox.put(con, member_inbox.sysadmins(con), "member_request", f"member:{m.id}", f"{name} asks to be let in ({login})")
+        return m
 
 
 FIELDS = ("name", "role", "status", "upload_policy", "person_id")
@@ -198,6 +203,8 @@ def change(con: sqlite3.Connection, mid: int, actor: int | None, **fields) -> Me
         if not con.execute("SELECT 1 FROM members WHERE role='sysadmin' AND status='active'").fetchone():
             raise ValueError("the estate must keep an active sysadmin")   # (the `with` rolls the update back)
         journal.append(con, actor, "member.changed", f"member:{mid}", diff)
+        if m.status == "pending" and new["status"] != "pending":     # let in or turned away: the request is decided
+            member_inbox.close(con, "member_request", f"member:{mid}")
     got = get(con, mid)
     assert got is not None
     return got

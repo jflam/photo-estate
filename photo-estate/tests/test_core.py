@@ -149,8 +149,9 @@ def test_fresh_databases_match_what_the_old_code_made(tmp_path):
     """schema_baseline.json is sqlite_master as the code before #85 left it, captured from that code's own
     open paths (estate/embed/faces.connect, Changes, Tasks, scores.SCHEMA, set_favorites' CREATE, Feed, Store),
     and what has been added to it since in the fixture itself: the members area (members, member_logins,
-    journal), agent_tasks.acting_for, the lenses area (lenses, subscriptions, shown, member_favorites) and
-    change_sets.owner and lens_id, as ALTER TABLE ... ADD COLUMN writes them into the table's SQL."""
+    journal), agent_tasks.acting_for, the lenses area (lenses, subscriptions, shown, member_favorites),
+    change_sets.owner and lens_id, as ALTER TABLE ... ADD COLUMN writes them into the table's SQL, and the
+    inbox (inbox_items and its index, in the members area)."""
     baseline = json.loads((FIXTURES / "schema_baseline.json").read_text())
     # Tables newer than the baseline: only ever added (the video area: live_pairs and video_frames). They
     # must be there, and everything else must be as the old code made it.

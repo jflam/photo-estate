@@ -36,6 +36,7 @@ content type, Cache-Control[, headers])` or `None` when the path is not its own.
 | [intake/api.py](../../photo-estate/intake/api.py) | `IntakeAPI` | `/setup`, `/api/intake*` |
 | [members.py](../../photo-estate/members.py) | (functions) | Who the estate knows: members, their logins, roles and upload policies, and the journal entries each change appends; `PhotoApp` answers `/request-access`, `/api/request-access`, `/api/me`, `/members` and `/api/members*` with it (below) |
 | [journal.py](../../photo-estate/journal.py) | (functions) | No routes: `append` one entry to the journal in the caller's transaction, `since` to read it ([below](#the-journal)) |
+| [member_inbox.py](../../photo-estate/member_inbox.py) | (functions) | Each member's inbox: `put` and `close`, called by the code that makes and decides each item; `PhotoApp` answers `/inbox`, `/api/inbox` and `/api/inbox/<id>/dismiss` with it ([below](#the-inbox)) |
 | [compare.py](../../photo-estate/compare.py) | `Compare` | `/compare`, `/api/compare*`, only with `--compare-vectors`: a second model's ranking beside the app's own ([chapter 10](10-embeddings.md)) |
 
 What ties the modules together is `PhotoApp` (photo_app.py, about 500 lines): setting up the demo, the
@@ -92,8 +93,8 @@ before it reaches its module (`http_util.Auth`):
 
 A refused browser opening a page is shown the **request-access page** with a 403: for a login nobody has
 let in, "Ask John to let you in" (the first active sysadmin's name), a name field and a button, which
-makes a `pending` member; after that, that John will let them in; for a revoked member, that they are
-not let in. It is a page of a few words with no script, so it needs nothing that is not open. Anything
+makes a `pending` member and puts the request in every sysadmin's inbox ([below](#the-inbox)); after that,
+that John has been told and will let them in; for a revoked member, that they are not let in. It is a page of a few words with no script, so it needs nothing that is not open. Anything
 else refused is `403 {"error": "not allowed"}`. The album download and `/video/` stream past `route()`
 in the HTTP handler, which asks `PhotoApp.refusal` first; an upload checks the same rule in admin.py.
 
@@ -142,7 +143,8 @@ acting for the member who submitted the task (`acting_for`; its change sets stil
 `task:<id>`), as is a run's own end, `task.finished`. Phase 3 added the lens kinds: `lens.created`,
 `lens.subscribed`, `lens.unsubscribed`, `lens.published`/`unpublished`, `lens.proposed`,
 `lens.accepted`/`declined`, `album.published`/`unpublished`, `photo.shown`/`unshown` and
-`lenses.migrated`; `album.applied` names the lens a set hides for.
+`lenses.migrated`; `album.applied` names the lens a set hides for. Phase 4 added `inbox.dismissed`
+(below): an inbox item made or closed is not journaled, because the entry of what made or decided it is.
 
 ### What each member sees: lenses
 
@@ -175,7 +177,7 @@ reading the `hidden` table, or a photo's facts for a favourite, outside the modu
   (titled plainly "Hidden photos", made then), or the Estate defaults, for a sysadmin who asks (`{lens: "estate"}`).
   A set that hides something keeps its lens until it is reverted.
 - **Proposing** a filter as an estate default publishes it and marks it (`lenses.proposed_at`); a
-  sysadmin accepts (it becomes one) or declines. The inbox item that tells the sysadmin comes in phase 4.
+  sysadmin accepts (it becomes one) or declines. Every other sysadmin is told in their inbox ([below](#the-inbox)).
 - **Favourites** are each member's own (`member_favorites`; the old `favorites` table is no longer
   written). What a photo's source said (`assets.favorited`) is a favourite of its sharers only.
 
@@ -221,6 +223,40 @@ sysadmin's. So the owner sees exactly what he saw before, and so does every memb
 out of until the migration names the Estate defaults. The migration ([appendix A](appendix-a-commands.md))
 gives those sets the lens Estate defaults, those albums the sysadmin, and copies the old favourites to
 the sysadmin's own.
+
+### The inbox
+
+Every "propose" in the design ends with someone deciding, so each member has an **inbox**: what waits for
+them ([member_inbox.py](../../photo-estate/member_inbox.py), the table `inbox_items` in core/schema.py's
+`members` area; phase 4 of the plan). The word "inbox" is also the upload folder (`--inbox`), which this
+has nothing to do with: hence the module's and the table's names. An item is a member, a **kind**, a
+**ref** (what it is about, in the journal's words: `member:4`, `album:12`, `lens:3`), a title, and a state:
+`open`, `done` (decided, or no longer anyone's to decide) or `dismissed` (put away by its member).
+
+An item is made **by the code that needs the decision**, in the same transaction as what caused it, and
+closed by the decision itself wherever it is made. The inbox decides nothing: each kind opens the screen
+that already decides it.
+
+| Kind | For | Made by | Closed by | Opens |
+|---|---|---|---|---|
+| `member_request` | every active sysadmin | `members.request`: someone asked to be let in | letting them in or turning them away (`members.change`, from `/members`) | `/members` |
+| `review` | whom the task acted for | `Tasks.move`, when a task ends (done, failed or cancelled, and a run the app restarted under): each hiding set its agent made that has photos and hides none yet | applying the set in full, taking it down to an album, or discarding it (changes.py) | `/changes/<id>` |
+| `lens_proposed` | every other active sysadmin | `lenses.propose` | `lenses.decide` (accept or decline), or the owner taking the filter back (unpublishing) | the Albums tab, where "Waiting for you to decide" lists it |
+| `lens_changed` | each member subscribed to a published lens live (not its owner, nor whoever changed it) | changes.py, when a filter's hides change (an apply, a revert, a hidden photo taken out of a set) or a series' photos or search do | nothing waits on it: leaving the lens (unsubscribing, or keeping a copy instead) closes it; otherwise it is put away | the Albums tab (a filter), or the series |
+
+`lens_changed` is one open item per member and lens, brought up to date ("Ben's lens “Hidden photos”
+changed: it hides 4 photos now") and moved to the top, never one per change; the change itself applies at
+once. An estate default has no subscription rows (every member is in it unless they opt out), so it tells
+nobody: the sysadmin's everyday hiding would otherwise reach every member's inbox. The `review` trigger is
+the end of the task rather than the set being made, because an agent fills a set over many calls and a
+set looked at half-made would be reviewed again.
+
+`GET /api/inbox` is the member's open items, newest first, each with what it `opens`, and how many;
+`POST /api/inbox/<id>/dismiss` puts one away (`404` for any item that is not the member's own, `409` for one
+that is not open), journaled as `inbox.dismissed`, the one thing about an item that no other entry says.
+The page is **`/inbox`** ([chapter 26](26-albums-and-agents.md#the-inbox)); the Library's menu shows how many
+items are open. A later phase adds a kind with a row in `member_inbox.OPENS` (what its item opens) and a
+`put` and a `close` in the code that makes and decides it.
 
 ### Malformed requests
 

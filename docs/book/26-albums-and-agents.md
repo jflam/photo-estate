@@ -128,13 +128,31 @@ these are the places a member meets it. The machines and the words are
   from you*. The choice goes with the first apply (`{lens}`); after that the page names the lens, "Hidden
   from you through your lens *Hidden photos*", until the set is reverted. A set or album that is not the
   member's answers 404, and the page says so plainly: *This change set is not here*, *This album is not here*.
+  In the Albums tab, a hiding set's photos are badged *Hidden from you* or, when the set hides for the estate
+  defaults, *Hidden from everyone*, as the review page says it.
 - **The viewer's why line.** Each photo that stays on screen a quarter of a second is asked about
   (`GET /api/photos/<sha>/why`); for one the member's filters hide (in a hiding set's review, in **See
   them**, wherever else it is opened) a line under the caption says why, "Hidden by your lens *Hidden
-  photos* on Nov 23", with **Show it anyway**, and once shown, **Hide it again**. The lists behind the viewer
-  are asked for again when it closes.
-- **The Library's ⋯ menu** names the member (*You are Ada*, from `GET /api/me`) and offers **Members** to a
-  sysadmin; on the demo, **Be another member**.
+  photos* on Nov 23", with **Show it anyway**, and once shown, **Hide it again**. The page words the line
+  itself from the answer's `reasons`, and says the day in the viewer's own time zone (the server's `text`
+  says it in UTC). The lists behind the viewer are asked for again when it closes.
+- **The Library's ⋯ menu** names the member (*You are Ada*, from `GET /api/me`), offers **Inbox** with how
+  many things wait there (below), **Members** to a sysadmin, and on the demo, **Be another member**.
+
+## The inbox
+
+Whatever waits for a member's decision is in their **inbox** (phase 4 of the multiplayer plan; the items,
+what makes and closes each, and the API are [chapter 11](11-server.md#the-inbox)). The page is
+**`/inbox`** (inbox.html; its machine in [app/inbox-flow.js](../../photo-estate/app/inbox-flow.js),
+unit-tested in `app/tests/inbox-flow.test.js`): a card per open item, newest first, with what kind it is
+(*Asking to be let in*, *To look over*, *Proposed estate default*, *A lens you follow*), what it is about
+and the day, a button that opens the screen that decides it (**Open Members**, **Look it over**, **Decide
+in Albums**, **See it in Albums** or **Open the series**) and **Dismiss**. Deciding where it opens takes the
+item out of the inbox; nothing is decided on the inbox itself. A lens that changed asks for no decision,
+so opening it puts it away. The Library's ⋯ button carries a small count when anything is open, and its
+menu's **Inbox** row the same; the count is asked for when the page loads, when it is come back to, and
+after a lens is decided in Albums. No push notifications: the inbox is read when the app is opened. The
+request-access page tells someone who has asked that the sysadmin has been told, in their inbox.
 
 ## The library as tools: MCP
 

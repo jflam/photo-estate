@@ -276,8 +276,9 @@ viewer's index and the server's `cursor`.
 
 The Library is every photo, newest first. Its bar floats over the photos (with a fade of the page colour
 behind it so it stays readable): a Back button, the **Years · Months · All** switch, then a View button and
-a ⋯ menu of the rest of your library (Name people, Add photos, Changes, Library info; Members for a
-sysadmin), headed by who you are (*You are Ada*, `/api/me`).
+a ⋯ menu of the rest of your library (Inbox, Name people, Add photos, Changes, Library info; Members for a
+sysadmin), headed by who you are (*You are Ada*, `/api/me`). When something waits in your inbox
+([chapter 26](26-albums-and-agents.md#the-inbox)) the ⋯ button carries a small count, and so does its Inbox row.
 
 The heading says how many photos there are, rounded (`about()`), and what the view options hide, so it adds
 up to the whole library: *81K of 83K photos · 2.1K hidden*.
