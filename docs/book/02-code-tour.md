@@ -78,13 +78,14 @@ photo-estate/                  the server and the web app (Python run with uv; n
   lenses.py            360  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
                             out of an estate default), "show it anyway", each member's favourites, why a photo is
                             hidden; State, the looks every member view is worked out from (chapter 11)
-  private.py           495  photos private to their sharer (chapter 11): who may be shown a photo, the sharer ingest
+  private.py           609  photos private to their sharer (chapter 11): who may be shown a photo, the sharer ingest
                             records from the inbox's member folder, withdrawing and releasing (now, or on a day:
                             the app's timer), the hold at ingestion (PROMPTS and HOLD_AT, in one place, and the
-                            phone's screenshot mark) and the one-off run over the library (`private.py library
-                            --dry-run`); the phone gate's tombstones (a member's opt-outs, which refuse their uploads)
+                            phone's screenshot mark), the one-off run over the library (`private.py library
+                            --dry-run`) and looking held photos over (/held: review_list, its order and sections,
+                            and review, "Reviewed up to here"); the phone gate's tombstones (a member's opt-outs)
   hold-prompts.json         the hold's prompts as SigLIP text vectors, made once by `embed.py hold-prompts`
-  member_inbox.py      110  each member's inbox (inbox_items; not the upload folder): put and close, called by the
+  member_inbox.py      169  each member's inbox (inbox_items; not the upload folder): put, close and retitle, called by the
                             code that makes and decides each kind, what an item opens, the member's list,
                             dismissing; a lens that changed tells its live subscribers once (chapter 11)
   stories.py           486  questions and stories (chapter 11): ask (only photos the recipient may be shown), the
@@ -143,7 +144,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
 
   search.html        2,092  the photo app: Library, Albums and Search (HTML + CSS + its own script, a module)
   people.html          796  the People page
-  changes.html         449  reviewing an album or change set, at /changes
+  changes.html         601  reviewing an album or change set, at /changes; and in its held mode, looking held
+                              photos over, at /held (the same wall: mark to release, "Reviewed up to here")
   setup.html           429  bringing photos in, at /setup
   stats.html           282  library info, at /stats
   members.html         128  the sysadmin's members: let in, turn off, role, upload policy, person, at /members
@@ -197,8 +199,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
                               what each kind's button says, and the count the Library's menu shows
     agents-flow.js     173    agents.html's strict machine (loading, ready, deciding one agent at a time, failed; a
                               refresh that fails keeps the page), how each agent is said, the command and configuration
-    private-flow.js    125    private photos on search.html: the viewer's private line (withdraw, release, a release
-                              day) and the held view (`is:held`: release all, or those chosen)
+    private-flow.js    133    private photos on search.html: the viewer's private line (withdraw, release, a release
+                              day) and the held view (`is:held`: what it shows of what is held, the way to /held,
+                              and releasing those chosen)
+    held-flow.js       113    changes.html's held mode (/held): its strict machine (loading, reviewing, sending,
+                              failed), what "Reviewed up to here" covers, why a photo is held, the page's words
     story-flow.js      266    telling a story, typed or spoken (the teller: its strict machine, the browser's
                               MediaRecorder and microphone, the component's HTML, mountTeller), a story's words and
                               HTML, follow() (a transcript asked for again until it is written), and the viewer's
@@ -237,7 +242,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             a purge, the phone's screenshot mark reaching the hold;
                             test_private.py checks private photos: who may be shown one with one to three sharers,
                             every way a photo leaves the app (over real HTTP too), People, release on a day, an
-                            agent, ingest's sharers and the hold before any reload, and the one-off run;
+                            agent, ingest's sharers and the hold before any reload, the one-off run, and the
+                            review of held photos (its order, up to here, the inbox item, every caller refused alike);
                             test_multiplayer.py checks, as the demo's three members, what each sees everywhere, and
                             that no route asks it any way but Live.visible_for (it reads the code);
                             test_append_only.py checks the protected tables, the sources only adding, the
@@ -263,6 +269,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_agents_browser.py (slow tier) connects Ben's and Cleo's agents and allows and turns
                             them off from the inbox and /agents;
                             test_private_browser.py (slow tier) withdraws, releases and reviews held photos as Ben and Cleo;
+                            test_held_browser.py (slow tier) looks Ben's held photos over on /held a stretch at a time;
                             test_stories_browser.py (slow tier) answers questions typed and spoken, tells stories,
                             grows a series and asks the agent for the family, as them
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it, and the tables and columns

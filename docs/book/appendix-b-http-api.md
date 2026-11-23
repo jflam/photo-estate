@@ -22,7 +22,7 @@ each request to the module that answers it ([chapter 11](11-server.md)):
 |---|---|
 | `/`, the app files, `/api/info`, `/api/sync`, `/api/favorite`, `/api/albums/<id>/download`, `/request-access`, `/api/request-access`, `/api/me`, `/members`, `/api/members*` | `PhotoApp` in [photo_app.py](../../photo-estate/photo_app.py), with [members.py](../../photo-estate/members.py) |
 | `/api/lenses*`, `/api/albums/<id>/publish`, `/api/photos/<sha>/show`, `/api/photos/<sha>/why` | `PhotoApp`, with [lenses.py](../../photo-estate/lenses.py) |
-| `/api/private`, `/api/tombstones` | `PhotoApp`, with [private.py](../../photo-estate/private.py) |
+| `/api/private`, `/held`, `/api/held`, `/api/held/review`, `/api/tombstones` | `PhotoApp`, with [private.py](../../photo-estate/private.py) |
 | `/inbox`, `/api/inbox`, `/api/inbox/<id>/dismiss` | `PhotoApp`, with [member_inbox.py](../../photo-estate/member_inbox.py) |
 | `/api/questions*`, `/api/stories*`, `/api/photos/<sha>/stories`, `/api/albums/<id>/stories` | `PhotoApp` (`stories_route`), with [stories.py](../../photo-estate/stories.py) |
 | `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log` | `Browse` in [browse.py](../../photo-estate/browse.py) |
@@ -95,6 +95,7 @@ The setup server (`intake/server.py`) and `faces.py serve` read bodies the same 
 | `GET /` , `/index.html` | `search.html`, with an `ETag` and `Cache-Control: no-cache` |
 | `GET /manifest.webmanifest`, `/icon-180.png`, `/icon-192.png`, `/icon-512.png`, `/icon-maskable-512.png`, `/sw.js` | The files in `app/`, served from the site root |
 | `GET /app/<name>.js` (`/app/members-flow.js`, `/app/inbox-flow.js`, `/app/agents-flow.js`, `/app/dom.js`, `/app/api.js`, `/app/fsm.js`, `/app/toast.js`, `/app/format.js`, `/app/query.js`, `/app/layout.js`, `/app/grid-flow.js`, `/app/library-flow.js`, `/app/albums-flow.js`, `/app/viewer-flow.js`, `/app/favourite.js`, `/app/loop.js`, `/app/work.js`, `/app/save-queue.js`, `/app/changes-flow.js`, `/app/people-flow.js`, `/app/stats-watch.js`, `/app/setup-flow.js`) | A script module the pages import (`pages.module`), as `text/javascript; charset=utf-8`, with an `ETag` and `Cache-Control: no-cache` like the page. Only the modules in `app/`: anything else under `/app/` (their tests, `package.json`, `/app/sw.js`) is a 404. The setup server, `faces.py serve` and `estate.py review` serve the same paths for their pages, without the `ETag` |
+| `GET /held`, `/held.html` | `changes.html` in its held mode: the review of the member's held photos ([below](#private-photos)), with an `ETag` and `Cache-Control: no-cache` |
 | `GET /people`, `/people/` | `people.html`, once faces exist and `People` has loaded (else 503; 500 with the error if loading them failed) |
 
 ### Uploads from the phone
@@ -266,13 +267,17 @@ feeds and People follow.
 | Request | Does |
 |---|---|
 | `POST /api/private {shas: [sha], private: true, until?}` | Withdraw photos the member shared (private to them, `withdrawn`), and with `until` (`YYYY-MM-DD`) set the day each is released on by itself; for one already private, `until` sets or (`null`) clears its day. `{withdrawn, release_set, released, changed, photos}`, and for one photo `private` (as the why answer's). One `photo.withdrawn` (and `photo.release_set`) journal entry |
-| `POST /api/private {shas: [sha], private: false}` | Release them now: `{released, ...}`, one `photo.released` entry; a `held` inbox item none of whose photos is still held is done |
-| `POST /api/private {which: "held" \| "private", private: false}` | Release every photo held at ingestion (the held view's "Release all"), or every one private to the member |
+| `POST /api/private {shas: [sha], private: false}` | Release them now: `{released, ...}`, one `photo.released` entry; the member's `held` inbox item says how many still wait to be looked over, and is done when none does |
+| `GET /api/held` | The review of held photos (`/held`): every held photo of the member's that waits to be looked over (an open `held` row with no `reviewed_at`), whatever their view options, stacks or hides: `{items: [{sha, section, why, scores, when, ar, place, people, hidden?, missing?}], sections: [{key, n}], held, waiting, hold_at, prompts, member}`. In order, likeliest mistakes first: `section` `named` (a person named in it), `close` (best score under `HOLD_AT + 0.01`), `documents`, `sure` (a screenshot, or a score of 0.13 or more), `hidden` (the member hides it); within one, best score (lowest first), then sha. `why`: the prompts at or over the line, `is_screenshot`, `phone_screenshot`; `scores`: one per prompt, in the order of `prompts` (null: no vector); `missing`: not in the catalog served. Another member's held photos are no part of it |
+| `GET /api/held?count=1` | `{held, waiting}`: how many photos are held for the member, and how many of them wait to be looked over (the search's held view says these) |
+| `POST /api/held/review {release: [sha], keep: [sha]}` | "Reviewed up to here" on `/held`: release those in `release` (`released_at`) and keep those in `keep` private, looked over (`reviewed_at`): both leave the review. Only photos that wait to be looked over are touched; any other sha (looked over or released already, held after the page read the list, someone else's, no photo) is skipped, each the same. `{released, kept, skipped, changed, held, waiting}`. One `photo.released` and one `photo.reviewed {photos}` journal entry, by the member; the `held` inbox item says how many still wait, or is done. A kept photo is private as before (`is:held` lists it; the viewer's line releases it) |
 
-`400` for a body without `private` (a boolean), without `shas` (at most 20,000 sha256s) or `which`, or with an
-`until` that is not a day; `404 {"error": "no such photo"}` when any photo is one the member may not be shown
-(as for an unknown sha); `403` for a photo they did not share, or a request for no member. A timer in the app
-releases photos whose day has come (`photo.released {auto: true}`, by no actor, acting for their sharer).
+`400` for a body without `private` (a boolean), without `shas` (at most 20,000 sha256s; there is no `which`: no
+call releases every photo at once), or with an `until` that is not a day; `404 {"error": "no such photo"}` when any
+photo is one the member may not be shown (as for an unknown sha); `403` for a photo they did not share, or a request
+for no member. `/api/held/review`: `400` when `release` or `keep` is not a list of lower-case hex sha256s (at most
+50,000 each) or a sha is in both; `403` (as `/api/held`) for a request with no member. A timer in the app releases
+photos whose day has come (`photo.released {auto: true}`, by no actor, acting for their sharer).
 
 ### Tombstones (the phone gate)
 
@@ -292,8 +297,8 @@ both; `403` for a request with no member.
 
 Answered by `PhotoApp` with [member_inbox.py](../../photo-estate/member_inbox.py) ([chapter 11](11-server.md#the-inbox)).
 All take the `MEMBER` rule, and a member only ever sees and changes their own items. The kinds are
-`member_request`, `review`, `lens_proposed`, `lens_changed`, `held` (photos kept private at ingestion, `held:<batch>`,
-opening `/?q=is:held`), `question` (a group of questions dealt to the member, `ask:<group>`, opening
+`member_request`, `review`, `lens_proposed`, `lens_changed`, `held` (photos kept private at ingestion that wait to
+be looked over: one item per member, `held:<the batch that opened it>`, saying how many, opening `/held`), `question` (a group of questions dealt to the member, `ask:<group>`, opening
 `/inbox?ask=<group>`: [questions and stories](#questions-and-stories)) and `series_update` (new photos that may
 belong in a series of the member's, `album:<id>`, opening `/?album=<id>&candidates=1`) and `binding` (their own agent
 connected from a new device, `binding:<id>`, opening `/agents`: [agents](#agents-mcp-and-tasks)); each is closed by the
@@ -304,7 +309,7 @@ may be shown to them now.
 | Request | Does |
 |---|---|
 | `GET /inbox` | `inbox.html`, the member's inbox (with an `ETag`, `no-cache`) |
-| `GET /api/inbox` | `{items: [{id, kind, ref, title, created_at, updated_at, opens}], open}`: the member's open items, newest first (by `updated_at`: a `lens_changed` item brought up to date moves to the top). `ref` is what it is about (`member:<id>`, `album:<id>`, `lens:<id>`); `opens` the address that decides it (`/members`, `/changes/<id>`, `/?albums`, `/?album=<id>`); `open` how many |
+| `GET /api/inbox` | `{items: [{id, kind, ref, title, created_at, updated_at, opens}], open}`: the member's open items, newest first (by `updated_at`: a `lens_changed` item brought up to date moves to the top, as does a `held` item a new hold brings up to date; a review only retitles it). `ref` is what it is about (`member:<id>`, `album:<id>`, `lens:<id>`, `held:<batch>`); `opens` the address that decides it (`/members`, `/changes/<id>`, `/?albums`, `/?album=<id>`, `/held`); `open` how many |
 | `POST /api/inbox/<id>/dismiss` | Put one of the member's own open items away: `{id, state: "dismissed", open}` (how many are left), and one `inbox.dismissed` journal entry. It decides nothing (a request to be let in stays pending). `404` for an item that is not theirs, `409` for one that is not open |
 
 ### Questions and stories

@@ -30,6 +30,16 @@ private to anyone (faces.default_hidden), its sharer included, until it is relea
 Released: by its sharer (now, or by itself on the day they set: `until`, released by the app's timer,
 release_due). The row stays, with released_at, so `library` never holds again what a member let go.
 
+Looked over (the review of held photos, /held: the change-set review page in its held mode). A held photo waits
+for its sharer to look it over until they release it or keep it private there (reviewed_at): a photo kept is
+private exactly as before (is:held and is:private in search still list it, the viewer's line still releases it);
+it only leaves the review. Every waiting photo is listed, whatever the view options, stacks or hides, likeliest
+mistakes first (review_list): a named person in it, then the rest by how little it cleared HOLD_AT ("close",
+under HOLD_AT + CLOSE, then "documents"), then screenshots and the surest (SURE and over), and last those the
+member hides. Nothing is released but what the page names: review() takes the photos to release and those to
+keep as lists, and does nothing to a photo that does not wait to be looked over (a photo held after the page
+loaded is in neither list).
+
   PROMPTS, HOLD_AT, VECTORS        what is held, in one place (the prompts' text vectors are VECTORS, made once
                                    by `embed.py hold-prompts`: the ingest path never loads the model)
   member_of(path)                  the member an inbox path names (m<id>/...), or None
@@ -39,6 +49,12 @@ release_due). The row stays, with released_at, so `library` never holds again wh
   check(con, model)                the ingest step: every `new` row with a vector is held or let go
   library(con, member, model, dry_run, out)   the one-off run over a member's photos
   change(con, member, shas, private, until=KEEP)   withdraw, release, or set the day it is released on
+  counts(con, member)              GET /api/held?count=1: {held, waiting} (waiting: not yet looked over)
+  review_list(con, member, model, named, hidden)   GET /api/held: every held photo waiting to be looked over,
+                                   in order, each with its section, why it was held and its scores
+  review(con, member, release, keep)   POST /api/held/review: release these, keep those private and looked over
+  close_held(con, member)          the member's held inbox item: how many wait, or done when none does
+  SECTIONS, CLOSE, SURE            the review's sections, in order, and where its bands start
   release_due(con, today)          the timer's: every row whose day has come is released
   tombstones(con, member)          GET /api/tombstones: the member's own opt-outs, not lifted (hashes only)
   change_tombstones(con, member, add, lift)   POST /api/tombstones: opt out of hashes, or take opt-outs back
@@ -51,10 +67,13 @@ release_due). The row stays, with released_at, so `library` never holds again wh
 Every write appends one journal entry per member and action in the same transaction (journal.py): photo.held
 {photos, how: upload | library} (no actor: the app, acting for the sharer), photo.withdrawn {photos, until},
 photo.release_set {photos, until}, photo.released {photos} (by the sharer) or {photos, auto, until} (the timer:
-no actor, acting for the sharer); subject the sha for one photo, else "photos". A `new` row that `check` lets go
-was never private to anyone in a way anyone saw, and is not journaled (ingest.finished says the photo came).
-The inbox (member_inbox.py): a hold puts one `held` item, held:<batch>, in its sharer's inbox, opening the held
-view (/?q=is:held); it is done once nothing it held is still held.
+no actor, acting for the sharer), photo.reviewed {photos} (by the sharer: those a review kept private, one entry
+per submit, beside the photo.released of those it released); subject the sha for one photo, else "photos". A
+`new` row that `check` lets go was never private to anyone in a way anyone saw, and is not journaled
+(ingest.finished says the photo came). The inbox (member_inbox.py): a member has one open `held` item while any
+held photo of theirs waits to be looked over, opening the review (/held) and saying how many wait; a later hold
+joins it (its ref stays held:<the batch that opened it>), and it is done once none waits (looked over, or
+released by any way).
 
 Tombstones (multiplayer phase 6, the phone gate): a photo a member opted out of on their phone is a row of
 `tombstones` (why opted_out) with their member id and the SHA-256 of the file, as the store keys it. It refuses
@@ -95,6 +114,14 @@ PROMPTS = ("a receipt", "a screenshot of a phone", "a document")
 HOLD_AT = 0.095
 VECTORS = HERE / "hold-prompts.json"       # {model: {prompt: base64 float16 unit vector}}: embed.py hold-prompts
 KEEP = object()            # change(): leave `until` as it is
+# The review of held photos (/held), likeliest mistakes first: a named person in it ("named"); then by its best
+# score, lowest first, just over the line (under HOLD_AT + CLOSE: "close") and the rest ("documents"); then the
+# screenshots (catalog.is_screenshot, or the phone's mark) and those at SURE or over ("sure"); and last whatever
+# the member hides from their own library ("hidden"). Made receipts score 0.13-0.17 and documents 0.14 (HOLD_AT's
+# note), so SURE is where a photo is very likely what it was held for.
+SECTIONS = ("named", "close", "documents", "sure", "hidden")
+CLOSE = 0.01
+SURE = 0.13
 
 
 class PrivateError(Exception):
@@ -295,22 +322,33 @@ def judge(con, model: str, shas) -> dict[str, tuple[list[str], list[float]]]:
             for i, sha in enumerate(got)}
 
 
-def _title(n: int, how: str) -> str:
-    what = f"{n} photo{'' if n == 1 else 's'}"
-    return (f"{what} kept private to you: {'they look' if n != 1 else 'it looks'} like a receipt, a screenshot or a"
-            f" document" + (" (a look over your library)" if how == "library" else ""))
+def _title(n: int) -> str:
+    """The held item's title: how many photos wait to be looked over."""
+    one = n == 1
+    return (f"{n:,} photo{'' if one else 's'} kept private to you, waiting for you to look {'it' if one else 'them'} over:"
+            f" {'it looks' if one else 'they look'} like a receipt, a screenshot or a document")
+
+
+def _open_held(con, member: int) -> list[str]:
+    """The refs of `member`'s open held items, newest first."""
+    return [r for r, in con.execute("SELECT ref FROM inbox_items WHERE member_id=? AND kind='held' AND state='open'"
+                                    " ORDER BY updated_at DESC, id DESC", (member,))]
 
 
 def _hold(con, member: int, shas: list[str], how: str, t: str) -> int:
-    """Hold `shas` for `member` (rows that exist become held; the rest are made), one photo.held entry and one
-    held inbox item. In the caller's transaction. Returns the batch (the entry's id)."""
+    """Hold `shas` for `member` (rows that exist become held, to be looked over again; the rest are made), one
+    photo.held entry, and their held inbox item: the one open already (brought up to date and to the top), else
+    a new one, held:<batch>. In the caller's transaction. Returns the batch (the entry's id)."""
     batch = journal.append(con, None, "photo.held", shas[0] if len(shas) == 1 else "photos", {"photos": len(shas), "how": how},
                            member)         # (no actor: the app held them, for their sharer)
     for sha in shas:
         con.execute("INSERT INTO private(sha256, member_id, why, since, batch) VALUES (?,?,'held',?,?)"
                     " ON CONFLICT(sha256, member_id) DO UPDATE SET why='held', since=excluded.since, batch=excluded.batch,"
-                    " until=NULL, released_at=NULL", (sha, member, t, batch))
-    member_inbox.put(con, [member], "held", f"held:{batch}", _title(len(shas), how))
+                    " until=NULL, released_at=NULL, reviewed_at=NULL", (sha, member, t, batch))
+    refs = _open_held(con, member)
+    ref = refs[0] if refs else f"held:{batch}"
+    member_inbox.put(con, [member], "held", ref, _title(counts(con, member)["waiting"]))
+    close_held(con, member, ref)       # (any other open one, from before one item held them all, is done)
     return batch
 
 
@@ -399,15 +437,107 @@ def library(con, member: int, model: str, dry_run: bool = False, out=print, samp
 
 # -- the sharer's own word -------------------------------------------------------------------------------
 
-def close_held(con, member: int) -> int:
-    """Each of `member`'s open held items whose batch has nothing still held is done. In the caller's transaction."""
-    n = 0
-    for ref, in con.execute("SELECT ref FROM inbox_items WHERE member_id=? AND kind='held' AND state='open'", (member,)).fetchall():
-        batch = ref.partition(":")[2]
-        if not batch.isdigit() or not con.execute("SELECT 1 FROM private WHERE batch=? AND member_id=? AND why='held'"
-                                                  " AND released_at IS NULL LIMIT 1", (int(batch), member)).fetchone():
-            n += member_inbox.close(con, "held", ref, member)
-    return n
+def close_held(con, member: int, keep: str | None = None) -> int:
+    """`member`'s held inbox item, after a change: once none of their held photos waits to be looked over, every
+    open one is done; else one stays open (`keep`, else the newest), its title saying how many wait (retitled,
+    not moved up: a review is not news), and any other is done. In the caller's transaction. How many it closed."""
+    refs = _open_held(con, member)
+    if not refs:
+        return 0
+    n = counts(con, member)["waiting"]
+    stay = (keep if keep in refs else refs[0]) if n else None
+    if stay is not None:
+        member_inbox.retitle(con, "held", stay, member, _title(n))
+    return sum(member_inbox.close(con, "held", ref, member) for ref in refs if ref != stay)
+
+
+def counts(con, member: int) -> dict:
+    """GET /api/held?count=1: how many photos are held for `member` (`held`: open held rows, looked over or not)
+    and how many of them wait to be looked over (`waiting`)."""
+    held, wait = con.execute("SELECT count(*), coalesce(sum(reviewed_at IS NULL), 0) FROM private WHERE member_id=?"
+                             " AND why='held' AND released_at IS NULL", (member,)).fetchone()
+    return {"held": held, "waiting": wait}
+
+
+def waiting(con, member: int) -> list[str]:
+    """Every held photo of `member`'s that waits to be looked over: open, held, not reviewed."""
+    return [s for s, in con.execute("SELECT sha256 FROM private WHERE member_id=? AND why='held' AND released_at IS NULL"
+                                    " AND reviewed_at IS NULL ORDER BY sha256", (member,))]
+
+
+def section(why: list[str], sc: list[float] | None, named: bool, hidden: bool) -> str:
+    """Where a held photo goes in the review (SECTIONS): from why it is held, its scores (None: no vector), whether
+    a person is named in it and whether the member hides it."""
+    if hidden:
+        return "hidden"
+    if named:
+        return "named"
+    best = max(sc) if sc else None
+    if "is_screenshot" in why or "phone_screenshot" in why or (best is not None and best >= SURE):
+        return "sure"
+    return "close" if best is not None and best < HOLD_AT + CLOSE else "documents"
+
+
+def review_list(con, member: int, model: str, named=lambda sha: False, hidden=lambda sha: False) -> dict:
+    """GET /api/held: every held photo of `member`'s that waits to be looked over, whatever their view options,
+    stacks or hides (`hidden(sha)`: they hide it; `named(sha)`: a person is named in it), in the review's order:
+    by section (SECTIONS), then best score, lowest first (no vector: last), then id, so the same rows are always in
+    the same order. Each {sha, section, why, scores}: why it is held now (reasons) and its score for each prompt,
+    from the stored vectors and VECTORS, as check() scores an upload (None for a photo with no vector). With the
+    counts (`held`, `waiting`), the sections that have photos ({key, n}, in order) and HOLD_AT."""
+    shas = waiting(con, member)
+    found: dict[str, tuple[list[str], list[float]]] = {}
+    try:
+        for part in chunks(shas, 5000):
+            found.update(judge(con, model, part))
+    except MissingVectors:             # (scores unknown: every photo is listed all the same, in id order)
+        found = {}
+    items = []
+    for sha in shas:
+        why, sc = found.get(sha, ([], None))
+        items.append({"sha": sha, "section": section(why, sc, bool(named(sha)), bool(hidden(sha))), "why": why, "scores": sc})
+    items.sort(key=lambda it: (SECTIONS.index(it["section"]), max(it["scores"]) if it["scores"] else 9.0, it["sha"]))
+    n = {k: 0 for k in SECTIONS}
+    for it in items:
+        n[it["section"]] += 1
+    return {"items": items, "sections": [{"key": k, "n": n[k]} for k in SECTIONS if n[k]], **counts(con, member),
+            "hold_at": HOLD_AT, "prompts": list(PROMPTS)}
+
+
+def review(con, member: int, release=(), keep=()) -> dict:
+    """POST /api/held/review: `member` looked these held photos over: those in `release` are released (the family
+    sees them), those in `keep` stay private to them and leave the review (reviewed_at). Only a photo that waits to
+    be looked over is touched; any other sha (released or looked over already, held after the page loaded and so in
+    neither list, someone else's, or none at all) is skipped and counted, the same for each. ValueError for
+    anything that is not two lists of hashes, or a hash in both. One photo.released and one photo.reviewed entry
+    (by the member) for what changed; the held item says how many still wait, or is done."""
+    if not member:
+        raise PrivateError(403, "only a member's photos are private")
+    for xs in (release, keep):
+        if not isinstance(xs, (list, tuple)) or len(xs) > 50000 or not all(isinstance(s, str) and SHA.fullmatch(s) for s in xs):
+            raise ValueError("release and keep are lists of photo ids (SHA-256, lower-case hex)")
+    release, keep = list(dict.fromkeys(release)), list(dict.fromkeys(keep))
+    if set(release) & set(keep):
+        raise ValueError("a photo cannot be released and kept private at once")
+    t, ready = now(), set()
+    with con:
+        for part in chunks(release + keep):
+            ready.update(s for s, in con.execute(
+                f"SELECT sha256 FROM private WHERE member_id=? AND why='held' AND released_at IS NULL AND reviewed_at IS NULL"
+                f" AND sha256 IN ({','.join('?' * len(part))})", [member, *part]))
+        rel, kept = [s for s in release if s in ready], [s for s in keep if s in ready]
+        con.executemany("UPDATE private SET released_at=?, reviewed_at=? WHERE sha256=? AND member_id=? AND released_at IS NULL",
+                        ((t, t, s, member) for s in rel))
+        con.executemany("UPDATE private SET reviewed_at=? WHERE sha256=? AND member_id=? AND released_at IS NULL",
+                        ((t, s, member) for s in kept))
+        if rel:
+            journal.append(con, member, "photo.released", rel[0] if len(rel) == 1 else "photos", {"photos": len(rel)})
+        if kept:
+            journal.append(con, member, "photo.reviewed", kept[0] if len(kept) == 1 else "photos", {"photos": len(kept)})
+        close_held(con, member)
+        left = counts(con, member)
+    return {"released": len(rel), "kept": len(kept), "skipped": len(release) + len(keep) - len(rel) - len(kept),
+            "changed": bool(rel or kept), **left}
 
 
 def day(s) -> str | None:
@@ -477,13 +607,6 @@ def about(con, st: Private, member: int | None, sha: str) -> dict:
     return {"sharer": m in sharers,
             "mine": {"why": mine[0], "since": mine[1], "until": mine[2]} if mine else None,
             "others_sharing": len(sharers - {m} - rows.keys()) if m in sharers else None}
-
-
-def held_by(con, member: int, which: str) -> list[str]:
-    """Every photo private to `member`: `which` held (from ingestion), or private (held or withdrawn)."""
-    q = "SELECT sha256 FROM private WHERE member_id=? AND released_at IS NULL" + (" AND why='held'" if which == "held" else
-                                                                                  " AND why != 'new'")
-    return [s for s, in con.execute(q + " ORDER BY sha256", (member,))]
 
 
 def release_due(con, today: str) -> dict[int, int]:

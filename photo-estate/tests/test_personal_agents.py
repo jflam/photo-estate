@@ -281,6 +281,7 @@ def test_journal_since_gives_each_kind_only_to_whom_it_is_for(app):
         (ada, None, "photo.release_set", "photos", {}, True, False),
         (None, ada, "photo.released", "photos", {}, True, False),
         (ben, None, "photo.released", "photos", {}, False, True),
+        (ben, None, "photo.reviewed", "photos", {"photos": 3}, False, False),
         (ben, None, "tombstones.changed", "tombstones", {}, False, False),
         (None, ben, "series.update_requested", f"album:{b_own}", {"photos": [x, y]}, False, True),
         (None, ada, "series.update_requested", f"album:{a_own}", {"photos": [x]}, True, False),

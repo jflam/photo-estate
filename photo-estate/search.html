@@ -656,14 +656,15 @@ const I = {
   inbox: svg('<path d="M2.500 9.500 4.300 3.800a1 1 0 0 1 1-.7h5.400a1 1 0 0 1 1 .7l1.800 5.700v3a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z"/><path d="M2.500 9.500h3.200l.8 1.600h3l.8-1.600h3.200"/>', 18),
 };
 // Photos private to this member (app/private-flow.js; private.py): the viewer's private line, beside the why line,
-// and the details' row that withdraws a photo they shared; the held view (a search for is:held), whose bar releases
-// all of them or those chosen. What the member sees changes with each: the lists behind are asked for again.
+// and the details' row that withdraws a photo they shared; the held view (a search for is:held), whose bar says how
+// many it shows of how many are held, leads to the review of every one (/held), and releases those chosen. What the
+// member sees changes with each: the lists behind are asked for again.
 const PRIV = privateLine({
   send: (sha, body) => api("/api/private", { shas: [sha], ...body }),
   onChange: () => privDraw(),
 });
 const HELD = heldView({
-  release: what => api("/api/private", { private: false, ...what }),
+  release: what => api("/api/private", { private: false, ...what }),   // ({shas}: exactly those chosen)
   onChange: () => heldDraw(),
 });
 const DEBUG = (() => { try { return localStorage.getItem("estate.debug") === "1"; } catch (e) { return false; } })();   // set on the Library info page
@@ -1695,7 +1696,7 @@ function searchHead() {                               // what the answer is, in 
   parts.push(...(D.filters || []).filter(f => f !== mineOnly || D.text || reading));
   if (DEBUG) parts.push(`${D.ms} ms`);
   $("#sHead h1").textContent = title; $("#sHead p").textContent = parts.filter(Boolean).join("  ·  ");
-  if (mineOnly === "is:held" && !D.text && !reading) HELD.open(D.matching); else HELD.close();
+  if (mineOnly === "is:held" && !D.text && !reading) { HELD.open(D.matching); heldCount(); } else HELD.close();
   titleDoc();
 }
 // An album from the answer showing: every photo the search finds (not only those loaded so far), fixed as they
@@ -2172,17 +2173,22 @@ $("#vInfo").addEventListener("click", e => {
 });
 function heldDraw() {                                // the held view's bar, under the search's heading
   const b = barSays(HELD.view), el = $("#sHeld");
-  el.innerHTML = b ? `<span>${esc(b.text)}</span>` + b.offers.map(o => `<button class="btn${o.primary ? " pri" : ""}" data-held="${o.what}">${esc(o.label)}</button>`).join("") : "";
+  el.innerHTML = b ? `<span>${esc(b.text)}</span>` + b.offers.map(o => o.href ? `<a class="btn${o.primary ? " pri" : ""}" href="${esc(o.href)}">${esc(o.label)}</a>`
+    : `<button class="btn${o.primary ? " pri" : ""}" data-held="${o.what}">${esc(o.label)}</button>`).join("") : "";
   for (const t of $$("#sGrid .t[data-i]")) { const r = sgrid.items[+t.dataset.i]; if (r && !r.ghost) t.classList.toggle("chosen", HELD.chosen(r.sha)); }
 }
+// How many are held for the member and how many wait to be looked over, for the bar: a search shows only what the
+// view options and their hides let it (GET /api/held?count=1). A failure leaves the bar without them.
+function heldCount() { api("/api/held?count=1").then(c => HELD.counted(c), () => {}); }
 $("#sHeld").addEventListener("click", async e => {
   const what = e.target.closest("[data-held]")?.dataset.held;
   if (what === "choose") return HELD.choose();
   if (what === "cancel") return HELD.cancel();
-  if (what !== "all" && what !== "chosen") return;
-  const got = await (what === "all" ? HELD.releaseAll() : HELD.releaseChosen());
+  if (what !== "chosen") return;
+  const got = await HELD.releaseChosen();
   if (!got.ok) return toast(`Couldn’t release them: ${got.error.message}`);
   toast(`Released ${plural(got.released, "photo")}: the family sees ${got.released === 1 ? "it" : "them"} now`);
+  heldCount();
   seenChanged();
 });
 $("#vWhy button").onclick = async () => {

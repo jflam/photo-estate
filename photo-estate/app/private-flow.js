@@ -2,8 +2,10 @@
 // docs/notes/MULTIPLAYER-PLAN.md's). A photo a member shared can be withdrawn from the family (private to them
 // alone) and released again, now or by itself on a day they choose; one held at ingestion (it looked like a
 // receipt, a screenshot or a document) is the same. The viewer says so in a line beside the "why" line, and its
-// details offer to withdraw a photo the member shared; the held view (a search for `is:held`) releases them in a
-// batch, all of them or those chosen.
+// details offer to withdraw a photo the member shared; the held view (a search for `is:held`) releases those chosen
+// in a batch. It is a search, so the view options (screenshots, stacks) and the member's hides leave photos out of it:
+// its bar says how many it shows of how many are held, and leads to the review of every one (/held: held-flow.js).
+// Nothing here releases a photo that was not tapped.
 //
 // The viewer's private line, for the photo showing (fed from the why answer: GET /api/photos/<sha>/why's `private`):
 //
@@ -16,25 +18,25 @@
 //
 // The held view (`is:held` in search), and choosing photos in it:
 //
-//   off ──► viewing ──► choosing ──► releasing ──► viewing (released), or as it was (refused)
-//            │   └─────────────────► releasing      (all of them)
+//   off ──► viewing ──► choosing ──► releasing ──► viewing (released), or choosing as it was (refused)
 //            └──► off   choosing ──► viewing (cancelled)
 //
-//   viewing    owns { n }: how many photos the view lists
-//   choosing   owns { n, chosen }: a Set of the photos chosen (a tile tapped is chosen, not opened)
-//   releasing  owns { n, chosen, all }: what is being released; nothing else is done until the server answers
+//   viewing    owns { n, held?, waiting? }: how many photos the view lists; how many are held, and how many of
+//              those wait to be looked over (GET /api/held?count=1), once known
+//   choosing   owns { n, held?, waiting?, chosen }: a Set of the photos chosen (a tile tapped is chosen, not opened)
+//   releasing  owns the same: what is being released; nothing else is done until the server answers
 //
 //   privateLine({ send, onChange })   -> { line, sha, look(sha, p), get says, get row, act(body), clear() }
-//   heldView({ release, onChange })   -> { view, open(n), close(), choose(), cancel(), toggle(sha), chosen(sha), releaseAll(),
-//                                        releaseChosen() }
+//   heldView({ release, onChange })   -> { view, open(n), counted({ held, waiting }), close(), choose(), cancel(), toggle(sha),
+//                                        chosen(sha), releaseChosen() }
 //   lineSays(p, today?)               what the line says, and what it offers: { html, offers: [{ label, body | "day" }] } | null
 //   rowSays(p)                        the details' row for a photo the member shared: { title, detail, label } | null
-//   barSays(view)                     the held view's bar: { text, offers: [{ label, what, primary? }] } | null
+//   barSays(view)                     the held view's bar: { text, offers: [{ label, what, primary?, href? }] } | null
 //   WHY_HELD, PRIVATE_STEPS, HELD_STEPS
 
 import { flow } from "./fsm.js";
 import { esc } from "./dom.js";
-import { plural } from "./format.js";
+import { fmt, plural } from "./format.js";
 import { day } from "./lens-flow.js";
 
 /** @typedef {"idle" | "known" | "saving"} PrivateState */
@@ -55,7 +57,7 @@ export const PRIVATE_STEPS = /** @type {Record<PrivateState, readonly PrivateSta
 
 export const HELD_STEPS = /** @type {Record<HeldState, readonly HeldState[]>} */ ({
   off: ["viewing"],
-  viewing: ["viewing", "choosing", "releasing", "off"],
+  viewing: ["viewing", "choosing", "off"],
   choosing: ["choosing", "viewing", "releasing", "off"],
   releasing: ["viewing", "choosing", "off"],
 });
@@ -96,24 +98,33 @@ export function rowSays(p) {
 }
 
 /**
- * The held view's bar: how many photos it holds, and what can be done with them.
+ * The held view's bar: what it shows, honestly (a search: the view options and the member's hides leave photos out
+ * of it), and what can be done: go to the review of every held photo, or choose photos here to release.
  * @param {{ state: HeldState, data: any }} view
- * @returns {{ text: string, offers: { label: string, what: "all" | "choose" | "chosen" | "cancel", primary?: boolean }[] } | null}
+ * @returns {{ text: string, offers: { label: string, what: "review" | "choose" | "chosen" | "cancel", primary?: boolean, href?: string }[] } | null}
  */
 export function barSays(view) {
   if (view.state === "off") return null;
-  const { n, chosen } = view.data;
-  if (!n) return { text: "Nothing is held: everything you shared, the family sees.", offers: [] };
+  const { n, held, waiting, chosen } = view.data;
+  const toReview = /** @type {{ label: string, what: "review", href: string, primary?: boolean }} */ (
+    { label: waiting ? `Look over ${waiting === 1 ? "it" : `all ${fmt(waiting)}`}` : "Review held photos", what: "review", href: "/held" });
+  if (!n) {
+    return { text: held ? `None of the ${plural(held, "photo")} held for you is in this search: your view options or what you hide leave ${held === 1 ? "it" : "them"} out.`
+      : "Nothing is held: everything you shared, the family sees.", offers: held ? [{ ...toReview, primary: true }] : [] };
+  }
   if (view.state === "viewing") {
-    return { text: `${plural(n, "photo")} kept private to you, as ${n === 1 ? "it looks" : "they look"} like a receipt, a screenshot or a document. Only you see ${n === 1 ? "it" : "them"} until you release ${n === 1 ? "it" : "them"}.`,
-      offers: [{ label: n === 1 ? "Release it" : `Release all ${n}`, what: "all" }, { label: "Choose…", what: "choose", primary: true }] };
+    const shows = held != null && held > n ? `This search shows ${fmt(n)} of the ${plural(held, "photo")} held for you` : `${plural(n, "photo")} held for you`;
+    const why = held != null && held > n ? ": your view options (screenshots, stacks) and what you hide leave the rest out" : "";
+    const wait = waiting ? `. ${fmt(waiting)} ${waiting === 1 ? "waits" : "wait"} for you to look ${waiting === 1 ? "it" : "them"} over` : "";
+    return { text: `${shows}${why}${wait}. They look like a receipt, a screenshot or a document, and only you see them until you release them.`,
+      offers: [{ ...toReview, primary: !!waiting }, { label: "Choose…", what: "choose", primary: !waiting }] };
   }
   const k = chosen.size;
   if (view.state === "choosing") {
     return { text: k ? `${plural(k, "photo")} chosen` : "Tap the photos to release",
       offers: [{ label: k ? `Release ${k}` : "Release", what: "chosen", primary: true }, { label: "Cancel", what: "cancel" }] };
   }
-  return { text: view.data.all ? `Releasing ${plural(n, "photo")}…` : `Releasing ${plural(k, "photo")}…`, offers: [] };
+  return { text: `Releasing ${plural(k, "photo")}…`, offers: [] };
 }
 
 /**
@@ -175,38 +186,31 @@ export function privateLine({ send, onChange }) {
 
 /**
  * The held view: its bar, and choosing photos in it to release.
- * @param {{ release: (what: { which: "held" } | { shas: string[] }) => Promise<{ released: number }>,
+ * @param {{ release: (what: { shas: string[] }) => Promise<{ released: number }>,
  *   onChange?: (to: HeldState, from: HeldState) => void }} options
- *   `release`: POST /api/private {private: false, which: "held"} for all of them, or {shas} for those chosen
+ *   `release`: POST /api/private {private: false, shas} for those chosen
  */
 export function heldView({ release, onChange }) {
   const view = flow("held", HELD_STEPS, /** @type {HeldState} */ ("off"), (to, from) => onChange?.(to, from));
-  /** @param {{ which: "held" } | { shas: string[] }} what @param {boolean} all */
-  async function go(what, all) {
-    const before = view.data;
-    const mine = view.to("releasing", { ...before, chosen: before.chosen || new Set(), all });
-    try {
-      const got = await release(what);
-      if (view.data === mine) view.to("viewing", { n: Math.max(0, before.n - (got?.released ?? 0)) });
-      return { ok: true, released: got?.released ?? 0 };
-    } catch (error) {
-      if (view.data === mine) view.to(before.chosen ? "choosing" : "viewing", before);   // as it was
-      return { ok: false, error };
-    }
-  }
+  const counts = () => ({ held: view.data.held, waiting: view.data.waiting });
   return {
     view,
     /** The held view shows `n` photos (asked again: the count changes). @param {number} n */
     open(n) {
       if (view.is("releasing")) return;
-      view.to(view.is("choosing") ? "choosing" : "viewing", { ...(view.is("choosing") ? view.data : {}), n });
+      const was = view.is("off") ? {} : counts();
+      view.to(view.is("choosing") ? "choosing" : "viewing", { ...(view.is("choosing") ? view.data : {}), ...was, n });
+    },
+    /** How many are held for the member, and how many wait to be looked over (GET /api/held?count=1). @param {{ held: number, waiting: number }} c */
+    counted(c) {
+      if (view.is("viewing", "choosing", "releasing")) view.to(view.state, { ...view.data, held: c.held, waiting: c.waiting });
     },
     /** It no longer shows (another search). */
     close() { if (!view.is("off")) view.to("off"); },
     /** Start choosing: a tile tapped is chosen, not opened. */
-    choose() { if (view.is("viewing")) view.to("choosing", { n: view.data.n, chosen: new Set() }); },
+    choose() { if (view.is("viewing")) view.to("choosing", { ...view.data, chosen: new Set() }); },
     /** Stop choosing; nothing is released. */
-    cancel() { if (view.is("choosing")) view.to("viewing", { n: view.data.n }); },
+    cancel() { if (view.is("choosing")) view.to("viewing", { n: view.data.n, ...counts() }); },
     /** Whether a tile tap chooses (true) or opens. */
     get choosing() { return view.is("choosing"); },
     /** Whether this photo is chosen (while choosing, or being released). @param {string} sha */
@@ -217,18 +221,23 @@ export function heldView({ release, onChange }) {
       const chosen = new Set(view.data.chosen);
       const on = !chosen.delete(sha);
       if (on) chosen.add(sha);
-      view.to("choosing", { n: view.data.n, chosen });
+      view.to("choosing", { ...view.data, chosen });
       return on;
     },
-    /** Release every photo held. */
-    releaseAll() {
-      if (!view.is("viewing", "choosing") || !view.data.n) return Promise.resolve({ ok: false, error: new Error("Nothing to release.") });
-      return go({ which: "held" }, true);
-    },
-    /** Release the photos chosen. */
-    releaseChosen() {
-      if (!view.is("choosing") || !view.data.chosen.size) return Promise.resolve({ ok: false, error: new Error("Choose the photos to release first.") });
-      return go({ shas: [...view.data.chosen] }, false);
+    /** Release the photos chosen: exactly those, never any other. */
+    async releaseChosen() {
+      if (!view.is("choosing") || !view.data.chosen.size) return { ok: false, error: new Error("Choose the photos to release first.") };
+      const before = view.data;
+      const mine = view.to("releasing", { ...before });
+      try {
+        const got = await release({ shas: [...before.chosen] });
+        const released = got?.released ?? 0;
+        if (view.data === mine) view.to("viewing", { n: Math.max(0, before.n - released), held: before.held == null ? before.held : Math.max(0, before.held - released), waiting: before.waiting });
+        return { ok: true, released };
+      } catch (error) {
+        if (view.data === mine) view.to("choosing", before);   // as it was
+        return { ok: false, error };
+      }
     },
   };
 }

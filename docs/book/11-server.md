@@ -248,7 +248,7 @@ that already decides it.
 | `lens_proposed` | every other active sysadmin | `lenses.propose` | `lenses.decide` (accept or decline), or the owner taking the filter back (unpublishing) | the Albums tab, where "Waiting for you to decide" lists it |
 | `lens_changed` | each member subscribed to a published lens live (not its owner, nor whoever changed it) | changes.py, when a filter's hides change (an apply, a revert, a hidden photo taken out of a set) or a series' photos or search do | nothing waits on it: leaving the lens (unsubscribing, or keeping a copy instead) closes it; otherwise it is put away | the Albums tab (a filter), or the series |
 
-| `held` | the photos' sharer | private.py, when the hold at ingestion (or the one-off run over the library) keeps photos private to them: one per batch, `held:<batch>` | nothing it held is still held (released by hand, in a batch, or on its day) | the held view, `/?q=is:held` |
+| `held` | the photos' sharer | private.py, when the hold at ingestion (or the one-off run over the library) keeps photos private to them: one open item per member, which a later hold brings up to date (its ref stays `held:<batch>` of the batch that opened it), saying how many wait to be looked over | none of their held photos waits to be looked over (each looked over on `/held`, or released any way), not when none is held | the review of held photos, `/held` |
 
 `lens_changed` is one open item per member and lens, brought up to date ("Ben's lens “Hidden photos”
 changed: it hides 4 photos now") and moved to the top, never one per change; the change itself applies at
@@ -310,7 +310,7 @@ receipt", "a screenshot of a phone", "a document": `private.PROMPTS`) with its S
 `catalog.is_screenshot` and the phone's own mark (an upload's `X-Screenshot`, which upload.py writes into its
 sidecar as the keyword `screenshot`, read back from the `xmp` table); one at or over `private.HOLD_AT` (0.095) on
 any prompt, or a screenshot, is **held**
-(one `photo.held` journal entry and one `held` inbox item per member and batch), and the rest are let go (their
+(one `photo.held` journal entry per member and batch, and their `held` inbox item made or brought up to date), and the rest are let go (their
 row goes: the photo is shared). The prompts' vectors are a file (`hold-prompts.json`, made once by `embed.py
 hold-prompts`), so the check never loads the model and works whether the app runs or not; without them it
 stops, and the photos stay private. **Why no one else can see a new upload before it is scored**: the
@@ -322,18 +322,41 @@ a setup job's, a restart) comes when. A photo with no vector is in no view at al
 photos with one), so a failed embed leaves it unseen and its row waiting for the next check. What is held: phone
 uploads of every member, the owner's too; not bulk imports, and not a photo the family is already shown.
 
-**Withdraw and release.** `POST /api/private {shas | which: "held" | "private", private: true | false, until?}`:
+**Withdraw and release.** `POST /api/private {shas, private: true | false, until?}`:
 a sharer withdraws photos (private, `withdrawn`), sets the day one is released on by itself (`until`,
-`YYYY-MM-DD`, the computer's own date), or releases them now; `which` releases a whole held view at once. A
-photo the member may not be shown is a 404, one they did not share a 403. It is answered outside the gate,
+`YYYY-MM-DD`, the computer's own date), or releases them now, each named: there is no call that releases every
+photo at once (a `which: "held"` that did was taken out: the held view's "Release all" released photos its
+search never showed). A photo the member may not be shown is a 404, one they did not share a 403. It is answered outside the gate,
 like a lens: every view is worked out again (`relook`) before the answer, and the feeds and People follow.
 A timer in the app (`PhotoApp.release_timer`, a thread `start()` starts beside the others) asks every minute
 whether a day has come (`private.release_due`): those photos are released, journaled by no actor acting for
-their sharer. A release closes every `held` item of the member's whose photos are all released. A released row
+their sharer. A release brings the member's `held` item up to date, and closes it once none waits. A released row
 stays (`released_at`), so the one-off run never holds again what its sharer let go. `GET
 /api/photos/<sha>/why` carries `private`: whether the member shared the photo, whether it is private to them
 (why, since, until), and how many other sharers still share it. Search's `is:private`, `is:held` and
 `is:withdrawn` find the member's own; a row of theirs says `private` ([chapter 26](26-albums-and-agents.md#private-photos-on-the-pages)).
+
+**Looking held photos over** (`/held`). A search for `is:held` obeys the view options and the member's hides, so it
+cannot be where thousands of held photos are looked over (on the owner's library it listed 4,439 of 7,992: no
+screenshots, no shots behind another in a stack, nothing he had hidden). The review lists **every** held photo of
+the member's that waits to be looked over: an open `held` row with no `reviewed_at` (`private.waiting`). `GET
+/api/held` (`private.review_list`) gives them in one order, the likeliest mistakes first, in sections
+(`private.SECTIONS`): a person named in it (`named`); then by its best score over the prompts, lowest first, those
+just over the line (under `HOLD_AT + CLOSE`, 0.105: `close`) and the rest (`documents`); then screenshots
+(`catalog.is_screenshot`, or the phone's mark) and anything at `SURE` (0.13) or over (`sure`); and last what the
+member hides (`hidden`). Within a section: best score, then id, so the order is the same every time. The scores are
+`private.judge`'s, from the stored vectors and `hold-prompts.json`: no model at request time. Each row has its
+section, why it is held now (`why`: the prompts over the line, `is_screenshot`, `phone_screenshot`) and its score
+for each prompt, with what the page shows (date, shape, place, people, `hidden`). `GET /api/held?count=1` is only
+`{held, waiting}`. `POST /api/held/review {release: [sha], keep: [sha]}` (`private.review`) is the page's "Reviewed
+up to here": those in `release` are released (`released_at`), those in `keep` stay private and are looked over
+(`reviewed_at`). The page names every photo it covers, so a photo held after it read the list is in neither list
+and is never released or looked over by mistake; a sha that does not wait (looked over already, released, someone
+else's, or none) is skipped and counted, each the same. One `photo.released` and one `photo.reviewed {photos}`
+entry per submit (the latter returned to no agent by journal_since: it is the review's bookkeeping). A photo looked
+over and kept is **private exactly as before**: `is:held` and `is:private` list it, the viewer's line releases it;
+it only leaves the review. A later hold of the same photo (its row made `held` again) clears `reviewed_at`. The
+page is the change-set review page in its held mode ([chapter 26](26-albums-and-agents.md#looking-held-photos-over)).
 
 **Tombstones: what a member keeps off the estate** (phase 6, the phone gate; [chapter 24](24-uploading.md#the-phone-gate-looking-before-sharing)).
 A photo a member opted out of on their phone is a row of `tombstones` with their member id and the SHA-256 of the
@@ -350,7 +373,7 @@ member's copy, and is no withdraw: a photo already in the estate, or shared by s
 **The one-off run over the library** (the plan's open question 3: nobody else is let in until it has run, as
 the owner's, and he has looked over what it held): `private.py library --member <id>` scores every image the
 member shared (for the first sysadmin, every image with no sharer too) the same way and holds what crosses as
-theirs: one `photo.held` entry with the count, one inbox item. With `--dry-run` it changes nothing and prints,
+theirs: one `photo.held` entry with the count, and their `held` inbox item, which opens the review (`/held`). With `--dry-run` it changes nothing and prints,
 with no pixels and no file names, how many each prompt would hold, the best scores near the threshold, and a
 sample of ids. It is safe to run twice, and never holds a photo the member released ([appendix A](appendix-a-commands.md)).
 

@@ -612,12 +612,28 @@ hold and the one-off run. The choices:*
   `start()` starts; its entry has no actor, acting for the sharer. The held view is a search (`is:held`), with a
   bar that releases all of them or those chosen (a tile tapped is chosen while choosing): the pages had no
   selection to reuse; the review page's marks were the nearest, but a change set is the wrong thing to hold
-  private photos in.*
+  private photos in. (Its "release all" was taken out on 2026-11-23, and held photos are looked over on the
+  review page's wall after all, in a mode of its own, with no change set: the last note below.)*
 - *Not built: the phone's screenshot header and withdrawing from the phone (phase 6); scoring videos; a list
   of what was released. Known and left: places.py works an event's place out from all its photos, so a shared
   photo can carry a place (or an event title) inferred from a private one of the same event; `/compare`'s runs
   and reports are shared by every member and keep the ids the runner's searches found; the local tools
   (`estate.py review`, `faces.py serve`, `embed.py search`) read the whole catalog, as before.*
+- *Built 2026-11-23, after the hold over the real library: the review of held photos, `/held`. The owner found the
+  held view wrong for 7,992 photos: being a search it listed 4,439 (no screenshots, no shots behind another in a
+  stack, nothing he hid), and its "Release all" released all 7,992, those never shown included. Now the `held`
+  inbox item opens `/held`, the change-set review page in a held mode (the same wall, keys, sizes, zoom and "up to
+  here"; `app/held-flow.js`): every held photo waiting to be looked over, likeliest mistakes first (a named
+  person; the lowest best score over the line, "just over the line" under 0.105, then "receipts and documents";
+  screenshots and scores of 0.13 and over; what he hides, last), each saying why it was held. He marks what to
+  release; "Reviewed up to here" (U) releases that and keeps the rest up to there private, recorded as looked
+  over (`private.reviewed_at`, an additive column) so it leaves the review and stays private as before. The request
+  names every photo it covers, so a photo held after the page read the list is never touched. One open `held`
+  inbox item per member says how many wait and is done when none does (not when none is held); a later hold joins
+  it. `POST /api/private {which}` is gone (nothing used it but "Release all"); the search's held view says how
+  many it shows of how many are held and leads to `/held`. One `photo.reviewed {photos}` journal entry per submit,
+  returned to no agent. Measured: listing and reviewing 8,000 held rows takes about 0.1 s on the laptop
+  (`private.review_list`), and the page draws 8,000 tiles in about 0.3 s (fake rows, thumbnails not loaded).*
 
 - **Who shared it.** Uploads land in `<inbox>/m<member id>/YYYY/MM/DD/...` (the upload path keeps its
   shape below the member folder; the `m` keeps a member apart from a year, and what is already in the
@@ -964,8 +980,10 @@ left out. What is still to do is the owner's, or waits on him:
 1. **The hold over the existing library was run on 2026-11-23 at 0.095, the owner's choice: 7,992 photos
    are private to him** (one `photo.held` entry, one inbox item; the backup is
    `~/photo-estate-lab/estate.db.before-hold-20261123-0638`). `HOLD_AT` is now 0.095 for new uploads too.
-   **He has not yet looked them over** (Inbox, or `is:held`), which open question 3 puts before anyone
-   else is let in. The dry run on the real library (`private.py library --member 1 --dry-run`)
+   **He has not yet looked them over**, which open question 3 puts before anyone else is let in: the Inbox
+   item opens the review, `/held` (phase 5's last Built note), where every one is listed, likeliest mistakes
+   first, and looked over a stretch at a time ("Reviewed up to here"). Search for `is:held` is not the place: it
+   leaves out screenshots, stacked shots and what he hides. The dry run on the real library (`private.py library --member 1 --dry-run`)
    holds about a tenth of it at the built-in threshold, and the scores have no gap to put a threshold in:
 
    | `HOLD_AT` | photos held | of them with a named face | already hidden by the owner |

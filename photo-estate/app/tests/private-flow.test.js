@@ -1,7 +1,8 @@
 // private-flow.js: the viewer's private line and the held view (multiplayer phase 5). Both machines (every pair of
 // states); what the line says for a held photo, a withdrawn one, one with a release day, one another member
 // shares too; the details' row for a photo the member shared; a change saved, refused, or answered after the
-// viewer moved on; choosing photos in the held view and releasing them, all or those chosen, and a refusal.
+// viewer moved on; the held view's bar, honest about what a search shows, leading to the review; choosing photos in
+// it and releasing exactly those, and a refusal. There is no "release all".
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -16,7 +17,8 @@ const shared = { sharer: true, mine: null, others_sharing: 0 };
 test("the private line and held view machines: every legal step is taken, every other pair throws", () => {
   const make = (/** @type {any} */ s, /** @type {any} */ from) => flow("t", s, from);
   assert.deepEqual(everyPair(PRIVATE_STEPS, make, assert.throws), { legal: 6, refused: 3 });
-  assert.deepEqual(everyPair(HELD_STEPS, make, assert.throws), { legal: 12, refused: 4 });
+  assert.deepEqual(everyPair(HELD_STEPS, make, assert.throws), { legal: 11, refused: 5 });
+  assert.equal(HELD_STEPS.viewing.includes("releasing"), false, "nothing is released from viewing: only what was chosen");
 });
 
 test("lineSays: what the line says of a photo private to the member, and what it offers", () => {
@@ -75,26 +77,39 @@ test("the line: look, act saved (the server's answer is the line), refused (as i
   assert.equal((await L.act({ private: false })).ok, false, "nothing to change with no photo");
 });
 
-test("barSays: the held view's bar, as it is viewed, chosen in and released", () => {
+test("barSays: the held view's bar says what the search shows of what is held, and leads to the review", () => {
   assert.equal(barSays({ state: "off", data: null }), null);
   assert.deepEqual(barSays({ state: "viewing", data: { n: 0 } })?.offers, []);
-  const v = barSays({ state: "viewing", data: { n: 3 } });
-  assert.match(v?.text ?? "", /^3 photos kept private to you/);
-  assert.deepEqual(v?.offers.map(o => [o.label, o.what]), [["Release all 3", "all"], ["Choose…", "choose"]]);
-  assert.deepEqual(barSays({ state: "viewing", data: { n: 1 } })?.offers[0].label, "Release it");
+  assert.match(barSays({ state: "viewing", data: { n: 0 } })?.text ?? "", /^Nothing is held/);
+  const hid = barSays({ state: "viewing", data: { n: 0, held: 2, waiting: 2 } });
+  assert.match(hid?.text ?? "", /^None of the 2 photos held for you is in this search/);
+  assert.deepEqual(hid?.offers.map(o => [o.label, o.href]), [["Look over all 2", "/held"]]);
+  const v = barSays({ state: "viewing", data: { n: 4439, held: 7992, waiting: 7992 } });
+  assert.match(v?.text ?? "", /^This search shows 4,439 of the 7,992 photos held for you: your view options \(screenshots, stacks\) and what you hide leave the rest out\. 7,992 wait for you to look them over\./);
+  assert.deepEqual(v?.offers.map(o => [o.label, o.what, !!o.primary]), [["Look over all 7,992", "review", true], ["Choose…", "choose", false]]);
+  assert.ok(!v?.offers.some(o => /release all/i.test(o.label)), "no release-all");
+  const done = barSays({ state: "viewing", data: { n: 3, held: 3, waiting: 0 } });
+  assert.match(done?.text ?? "", /^3 photos held for you\. They look like/);
+  assert.deepEqual(done?.offers.map(o => [o.label, !!o.primary]), [["Review held photos", false], ["Choose…", true]]);
+  assert.match(barSays({ state: "viewing", data: { n: 3 } })?.text ?? "", /^3 photos held for you\./, "before the counts come");
   assert.equal(barSays({ state: "choosing", data: { n: 3, chosen: new Set() } })?.text, "Tap the photos to release");
   assert.deepEqual(barSays({ state: "choosing", data: { n: 3, chosen: new Set(["a", "b"]) } })?.offers.map(o => o.label), ["Release 2", "Cancel"]);
-  assert.equal(barSays({ state: "releasing", data: { n: 3, chosen: new Set(["a"]), all: false } })?.text, "Releasing 1 photo…");
+  assert.equal(barSays({ state: "releasing", data: { n: 3, chosen: new Set(["a"]) } })?.text, "Releasing 1 photo…");
 });
 
-test("the held view: choose, toggle, release those chosen; release all; a refusal leaves it as it was", async () => {
+test("the held view: choose, toggle, release exactly those chosen; a refusal leaves it as it was; the counts", async () => {
   /** @type {any[]} */ const asked = [];
   let answer = deferred();
   const H = heldView({ release: what => { asked.push(what); return answer.promise; } });
   H.open(3);
   assert.equal(H.view.state, "viewing");
+  H.counted({ held: 5, waiting: 4 });
+  assert.deepEqual([H.view.data.n, H.view.data.held, H.view.data.waiting], [3, 5, 4]);
+  H.open(3);
+  assert.equal(H.view.data.held, 5, "the counts stay when the list is asked again");
   assert.equal(H.choosing, false);
   assert.equal(H.toggle("a"), false, "not choosing: a tap opens the photo");
+  assert.equal("releaseAll" in H, false, "nothing releases every photo");
   H.choose();
   assert.equal(H.choosing, true);
   assert.equal(H.toggle("a"), true);
@@ -107,7 +122,7 @@ test("the held view: choose, toggle, release those chosen; release all; a refusa
   answer.resolve({ released: 1 });
   assert.deepEqual(await going, { ok: true, released: 1 });
   assert.deepEqual(asked, [{ shas: ["b"] }]);
-  assert.deepEqual([H.view.state, H.view.data.n], ["viewing", 2]);
+  assert.deepEqual([H.view.state, H.view.data.n, H.view.data.held], ["viewing", 2, 4]);
   answer = deferred();
   H.choose();
   H.toggle("c");
@@ -116,13 +131,8 @@ test("the held view: choose, toggle, release those chosen; release all; a refusa
   assert.equal((await going).ok, false);
   assert.deepEqual([H.view.state, [...H.view.data.chosen]], ["choosing", ["c"]], "refused: as it was, still chosen");
   H.cancel();
-  answer = deferred();
-  going = H.releaseAll();
-  answer.resolve({ released: 2 });
-  await going;
-  assert.deepEqual(asked.at(-1), { which: "held" });
-  assert.deepEqual([H.view.state, H.view.data.n], ["viewing", 0]);
-  assert.equal((await H.releaseAll()).ok, false, "nothing left to release");
+  assert.equal((await H.releaseChosen()).ok, false, "nothing chosen: nothing released");
+  assert.deepEqual(asked, [{ shas: ["b"] }, { shas: ["c"] }]);
   H.close();
   assert.equal(H.view.state, "off");
   await settled();

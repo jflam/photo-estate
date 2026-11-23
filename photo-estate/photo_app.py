@@ -39,6 +39,15 @@ the member's inbox (member_inbox.py): what waits for them to decide, each item o
   GET  /inbox, /api/inbox             the page; the member's open items, newest first, and how many
   POST /api/inbox/<id>/dismiss        put one of their own away (404 for anyone else's)
 
+the review of the member's own held photos (private.py; multiplayer phase 5): every one that waits to be looked
+over, whatever their view options or hides, likeliest mistakes first; what they mark is released, the rest up to
+where they got stays private and leaves the review
+
+  GET  /held                          the page (changes.html, in its held mode)
+  GET  /api/held                      every held photo of theirs waiting to be looked over, in order, with why
+  GET  /api/held?count=1              {held, waiting}: how many are held, and how many wait
+  POST /api/held/review {release: [sha], keep: [sha]}   release these, keep those private: both leave the review
+
 the phone gate's opt-outs (private.py: tombstones), the member's own: an upload of an opted-out photo's bytes from
 them is refused (admin.py)
 
@@ -173,6 +182,7 @@ FAVORITE = re.compile(r"/api/favorite|/api/albums/\d+/favorite")   # (POST) the 
 LENS_WRITE = re.compile(r"/api/lenses(?:/(\d+)/(subscribe|unsubscribe|publish|propose|decide))?"
                         r"|/api/albums/(\d+)/publish|/api/photos/([0-9a-f]{64})/show")
 PRIVATE_WRITE = "/api/private"   # (POST) photos made private or released (private.py): the gate's write side, in relook
+HELD_REVIEW = "/api/held/review"  # (POST) held photos released or kept, looked over (private.review): the same
 APP_TYPES = {".webmanifest": "application/manifest+json", ".js": "text/javascript; charset=utf-8",
              ".png": "image/png"}
 
@@ -821,7 +831,7 @@ class PhotoApp:
         setting favourites, which takes the gate's write side itself (set_favorites)."""
         return not (path.startswith(UNGATED) or path.endswith("/download")
                     or method == "POST" and (FAVORITE.fullmatch(path) or LENS_WRITE.fullmatch(path)) is not None
-                    or method == "POST" and path == PRIVATE_WRITE)
+                    or method == "POST" and path in (PRIVATE_WRITE, HELD_REVIEW))
 
     def route(self, req: Request) -> Response:
         method, headers, local = req.method, req.headers, req.local
@@ -871,6 +881,8 @@ class PhotoApp:
             return self.lens_write(lw, body, m)
         if path == PRIVATE_WRITE:
             return self.private_write(body, m)
+        if path == HELD_REVIEW:
+            return self.held_review(body, m)
         if (ii := re.fullmatch(r"/api/inbox/(\d+)/dismiss", path)) is not None:
             return self.inbox_route(m, int(ii[1]))
         if path == "/api/tombstones":
@@ -906,6 +918,10 @@ class PhotoApp:
             return self.inbox_route(m)
         if path == "/api/tombstones":
             return self.tombstones_route(m)
+        if path in ("/held", "/held.html"):   # the review of held photos: the change-set review page, in its held mode
+            return _etagged(pages.page("changes.html"), "text/html; charset=utf-8")
+        if path == "/api/held":
+            return self.held_list(m, one("count") == "1")
         if path in ("/agents", "/agents.html"):
             return _etagged(pages.page("agents.html"), "text/html; charset=utf-8")
         if path == "/api/agents":
@@ -1238,11 +1254,12 @@ class PhotoApp:
     # -- private photos (private.py) ----------------------------------------------------------------
 
     def private_write(self, body, m: Member | None) -> Response:
-        """POST /api/private {shas | which: held | private, private: true | false, until?: YYYY-MM-DD | null}: the
-        member makes photos they shared private (withdrawn), sets the day they are released on, or releases them.
-        A photo they may not be shown is a 404, as one that does not exist; one they did not share, a 403. Outside
-        the gate, like a lens: the change is in every view (relook) before this answers; the feeds and People follow
-        in the background."""
+        """POST /api/private {shas, private: true | false, until?: YYYY-MM-DD | null}: the member makes photos they
+        shared private (withdrawn), sets the day they are released on, or releases them, each named: there is no
+        call that releases every photo at once (the held photos are looked over on /held: held_review). A photo
+        they may not be shown is a 404, as one that does not exist; one they did not share, a 403. Outside the gate,
+        like a lens: the change is in every view (relook) before this answers; the feeds and People follow in the
+        background."""
         if not isinstance(body, dict) or not isinstance(body.get("private"), bool):
             return json_response({"error": "say private: true or false"}, 400)
         viewer = m.id if m else None
@@ -1250,18 +1267,16 @@ class PhotoApp:
             return json_response({"error": "only a member's photos are private"}, 403)
         con = connect(self.a.db)
         try:
-            if body.get("which") in ("held", "private"):
-                shas = private.held_by(con, viewer, body["which"])
-            elif isinstance(body.get("shas"), list) and 0 < len(body["shas"]) <= 20000 and \
+            if isinstance(body.get("shas"), list) and 0 < len(body["shas"]) <= 20000 and \
                     all(isinstance(x, str) and re.fullmatch(r"[0-9a-f]{64}", x) for x in body["shas"]):
                 shas = body["shas"]
                 with self.live.gate:
                     if not all(self.may_see(sha, viewer) for sha in shas):
                         return json_response({"error": "no such photo"}, 404)
             else:
-                return json_response({"error": "say which photos: shas, or which: held | private"}, 400)
+                return json_response({"error": "say which photos: shas, a list of photo ids"}, 400)
             got = private.change(con, viewer, shas, body["private"], body["until"] if "until" in body else private.KEEP)
-            if len(shas) == 1 and "shas" in body:   # (the viewer's line: the photo as it is now)
+            if len(shas) == 1:   # (the viewer's line: the photo as it is now)
                 got["private"] = private.about(con, private.read(con, self.sysadmin.id if self.sysadmin else None), viewer, shas[0])
         except ValueError as e:
             return json_response({"error": str(e)}, 400)
@@ -1272,6 +1287,57 @@ class PhotoApp:
         if got["changed"]:
             self.on_hidden_change(self.relook())
         return json_response({**got, "photos": len(shas)})
+
+    def held_list(self, m: Member | None, count: bool = False) -> Response:
+        """GET /api/held: every held photo of the member's that waits to be looked over (private.review_list),
+        whatever their view options, stacks or hides, each with what the review page shows of it (its date, shape,
+        place and people) and `hidden` for one their own filters hide; `missing` for one the catalog served does not
+        have. With count=1 only {held, waiting}. A member's own only: anyone else's held photos are no part of it;
+        this computer, with no member to be, is refused as /api/private refuses it. Inside the gate (a GET)."""
+        viewer = m.id if m else None
+        if viewer is None:
+            return json_response({"error": "only a member's photos are private"}, 403)
+        con = connect(self.a.db)
+        try:
+            if count:
+                return json_response(private.counts(con, viewer))
+            v = self.live.visible_for(viewer)
+            meta, index = v.cat.meta, v.cat.index
+            got = private.review_list(con, viewer, self.a.model, named=lambda sha: bool((meta.get(sha) or {}).get("people")),
+                                      hidden=lambda sha: sha in index and not bool(v.visible[index[sha]]))
+        finally:
+            con.close()
+        for it in got["items"]:
+            f = meta.get(it["sha"])
+            if f is None:
+                it["missing"] = True
+                continue
+            it.update(when=f.get("local") or f.get("taken") or "", ar=f.get("ar") or 1.5, place=f.get("place"),
+                      people=f.get("people") or [])
+            if it["section"] == "hidden":
+                it["hidden"] = True
+        return json_response({**got, "member": viewer})
+
+    def held_review(self, body, m: Member | None) -> Response:
+        """POST /api/held/review {release: [sha], keep: [sha]}: the member looked these held photos over (/held:
+        "Reviewed up to here", or all of them): those in `release` are released, those in `keep` stay private and
+        leave the review (private.review: only photos of theirs that wait to be looked over; any other is skipped,
+        each the same). Outside the gate, like /api/private: what was released is in every view before this answers."""
+        if not isinstance(body, dict):
+            return json_response({"error": "expected a JSON object"}, 400)
+        viewer = m.id if m else None
+        con = connect(self.a.db)
+        try:
+            got = private.review(con, viewer or 0, body.get("release") or [], body.get("keep") or [])
+        except ValueError as e:
+            return json_response({"error": str(e)}, 400)
+        except private.PrivateError as e:
+            return json_response({"error": str(e)}, e.status)
+        finally:
+            con.close()
+        if got["released"]:
+            self.on_hidden_change(self.relook())
+        return json_response(got)
 
     # -- the inbox (member_inbox.py) -----------------------------------------------------------------
 

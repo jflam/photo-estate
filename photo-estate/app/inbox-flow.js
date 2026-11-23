@@ -63,7 +63,7 @@ export function act(item) {
   if (item.kind === "review") return { label: "Look it over", notice: false };
   if (item.kind === "lens_proposed") return { label: "Decide in Albums", notice: false };
   if (item.kind === "lens_changed") return { label: item.ref.startsWith("album:") ? "Open the series" : "See it in Albums", notice: true };
-  if (item.kind === "held") return { label: "Look them over", notice: false };   // done once nothing it held is still held
+  if (item.kind === "held") return { label: "Look them over", notice: false };   // (/held) done once none waits to be looked over
   if (item.kind === "question") return { label: "Answer", notice: false };       // done once each is answered or put away
   if (item.kind === "series_update") return { label: "Look at them", notice: false };   // done once they are added, or none
   if (item.kind === "binding") return { label: "Allow or turn off", notice: false };   // done once the member decides (/agents)

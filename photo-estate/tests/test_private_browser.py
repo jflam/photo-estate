@@ -5,8 +5,9 @@ and Cleo (someone else), each a browser of their own (the X-Demo-Member header).
   library no longer has it (nor its thumbnail);
 - he sets the day it is released on (a menu over the viewer), and the line says it;
 - he releases it from the line, and Cleo sees it again;
-- the held view (the inbox's item opens it: /?q=is:held): two photos held for Ben, marked in the grid; he
-  chooses one and releases it, then releases the rest; Cleo is shown neither while held, both after;
+- the held view (Search for is:held): two photos held for Ben, marked in the grid; its bar says how many are held
+  and wait, leads to the review (/held: tests/test_held_browser.py), and has no "release all"; he chooses one and
+  releases it, then the other; Cleo is shown neither while held, both after, and his inbox item is done;
 - Cleo's held view holds nothing of Ben's.
 
 Light and dark screenshots of the viewer's private line and of the held view go to PHOTO_ESTATE_SHOTS (a folder;
@@ -152,18 +153,22 @@ def test_ben_withdraws_a_photo_from_the_viewer_sets_its_day_and_releases_it(app,
     p.keyboard.press("Escape")
 
 
-def test_the_held_view_marks_and_releases_chosen_then_all(app, be, story, shots):   # noqa: F811  (be: the fixture imported above)
+def test_the_held_view_marks_and_releases_those_chosen(app, be, story, shots):   # noqa: F811  (be: the fixture imported above)
     a, b = story["held"]
     assert not {a, b} & seen(app, "cleo")
     p = be("ben")
     p.goto(f"{app}/inbox")
     item = p.locator(".item", has_text="kept private to you").first
     item.wait_for()
-    item.get_by_role("link", name="Look them over").click()
-    p.locator("#sHeld .btn").first.wait_for()
+    assert item.get_by_role("link", name="Look them over").get_attribute("href") == "/held"
+    p.goto(f"{app}/?q=is:held")
+    p.wait_for_function("() => document.querySelector('#sHeld span')?.textContent.includes('wait for you')")   # (the counts)
     assert p.locator("#sHead h1").inner_text() == "Held as private"
     assert p.locator("#sGrid .t").count() == 2 and p.locator("#sGrid .t .prv").count() == 2
-    assert p.locator("#sHeld span").inner_text().startswith("2 photos kept private to you")
+    text = p.locator("#sHeld span").inner_text()
+    assert text.startswith("2 photos held for you. 2 wait for you to look them over"), text
+    assert p.locator("#sHeld a.btn").inner_text() == "Look over all 2" and p.locator("#sHeld a.btn").get_attribute("href") == "/held"
+    assert "Release all" not in p.locator("#sHeld").inner_text()
     both_schemes(p, shots / "held-view")
     p.locator("#sHeld").get_by_role("button", name="Choose…").click()
     first = p.locator("#sGrid .t").first
@@ -175,7 +180,9 @@ def test_the_held_view_marks_and_releases_chosen_then_all(app, be, story, shots)
     p.locator("#sHeld").get_by_role("button", name="Release 1").click()
     p.wait_for_function("() => document.querySelectorAll('#sGrid .t[data-i]').length === 1")
     assert chosen in seen(app, "cleo") and ({a, b} - {chosen}).isdisjoint(seen(app, "cleo"))
-    p.locator("#sHeld").get_by_role("button", name="Release it").click()
+    p.locator("#sHeld").get_by_role("button", name="Choose…").click()
+    p.locator("#sGrid .t").first.click()
+    p.locator("#sHeld").get_by_role("button", name="Release 1").click()
     p.wait_for_function("() => document.querySelector('#sHeld span')?.textContent.startsWith('Nothing is held')")
     assert {a, b} <= seen(app, "cleo")
     p.goto(f"{app}/inbox")

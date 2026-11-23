@@ -8,6 +8,7 @@ An item is open, done (decided, or no longer waiting on anyone) or dismissed (pu
   OPENS                                  kind -> what an item opens, from its ref (a kind is a row here)
   put(con, members, kind, ref, title)    one open item per member, kind and ref: made, or brought up to date
   close(con, kind, ref, member=None)     every open item of that kind and ref (or that member's) is done
+  retitle(con, kind, ref, member, title) an open item says something new, and stays where it is in the list
   mine(con, member, keep=None) -> {items, open}   GET /api/inbox: the member's open items, newest first (keep: a
                                          filter, for the questions: stories.keep_item)
   dismiss(con, member, id) -> dict       POST /api/inbox/<id>/dismiss (InboxError: not theirs, or not open)
@@ -32,9 +33,11 @@ The kinds, who each is for, what makes and closes it (all in the caller's transa
                                           (lenses.unsubscribe, or a snapshot instead) or put away. Opens Albums
                                           (a filter) or the series (/?album=<id>)
   held            the photos' sharer      private.py, when a hold (a batch of phone uploads checked, or the
-                  held:<batch>            one-off run over the library) kept photos private to them; done once
-                                          none of that batch is still held (released, by hand or on its day).
-                                          Opens the held view (/?q=is:held)
+                  held:<batch>            one-off run over the library) kept photos private to them: one open
+                                          item per member, which a later hold brings up to date (its ref stays
+                                          that of the batch that opened it), saying how many wait to be looked
+                                          over; done once none waits (looked over on /held, or released by any
+                                          way), not once none is held. Opens the review of held photos (/held)
 
   question        the member it is dealt to stories.deal (when their inbox is read): one item per group of
                   ask:<group>             questions (a group_key, or q<id>), within their weekly allowance; done once
@@ -75,7 +78,7 @@ OPENS = {
     "review": lambda ref: f"/changes/{_num(ref)}",
     "lens_proposed": lambda ref: "/?albums",
     "lens_changed": lambda ref: f"/?album={_num(ref)}" if ref.startswith("album:") else "/?albums",
-    "held": lambda ref: "/?q=is:held",
+    "held": lambda ref: "/held",
     "question": lambda ref: f"/inbox?ask={quote(ref.partition(':')[2])}",
     "series_update": lambda ref: f"/?album={_num(ref)}&candidates=1",
     "binding": lambda ref: "/agents",
@@ -121,6 +124,13 @@ def close(con: sqlite3.Connection, kind: str, ref: str, member: int | None = Non
     if member is not None:
         q, args = q + " AND member_id=?", args + [member]
     return con.execute(q, args).rowcount
+
+
+def retitle(con: sqlite3.Connection, kind: str, ref: str, member: int, title: str) -> int:
+    """`member`'s open item of `kind` about `ref` says `title` now, without being moved to the top (put() moves it:
+    something new happened; this is the same thing, counted again). In the caller's transaction. How many changed."""
+    return con.execute("UPDATE inbox_items SET title=? WHERE member_id=? AND kind=? AND ref=? AND state='open' AND title IS NOT ?",
+                       (title[:300], member, kind, ref, title[:300])).rowcount
 
 
 def _item(row) -> dict:

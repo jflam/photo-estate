@@ -154,7 +154,7 @@ def test_fresh_databases_match_what_the_old_code_made(tmp_path):
     inbox (inbox_items and its index, in the members area), `private` (multiplayer phase 5, in the catalog area),
     and phase 7's: the stories area (questions, asked, stories, story_photos and their triggers, listener_cursors),
     change_sets.grows_from, agent_tasks.started_by and members.questions_per_week; and phase 8's agent_bindings (and
-    its index, in the members area) and stories.seconds."""
+    its index, in the members area) and stories.seconds; and private.reviewed_at (the review of held photos)."""
     baseline = json.loads((FIXTURES / "schema_baseline.json").read_text())
     # Tables newer than the baseline: only ever added (the video area: live_pairs and video_frames). They
     # must be there, and everything else must be as the old code made it.

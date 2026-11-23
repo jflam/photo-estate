@@ -84,7 +84,7 @@ trip.
 
 **Hamming distance.** The number of bits in which two bit strings differ.
 
-**Held.** A photo kept private to its sharer when it came in from a phone, because it looks like a receipt, a screenshot or a document (`private.py check`: three prompts scored against its SigLIP vector, and `is_screenshot`), or by the one-off run over the library. Its sharer is told in their inbox and releases it from the held view (`is:held`) ([11](11-server.md#private-photos)).
+**Held.** A photo kept private to its sharer when it came in from a phone, because it looks like a receipt, a screenshot or a document (`private.py check`: three prompts scored against its SigLIP vector, and `is_screenshot`), or by the one-off run over the library. Its sharer is told in their inbox and looks it over on `/held`, the review of held photos: released, or kept private and *looked over* (`reviewed_at`), after which it no longer waits there but is still private and still found by `is:held` ([11](11-server.md#private-photos)).
 
 **Home.** The place (per year) with photos on the most distinct days; used to decide what is "away".
 
@@ -103,7 +103,7 @@ trip.
 **Journal (face).** `face-labels.jsonl`: an append-only record of your face decisions, keyed by photo
 hash and box.
 
-**Released.** A private photo shared with the family again, by its sharer (now, or in a batch from the held view) or by itself on the day they set ("private until Dec 26": the app's timer). Its row stays, so it is never held again ([11](11-server.md#private-photos)).
+**Released.** A private photo shared with the family again, by its sharer (now, from the viewer; in a batch from the review of held photos, or those chosen in the held view) or by itself on the day they set ("private until Dec 26": the app's timer). Its row stays, so it is never held again ([11](11-server.md#private-photos)).
 
 **Replica.** The phone's read-only copy of the catalog, in `catalog.db`; the server is the only writer ([20](20-sync.md)).
 

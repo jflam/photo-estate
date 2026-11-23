@@ -53,6 +53,7 @@ gets each kind:
   photo.purged                 no one
   photo.held                   theirs (acting for the sharer)
   photo.withdrawn, .release_set, .released   theirs
+  photo.reviewed               no one (the review's own bookkeeping: what it kept is private as before)
   tombstones.changed           no one (the phone's opt-outs)
   series.update_requested      theirs (acting for the series' owner), its photos those they may be shown, and
                                `waiting`: whether their series_update item is still open
@@ -108,6 +109,9 @@ Kinds, with their subject and where each is appended:
   photo.release_set                <sha> or photos   the day private photos are released on, set or cleared {photos, until}
   photo.released                   <sha> or photos   released by their sharer {photos}, or by the app's timer on their
                                                 day {photos, auto: true, until}: no actor, acting for the sharer
+  photo.reviewed                   <sha> or photos   held photos their sharer looked over and kept private (/held,
+                                                private.review: one entry per submit) {photos}; those it released are
+                                                a photo.released of their own
   album.grows                      album:<id>   changes.py: the search a series grows from, set or cleared {grows_from}
   series.update_requested          album:<id>   listeners.py: new photos match a member's own series {ingest, photos,
                                                 more?}: no actor, acting for its owner (their series_update item)

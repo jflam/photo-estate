@@ -5,7 +5,8 @@
   ADDED                 area -> {table: ((column, type), ...)}: columns newer than some existing databases
   CATALOG_AREAS         the areas that live in the catalog (estate.db), for tests and tools
   APPEND_ONLY           sharers, tombstones and the protected-table triggers (part of the catalog area)
-  PRIVATE               private: photos private to a sharer (part of the catalog area; private.py)
+  PRIVATE               private: photos private to a sharer (part of the catalog area; private.py), and its
+                        reviewed_at (ADDED: a held photo looked over and kept private, on /held)
   EXIF_APP_INDEX        the index catalog.load adds to exif for the app's startup read
 
 Areas, and who opens them (each owner calls ensure when it opens the database, never per request):
@@ -401,6 +402,9 @@ AREAS = {"catalog": CATALOG + APPEND_ONLY + PRIVATE, "embeddings": EMBEDDINGS, "
 CATALOG_AREAS = ("catalog", "embeddings", "video", "faces", "changes", "tasks", "scores", "favorites", "members", "lenses",
                  "stories")
 ADDED = {
+    # reviewed_at: when a held photo's sharer looked it over on /held and kept it private (private.review); NULL
+    # while it waits to be looked over. It stays private all the same: only the review no longer lists it
+    "catalog": {"private": (("reviewed_at", "TEXT"),)},
     # owner: the member whose album or set it is (NULL: the first sysadmin's); lens_id: the filter lens a hiding
     # set hides for (lenses.py; NULL: from before lenses, hiding for everyone until `estate.py migrate`)
     "changes": {"change_sets": (("done_at", "TEXT"), ("kind", "TEXT DEFAULT 'list'"), ("query", "TEXT"),

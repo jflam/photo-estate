@@ -469,14 +469,22 @@ sqlite3 $DB "select why, count(*) from private where released_at is null group b
 sqlite3 $DB "select kind, data from journal where kind='photo.held' order by id desc limit 1"
 
 # 5. The app reads who is private when something changes: restart it, then look the held photos over in the
-#    app (Inbox, or Search for is:held), releasing what should be shared ("Release all", or "Choose…")
+#    app: the Inbox item ("Look them over") opens the review, /held. It lists every held photo, likeliest
+#    mistakes first; mark what should be shared (click, or R), and "Reviewed up to here" (U) releases that
+#    and keeps the rest up to there private, a stretch at a time. Search for is:held is not the place: it
+#    leaves out screenshots, stacked shots and what you hide.
 launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search
 curl -s http://127.0.0.1:8766/api/info | head -c 200; echo
+sqlite3 $DB "select count(*), sum(reviewed_at is null) from private where why='held' and released_at is null"   # held|waiting
 ```
+
+The review records what has been looked over in `private.reviewed_at`, a column the app adds to the catalog when it
+starts (an additive schema change: take the catalog backup CLAUDE.md gives before the first restart on code that
+has it). A photo looked over and kept is private exactly as before; it only leaves the review.
 
 Releasing a photo by hand, or on a day set in the viewer ("Release on a day…"), needs nothing on the mini: the
 app's timer releases what is due every minute, by the mini's own date. To undo the one-off run completely
-(nothing else depends on it): release everything it held from the held view, or by hand,
+(nothing else depends on it): release everything it held by hand (the app has no "release all"),
 `sqlite3 $DB "update private set released_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') where why='held' and released_at is null"`
 then restart the app (the rows stay, released, so the run does not hold them again).
 

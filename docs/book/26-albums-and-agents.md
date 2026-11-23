@@ -6,7 +6,7 @@ wrong ones. This chapter is both, and how the same two ideas let an agent work o
 being trusted with it.
 
 The code is [changes.py](../../photo-estate/changes.py) (albums and change sets),
-[changes.html](../../photo-estate/changes.html) (the review page),
+[changes.html](../../photo-estate/changes.html) (the review page, which is also the review of held photos at `/held`),
 [estate_mcp.py](../../photo-estate/estate_mcp.py) (the library as tools for an agent) and
 [tasks.py](../../photo-estate/tasks.py) (an agent that runs on the library's computer). On the phone it is
 [Albums.swift](../../ios/PhotoEstate/Library/Albums.swift) and
@@ -155,11 +155,38 @@ Phase 5 of the multiplayer plan lets a member keep a photo they shared to themse
   *Shared by you*, **Withdraw from the family**; withdrawn, the line takes its place. The lists behind the
   viewer are asked for again when it closes.
 - **A mark in the grid**: a small lock on each photo private to the member, wherever their own lists show it.
-- **The held view** is Search for `is:held` (the `held` inbox item opens it): *Held as private*, the photos
-  held at ingestion, and a bar: how many, **Release all**, and **Choose…**, after which a tile tapped is
-  chosen (outlined), not opened, and **Release N** releases those chosen (**Cancel** stops choosing). So 500
-  held photos are looked over as a wall and released in one or a few presses, not 500. `is:private` lists
-  everything private to the member, held or withdrawn; `is:withdrawn` only what they withdrew.
+- **The held view** is Search for `is:held`: *Held as private*, and a bar. Being a search, it obeys the view
+  options and the member's hides, so its bar says so ("This search shows 4,439 of the 7,992 photos held for you:
+  your view options (screenshots, stacks) and what you hide leave the rest out", from `GET /api/held?count=1`),
+  says how many wait to be looked over, and leads to the review of every one (**Look over all N**, `/held`,
+  below). **Choose…** remains: a tile tapped is then chosen (outlined), not opened, and **Release N** releases
+  exactly those (**Cancel** stops choosing). There is no "Release all": it released every held photo, those the
+  search never showed included. `is:private` lists everything private to the member, held or withdrawn;
+  `is:withdrawn` only what they withdrew.
+
+### Looking held photos over
+
+The `held` inbox item opens **`/held`**: the change-set review page in its held mode, the same wall with the
+roles swapped. On a change set every photo will be hidden unless it is marked to keep; here every photo stays
+private unless it is marked to **release**. It lists every held photo of the member's that waits to be looked
+over, whatever the view options, stacks or hides ([chapter 11](11-server.md#private-photos) has the order and
+the API), under headings: *Someone is named in them* (the likeliest mistakes), *Just over the line*, *Receipts
+and documents*, *Screenshots, and the surest*, and last *Already hidden from you* (each tile there says
+*Hidden*). Each tile's tooltip, and the zoomed photo's line, say why it was held ("Looks like a receipt
+(0.112)", "The phone marked it a screenshot").
+
+Everything the change-set page does with the wall it does here, with the same code: the tile sizes (− and +),
+moving with the arrow keys or the pointer, Space to zoom, a click (or **R**) to mark, shift-click for a run,
+and the filter (*All*, *To release*). The dock says what **Reviewed up to here** (**U**) would do from the
+photo the member is on ("Up to here: release 2, keep 3 private · 7 after it"): the marked photos up to it are
+released, the rest up to it stay private and leave the review, and what comes after waits, so 8,000 are looked
+over a stretch at a time. **Done: keep the rest private** (**A**, after a confirm) does the same for the whole
+list. Marks are kept in the browser (per member) until they are sent, so a reload keeps them; the request
+names every photo it covers, so nothing is released that was not marked, and a photo held after the page read
+the list is not touched (the page says when more have been held since, and offers to read the list again). A
+photo kept is still private, and still found by `is:held`. The machine and the words are
+[app/held-flow.js](../../photo-estate/app/held-flow.js) (a strict `flow()`: loading, reviewing, sending,
+failed), unit-tested in `app/tests/held-flow.test.js`; tests/test_held_browser.py drives the page.
 
 ## The inbox
 
@@ -169,8 +196,8 @@ what makes and closes each, and the API are [chapter 11](11-server.md#the-inbox)
 unit-tested in `app/tests/inbox-flow.test.js`): a card per open item, newest first, with what kind it is
 (*Asking to be let in*, *To look over*, *Proposed estate default*, *A lens you follow*, *Kept private to
 you*), what it is about and the day, a button that opens the screen that decides it (**Open Members**, **Look
-it over**, **Decide in Albums**, **See it in Albums**, **Open the series** or **Look them over**: the held
-view) and **Dismiss**. Deciding where it opens takes the
+it over**, **Decide in Albums**, **See it in Albums**, **Open the series** or **Look them over**: the review
+of held photos, `/held`) and **Dismiss**. Deciding where it opens takes the
 item out of the inbox; nothing is decided on the inbox itself. A lens that changed asks for no decision,
 so opening it puts it away. The Library's ⋯ button carries a small count when anything is open, and its
 menu's **Inbox** row the same; the count is asked for when the page loads, when it is come back to, and
@@ -370,6 +397,7 @@ show the photo's stories and **Tell a story**.
 |---|---|
 | Albums, change sets, the `hidden` table | [changes.py](../../photo-estate/changes.py) `Changes` |
 | The review page | [changes.html](../../photo-estate/changes.html) |
+| Looking held photos over (`/held`) | [changes.html](../../photo-estate/changes.html) in its held mode, [app/held-flow.js](../../photo-estate/app/held-flow.js); [private.py](../../photo-estate/private.py) `review_list`, `review`; [test_held_browser.py](../../photo-estate/tests/test_held_browser.py) |
 | The MCP tools and their descriptions | [estate_mcp.py](../../photo-estate/estate_mcp.py) `Tools` |
 | Running the agent, its briefs, its token, its events | [tasks.py](../../photo-estate/tasks.py) `Tasks`, `BRIEF`, `WORK_BRIEF`, `mint` |
 | A member's own agent: bindings, what it may read of the journal, Connect your agent | [members.py](../../photo-estate/members.py) `bind`, `decide_binding`; [journal.py](../../photo-estate/journal.py) `for_member`; [agents.html](../../photo-estate/agents.html), [app/agents-flow.js](../../photo-estate/app/agents-flow.js) |

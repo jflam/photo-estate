@@ -84,7 +84,7 @@ test("what each kind's button says, and that only a notice is put away by openin
   assert.deepEqual(act({ kind: "photo_frame", ref: "device:1" }), { label: "Open", notice: false }, "a kind this page does not know yet");
   assert.deepEqual(act({ kind: "question", ref: "ask:q1" }), { label: "Answer", notice: false }, "done once each is answered or put away");
   assert.deepEqual(act({ kind: "series_update", ref: "album:7" }), { label: "Look at them", notice: false });
-  assert.deepEqual(act({ kind: "held", ref: "held:12" }), { label: "Look them over", notice: false }, "done once nothing is still held");
+  assert.deepEqual(act({ kind: "held", ref: "held:12" }), { label: "Look them over", notice: false }, "done once none waits to be looked over");
   assert.deepEqual(Object.keys(KIND), ["member_request", "review", "lens_proposed", "lens_changed", "held", "question", "series_update", "binding"]);
 });
 

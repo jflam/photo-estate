@@ -5,7 +5,10 @@ and a withdrawn one; a real HTTP server asked for every pixel and metadata route
 exactly what it answers for a sha it does not have; People; release now and on a day (the timer, on a fake
 clock); an agent acting for Cleo, and for nobody; ingest (two members sending the same bytes, a phone upload
 private before any reload can show it, the old inbox layout); the hold's scores on the demo; the one-off run's
-dry run and its second run.
+dry run and its second run. The review of held photos (/held): every held photo listed whatever the view options,
+stacks or hides; its order and sections; "reviewed up to here" and a photo held after the list was read; the held
+inbox item's life; a photo looked over and kept still private; every private route answering a stranger, another
+member, the estate's agent and a member's own agent as /api/private does; and, slow, a review of 8,000 photos.
 
   uv run pytest tests/test_private.py
 """
@@ -36,7 +39,7 @@ import estate  # noqa: E402
 import faces  # noqa: E402
 import private  # noqa: E402
 from photo_app import PhotoApp  # noqa: E402
-from test_multiplayer import ADA, ALL, BEN, CLEO, call, feed, mid, seen, settle, tool  # noqa: E402
+from test_multiplayer import ADA, ALL, BEN, CLEO, bind, call, feed, hide, mid, seen, settle, tool  # noqa: E402
 
 MODEL = embed.DEFAULT_MODEL
 UNKNOWN = "0" * 64
@@ -70,11 +73,11 @@ def withdraw(app, who, shas, until=None, expect=200, on=True):
     return got
 
 
-def hold(app, who, sha) -> int:
-    """Hold a photo for `who`, as private.py check does for a phone upload that looks like a receipt."""
+def hold(app, who, *shas) -> int:
+    """Hold photos for `who`, in one batch, as private.py check does for phone uploads that look like a receipt."""
     con = db(app)
     with con:
-        batch = private._hold(con, mid(app, who), [sha], "upload", private.now())
+        batch = private._hold(con, mid(app, who), list(shas), "upload", private.now())
     con.close()
     app.relook()
     settle(app)
@@ -365,7 +368,7 @@ def test_release_now_and_on_a_day_by_the_timer(app):
     withdraw(app, BEN, [y], until="2026-12-26")
     assert x not in seen(app, CLEO) and y not in seen(app, CLEO)
     items = call(app, "GET", "/api/inbox", BEN)["items"]
-    assert [(i["kind"], i["opens"]) for i in items] == [("held", "/?q=is:held")]
+    assert [(i["kind"], i["opens"]) for i in items] == [("held", "/held")]
     withdraw(app, BEN, [x], until="2026-12-26")                     # the held photo gets a day too
     con = db(app)
     assert con.execute("SELECT why, until FROM private WHERE sha256=?", (x,)).fetchone() == ("held", "2026-12-26")
@@ -392,12 +395,11 @@ def test_release_now_and_on_a_day_by_the_timer(app):
     kinds = [k for _, _, k, _ in entries]
     assert kinds == ["photo.held", "photo.withdrawn", "photo.release_set", "photo.released"]
     assert entries[-1][:2] == (None, mid(app, BEN)) and json.loads(entries[-1][3]) == {"photos": 2, "auto": True, "until": "2026-12-26"}
-    # released now, and in a batch from the held view (which: held)
+    # there is no call that releases every held photo: {which} is gone, and releases nothing
     hold(app, BEN, x)
-    got = call(app, "POST", "/api/private", BEN, {"which": "held", "private": False})
-    assert got["released"] == 1 and got["photos"] == 1
-    settle(app)
-    assert x in seen(app, CLEO)
+    for which in ("held", "private"):
+        call(app, "POST", "/api/private", BEN, {"which": which, "private": False}, expect=400)
+    assert x not in seen(app, CLEO)
 
 
 # -- an agent ------------------------------------------------------------------------------------------
@@ -584,12 +586,12 @@ def test_the_one_off_run_dry_run_then_twice(app):
 
 HELD_SCRIPT = """# /// script
 # requires-python = ">=3.11,<3.14"
-# dependencies = ["torch", "transformers>=4.49", "pillow>=10.0", "pillow-heif>=0.18", "sentencepiece", "protobuf", "numpy"]
+# dependencies = ["torch", "transformers>=4.49", "pillow>=10.1", "pillow-heif>=0.18", "sentencepiece", "protobuf", "numpy"]
 # ///
 import sys
 sys.path.insert(0, sys.argv[1])
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import embed, encoder, private
 MODEL = embed.DEFAULT_MODEL
 vecs = embed.text_vectors(list(private.PROMPTS), MODEL, 4, "cpu")
@@ -602,8 +604,9 @@ LINES = {"receipt": "ITEM {i}   {p:6.2f}      TOTAL", "screenshot": "9:41    Mes
 for kind, (w, h) in (("receipt", (600, 1400)), ("screenshot", (1170, 2532)), ("document", (1700, 2200))):
     im = Image.new("RGB", (w, h), "white")
     d = ImageDraw.Draw(im)
+    font = ImageFont.load_default(min(w // 27, h // 45 - 8))    # text a person could read: in the default 10px font the page is all but blank
     for i in range(40):
-        d.text((40, 60 + i * (h // 45)), LINES[kind].format(i=i, p=i * 1.37), fill="black")
+        d.text((40, 60 + i * (h // 45)), LINES[kind].format(i=i, p=i * 1.37), fill="black", font=font)
     v = e.image(im.resize((side, side))).astype(np.float32)
     s = private.scores(v[None] / np.linalg.norm(v), MODEL)[0]
     print(kind, [round(float(x), 4) for x in s])
@@ -636,3 +639,245 @@ def test_prompt_vectors_missing_keeps_new_photos_private(app, monkeypatch, tmp_p
         private.check(con, MODEL, out=lambda *a: None)
     assert con.execute("SELECT why FROM private WHERE sha256=?", (x,)).fetchone() == ("new",)
     con.close()
+
+
+# -- the review of held photos (/held) ----------------------------------------------------------------------
+
+def aim(app, sha: str, k: int, score: float) -> None:
+    """Give a photo a vector that scores `score` for prompt k (PROMPTS: 0 a receipt, 1 a phone screenshot, 2 a
+    document), and less for the others: a photo made to look like one, as closely as asked."""
+    P = private.prompt_vectors(MODEL).astype(np.float64)
+    P /= np.linalg.norm(P, axis=1, keepdims=True)
+    w = np.random.default_rng(int(sha[:8], 16)).standard_normal(P.shape[1])
+    q, _ = np.linalg.qr(P.T)                        # the prompts' span: w is made at right angles to all of it
+    w -= q @ (q.T @ w)
+    embed_as(app, sha, score * P[k] + np.sqrt(1 - score * score) * w / np.linalg.norm(w))
+
+
+def waiting_rows(app, who) -> int:
+    con = db(app)
+    n = con.execute("SELECT count(*) FROM private WHERE member_id=? AND why='held' AND released_at IS NULL"
+                    " AND reviewed_at IS NULL", (mid(app, who),)).fetchone()[0]
+    con.close()
+    return n
+
+
+def held_items(app, who) -> list[str]:
+    return [it["sha"] for it in call(app, "GET", "/api/held", who)["items"]]
+
+
+def review(app, who, release=(), keep=(), expect=200):
+    got = call(app, "POST", "/api/held/review", who, {"release": list(release), "keep": list(keep)}, expect=expect)
+    settle(app)
+    return got
+
+
+def test_the_review_lists_every_held_photo_in_order_whatever_the_view_options(app):
+    """Every held photo of Ben's, whatever the page's view options (screenshots out, stacks as their top) or his own
+    hides leave out of a search for is:held: a person named first, then by how little it cleared the line, then
+    screenshots and the surest, and last what he hides. The count is the table's."""
+    c = app.live.cat
+    named, close1, close2, doc, sure, shot, hid, top, dup = (c.shas[k] for k in (10, 11, 12, 13, 14, 15, 16, 50, 51))
+    con = db(app)
+    con.execute("UPDATE assets SET people='Zed Quux' WHERE sha256=?", (named,))
+    con.execute("UPDATE assets SET ext='.png', width=1170, height=2532 WHERE sha256=?", (shot,))   # a phone's screenshot
+    con.execute("DELETE FROM exif WHERE sha256=?", (shot,))
+    vec = con.execute("SELECT vec FROM embeddings WHERE sha256=?", (top,)).fetchone()[0]
+    for k, x in enumerate((top, dup)):                                                         # a stack: dup is behind top
+        con.execute("UPDATE embeddings SET vec=? WHERE sha256=?", (vec, x))
+        con.execute("UPDATE assets SET taken_at=? WHERE sha256=?", (f"2001-02-03T04:05:0{k}+00:00", x))
+    con.commit()
+    con.close()
+    for x, k, score in ((named, 0, 0.14), (close1, 0, 0.102), (close2, 2, 0.098), (doc, 2, 0.12), (sure, 0, 0.16), (hid, 1, 0.11)):
+        aim(app, x, k, score)
+    app.live.install(app.load_catalog(), then=app.caught_up, looks=app.with_private)
+    held = [named, close1, close2, doc, sure, shot, hid, dup]
+    share(app, held[0], BEN)
+    for x in held[1:]:
+        share(app, x, BEN)
+    hide(app, BEN, [hid])
+    hold(app, BEN, *held)
+    page = {r["sha"] for r in call(app, "GET", "/api/search?limit=500&q=is:held&shots=0&dedupe=1", BEN)["results"]}
+    assert page == set(held) - {shot, dup, hid}, "the search leaves out a screenshot, a shot behind another and what he hides"
+    got = call(app, "GET", "/api/held", BEN)
+    assert [it["sha"] for it in got["items"]] == [named, dup, close2, close1, doc, shot, sure, hid]
+    assert [(x["key"], x["n"]) for x in got["sections"]] == [("named", 1), ("close", 3), ("documents", 1), ("sure", 2), ("hidden", 1)]
+    assert got["waiting"] == got["held"] == len(got["items"]) == waiting_rows(app, BEN) == 8
+    by = {it["sha"]: it for it in got["items"]}
+    assert by[hid]["hidden"] is True and not any(by[x].get("hidden") for x in held if x != hid)
+    assert by[close2]["why"] == ["a document"] and abs(by[close2]["scores"][2] - 0.098) < 2e-3
+    assert "is_screenshot" in by[shot]["why"] and by[dup]["why"] == [], "dup was held at another line: it says its scores"
+    assert by[named]["people"] == ["Zed Quux"] and by[doc]["ar"] and by[doc]["when"] is not None
+    assert got["prompts"] == list(private.PROMPTS) and got["hold_at"] == private.HOLD_AT and got["member"] == mid(app, BEN)
+    assert held_items(app, BEN) == [it["sha"] for it in got["items"]], "the same order every time"
+    assert call(app, "GET", "/api/held?count=1", BEN) == {"held": 8, "waiting": 8}
+    assert call(app, "GET", "/api/held", CLEO)["items"] == [] and call(app, "GET", "/api/held?count=1", CLEO) == {"held": 0, "waiting": 0}
+
+
+def test_reviewed_up_to_here_releases_what_was_marked_and_never_a_photo_held_since(app):
+    xs = [pick(app, k) for k in range(20, 27)]
+    for x in xs:
+        share(app, x, BEN)
+    hold(app, BEN, *xs[:5])
+    listed = held_items(app, BEN)
+    marked, unmarked = [listed[0], listed[2]], [listed[1]]          # up to the third: two marked to release, one not
+    hold(app, BEN, xs[5])                                              # held after the page read the list
+    got = review(app, BEN, marked, unmarked)
+    assert got == {"released": 2, "kept": 1, "skipped": 0, "changed": True, "held": 4, "waiting": 3}
+    cleo = set(seen(app, CLEO))
+    assert set(marked) <= cleo and not ({listed[1], *listed[3:], xs[5]} & cleo)
+    left = held_items(app, BEN)
+    assert set(left) == {*listed[3:], xs[5]} and [x for x in left if x != xs[5]] == listed[3:]
+    # sent again (another tab, a retry): nothing changes; someone else's, and none at all: skipped, each the same
+    assert review(app, BEN, marked, unmarked) == {"released": 0, "kept": 0, "skipped": 3, "changed": False, "held": 4, "waiting": 3}
+    assert raw(app, "POST", "/api/held/review", CLEO, {"release": [listed[3]]}) == \
+        raw(app, "POST", "/api/held/review", CLEO, {"release": [UNKNOWN]})
+    assert review(app, CLEO, [listed[3]])["skipped"] == 1 and listed[3] in held_items(app, BEN)
+    assert review(app, BEN, [UNKNOWN, xs[6]])["skipped"] == 2, "not held, or no photo at all"
+    for bad in ({"release": "x"}, {"keep": [listed[3]], "release": [listed[3]]}, {"keep": ["nothex"]}, {"keep": [1]}):
+        call(app, "POST", "/api/held/review", BEN, bad, expect=400)
+    call(app, "POST", "/api/held/review", BEN, [listed[3]], expect=400)
+    assert held_items(app, BEN) == left
+    con = db(app)
+    entries = con.execute("SELECT actor, kind, subject, data FROM journal WHERE kind IN ('photo.released', 'photo.reviewed')"
+                          " ORDER BY id").fetchall()
+    assert con.execute("SELECT reviewed_at IS NOT NULL, released_at IS NOT NULL FROM private WHERE sha256=?", (listed[1],)).fetchone() == (1, 0)
+    con.close()
+    assert [(a, k, sub, json.loads(d)) for a, k, sub, d in entries] == \
+        [(mid(app, BEN), "photo.released", "photos", {"photos": 2}), (mid(app, BEN), "photo.reviewed", listed[1], {"photos": 1})]
+
+
+def test_the_held_item_says_how_many_wait_and_is_done_when_none_does(app):
+    import member_inbox
+    xs = [pick(app, k) for k in range(30, 35)]
+    for x in xs:
+        share(app, x, BEN)
+    held_of = lambda: [i for i in call(app, "GET", "/api/inbox", BEN)["items"] if i["kind"] == "held"]   # noqa: E731
+    hold(app, BEN, xs[0], xs[1])
+    hold(app, BEN, xs[2])                            # a later hold joins the same item, brought up to date
+    (item,) = held_of()
+    assert item["title"].startswith("3 photos kept private to you, waiting for you to look them over") and item["opens"] == "/held"
+    review(app, BEN, keep=[xs[0]])
+    (again,) = held_of()
+    assert again["id"] == item["id"] and again["title"].startswith("2 photos") and again["updated_at"] == item["updated_at"], \
+        "the same item, saying how many wait, not moved up"
+    withdraw(app, BEN, [xs[1]], on=False)            # released from the viewer's line: it waits no more either
+    assert held_of()[0]["title"].startswith("1 photo kept private to you, waiting for you to look it over: it looks like")
+    review(app, BEN, keep=[xs[2]])
+    assert held_of() == [] and call(app, "GET", "/api/held?count=1", BEN) == {"held": 2, "waiting": 0}, \
+        "done once none waits, though two are still held"
+    hold(app, BEN, xs[3])                            # held later: a new item
+    (fresh,) = held_of()
+    assert fresh["id"] != item["id"] and fresh["title"].startswith("1 photo")
+    con = db(app)                                    # from before one item held them all: two open, of two batches
+    with con:
+        member_inbox.put(con, [mid(app, BEN)], "held", "held:999999", "an old batch's item")
+    con.close()
+    hold(app, BEN, xs[4])
+    assert [i["title"][:9] for i in held_of()] == ["2 photos "], "one item stays, saying how many wait"
+
+
+def test_a_photo_looked_over_and_kept_is_private_as_before(app):
+    x, y = pick(app, 40), pick(app, 41)
+    share(app, x, BEN)
+    share(app, y, BEN)
+    hold(app, BEN, x, y)
+    review(app, BEN, release=[y], keep=[x])
+    assert x not in seen(app, CLEO) and y in seen(app, CLEO)
+    assert x in seen(app, BEN, "&q=is:held") and x in seen(app, BEN, "&q=is:private") and y not in seen(app, BEN, "&q=is:private")
+    assert call(app, "GET", f"/api/photos/{x}/why", BEN)["private"]["mine"]["why"] == "held"
+    call(app, "GET", f"/api/photos/{x}/why", CLEO, expect=404)
+    assert held_items(app, BEN) == []
+    con = db(app)
+    assert private.library(con, mid(app, BEN), MODEL, out=lambda *a: None)["held"] == 0, "neither is held again"
+    con.close()
+    assert held_items(app, BEN) == [] and y in seen(app, CLEO), "what he released does not come back"
+    withdraw(app, BEN, [x], on=False)                # the viewer's line still releases it
+    assert x in seen(app, CLEO)
+
+
+PRIVATE_ROUTES = (("POST", "/api/private", {"shas": [UNKNOWN], "private": False}), ("GET", "/api/held", None),
+                  ("GET", "/api/held?count=1", None), ("POST", "/api/held/review", {"keep": [UNKNOWN]}),
+                  ("GET", "/api/tombstones", None), ("POST", "/api/tombstones", {"add": []}))
+
+
+def test_every_private_route_answers_a_stranger_another_member_and_the_agents_alike(app):
+    """The routes of a member's private photos, old and new, side by side: a stranger is refused each the same; another
+    member is told nothing of Ben's held photo (as of a photo that does not exist); a run of the estate's agent, by its
+    token, gets no way in that a stranger lacks; and neither it nor a member's own agent has any new tool, nor any new
+    entry in journal_since."""
+    x = pick(app, 45)
+    share(app, x, BEN)
+    hold(app, BEN, x)
+    stranger = {"X-Demo-Member": "zed"}              # a login nobody has let in
+    con = db(app)
+    tid = con.execute("INSERT INTO agent_tasks(prompt, status, created_by, created_at, acting_for) VALUES"
+                      " ('look', 'running', 'x', '2026-01-01', ?)", (mid(app, BEN),)).lastrowid
+    con.commit()
+    con.close()
+    token = {"X-Estate-Agent": app.tasks.mint(tid)}
+    refused = raw(app, "POST", "/api/private", stranger, {"shas": [x], "private": False})
+    assert refused[0] == 403 and json.loads(refused[1]) == {"error": "not allowed"}
+    for method, path, body in PRIVATE_ROUTES:
+        assert raw(app, method, path, stranger, body) == refused, path
+        assert raw(app, method, path, {**stranger, **token}, body) == refused, path
+    for page in ("/held", "/inbox"):
+        r = app.request("GET", page, headers={**stranger, "Accept": "text/html"})
+        assert r.status == 403 and b"request" in r.body.lower(), page
+    assert app.request("GET", "/held", headers={**stranger, "Accept": "text/html"}).body == \
+        app.request("GET", "/inbox", headers={**stranger, "Accept": "text/html"}).body
+    # Cleo: nothing of Ben's, and his photo is as one that does not exist
+    for path in ("/api/held", "/api/held?count=1"):
+        assert x not in raw(app, "GET", path, CLEO)[1].decode()
+    assert raw(app, "POST", "/api/held/review", CLEO, {"release": [x]}) == raw(app, "POST", "/api/held/review", CLEO, {"release": [UNKNOWN]})
+    assert raw(app, "POST", "/api/private", CLEO, {"shas": [x], "private": False}) == \
+        raw(app, "POST", "/api/private", CLEO, {"shas": [UNKNOWN], "private": False})
+    assert held_items(app, BEN) == [x]
+    # the agents: the estate's (a run acting for Ben, by its token) and Ben's own; no tool is new, and no tool names it
+    run = call(app, "POST", "/mcp", {**token}, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, local=True)["result"]["tools"]
+    bind(app, BEN)
+    own = call(app, "POST", "/mcp", BEN, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]
+    for tools in (run, own):
+        assert not [t["name"] for t in tools if "held" in t["name"] or "review" in t["name"] or "private" in t["name"]]
+    review(app, BEN, keep=[x])
+    kinds = [e["kind"] for e in tool(app, BEN, "journal_since", {"limit": 500})["entries"]]
+    assert "photo.held" in kinds and "photo.reviewed" not in kinds, "the review's bookkeeping is told to no agent"
+
+
+@pytest.mark.slow
+def test_a_review_of_eight_thousand_held_photos(app, tmp_path):
+    """The size of the owner's library's hold (7,992): 8,000 held rows with vectors, made in the app's scratch catalog
+    (fake photos: assets, sharers and embeddings rows, no files). The list is read, in order, and looked over in three
+    stretches, within a few seconds each. Measured here: private.review_list and private.review on this machine's
+    SQLite; not measured: the HTTP layer, the catalog's own load of 8,000 more photos, or a browser drawing them."""
+    import hashlib as h
+    rng = np.random.default_rng(7)
+    ben = mid(app, BEN)
+    shas = [h.sha256(f"fake {i}".encode()).hexdigest() for i in range(8000)]
+    P = private.prompt_vectors(MODEL)
+    vecs = rng.standard_normal((8000, P.shape[1])).astype(np.float32) * 0.03 + P[rng.integers(0, 3, 8000)] * 0.12
+    vecs = (vecs / np.linalg.norm(vecs, axis=1, keepdims=True)).astype(np.float16)
+    con = db(app)
+    with con:
+        con.executemany("INSERT INTO assets(sha256, ext, size, kind, width, height) VALUES (?, '.jpg', 1, 'image', 4032, 3024)",
+                        ((s,) for s in shas))
+        con.executemany("INSERT INTO sharers VALUES (?,?,'2026-01-01')", ((s, ben) for s in shas))
+        con.executemany("INSERT INTO embeddings VALUES (?,?,?,?,NULL,'2026-11-22')",
+                        ((s, MODEL, P.shape[1], v.tobytes()) for s, v in zip(shas, vecs)))
+        private._hold(con, ben, shas, "library", private.now())
+    t = time.time()
+    got = private.review_list(con, ben, MODEL)
+    listed = time.time() - t
+    assert [it["sha"] for it in got["items"]] == [it["sha"] for it in private.review_list(con, ben, MODEL)["items"]]
+    assert len(got["items"]) == got["waiting"] == 8000 and sum(x["n"] for x in got["sections"]) == 8000
+    order = [it["sha"] for it in got["items"]]
+    took = []
+    for a, b in ((0, 500), (500, 3000), (3000, 8000)):
+        t = time.time()
+        r = private.review(con, ben, release=order[a:a + 3], keep=order[a + 3:b])
+        took.append(time.time() - t)
+        assert r["released"] == 3 and r["kept"] == b - a - 3
+    assert private.counts(con, ben) == {"held": 8000 - 9, "waiting": 0}
+    con.close()
+    print(f"review_list of 8,000: {listed:.2f}s; reviews of 500, 2,500, 5,000: {', '.join(f'{x:.2f}s' for x in took)}")
+    assert listed < 10 and max(took) < 10
