@@ -84,7 +84,9 @@ before it reaches its module (`http_util.Auth`):
   read and every write that is not below: searching, images and videos, the sync feed, People,
   favourites, albums and change sets, tasks, `/mcp`, the ingest, uploads.
 - **`SYSADMIN`**: an active sysadmin, or a local request. `/members` and its API (letting people in),
-  `/setup` and `/api/intake/...` (a job reads any folder on this computer), and restarting.
+  `/setup` and `/api/intake/...` (a job reads any folder on this computer), restarting, and the machine's
+  figures: `/stats`, `/api/stats` and `GET /api/ingest` (they count every member's photos, private ones too,
+  and the ingest's log names files; phase 5).
 - **`PUBLIC`**: only what a browser needs to ask to be let in: `/request-access` and `POST
   /api/request-access`, the home-screen app's files (manifest, icons, the service worker), and
   `/api/info`, which tells someone who is not a member only `{"member": false}` (that the app is up:
@@ -167,8 +169,9 @@ reading the `hidden` table, or a photo's facts for a favourite, outside the modu
   any other published filter M subscribes to `live`. A filter is always on, everywhere; the filters add
   their hides together. A series is never on: subscribing to one puts it in M's Albums and changes
   nothing else.
-- **What M sees**: what M may be shown (`shared_for`: every photo, until private photos in phase 5), less
-  what M's filters hide, less nothing M has said to **show anyway** (`shown`). A hiding set with no lens
+- **What M sees**: what M may be shown (`shared_for`: every photo but those private to their sharers when M
+  is not one of them, [below](#private-photos)), less what M's filters hide, less nothing M has said to
+  **show anyway** (`shown`). A hiding set with no lens
   (from before lenses) hides for everyone, as all hiding did before.
 - **A snapshot** subscription copies what the lens holds now into one of M's own (a filter: a new filter
   lens of M's with one applied set; a series: a new album of M's with the photos M sees of it); it does
@@ -206,7 +209,7 @@ listed through the viewer's own view: a series never shows a member what their f
 hiding is its owner's review of what it hides, so it lists every photo of it (marked `hidden`).
 
 **People** stays built once, for everyone ([chapter 14](14-faces.md)): its faces leave out the photos the
-estate defaults hide (`faces.default_hidden`), not any member's own. A member's own filters apply as
+estate defaults hide and every photo private to anyone (`faces.default_hidden`), not any member's own hides. A member's own filters apply as
 faces are listed: a person's faces, the review queue, the unnamed groups and a person's cover leave out
 faces in photos the member does not see (`People.handle`'s `keep`); the counts stay People's own.
 
@@ -244,6 +247,8 @@ that already decides it.
 | `lens_proposed` | every other active sysadmin | `lenses.propose` | `lenses.decide` (accept or decline), or the owner taking the filter back (unpublishing) | the Albums tab, where "Waiting for you to decide" lists it |
 | `lens_changed` | each member subscribed to a published lens live (not its owner, nor whoever changed it) | changes.py, when a filter's hides change (an apply, a revert, a hidden photo taken out of a set) or a series' photos or search do | nothing waits on it: leaving the lens (unsubscribing, or keeping a copy instead) closes it; otherwise it is put away | the Albums tab (a filter), or the series |
 
+| `held` | the photos' sharer | private.py, when the hold at ingestion (or the one-off run over the library) keeps photos private to them: one per batch, `held:<batch>` | nothing it held is still held (released by hand, in a batch, or on its day) | the held view, `/?q=is:held` |
+
 `lens_changed` is one open item per member and lens, brought up to date ("Ben's lens “Hidden photos”
 changed: it hides 4 photos now") and moved to the top, never one per change; the change itself applies at
 once. An estate default has no subscription rows (every member is in it unless they opt out), so it tells
@@ -257,6 +262,82 @@ that is not open), journaled as `inbox.dismissed`, the one thing about an item t
 The page is **`/inbox`** ([chapter 26](26-albums-and-agents.md#the-inbox)); the Library's menu shows how many
 items are open. A later phase adds a kind with a row in `member_inbox.OPENS` (what its item opens) and a
 `put` and a `close` in the code that makes and decides it.
+
+### Private photos
+
+A photo can be **private to its sharer** (phase 5 of the plan; [private.py](../../photo-estate/private.py)). A
+**sharer** is a member who shared a photo: ingest records it in `sharers` ([chapter 4](04-store-and-ingest.md)),
+from the folder a phone's upload lands in (`<inbox>/m<member id>/YYYY/MM/DD/...`; admin.py chooses it from the
+member the request is for, and the phone's path is unchanged), and anything else (a bulk import from the setup
+page, a Takeout, an upload from before member folders) is the first sysadmin's. A copy a second member sends
+adds a sharer; it is not a new photo. A photo is private to a sharer while a row of `private` names them and is
+not released (`released_at`); its `why` is how it got there:
+
+- **`new`**: a phone upload not checked yet. Ingest writes the row in the transaction that adds the photo, for
+  an image nobody else is shown yet (a new photo, or one every sharer holds private).
+- **`held`**: the check found it looks like a receipt, a screenshot or a document, and kept it private.
+- **`withdrawn`**: its sharer took it back from the family, from the viewer.
+
+**Who may be shown it** (`lenses.State.shared`, from `private.Private`): everyone, unless every one of its
+sharers holds it private; then those sharers only. So a photo Ben and Cleo both shared, withdrawn by Ben, is
+still shown to everyone (Cleo shares it); withdrawn by both, to the two of them. A photo with no sharer row is
+the first sysadmin's. The estate's agent acting for nobody (a task with no `acting_for`) reads as member 0,
+`NOBODY`, and is shown only photos private to nobody. That one mask is `Live.shared_for`, and so everything
+goes by it: every view (`visible_for` builds on it), the counts, facets, trips, Years and Months, covers and
+"similar" neighbours of each view, `hidden=1`, the sync feeds, the MCP tools, albums, series and their zip,
+change sets' review pages, and every pixel route. A photo private to someone else **does not exist** for a
+member: every route that takes a sha answers it exactly as one the library does not have (`/thumb/`,
+`/preview/`, `/large/`, `/original/`, `/video/`: 404 with an empty body; `/api/photos/<sha>/why`: 404 "no such
+photo", never "it is private"; `/api/similar`: "unknown photo"; a stack named by it; the MCP's `get_photos`,
+`similar_photos`), and so does a Live Photo's clip whose stills are all private to others (`Catalog.stills`)
+and a face crop of a face in such a photo (`/face/<id>`, People's `see`). An event or trip only private photos
+are in has no title for them; a trip's count and dates are of the photos they may be shown; a person or place
+only such photos carry is a plain word in a typed search, and a name the MCP's search does not know. A task's
+record (its events, its report: what its agent saw, which is what its member sees) is for that member only:
+`/api/tasks` lists a member's own tasks, and another's is a 404. `/stats` and `GET /api/ingest` (the machine's
+figures, and the inbox's run log, which names files) are the sysadmin's ([below](#members-and-who-may-do-what)):
+its library figures are of the photos the first sysadmin may be shown; its disk figures are the machine's own,
+every file counted, with no file name of a private photo.
+
+**People** is built without every photo private to anyone, its sharer included, until it is released, as
+without what the estate defaults hide; a change to what is private reloads it, as a change to an estate
+default does (`PhotoApp.relook` says whether `State.people_out` changed).
+
+**The hold at ingestion.** ingest-iphone.sh runs `private.py check` after the embeddings and before it tells
+the app (`catalog_ready`): each `new` row whose photo has a vector is scored against three prompts ("a
+receipt", "a screenshot of a phone", "a document": `private.PROMPTS`) with its SigLIP 2 vector, plus
+`catalog.is_screenshot`; one at or over `private.HOLD_AT` (0.075) on any prompt, or a screenshot, is **held**
+(one `photo.held` journal entry and one `held` inbox item per member and batch), and the rest are let go (their
+row goes: the photo is shared). The prompts' vectors are a file (`hold-prompts.json`, made once by `embed.py
+hold-prompts`), so the check never loads the model and works whether the app runs or not; without them it
+stops, and the photos stay private. **Why no one else can see a new upload before it is scored**: the
+`new` row is written in the same transaction as the photo's `assets` row, and a photo is in a catalog only once
+it has an `assets` row and a vector. The app reads who is private after it reads a catalog and inside the swap
+that installs it (`PhotoApp.with_private`, `Live.install(looks=...)`), and at startup after the catalog too,
+so every photo a catalog holds has its row in the looks it is seen through, whichever reload (the ingest's,
+a setup job's, a restart) comes when. A photo with no vector is in no view at all (`catalog.load` reads only
+photos with one), so a failed embed leaves it unseen and its row waiting for the next check. What is held: phone
+uploads of every member, the owner's too; not bulk imports, and not a photo the family is already shown.
+
+**Withdraw and release.** `POST /api/private {shas | which: "held" | "private", private: true | false, until?}`:
+a sharer withdraws photos (private, `withdrawn`), sets the day one is released on by itself (`until`,
+`YYYY-MM-DD`, the computer's own date), or releases them now; `which` releases a whole held view at once. A
+photo the member may not be shown is a 404, one they did not share a 403. It is answered outside the gate,
+like a lens: every view is worked out again (`relook`) before the answer, and the feeds and People follow.
+A timer in the app (`PhotoApp.release_timer`, a thread `start()` starts beside the others) asks every minute
+whether a day has come (`private.release_due`): those photos are released, journaled by no actor acting for
+their sharer. A release closes every `held` item of the member's whose photos are all released. A released row
+stays (`released_at`), so the one-off run never holds again what its sharer let go. `GET
+/api/photos/<sha>/why` carries `private`: whether the member shared the photo, whether it is private to them
+(why, since, until), and how many other sharers still share it. Search's `is:private`, `is:held` and
+`is:withdrawn` find the member's own; a row of theirs says `private` ([chapter 26](26-albums-and-agents.md#private-photos-on-the-pages)).
+
+**The one-off run over the library** (the plan's open question 3: nobody else is let in until it has run, as
+the owner's, and he has looked over what it held): `private.py library --member <id>` scores every image the
+member shared (for the first sysadmin, every image with no sharer too) the same way and holds what crosses as
+theirs: one `photo.held` entry with the count, one inbox item. With `--dry-run` it changes nothing and prints,
+with no pixels and no file names, how many each prompt would hold, the best scores near the threshold, and a
+sample of ids. It is safe to run twice, and never holds a photo the member released ([appendix A](appendix-a-commands.md)).
 
 ### Malformed requests
 

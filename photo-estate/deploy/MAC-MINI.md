@@ -430,3 +430,52 @@ The owner's phone keeps `sync-feed.db`; another member's phone gets `sync-feed-<
 catalog the first time it asks. Nothing else changes for the owner: his new hides go to his own filter
 lens ("Hidden photos") unless he applies a set to the Estate defaults, and only he uses the app
 until phase 5 (open question 3 of the plan).
+## Private photos and the hold: the by-hand steps (multiplayer phase 5)
+
+Since phase 5 a photo can be private to the member who shared it (book chapter 11, "Private photos"). The
+deploy itself needs nothing by hand: the app's first start on this code adds the `private` table, phone
+uploads land in `/Volumes/estate/iphone/m<member id>/...` from then on (the phone's app is unchanged; what
+is already in the inbox is the sysadmin's), and each new upload is scored by `private.py check` in
+ingest-iphone.sh before the app shows it: a receipt, a screenshot or a document stays private to whoever sent
+it, the owner included, and their inbox says so. Nobody but the owner is let in until the one-off run below
+has held what looks private in the existing library, as the owner's, and he has looked over what it held
+(open question 3 of the plan). In order:
+
+```bash
+export PATH=/opt/homebrew/bin:$PATH
+DB=~/estate/estate.db
+cd ~/src/photo-estate/photo-estate
+ME=$(sqlite3 $DB "select id from members where role='sysadmin' and status='active' order by id limit 1")
+
+# 1. After the deploy (the app restarted on this branch): the app made the table; check, and that the prompts'
+#    vectors are in the checkout (hold-prompts.json: without them the check stops and new uploads stay private)
+sqlite3 $DB "select count(*) from private"                    # 0
+uv run private.py --db $DB check                              # "hold: nothing new to check"
+
+# 2. The dry run over the owner's library: changes nothing; prints how many each prompt would hold, the best
+#    scores near the threshold (0.075), and ids (never a file name). Open a few of the ids in the app
+#    (/preview/<id>), those held and those just below, to judge whether the threshold is right. To move it,
+#    change HOLD_AT in private.py on a branch (it is the one place), and run the dry run again.
+uv run private.py --db $DB library --member $ME --dry-run
+
+# 3. A catalog backup, checked (the real run writes to the catalog)
+B=$HOME/photo-estate-lab/estate.db.before-hold-$(date +%Y%m%d-%H%M)
+sqlite3 $DB ".backup $B" && sqlite3 $B "pragma quick_check"          # must print ok
+
+# 4. The real run: one transaction, one photo.held journal entry, one inbox item. Safe to run again: it then
+#    holds nothing new, and never holds again a photo the owner released.
+uv run private.py --db $DB library --member $ME
+sqlite3 $DB "select why, count(*) from private where released_at is null group by why"     # held|N
+sqlite3 $DB "select kind, data from journal where kind='photo.held' order by id desc limit 1"
+
+# 5. The app reads who is private when something changes: restart it, then look the held photos over in the
+#    app (Inbox, or Search for is:held), releasing what should be shared ("Release all", or "Choose…")
+launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search
+curl -s http://127.0.0.1:8766/api/info | head -c 200; echo
+```
+
+Releasing a photo by hand, or on a day set in the viewer ("Release on a day…"), needs nothing on the mini: the
+app's timer releases what is due every minute, by the mini's own date. To undo the one-off run completely
+(nothing else depends on it): release everything it held from the held view, or by hand,
+`sqlite3 $DB "update private set released_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') where why='held' and released_at is null"`
+then restart the app (the rows stay, released, so the run does not hold them again).

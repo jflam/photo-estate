@@ -55,6 +55,14 @@ Kinds, with their subject and where each is appended:
   photo.purged                     <sha>        estate.py purge {reason, ext, kind, size, taken_at, first_seen,
                                                 sources: [[source, path]]}
   sharers.migrated                 sharers      estate.py migrate {member, photos}
+  photo.held                       <sha> or photos   private.py: photos kept private to their sharer at ingestion
+                                                (`check`) or by the one-off run {photos, how: upload | library}: no
+                                                actor, acting for the sharer; its id is the batch (private.batch, the
+                                                inbox item held:<id>)
+  photo.withdrawn                  <sha> or photos   POST /api/private: a sharer took photos back from the family {photos, until?}
+  photo.release_set                <sha> or photos   the day private photos are released on, set or cleared {photos, until}
+  photo.released                   <sha> or photos   released by their sharer {photos}, or by the app's timer on their
+                                                day {photos, auto: true, until}: no actor, acting for the sharer
   inbox.dismissed                  inbox:<id>   member_inbox.dismiss {kind, ref}: an item put away by its member (an
                                                 item made or done is not journaled: the entry of what made or decided
                                                 it says so)

@@ -771,7 +771,7 @@ def test_video_file(clips, tmp_path):
     cat = SimpleNamespace(meta={vid: {"ext": ".mp4", "kind": "video", "path": "Videos 2026/Beach day.mp4"},
                                 gone: {"ext": ".mp4", "kind": "video", "path": "x/gone.mp4"},
                                 photo: {"ext": ".jpg", "path": "x/p.jpg"}},
-                          clips={clip: ".mov"})
+                          clips={clip: ".mov"}, stills={clip: (photo,)})     # (a clip is served to whoever may see its still)
     im = Images(SimpleNamespace(cat=cat), store, tmp_path / "cache", tmp_path / "cache")
     assert im.video_file(vid) == (src, "video/mp4", "Beach day.mp4")
     assert im.video_file(clip) == (csrc, "video/mp4", f"{clip[:12]}.mov")

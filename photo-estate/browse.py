@@ -4,7 +4,8 @@ browsed lists, and the same searches as an agent's tools (estate_mcp.py) ask the
 
   GET /api/search    ?q= (words, names, places, key:value filters) and the facet params -> a page of results
                      (`kind=video|photo` or `is:video` in q: only those; a video found by words carries `at`,
-                     the seconds into it where they match best)
+                     the seconds into it where they match best; `is:private`, `is:held`, `is:withdrawn` in q:
+                     the member's own private photos, private.py)
   GET /api/similar   ?sha= -> photos that look like it
   GET /api/facets    counts per facet value under the current filters
   GET /api/periods   the Library's Years and Months: a card each, with its cover
@@ -16,7 +17,9 @@ browsed lists, and the same searches as an agent's tools (estate_mcp.py) ask the
 
 Every answer is worked out from the catalog being served (catalog.Live), read once per request, as the member
 the request is for sees it: Live.visible_for(member), the one way to ask (multiplayer: one member's filters
-hide nothing for another). A `limit` or `cursor` that is not a whole number raises http_util.HTTPError (400),
+hide nothing for another). A photo private to someone else does not exist for them: a sha of one (similar,
+stack, an agent's `like`), an event or trip only it is in, or a person or place only it shows is answered as
+one the library does not have. A `limit` or `cursor` that is not a whole number raises http_util.HTTPError (400),
 which PhotoApp answers.
 """
 from __future__ import annotations
@@ -61,8 +64,10 @@ def js(o, code: int = 200):
     return code, json.dumps(o, separators=(",", ":")).encode(), "application/json", "no-store"
 
 
-def read_words(c: Catalog, text: str):
-    """'ben and matthew in san diego' -> (['Ben Lam', 'Matthew Lam'], ['San Diego'], '')."""
+def read_words(c: Catalog, text: str, known=None):
+    """'ben and matthew in san diego' -> (['Ben Lam', 'Matthew Lam'], ['San Diego'], ''). `known(kind, name)`
+    ("who" or "where"): whether the member asking may be shown a photo of that person or place; a name only
+    their unshared photos carry is read as a plain word, as one the library does not have."""
     names, places, parts, at = [], [], [], 0
     for m in c.word_re.finditer(text):
         word = m.group("who") or m.group("where")
@@ -75,6 +80,8 @@ def read_words(c: Catalog, text: str):
             if key in c.common_place and not capital:
                 continue
             mark, got, val = "\1", places, c.where[key]
+        if known is not None and not known("who" if mark == "\0" else "where", val):
+            continue
         parts += [text[at:m.start()], mark]
         at = m.end()
         if val not in got:
@@ -107,17 +114,36 @@ def parse(view: View, q: str):
             mask &= np.fromiter((w.startswith(v) for w in c.when), bool, len(c.when))
         elif key in ("event", "trip") and v.lstrip("-").isdigit():
             mask &= (c.event_of if key == "event" else c.trip_of) == int(v)
-            scope = c.scope_of(key, int(v)) or scope
+            scope = scope_for(view, key, int(v)) or scope
             val = (scope or {}).get("title") or val
         elif key == "is" and v in ("fav", "favorite", "favourite"):
             mask &= view.fav
         elif key == "is" and v in ("video", "videos", "photo", "photos"):
             mask &= c.video if v.startswith("video") else ~c.video
+        elif key == "is" and v in ("private", "held", "withdrawn"):   # the member's own private photos (private.py)
+            mask &= view.private_mask(None if v == "private" else v)
         else:
             continue
         applied.append(f"{key}:{val}")
     text = re.sub(r"\s+", " ", filter_re.sub(" ", q)).strip()
     return text, mask, applied, scope
+
+
+def scope_for(v: View, kind: str, ident: int):
+    """An event or trip as the member may be told of it: its title and dates, and how many of its photos they
+    may be shown (None when they may be shown none: then, for them, there is no such event)."""
+    c = v.cat
+    got = c.scope_of(kind, ident)
+    if not got:
+        return None
+    of = (c.event_of if kind == "event" else c.trip_of) == ident
+    mine = of & v.shared
+    if not mine.any():
+        return None
+    if mine.sum() != of.sum():   # some of its photos are not theirs to see: its count and dates are of the rest
+        when = sorted(w for w in c.when[mine] if w)
+        got.update(n=int(mine.sum()), start=when[0] if when else None, end=when[-1] if when else None)
+    return got
 
 
 def view_masks(v: View, qs: dict, masks: dict, text: str, similar: bool) -> bool:
@@ -183,6 +209,14 @@ class Browse:
             return np.fromiter((bool(rx.search(x)) for x in c.cols["place"]), bool, c.N)
         return self.remember(("place", place), make)
 
+    def known(self, v: View):
+        """read_words' `known`, for this member: a person or a place counts only if they may be shown a photo of
+        it. None when they may be shown every photo (nothing to ask)."""
+        if v.shared.all():
+            return None
+        return lambda kind, name: bool((v.shared & (v.cat.person_mask(name) if kind == "who"
+                                                    else self.place_mask(v.cat, name))).any())
+
     def select(self, v: View, qs: dict):
         """Query string -> one mask per kind of filter, the free text, and the event/trip in scope."""
         c, masks = v.cat, {}
@@ -208,19 +242,21 @@ class Browse:
         if (qs.get("hidden") or ["0"])[0] == "1":   # what the member's filters hide (of what they may be shown)
             masks["hidden"] = ~v.visible
         one = c.index.get((qs.get("stack") or [""])[0])
+        if one is not None and not v.shared[one]:
+            one = None        # a photo they may not be shown: as a sha the library does not have
         if one is not None:   # the photos of one stack, named by any of them
             masks["stack"] = v.stack_of == v.stack_of[one] if v.stack_of[one] >= 0 else np.arange(c.N) == one
         scope = None
         ev = (qs.get("event") or [""])[0]
         if ev.lstrip("-").isdigit():
             masks["event"] = c.event_of == int(ev)
-            scope = c.scope_of("event", int(ev))
+            scope = scope_for(v, "event", int(ev))
         elif len(qs.get("trip") or []) == 1 and qs["trip"][0].lstrip("-").isdigit():
-            scope = c.scope_of("trip", int(qs["trip"][0]))
+            scope = scope_for(v, "trip", int(qs["trip"][0]))
         text, typed, applied, typed_scope = parse(v, (qs.get("q") or [""])[0].strip())
         if applied:
             masks["typed"] = typed
-        names, places, rest = read_words(c, text)
+        names, places, rest = read_words(c, text, self.known(v))
         if (names or places) and (qs.get("names") or ["1"])[0] != "0":
             if names:
                 masks["names"] = np.logical_and.reduce([c.person_mask(n) for n in names])
@@ -295,7 +331,7 @@ class Browse:
         deduped = view_masks(v, qs, masks, text, path == "/api/similar")
         mask = v.combine(masks)
         sha = one("sha")
-        if path == "/api/similar" and sha not in c.index:
+        if path == "/api/similar" and (sha not in c.index or not v.shared[c.index[sha]]):   # (one they may not be shown: the same)
             return js({"error": "unknown photo"}, 404)
         by_default = "best" if "stack" in masks else "old" if scope else "new"   # a stack: its top photo first
         sort = one("sort") or by_default
@@ -358,8 +394,9 @@ class Browse:
             if args.get(key):
                 v = str(args[key]).lower()
                 mask &= np.fromiter((v in x for x in c.cols[key]), bool, N)
+        known = self.known(view)
         for name in args.get("people") or []:
-            if name not in c.people_ix:
+            if name not in c.people_ix or known and not known("who", name):
                 raise ValueError(f"nobody in the library is named {name!r}; library_overview lists the names")
             mask &= c.person_mask(name)
         if args.get("named_people") in ("none", "some"):
@@ -386,7 +423,7 @@ class Browse:
         quality = lambda ids: [round(float(x), 3) for x in c.scored()[2][ids]]
         like, text = args.get("like"), str(args.get("query") or "").strip()
         if like:
-            if like not in index:
+            if like not in index or not view.shared[index[like]]:   # (one they may not be shown: the same)
                 raise ValueError("no photo has that id")
             sims = c.sims(M[index[like]])
             mask[index[like]] = False
@@ -425,7 +462,8 @@ class Browse:
                "source_path": m["path"], "hidden": (not v.visible[i]) or None,
                "kind": m.get("kind"), "seconds": m.get("dur"), "live_photo": bool(m.get("live")) or None,
                "quality": round(float(c.score[i]), 3) if c.score is not None else None,
-               "shots_alike": int(v.stack_n[i]) if v.stack_n[i] > 1 else None}
+               "shots_alike": int(v.stack_n[i]) if v.stack_n[i] > 1 else None,
+               "private": v.mine[sha]["why"] if sha in v.mine else None}
         return {k: v for k, v in row.items() if v not in (None, [], "")}
 
     def faces(self, ids: list[str]) -> dict[str, tuple[int, int]]:

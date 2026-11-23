@@ -4,8 +4,12 @@ The photo app's `PUT /api/upload/<path>` hands the request body to `save_upload`
 plain folder mirror in the same shape as the iCloud mirror, so `estate.py ingest --force <inbox>`
 picks it up like any other source:
 
-    <inbox>/2026/11/14/IMG_0042-A1B2C3D.HEIC        the original, byte for byte
-    <inbox>/2026/11/14/IMG_0042-A1B2C3D.HEIC.xmp    its metadata (date with offset, GPS, favourite)
+    <inbox>/m3/2026/11/14/IMG_0042-A1B2C3D.HEIC        the original, byte for byte
+    <inbox>/m3/2026/11/14/IMG_0042-A1B2C3D.HEIC.xmp    its metadata (date with offset, GPS, favourite)
+
+m3 is the member the upload was for (members.id 3; admin.py chooses it, the phone's path is unchanged), so
+ingest records who shared the photo (private.member_of). What is in the inbox with no member folder, sent
+before there were members' folders, is the first sysadmin's.
 
 The server never records photos in the catalog: it only drops files here. That keeps `ingest` the
 single writer of what the catalog holds, and a half-finished upload can never be mistaken for a photo,
@@ -81,7 +85,7 @@ def xmp_for(meta: dict) -> str | None:
 
 
 def save_upload(inbox: Path, rel: str, fp, length: int, sha256: str | None = None,
-                meta: dict | None = None, stored: dict | None = None) -> tuple[int, str]:
+                meta: dict | None = None, stored: dict | None = None, stage: Path | None = None) -> tuple[int, str]:
     """Stream `length` bytes from fp to <inbox>/<rel>. Returns (http status, message).
 
     `meta` (taken/lat/lon/fav, from request headers) becomes the file's `.xmp` sidecar, written after
@@ -99,7 +103,7 @@ def save_upload(inbox: Path, rel: str, fp, length: int, sha256: str | None = Non
     dest = inbox / p
     if dest.exists():
         return (200, "exists") if dest.stat().st_size == length else (409, "path exists with different content")
-    stage = staging_dir(inbox)
+    stage = stage or staging_dir(inbox)     # (a member's folder is inside the inbox: its staging is the inbox's)
     stage.mkdir(parents=True, exist_ok=True)
     tmp = stage / f"{os.getpid()}.{time.time_ns()}"
     h, got = hashlib.sha256(), 0

@@ -1,0 +1,505 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["numpy"]
+# ///
+"""private.py — photos private to their sharer, and the hold at ingestion (multiplayer phase 5). The words are
+the multiplayer plan's (docs/notes/MULTIPLAYER-PLAN.md).
+
+A **sharer** is a member who shared a photo (the `sharers` table). Ingest records it (record_sharer): a phone's
+upload lands in <inbox>/m<member id>/YYYY/MM/DD/... (admin.py chooses the folder from the member the request is
+for), and anything else, a bulk import or an upload from before member folders, is the first sysadmin's. A copy
+a second member sends adds a sharer; it is not a new photo.
+
+A photo is **private** to a sharer while a row of `private` names them and is not released:
+
+  new        a phone upload not checked yet. Ingest writes it in the transaction that records the photo, so no
+             catalog the app loads, at any moment, has the photo without it: nobody but its sharer can be shown
+             a new upload before `check` has scored it (ingest-iphone.sh runs it after the embeddings).
+  held       `check` found that it looks like a receipt, a screenshot or a document (PROMPTS, HOLD_AT, and
+             catalog.is_screenshot), or the one-off run over the library (`library`) did
+  withdrawn  its sharer took it back from the family (POST /api/private, from the viewer)
+
+Who may be shown a photo (lenses.State.shared, from read() here): everyone, unless every one of its sharers
+holds it private (rule 1: a photo is shared for M if M is one of its sharers, or some sharer has it and has not
+made it private); then only its sharers. A photo with no sharer row is the first sysadmin's. The estate's agent
+acting for nobody (NOBODY) is shown only photos private to nobody. People is built without every photo that is
+private to anyone (faces.default_hidden), its sharer included, until it is released.
+
+Released: by its sharer (now, or by itself on the day they set: `until`, released by the app's timer,
+release_due). The row stays, with released_at, so `library` never holds again what a member let go.
+
+  PROMPTS, HOLD_AT, VECTORS        what is held, in one place (the prompts' text vectors are VECTORS, made once
+                                   by `embed.py hold-prompts`: the ingest path never loads the model)
+  member_of(path)                  the member an inbox path names (m<id>/...), or None
+  record_sharer(con, sha, member, new, image, upload)   ingest's half, in its transaction
+  Private, read(con, sysadmin)     the open rows and the sharers of those photos: who may be shown what
+  scores(vecs, model) / reasons(row, shot)    how a photo is scored, and why it would be held
+  check(con, model)                the ingest step: every `new` row with a vector is held or let go
+  library(con, member, model, dry_run, out)   the one-off run over a member's photos
+  change(con, member, shas, private, until=KEEP)   withdraw, release, or set the day it is released on
+  release_due(con, today)          the timer's: every row whose day has come is released
+  PrivateError                     what a member may not do, with the HTTP status
+
+  uv run private.py --db estate.db check                           (what ingest-iphone.sh runs)
+  uv run private.py --db estate.db library --member 1 --dry-run    (then without --dry-run)
+
+Every write appends one journal entry per member and action in the same transaction (journal.py): photo.held
+{photos, how: upload | library} (no actor: the app, acting for the sharer), photo.withdrawn {photos, until},
+photo.release_set {photos, until}, photo.released {photos} (by the sharer) or {photos, auto, until} (the timer:
+no actor, acting for the sharer); subject the sha for one photo, else "photos". A `new` row that `check` lets go
+was never private to anyone in a way anyone saw, and is not journaled (ingest.finished says the photo came).
+The inbox (member_inbox.py): a hold puts one `held` item, held:<batch>, in its sharer's inbox, opening the held
+view (/?q=is:held); it is done once nothing it held is still held.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import random
+import re
+import sqlite3
+import sys
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+
+import journal
+import member_inbox
+
+HERE = Path(__file__).resolve().parent
+NOBODY = 0                 # the member an agent acting for no one reads as: only what is private to nobody
+WHYS = ("new", "held", "withdrawn")
+# What is held at ingestion. Each prompt is compared with a photo's SigLIP 2 vector (a cosine); a photo is held
+# when any of them reaches HOLD_AT, or when catalog.is_screenshot says it is a screenshot. Set on the demo
+# library and on made receipts, screenshots and documents (docs/notes/MULTIPLAYER-PLAN.md, phase 5's Built
+# note): the demo's 104 photos score at most 0.058 on any prompt; made receipts 0.13-0.17 ("a receipt"),
+# documents 0.14 ("a document"), phone screenshots 0.096-0.134 ("a screenshot of a phone"). A search's own
+# floor is 0.085 (embed.MATCH_FLOOR); this is lower, leaning towards holding: a photo held by mistake is one
+# click to release, one shared by mistake has been seen. Check it on the real library with `library --dry-run`.
+PROMPTS = ("a receipt", "a screenshot of a phone", "a document")
+HOLD_AT = 0.075
+VECTORS = HERE / "hold-prompts.json"       # {model: {prompt: base64 float16 unit vector}}: embed.py hold-prompts
+KEEP = object()            # change(): leave `until` as it is
+
+
+class PrivateError(Exception):
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def chunks(xs, n=500):
+    xs = list(xs)
+    return (xs[i:i + n] for i in range(0, len(xs), n))
+
+
+def member_of(path: str) -> int | None:
+    """The member a phone upload's inbox path names: m<id>/YYYY/... -> id; None for any other path."""
+    m = re.match(r"m(\d{1,9})/", path)
+    return int(m[1]) if m else None
+
+
+def _sysadmin(con) -> int | None:
+    row = con.execute("SELECT id FROM members WHERE role='sysadmin' AND status='active' ORDER BY id LIMIT 1").fetchone()
+    return row[0] if row else None
+
+
+def _holders(con, sha: str) -> set[int]:
+    return {m for m, in con.execute("SELECT member_id FROM private WHERE sha256=? AND released_at IS NULL", (sha,))}
+
+
+def record_sharer(con, sha: str, member: int | None, new: bool, image: bool, upload: bool,
+                  sysadmin: int | None = None) -> bool:
+    """Ingest's half, in its transaction: `member` shared this photo (`new`: ingest just added it). A photo that
+    was in the estate with no sharer row was the first sysadmin's, so that is written first. A phone upload
+    (`upload`) of an image nobody else is shown yet (new, or every sharer holds it private) is private to its
+    sharer until check() has scored it: a `new` row. True if it made one."""
+    if member is None:
+        return False
+    had = {m for m, in con.execute("SELECT member_id FROM sharers WHERE sha256=?", (sha,))}
+    if member in had:
+        return False
+    t = now()
+    if not had and not new and sysadmin is not None and sysadmin != member:
+        con.execute("INSERT OR IGNORE INTO sharers(sha256, member_id, shared_at) VALUES (?,?,?)", (sha, sysadmin, t))
+        had = {sysadmin}
+    con.execute("INSERT OR IGNORE INTO sharers(sha256, member_id, shared_at) VALUES (?,?,?)", (sha, member, t))
+    if not (upload and image) or not (new or had <= _holders(con, sha)):
+        return False
+    con.execute("INSERT OR IGNORE INTO private(sha256, member_id, why, since) VALUES (?,?,'new',?)", (sha, member, t))
+    return True
+
+
+# -- who may be shown what ------------------------------------------------------------------------------
+
+@dataclass
+class Private:
+    """The open rows of `private` (sha -> {member: (why, since, until)}) and the sharers of those photos only:
+    everything else is shown to everyone. read() builds it; lenses.State keeps one."""
+    rows: dict[str, dict[int, tuple[str, str | None, str | None]]] = field(default_factory=dict)
+    sharers: dict[str, frozenset[int]] = field(default_factory=dict)
+    sysadmin: int | None = None
+
+    def to(self, sha: str) -> frozenset[int] | None:
+        """Who may be shown the photo: None for everyone; else its sharers, every one of whom holds it private."""
+        held = self.rows.get(sha)
+        if not held:
+            return None
+        sharers = self.sharers.get(sha) or (frozenset({self.sysadmin}) if self.sysadmin is not None else frozenset())
+        return None if sharers - held.keys() else sharers
+
+    def refused(self, sha: str, member: int | None) -> bool:
+        """`member` may not be shown this photo (None: the first sysadmin; NOBODY: what is private to nobody)."""
+        if member == NOBODY:
+            return sha in self.rows
+        to = self.to(sha)
+        m = member if member is not None else self.sysadmin
+        return to is not None and m not in to
+
+    def out_for(self, member: int | None) -> list[str]:
+        """Every photo `member` may not be shown."""
+        return [s for s in self.rows if self.refused(s, member)]
+
+    def mine(self, member: int | None) -> dict[str, dict]:
+        """The photos private to `member`: sha -> {why, since, until}."""
+        m = member if member is not None else self.sysadmin
+        return {s: {"why": r[m][0], "since": r[m][1], "until": r[m][2]} for s, r in self.rows.items() if m in r}
+
+
+def read(con, sysadmin: int | None = None) -> Private:
+    try:
+        rows = con.execute("SELECT sha256, member_id, why, since, until FROM private WHERE released_at IS NULL").fetchall()
+    except sqlite3.OperationalError:       # a catalog from before private photos
+        return Private(sysadmin=sysadmin)
+    p = Private(sysadmin=sysadmin)
+    for sha, m, why, since, until in rows:
+        p.rows.setdefault(sha, {})[m] = (why, since, until)
+    got: dict[str, set[int]] = {}
+    for part in chunks(p.rows):
+        for sha, m in con.execute(f"SELECT sha256, member_id FROM sharers WHERE sha256 IN ({','.join('?' * len(part))})", part):
+            got.setdefault(sha, set()).add(m)
+    p.sharers = {s: frozenset(ms) for s, ms in got.items()}
+    return p
+
+
+# -- scoring --------------------------------------------------------------------------------------------
+
+class MissingVectors(RuntimeError):
+    pass
+
+
+def prompt_vectors(model: str):
+    """PROMPTS' text vectors for `model` (P x d, unit rows), from VECTORS. MissingVectors if it lacks any: then
+    nothing is let go (a `new` photo stays private to its sharer) until `embed.py hold-prompts` has made them."""
+    import numpy as np
+    try:
+        got = json.loads(VECTORS.read_text()).get(model) or {}
+    except (OSError, ValueError):
+        got = {}
+    if any(p not in got for p in PROMPTS):
+        raise MissingVectors(f"{VECTORS.name} has no vectors for {model}: run `embed.py hold-prompts`")
+    return np.stack([np.frombuffer(base64.b64decode(got[p]), np.float16).astype(np.float32) for p in PROMPTS])
+
+
+def scores(vecs, model: str, prompts=None):
+    """Each photo's cosine with each prompt (n x len(PROMPTS)), from their unit vectors (n x d)."""
+    import numpy as np
+    P = prompt_vectors(model) if prompts is None else prompts
+    return np.asarray(vecs, np.float32) @ P.T
+
+
+def reasons(row, shot: bool) -> list[str]:
+    """Why a photo would be held, from its scores (one per prompt) and whether it is a screenshot: [] for none."""
+    out = [p for p, s in zip(PROMPTS, row) if s >= HOLD_AT]
+    return out + (["is_screenshot"] if shot else [])
+
+
+def _facts(con, shas) -> dict[str, dict]:
+    """What catalog.is_screenshot reads, from the catalog's tables."""
+    out: dict[str, dict] = {}
+    for part in chunks(shas):
+        q = ",".join("?" * len(part))
+        for sha, ext, w, h in con.execute(f"SELECT sha256, ext, width, height FROM assets WHERE sha256 IN ({q})", part):
+            out[sha] = {"ext": ext, "w": w, "h": h, "camera": None, "lens": None, "path": None}
+        try:
+            for sha, camera, lens in con.execute(f"SELECT sha256, camera, lens FROM exif WHERE sha256 IN ({q})", part):
+                if sha in out:
+                    out[sha].update(camera=camera, lens=lens)
+        except sqlite3.OperationalError:
+            pass
+        for sha, path in con.execute(f"SELECT sha256, path FROM occurrences WHERE sha256 IN ({q}) ORDER BY id", part):
+            if sha in out and out[sha]["path"] is None:
+                out[sha]["path"] = path
+    return out
+
+
+def _vectors(con, model: str, shas):
+    """(the photos of `shas` that have a vector, their vectors as an n x d float32 matrix)."""
+    import numpy as np
+    got, vecs = [], []
+    for part in chunks(shas):
+        for sha, vec in con.execute(f"SELECT sha256, vec FROM embeddings WHERE model=? AND vec IS NOT NULL AND sha256 IN"
+                                    f" ({','.join('?' * len(part))})", [model, *part]):
+            got.append(sha)
+            vecs.append(np.frombuffer(vec, np.float16))
+    return got, (np.stack(vecs).astype(np.float32) if vecs else np.zeros((0, 1), np.float32))
+
+
+def judge(con, model: str, shas) -> dict[str, tuple[list[str], list[float]]]:
+    """sha -> (why it would be held, its score for each prompt), for those of `shas` that have a vector."""
+    from catalog import is_screenshot
+    got, M = _vectors(con, model, shas)
+    if not got:
+        return {}
+    S, facts = scores(M, model), _facts(con, got)
+    return {sha: (reasons(S[i], is_screenshot(facts.get(sha) or {})), [round(float(x), 4) for x in S[i]])
+            for i, sha in enumerate(got)}
+
+
+def _title(n: int, how: str) -> str:
+    what = f"{n} photo{'' if n == 1 else 's'}"
+    return (f"{what} kept private to you: {'they look' if n != 1 else 'it looks'} like a receipt, a screenshot or a"
+            f" document" + (" (a look over your library)" if how == "library" else ""))
+
+
+def _hold(con, member: int, shas: list[str], how: str, t: str) -> int:
+    """Hold `shas` for `member` (rows that exist become held; the rest are made), one photo.held entry and one
+    held inbox item. In the caller's transaction. Returns the batch (the entry's id)."""
+    batch = journal.append(con, None, "photo.held", shas[0] if len(shas) == 1 else "photos", {"photos": len(shas), "how": how},
+                           member)         # (no actor: the app held them, for their sharer)
+    for sha in shas:
+        con.execute("INSERT INTO private(sha256, member_id, why, since, batch) VALUES (?,?,'held',?,?)"
+                    " ON CONFLICT(sha256, member_id) DO UPDATE SET why='held', since=excluded.since, batch=excluded.batch,"
+                    " until=NULL, released_at=NULL", (sha, member, t, batch))
+    member_inbox.put(con, [member], "held", f"held:{batch}", _title(len(shas), how))
+    return batch
+
+
+def check(con, model: str, out=print) -> dict:
+    """The ingest step (ingest-iphone.sh, after the embeddings and before the app reloads): every `new` row whose
+    photo has a vector is scored: held (photo.held, and a held inbox item per sharer), or let go (the row goes:
+    the photo is shared). A photo with no vector yet keeps its row and is scored by the next run; it is in no
+    view meanwhile (catalog.load reads only photos with a vector). MissingVectors (nothing changes) without the
+    prompts' vectors. Safe to run again."""
+    rows = con.execute("SELECT sha256, member_id FROM private WHERE why='new' AND released_at IS NULL").fetchall()
+    if not rows:
+        out("hold: nothing new to check")
+        return {"checked": 0, "held": 0, "waiting": 0}
+    found = judge(con, model, {s for s, _ in rows})
+    held: dict[int, list[str]] = {}
+    let_go: list[tuple[str, int]] = []
+    for sha, m in rows:
+        if sha not in found:            # no vector yet: it stays private to its sharer, and waits
+            continue
+        if found[sha][0]:
+            held.setdefault(m, []).append(sha)
+        else:
+            let_go.append((sha, m))
+    t = now()
+    with con:
+        con.executemany("DELETE FROM private WHERE sha256=? AND member_id=? AND why='new'", let_go)
+        for m, shas in held.items():
+            _hold(con, m, shas, "upload", t)
+    n = sum(len(v) for v in held.values())
+    waiting = len(rows) - len(let_go) - n
+    out(f"hold: {len(rows) - waiting} new photos checked, {n} held as private"
+        + (f", {waiting} waiting for their vectors" if waiting else ""))
+    return {"checked": len(rows) - waiting, "held": n, "waiting": waiting}
+
+
+def library(con, member: int, model: str, dry_run: bool = False, out=print, sample: int = 20) -> dict:
+    """The one-off run over the library (open question 3): every image `member` shared (for the first sysadmin,
+    every image with no sharer too) that has no private row of theirs, open or released, is scored as check()
+    scores an upload, and what crosses is held as theirs: one photo.held entry {photos, how: library} and one
+    held inbox item. With `dry_run` nothing changes; it prints, with no pixels and no file names, how many each
+    prompt would hold, the scores near HOLD_AT, and a sample of ids. Safe to run again: what it held, and what
+    the member released, has a row."""
+    import numpy as np
+    if not con.execute("SELECT 1 FROM members WHERE id=?", (member,)).fetchone():
+        raise PrivateError(404, f"no member {member}")
+    first = _sysadmin(con) == member
+    q = ("SELECT a.sha256 FROM assets a WHERE a.kind='image' AND (EXISTS (SELECT 1 FROM sharers s WHERE s.sha256=a.sha256"
+         " AND s.member_id=:m)" + (" OR NOT EXISTS (SELECT 1 FROM sharers s WHERE s.sha256=a.sha256)" if first else "") +
+         ") AND NOT EXISTS (SELECT 1 FROM private p WHERE p.sha256=a.sha256 AND p.member_id=:m) ORDER BY a.sha256")
+    shas = [s for s, in con.execute(q, {"m": member})]
+    found: dict[str, tuple[list[str], list[float]]] = {}
+    for part in chunks(shas, 5000):
+        found.update(judge(con, model, part))
+    hold = sorted(s for s, (why, _) in found.items() if why)
+    report = {"member": member, "photos": len(shas), "scored": len(found), "held": len(hold),
+              "by_reason": {r: sum(r in why for why, _ in found.values()) for r in (*PROMPTS, "is_screenshot")}}
+    best = np.array([max(sc) for _, sc in found.values()]) if found else np.zeros(0)
+    edges = [round(HOLD_AT + d / 1000, 3) for d in range(-30, 35, 5)]
+    report["near"] = [{"from": a, "to": b, "photos": int(((best >= a) & (best < b)).sum())} for a, b in zip(edges, edges[1:])]
+    rng = random.Random(0)
+    below = sorted((s for s, (why, _) in found.items() if not why), key=lambda s: -max(found[s][1]))
+    report["sample_held"] = [{"id": s, "why": found[s][0], "scores": found[s][1]} for s in rng.sample(hold, min(sample, len(hold)))]
+    report["sample_just_below"] = [{"id": s, "scores": found[s][1]} for s in below[:max(1, sample // 2)]]
+    if dry_run:
+        out(f"dry run for member {member}: nothing is changed. {len(shas)} photos to look at, {len(found)} with a vector")
+        out(f"would hold {len(hold)} (any prompt at or over {HOLD_AT}, or a screenshot):")
+        for r, n in report["by_reason"].items():
+            out(f"  {r:26s} {n}")
+        out("best score of each photo, near the threshold:")
+        for b in report["near"]:
+            out(f"  {b['from']:.3f}-{b['to']:.3f} {'*' if b['from'] >= HOLD_AT else ' '} {b['photos']}")
+        out(f"a sample of what it would hold (ids; scores in the order {', '.join(PROMPTS)}):")
+        for x in report["sample_held"]:
+            out(f"  {x['id']}  {x['scores']}  {', '.join(x['why'])}")
+        out("the highest-scoring photos it would not hold:")
+        for x in report["sample_just_below"]:
+            out(f"  {x['id']}  {x['scores']}")
+        return report
+    if hold:
+        with con:
+            report["batch"] = _hold(con, member, hold, "library", now())
+    out(f"held {len(hold)} of member {member}'s {len(shas)} photos as private to them"
+        + ("" if hold else ": nothing new to hold"))
+    return report
+
+
+# -- the sharer's own word -------------------------------------------------------------------------------
+
+def close_held(con, member: int) -> int:
+    """Each of `member`'s open held items whose batch has nothing still held is done. In the caller's transaction."""
+    n = 0
+    for ref, in con.execute("SELECT ref FROM inbox_items WHERE member_id=? AND kind='held' AND state='open'", (member,)).fetchall():
+        batch = ref.partition(":")[2]
+        if not batch.isdigit() or not con.execute("SELECT 1 FROM private WHERE batch=? AND member_id=? AND why='held'"
+                                                  " AND released_at IS NULL LIMIT 1", (int(batch), member)).fetchone():
+            n += member_inbox.close(con, "held", ref, member)
+    return n
+
+
+def day(s) -> str | None:
+    """A release day as the API takes it ("2026-12-26"), or None; ValueError for anything else."""
+    if s is None:
+        return None
+    if not isinstance(s, str) or not re.fullmatch(r"\d{4}-\d\d-\d\d", s):
+        raise ValueError("until is a day, YYYY-MM-DD, or null")
+    datetime.strptime(s, "%Y-%m-%d")
+    return s
+
+
+def change(con, member: int, shas, private: bool, until=KEEP, sharers_of=None) -> dict:
+    """POST /api/private: `member` makes these photos private (`private` true: withdrawn, from a photo of theirs
+    they share with the family; already private: its release day set, if `until` is given) or releases them
+    (false: now). Only a sharer may (PrivateError 403 for a photo they did not share; the caller has already
+    answered 404 for one they may not be shown). One journal entry per action; the held items it empties close."""
+    shas = list(dict.fromkeys(s for s in shas if isinstance(s, str)))
+    until = until if until is KEEP else day(until)
+    t, out = now(), {"withdrawn": 0, "released": 0, "release_set": 0}
+    first = _sysadmin(con)
+    with con:
+        for sha in shas:
+            sharers = {m for m, in con.execute("SELECT member_id FROM sharers WHERE sha256=?", (sha,))} or {first}
+            if member not in sharers:
+                raise PrivateError(403, "only someone who shared a photo can make it private or release it")
+        rows = {s: (why, u) for s, why, u in con.execute(
+            f"SELECT sha256, why, until FROM private WHERE member_id=? AND released_at IS NULL AND sha256 IN"
+            f" ({','.join('?' * len(shas))})", [member, *shas])} if shas else {}
+        if private:
+            fresh = [s for s in shas if s not in rows]
+            for s in fresh:
+                con.execute("INSERT INTO private(sha256, member_id, why, since, until) VALUES (?,?,'withdrawn',?,?)"
+                            " ON CONFLICT(sha256, member_id) DO UPDATE SET why='withdrawn', since=excluded.since,"
+                            " until=excluded.until, released_at=NULL, batch=NULL",
+                            (s, member, t, None if until is KEEP else until))
+            moved = [s for s in shas if s in rows and until is not KEEP and rows[s][1] != until]
+            con.executemany("UPDATE private SET until=? WHERE sha256=? AND member_id=? AND released_at IS NULL",
+                            ((until, s, member) for s in moved))
+            if fresh:
+                journal.append(con, member, "photo.withdrawn", fresh[0] if len(fresh) == 1 else "photos",
+                               {"photos": len(fresh), **({"until": until} if until not in (KEEP, None) else {})})
+            if moved:
+                journal.append(con, member, "photo.release_set", moved[0] if len(moved) == 1 else "photos",
+                               {"photos": len(moved), "until": until})
+            out.update(withdrawn=len(fresh), release_set=len(moved))
+        else:
+            gone = [s for s in shas if s in rows]
+            con.executemany("UPDATE private SET released_at=? WHERE sha256=? AND member_id=? AND released_at IS NULL",
+                            ((t, s, member) for s in gone))
+            if gone:
+                journal.append(con, member, "photo.released", gone[0] if len(gone) == 1 else "photos", {"photos": len(gone)})
+                close_held(con, member)
+            out["released"] = len(gone)
+    return {**out, "changed": any(out.values())}
+
+
+def about(con, st: Private, member: int | None, sha: str) -> dict:
+    """What the viewer's private line says of a photo `member` may be shown (GET /api/photos/<sha>/why's
+    `private`): whether they shared it (and so may withdraw it), whether it is private to them now ({why,
+    since, until}), and how many other sharers do not hold it private (while any do, the family still sees it)."""
+    m = member if member is not None else st.sysadmin
+    sharers = {r for r, in con.execute("SELECT member_id FROM sharers WHERE sha256=?", (sha,))} or \
+        ({st.sysadmin} if st.sysadmin is not None else set())
+    rows = st.rows.get(sha, {})
+    mine = rows.get(m) if m is not None else None
+    return {"sharer": m in sharers,
+            "mine": {"why": mine[0], "since": mine[1], "until": mine[2]} if mine else None,
+            "others_sharing": len(sharers - {m} - rows.keys()) if m in sharers else None}
+
+
+def held_by(con, member: int, which: str) -> list[str]:
+    """Every photo private to `member`: `which` held (from ingestion), or private (held or withdrawn)."""
+    q = "SELECT sha256 FROM private WHERE member_id=? AND released_at IS NULL" + (" AND why='held'" if which == "held" else
+                                                                                  " AND why != 'new'")
+    return [s for s, in con.execute(q + " ORDER BY sha256", (member,))]
+
+
+def release_due(con, today: str) -> dict[int, int]:
+    """The timer's (PhotoApp.release_timer): every private row whose release day (`until`) is `today` or before is
+    released, one photo.released {photos, auto: true} entry per member, by no actor (the app). {member: photos}."""
+    rows = con.execute("SELECT sha256, member_id FROM private WHERE released_at IS NULL AND until IS NOT NULL AND until <= ?",
+                       (today,)).fetchall()
+    if not rows:
+        return {}
+    t, by = now(), {}
+    for sha, m in rows:
+        by.setdefault(m, []).append(sha)
+    with con:
+        for m, shas in by.items():
+            con.executemany("UPDATE private SET released_at=? WHERE sha256=? AND member_id=? AND released_at IS NULL",
+                            ((t, s, m) for s in shas))
+            journal.append(con, None, "photo.released", shas[0] if len(shas) == 1 else "photos",
+                           {"photos": len(shas), "auto": True, "until": today}, m)
+            close_held(con, m)
+    return {m: len(s) for m, s in by.items()}
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--db", default="estate.db")
+    ap.add_argument("--model", default="google/siglip2-base-patch16-256")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("check", help="score every new phone upload: hold it, or let it go (ingest-iphone.sh runs it)")
+    s = sub.add_parser("library", help="the one-off run: hold what looks private in a member's photos")
+    s.add_argument("--member", type=int, required=True, help="members.id (the owner: the first sysadmin)")
+    s.add_argument("--dry-run", action="store_true", help="change nothing; print counts, scores near the threshold, ids")
+    s.add_argument("--json", action="store_true", help="also print the report as JSON")
+    a = ap.parse_args()
+    from core import schema
+    con = sqlite3.connect(a.db, timeout=60)
+    con.execute("PRAGMA journal_mode=WAL")
+    schema.ensure(con, "catalog", "embeddings", "video", "members")
+    try:
+        if a.cmd == "check":
+            check(con, a.model)
+        else:
+            got = library(con, a.member, a.model, a.dry_run)
+            if a.json:
+                print(json.dumps(got, indent=1))
+    except (MissingVectors, PrivateError) as e:
+        sys.exit(f"hold: {e}")
+    finally:
+        con.close()
+
+
+if __name__ == "__main__":
+    main()

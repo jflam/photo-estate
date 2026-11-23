@@ -312,17 +312,24 @@ SRC_NAME = {v: k for k, v in SRC.items()}
 
 
 def default_hidden(con) -> set[str]:
-    """The photos no face of is on People: what the estate defaults hide (lenses.py), and the hiding sets from
-    before lenses, which hide for everyone. People is built once, for every member, so a member's own filters
-    are not here: they apply as a person's faces are listed (People.handle's `keep`)."""
+    """The photos no face of is on People: what the estate defaults hide (lenses.py), the hiding sets from
+    before lenses, which hide for everyone, and every photo private to anyone (private.py: its faces are in
+    People for no one, its sharer included, until it is released). People is built once, for every member, so
+    a member's own filters are not here: they apply as a person's faces are listed (People.handle's `keep`)."""
+    out: set[str] = set()
     for q in ("SELECT DISTINCT h.sha256 FROM hidden h JOIN change_sets s ON s.id = h.set_id"
               " LEFT JOIN lenses l ON l.id = s.lens_id WHERE s.lens_id IS NULL OR l.estate_default = 1",
               "SELECT sha256 FROM hidden"):         # (a catalog from before lenses: every hiding set is for everyone)
         try:
-            return {s for s, in con.execute(q)}
+            out = {s for s, in con.execute(q)}
+            break
         except sqlite3.OperationalError:
             continue
-    return set()
+    try:
+        out |= {s for s, in con.execute("SELECT sha256 FROM private WHERE released_at IS NULL")}
+    except sqlite3.OperationalError:        # a catalog from before private photos
+        pass
+    return out
 
 
 def face_rows(con) -> list[tuple]:
@@ -975,10 +982,11 @@ class People:
             out["groups"] = [g for g in (People.only(g, keep) for g in o["groups"]) if g and g.get("faces")]
         return out
 
-    def handle(self, method: str, path: str, qs: dict, body: dict | None, actor: int | None = None, keep=None):
+    def handle(self, method: str, path: str, qs: dict, body: dict | None, actor: int | None = None, keep=None, see=None):
         """One request -> (status, body bytes, content type, Cache-Control), or None if it isn't ours. `actor`:
         the member a write is for (members.id), for the journal. `keep` (sha -> bool): the photos the member
-        asking sees (photo_app.py); the faces of any other are left out of what a GET lists (only)."""
+        asking sees (photo_app.py); the faces of any other are left out of what a GET lists (only). `see` (sha ->
+        bool): the photos they may be shown at all; a face crop of any other is a 404, as one that does not exist."""
         one = lambda k, d="": (qs.get(k) or [d])[0]
         num = lambda k: int(one(k)) if one(k).lstrip("-").isdigit() else None
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":")).encode(), "application/json", "no-store")
@@ -986,8 +994,9 @@ class People:
         if method == "GET":
             if path in ("/people", "/people/"):
                 return 200, pages.page("people.html"), "text/html; charset=utf-8", "no-cache"
-            if path.startswith("/face/"):
-                body_ = self.crop(int(path[6:])) if path[6:].isdigit() else None
+            if path.startswith("/face/"):   # (a face in a photo the member may not be shown is not there: `see`)
+                k = self.row.get(int(path[6:])) if path[6:].isdigit() else None
+                body_ = self.crop(int(path[6:])) if k is not None and (see is None or see(self.sha[k])) else None
                 return (200, body_, "image/jpeg", "public, max-age=86400") if body_ else (404, b"", "text/plain", "no-store")
             if path == "/api/people":
                 return js(self.overview(keep))

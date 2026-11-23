@@ -23,8 +23,8 @@ import { flow, latest, STALE } from "./fsm.js";
 /**
  * @typedef {object} Item   an item as GET /api/inbox lists it
  * @property {number} id
- * @property {string} kind              member_request | review | lens_proposed | lens_changed
- * @property {string} ref               what it is about: member:<id>, album:<id>, lens:<id>
+ * @property {string} kind              member_request | review | lens_proposed | lens_changed | held
+ * @property {string} ref               what it is about: member:<id>, album:<id>, lens:<id>, held:<batch>
  * @property {string} title
  * @property {string} created_at
  * @property {string} updated_at        when it was made, or last brought up to date
@@ -46,6 +46,7 @@ export const KIND = /** @type {Record<string, string>} */ ({
   review: "To look over",
   lens_proposed: "Proposed estate default",
   lens_changed: "A lens you follow",
+  held: "Kept private to you",
 });
 
 /**
@@ -59,6 +60,7 @@ export function act(item) {
   if (item.kind === "review") return { label: "Look it over", notice: false };
   if (item.kind === "lens_proposed") return { label: "Decide in Albums", notice: false };
   if (item.kind === "lens_changed") return { label: item.ref.startsWith("album:") ? "Open the series" : "See it in Albums", notice: true };
+  if (item.kind === "held") return { label: "Look them over", notice: false };   // done once nothing it held is still held
   return { label: "Open", notice: false };
 }
 

@@ -208,7 +208,7 @@ class StubPeople:
     def __init__(self):
         self.calls = []
 
-    def handle(self, method, path, qs, body, actor=None, keep=None):   # actor: the member the journal names (members.id)
+    def handle(self, method, path, qs, body, actor=None, keep=None, see=None):   # actor: the member the journal names (members.id)
         self.calls.append((method, path, body, actor))
         return 200, b'{"ok":true}', "application/json", "no-store"
 

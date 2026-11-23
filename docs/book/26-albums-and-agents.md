@@ -137,7 +137,29 @@ these are the places a member meets it. The machines and the words are
   itself from the answer's `reasons`, and says the day in the viewer's own time zone (the server's `text`
   says it in UTC). The lists behind the viewer are asked for again when it closes.
 - **The Library's ⋯ menu** names the member (*You are Ada*, from `GET /api/me`), offers **Inbox** with how
-  many things wait there (below), **Members** to a sysadmin, and on the demo, **Be another member**.
+  many things wait there (below), **Members** and **Library info** (`/stats`) to a sysadmin, and on the demo,
+  **Be another member**.
+
+## Private photos on the pages
+
+Phase 5 of the multiplayer plan lets a member keep a photo they shared to themselves ([chapter
+11](11-server.md#private-photos) has the rule and the API). The machines and the words are
+[app/private-flow.js](../../photo-estate/app/private-flow.js), unit-tested in `app/tests/private-flow.test.js`.
+
+- **The viewer's private line**, under the why line (the same answer feeds both: the why answer's `private`):
+  for a photo private to the member, "*Private to you* since Nov 22: held: it looks like a receipt, a
+  screenshot or a document", or "you withdrew it", with "It is released by itself on Dec 26" once a day is
+  set, and when someone else shares it too, that the family still sees it. It offers **Release** and
+  **Release on a day…** (a menu over the viewer with a date; once set, **No release day** instead).
+- **Withdraw**: a photo the member shared and the family is shown has a row in the viewer's details,
+  *Shared by you*, **Withdraw from the family**; withdrawn, the line takes its place. The lists behind the
+  viewer are asked for again when it closes.
+- **A mark in the grid**: a small lock on each photo private to the member, wherever their own lists show it.
+- **The held view** is Search for `is:held` (the `held` inbox item opens it): *Held as private*, the photos
+  held at ingestion, and a bar: how many, **Release all**, and **Choose…**, after which a tile tapped is
+  chosen (outlined), not opened, and **Release N** releases those chosen (**Cancel** stops choosing). So 500
+  held photos are looked over as a wall and released in one or a few presses, not 500. `is:private` lists
+  everything private to the member, held or withdrawn; `is:withdrawn` only what they withdrew.
 
 ## The inbox
 
@@ -145,9 +167,10 @@ Whatever waits for a member's decision is in their **inbox** (phase 4 of the mul
 what makes and closes each, and the API are [chapter 11](11-server.md#the-inbox)). The page is
 **`/inbox`** (inbox.html; its machine in [app/inbox-flow.js](../../photo-estate/app/inbox-flow.js),
 unit-tested in `app/tests/inbox-flow.test.js`): a card per open item, newest first, with what kind it is
-(*Asking to be let in*, *To look over*, *Proposed estate default*, *A lens you follow*), what it is about
-and the day, a button that opens the screen that decides it (**Open Members**, **Look it over**, **Decide
-in Albums**, **See it in Albums** or **Open the series**) and **Dismiss**. Deciding where it opens takes the
+(*Asking to be let in*, *To look over*, *Proposed estate default*, *A lens you follow*, *Kept private to
+you*), what it is about and the day, a button that opens the screen that decides it (**Open Members**, **Look
+it over**, **Decide in Albums**, **See it in Albums**, **Open the series** or **Look them over**: the held
+view) and **Dismiss**. Deciding where it opens takes the
 item out of the inbox; nothing is decided on the inbox itself. A lens that changed asks for no decision,
 so opening it puts it away. The Library's ⋯ button carries a small count when anything is open, and its
 menu's **Inbox** row the same; the count is asked for when the page loads, when it is come back to, and

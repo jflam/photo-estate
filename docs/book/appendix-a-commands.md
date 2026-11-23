@@ -11,7 +11,7 @@ uv run estate.py [--db estate.db] <command> [options]
 
 | Command | Arguments and options | Purpose | Chapter |
 |---|---|---|---|
-| `ingest` | `sources...` (zips or folders); `--store DIR` (**required**); `--force` re-scan sources already ingested; `--delete-after` delete each zip once ingested | Hash and store media; record occurrences, sidecars, XMP, Flickr JSON. Refuses a purged photo; in a store whose root holds `.immutable`, sets `chflags uchg` on each file it writes | [4](04-store-and-ingest.md) |
+| `ingest` | `sources...` (zips or folders); `--store DIR` (**required**); `--force` re-scan sources already ingested; `--delete-after` delete each zip once ingested; `--uploads` the phone's inbox: `m<member id>/` says who shared each file, and a new photo is private to its sharer until `private.py check` has scored it | Hash and store media; record occurrences, sidecars, XMP, Flickr JSON, and who shared each file (`sharers`: the first sysadmin, or with `--uploads` the inbox folder's member). Refuses a purged photo; in a store whose root holds `.immutable`, sets `chflags uchg` on each file it writes | [4](04-store-and-ingest.md#who-shared-it) |
 | `link` | `--source NAME` (repeatable): only the photos those sources brought in, and every other copy of them; the name is the folder or zip `ingest` read | Match sidecars to media; merge dates, GPS, people, favourites, albums; rebuild the text index (only the touched photos' rows with `--source`); prints `progress N of M: what` (progress events instead with `PHOTO_ESTATE_EVENTS=1`, [16](16-operations.md)) | [6](06-linking.md) |
 | `exif` | `--store DIR` (**required**); `--workers N` (default: half the CPUs); `--batch 200`; `--limit 0` (all); `--force` | Read all metadata with `exiftool`; promote camera, lens, exposure; then pair Live Photo clips with their stills, as `live` does | [7](07-places-events-trips.md) |
 | `live` | `--redo` forget every pair and work them all out again | Pair Live Photo clips with their stills (`live_pairs`); prints how many it paired, how many videos are clips and how many stand on their own. Safe to run again | [6](06-linking.md#step-2-live-photos-and-motion-photos) |
@@ -49,6 +49,7 @@ uv run embed.py [--db estate.db] [--model google/siglip2-base-patch16-256] [--th
 | `run` | `--store DIR` (**required**); `--workers 3` decoder processes; `--batch 16`; `--limit 0`; `--after-rowid N` only assets added after it; `--no-videos` photos only, leave the videos for a later run | Embed every image with no embedding for this model, then every video that is not a Live Photo's clip: its kept frames into `video_frames`, their mean into `embeddings` (resumable; a video is committed whole) | [10](10-embeddings.md#videos) |
 | `search` | `query`; `--limit 15` | Command-line semantic search | [10](10-embeddings.md) |
 | `stats` | none | Images and videos in the catalog (how many videos are Live Photo clips), and per model how many are embedded, undecodable, and the video frames kept | |
+| `hold-prompts` | none | Write `hold-prompts.json`: the text vectors of private.py's `PROMPTS` for `--model` (on the CPU; other models' vectors in the file are kept). Run again when the prompts or the model change; the hold at ingestion reads the file and never loads the model | [11](11-server.md#private-photos) |
 | `serve` | `--root DIR` (the library: `estate.db` and `store/` inside; default: the one chosen on the setup page, saved in `~/.config/photo-estate/library.json`); `--store DIR` (default `<root>/store`); `--demo`; `--sandbox` (a scratch library with practice sources, port 8769); `--port` (default 8766, or 8767 with `--demo`). With no photos in the library yet, `serve` shows the setup page (`/setup`) instead of the app, and becomes the app once the first photos are searchable; `--cache DIR` (default `<db dir>/review`); `--fast-cache DIR`; `--no-pregenerate`; `--match-floor 0.085` (`-1` = no floor); `--match-window 0.04` (`2` = show every photo, ranked); `--query-log FILE` (default `<db dir>/query-log.jsonl`) | The photo app | [11](11-server.md) |
 
 ```bash
@@ -75,6 +76,22 @@ uv run embed.py serve --demo
 | `--backup-every HOURS` / `--backup-keep N` | 24 / 7 | How often, and how many copies to keep |
 
 The change feed (`sync-feed.db`) is created next to the catalog by `serve` ([20](20-sync.md)).
+
+## private.py: private photos and the hold
+
+```bash
+uv run private.py [--db estate.db] [--model google/siglip2-base-patch16-256] <command>
+```
+
+| Command | Options | Purpose | Chapter |
+|---|---|---|---|
+| `check` | none | The hold at ingestion (ingest-iphone.sh runs it after the embeddings, before `catalog_ready`): every new phone upload with a vector (a `new` row of `private`) is held as private to its sharer if any prompt scores it at or over `HOLD_AT`, or it is a screenshot (`photo.held`, a `held` inbox item per member), and shared if not. A photo with no vector yet waits for the next run. Exits non-zero, changing nothing, without the prompts' vectors | [11](11-server.md#private-photos) |
+| `library` | `--member ID` (**required**: the owner is the first sysadmin); `--dry-run`; `--json` also print the report | The one-off run over the library: every image the member shared (the first sysadmin: and every image with no sharer) that has no private row of theirs is scored as `check` scores an upload, and what crosses is held as theirs, in one transaction (one `photo.held` entry with the count, one inbox item). `--dry-run` changes nothing and prints how many each prompt would hold, the best scores near the threshold in steps of 0.005, and a sample of ids held and just below, never a file name. Safe to run twice; never holds a photo the member released. Restart the app after the real run (it reads who is private when something changes) | [11](11-server.md#private-photos) |
+
+```bash
+uv run private.py --db ~/estate/estate.db library --member 1 --dry-run
+uv run private.py --db ~/estate/estate.db library --member 1
+```
 
 ## faces.py: faces and people
 
@@ -131,7 +148,9 @@ Needs `rclone`, `sqlite3`, `uv`, bash 4 and GNU `df`. See [chapter 3](03-repatri
 | `PHOTO_ESTATE_EVENTS=1` | off | Also print the event lines the app reads (`new_assets`, `catalog_ready`, and the steps' progress; [16](16-operations.md)); the app sets it |
 
 Only new photos are touched by each stage; safe to run while the app is up and to overlap (a second run
-exits at once). The app runs it itself after uploads ([24](24-uploading.md)).
+exits at once). The app runs it itself after uploads ([24](24-uploading.md)). It ingests the inbox with
+`--uploads` (who shared each file, from its member folder) and runs `private.py check` (the hold) after the
+embeddings, before `catalog_ready` ([11](11-server.md#private-photos)).
 
 ### pull-icloud.sh
 

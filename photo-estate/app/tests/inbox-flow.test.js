@@ -81,7 +81,8 @@ test("what each kind's button says, and that only a notice is put away by openin
   assert.deepEqual(act({ kind: "lens_changed", ref: "lens:3" }), { label: "See it in Albums", notice: true });
   assert.deepEqual(act({ kind: "lens_changed", ref: "album:9" }), { label: "Open the series", notice: true });
   assert.deepEqual(act({ kind: "question", ref: "q:1" }), { label: "Open", notice: false }, "a kind this page does not know yet");
-  assert.deepEqual(Object.keys(KIND), ["member_request", "review", "lens_proposed", "lens_changed"]);
+  assert.deepEqual(act({ kind: "held", ref: "held:12" }), { label: "Look them over", notice: false }, "done once nothing is still held");
+  assert.deepEqual(Object.keys(KIND), ["member_request", "review", "lens_proposed", "lens_changed", "held"]);
 });
 
 test("the count beside Inbox", () => {

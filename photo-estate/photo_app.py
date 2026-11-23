@@ -87,6 +87,7 @@ import threading
 import time
 from collections import Counter
 from dataclasses import replace
+from datetime import datetime
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -98,6 +99,7 @@ import lenses
 import member_inbox
 import members
 import pages   # the pages, with the shared stylesheet put in
+import private
 from admin import Admin, backups
 from browse import Browse
 from changes import Changes
@@ -129,6 +131,9 @@ ROUTE_AUTH: tuple[tuple[str, tuple[str, ...], Auth], ...] = (
     ("POST", ("/api/members",), Auth.SYSADMIN),
     ("GET", ("/setup", "/api/intake"), Auth.SYSADMIN),      # bringing photos in: a job reads any folder here
     ("POST", ("/api/intake", "/api/restart"), Auth.SYSADMIN),
+    # Looking after the machine: what is on its disk and in its inbox counts every member's photos, their private
+    # ones too (the inbox's run log names files).
+    ("GET", ("/stats", "/api/stats", "/api/ingest"), Auth.SYSADMIN),
 )
 DEMO_HEADER, DEMO_COOKIE = "X-Demo-Member", "demo_member"   # --demo only: which demo member a request is
 # Requests that don't hold the catalog gate: they read no catalog, or only briefly, and can be slow.
@@ -137,6 +142,7 @@ FAVORITE = re.compile(r"/api/favorite|/api/albums/\d+/favorite")   # (POST) the 
 # (POST) what a member sees through, changed (lenses.py): the gate's write side, in relook
 LENS_WRITE = re.compile(r"/api/lenses(?:/(\d+)/(subscribe|unsubscribe|publish|propose|decide))?"
                         r"|/api/albums/(\d+)/publish|/api/photos/([0-9a-f]{64})/show")
+PRIVATE_WRITE = "/api/private"   # (POST) photos made private or released (private.py): the gate's write side, in relook
 APP_TYPES = {".webmanifest": "application/manifest+json", ".js": "text/javascript; charset=utf-8",
              ".png": "image/png"}
 
@@ -181,7 +187,7 @@ class PhotoApp:
         self.cache = cache = Path(a.fast_cache) if a.fast_cache else seed
         self.t0 = time.time()
         con = connect(a.db)               # the tables this app writes itself (core/schema.py), made when it opens
-        schema.ensure(con, "favorites", "members", "lenses")
+        schema.ensure(con, "catalog", "favorites", "members", "lenses")   # (catalog: sharers and private, in a demo's scratch copy)
         # Members (members.py). The demo makes its own in its scratch catalog; a catalog with none yet takes
         # the --upload-user logins, as they could write before.
         made = members.demo(con) if a.demo else members.first_start(con, a.upload_user, a.sysadmin)
@@ -258,6 +264,10 @@ class PhotoApp:
         # running: when this run ends, another starts, so nothing that was asked for is missed).
         self.reload_state = {"state": "idle", "at": None, "seconds": None, "error": None}
         self.reload_lock = threading.Lock()
+        # Photos private "until Dec 26" are released by a timer (release_timer, started in start()): it asks every
+        # `release_every` seconds whether a day has come, by `today` (the computer's own date: the family's).
+        self.release_every, self.release_stop = 60.0, threading.Event()
+        self.today = lambda: datetime.now().date().isoformat()
         # Change sets (changes.py). When one hides or shows photos, the catalog is re-read as after an ingest:
         # every view, count and cover is rebuilt without them, phones are told through the feed, and the
         # People page loads again without their faces. `settling` counts the moments before the reload starts.
@@ -265,7 +275,7 @@ class PhotoApp:
         self.changes = Changes(a.db, facts=lambda sha: self.live.cat.meta.get(sha), shown=self.shown,
                                busy=lambda: self.settling > 0 or self.reload_state["state"] != "idle",
                                on_change=self.on_hidden_change, find=browse.find, favorite=self.set_favorites,
-                               visible_for=self.live.visible_for, reading=self.reading)
+                               visible_for=self.live.visible_for, reading=self.reading, refused=self.refused)
         # Tasks (tasks.py): a request in words, worked on by an agent on this computer that uses the MCP
         # endpoint below like any other client, and ends in a change set.
         self.tasks = Tasks(a.db, config.mcp_url(self.port), command=a.agent_cmd, env_file=a.agent_env,
@@ -309,16 +319,21 @@ class PhotoApp:
             con.close()
 
     def relook(self) -> bool:
-        """What someone hides has changed: read the looks again, and every member's view is worked out anew.
-        Never from inside the gate (a request): it takes the write side. True if what the estate defaults
-        hide changed (People is built without those photos: faces.py)."""
+        """What someone hides, or holds private, has changed: read the looks again, and every member's view is
+        worked out anew. Never from inside the gate (a request): it takes the write side. True if what People is
+        built without changed (what the estate defaults hide, and the photos private to anyone: faces.py)."""
         with self.fav_write:     # not while a favourite is being shown: it would be lost from the looks
-            before = self.live.looks.default_hidden() if isinstance(self.live.looks, lenses.State) else None
+            before = self.live.looks.people_out() if isinstance(self.live.looks, lenses.State) else None
             looks = self.read_looks()
             self.live.relook(looks)
             self.browse.forget()
             self.admin.forget_library()
-        return before != looks.default_hidden()
+        return before != looks.people_out()
+
+    def refused(self, sha: str, member: int | None) -> bool:
+        """`member` may not be shown this photo, whether or not it is in the catalog being served (private.py)."""
+        looks = self.live.looks
+        return isinstance(looks, lenses.State) and looks.private.refused(sha, member)
 
     def load_people(self) -> None:
         """Again after a reload: the one that is ready keeps answering until the new one is, and keeps
@@ -357,6 +372,29 @@ class PhotoApp:
                              daemon=True).start()
         if not a.no_pregenerate:
             threading.Thread(target=self.images.pregenerate, daemon=True).start()
+        threading.Thread(target=self.release_timer, daemon=True, name="release timer").start()
+
+    def release_due(self) -> dict[int, int]:
+        """Release every private photo whose day (`until`) has come, by `today` (private.release_due); then every
+        view anew, the phones' feeds and People. {member: photos released}."""
+        con = connect(self.a.db)
+        try:
+            got = private.release_due(con, self.today())
+        finally:
+            con.close()
+        if got:
+            print(f"private: released {sum(got.values())} photos whose day has come", flush=True)
+            self.on_hidden_change(self.relook())
+        return got
+
+    def release_timer(self) -> None:
+        """The background thread start() runs: release_due every `release_every` seconds until release_stop."""
+        while not self.release_stop.is_set():
+            try:
+                self.release_due()
+            except Exception as e:       # (a locked catalog, a disk gone): try again next time
+                print(f"private: release timer: {type(e).__name__}: {e}", flush=True)
+            self.release_stop.wait(self.release_every)
 
     def feed_of(self, member: int | None, make: bool = False) -> Feed | None:
         """`member`'s feed (None: the first sysadmin's, sync-feed.db); with `make`, made if they have none yet."""
@@ -419,6 +457,21 @@ class PhotoApp:
             feed.touch(rows)
         return len(changed)
 
+    def with_private(self, looks):
+        """In the swap that installs a reloaded catalog (Live.install), with no request reading: the looks as they
+        are, with the photos private to a sharer read again from the table. Read after the catalog was, so every
+        photo it holds has its row here: ingest records a phone upload's `new` row in the transaction that adds
+        the photo (private.py), and no member is shown a new upload before it has been checked. Read inside the
+        swap, so a photo withdrawn meanwhile (relook) is not undone; the rest of the looks is kept as it is (a
+        favourite shown in place is not lost)."""
+        if not isinstance(looks, lenses.State):
+            return looks
+        con = connect(self.a.db)
+        try:
+            return replace(looks, private=private.read(con, looks.sysadmin))
+        finally:
+            con.close()
+
     def caught_up(self, cat: catalog.Catalog) -> None:
         """In the swap that installs a reloaded catalog: what was worked out from the old one is let go."""
         self.browse.forget()      # cached masks and rankings are the old catalog's
@@ -440,7 +493,7 @@ class PhotoApp:
                     fresh = self.load_catalog(self.live.cat.raw)
                     if os.environ.get("PHOTO_ESTATE_CHECK_RELOAD"):   # tools/bench_ingest.py --check
                         print(f"reload check: {fresh.differences(self.load_catalog()) or 'same as a full load'}", flush=True)
-                    self.live.install(fresh, then=self.caught_up)
+                    self.live.install(fresh, then=self.caught_up, looks=self.with_private)
                     rs.update(at=time.time(), seconds=time.time() - t, error=None)
                     print(f"catalog reloaded: {fresh.N} images in {time.time() - t:.1f}s", flush=True)
                     self.feed_update()
@@ -487,7 +540,8 @@ class PhotoApp:
             return fn()
 
     def may_see(self, sha: str, member: int | None) -> bool:
-        """Whether `member` may be shown this photo at all (Live.shared_for), for the pixel routes (images.py)."""
+        """Whether `member` may be shown this photo at all (Live.shared_for): in the catalog, and not private to
+        sharers they are not one of. For the pixel routes (images.py) and every route that takes a sha."""
         i = self.live.cat.index.get(sha)
         return i is not None and bool(self.live.shared_for(member)[i])
 
@@ -538,6 +592,15 @@ class PhotoApp:
             return Member(None, "this computer", role="sysadmin", upload_policy="everything", local=True)
         return self.roster.get(login)
 
+    def folder_of(self, m: Member | None) -> tuple[str, bool]:
+        """Where in the inbox a member's uploads land, and whether the folder before member folders counts as
+        theirs too: m<member id>/ (private.member_of reads who shared it back from there), and the inbox itself
+        for the first sysadmin's uploads from before (an upload sent again is found where it was). With no
+        member (no members yet), the inbox itself, as before."""
+        if m is None or m.id is None:
+            return "", True
+        return f"m{m.id}", bool(self.sysadmin and self.sysadmin.id == m.id)
+
     def refusal(self, req: Request, m: Member | None = None) -> Response | None:
         """None if ROUTE_AUTH lets `m` (by default, whoever the request is for) make the request. Otherwise
         its answer: for a browser opening a page, a page that says why (the request-access page); for
@@ -577,7 +640,8 @@ class PhotoApp:
         """Whether a request holds the catalog gate: not the slow ones (UNGATED, album downloads), nor
         setting favourites, which takes the gate's write side itself (set_favorites)."""
         return not (path.startswith(UNGATED) or path.endswith("/download")
-                    or method == "POST" and (FAVORITE.fullmatch(path) or LENS_WRITE.fullmatch(path)) is not None)
+                    or method == "POST" and (FAVORITE.fullmatch(path) or LENS_WRITE.fullmatch(path)) is not None
+                    or method == "POST" and path == PRIVATE_WRITE)
 
     def route(self, req: Request) -> Response:
         method, headers, local = req.method, req.headers, req.local
@@ -588,7 +652,7 @@ class PhotoApp:
             # with its own 403, since the handler's streamed uploads never come through route().
             m = self.who(headers, local)
             got, _ = self.admin.upload(method, path, {**headers, "Content-Length": str(len(req.body))},
-                                       io.BytesIO(req.body), m.login if m else "", Auth.MEMBER.allows(m))
+                                       io.BytesIO(req.body), m.login if m else "", Auth.MEMBER.allows(m), self.folder_of(m))
             return Response.of(got)
         if self.a.demo and method == "GET" and path == "/members" and re.search(r"(?:^|&)be=", u.query):   # (be= alone: no cookie)
             return self.be(qs)
@@ -622,6 +686,8 @@ class PhotoApp:
             return self.favorite(body, who, m.id if m else None)
         if (lw := LENS_WRITE.fullmatch(path)) is not None:
             return self.lens_write(lw, body, m)
+        if path == PRIVATE_WRITE:
+            return self.private_write(body, m)
         if (ii := re.fullmatch(r"/api/inbox/(\d+)/dismiss", path)) is not None:
             return self.inbox_route(m, int(ii[1]))
         if self.compare and path.startswith("/api/compare"):
@@ -728,11 +794,12 @@ class PhotoApp:
             return Response(503, b"Faces are still loading; try again in a moment.", "text/plain")
         if method == "POST" and not isinstance(body, dict):
             return json_response({"error": "expected a JSON object"}, 400)
-        keep = None
+        keep = see = None
         if method == "GET":
             v = self.live.visible_for(viewer)
             keep = lambda sha: (i := v.cat.index.get(sha)) is not None and bool(v.visible[i])   # noqa: E731
-        return Response.of(s.value.handle(method, path, qs, body, actor, keep=keep))
+            see = lambda sha: not self.refused(sha, viewer)                                       # noqa: E731
+        return Response.of(s.value.handle(method, path, qs, body, actor, keep=keep, see=see))
 
     def changes_route(self, method: str, path: str, qs: dict, body, who: str, acting_for: int | None = None) -> Response | None:
         """Change sets (changes.py) and tasks (tasks.py): the review page and their API. Proposing, deciding
@@ -768,7 +835,8 @@ class PhotoApp:
             if not self.may_see(sha, viewer):   # (a photo they may not be shown is not there, as for /thumb/)
                 return json_response({"error": "no such photo"}, 404)
             v = self.live.visible_for(viewer)
-            return json_response({**lenses.why(con, looks, viewer, sha), "visible": bool(v.visible[v.cat.index[sha]])})
+            return json_response({**lenses.why(con, looks, viewer, sha), "visible": bool(v.visible[v.cat.index[sha]]),
+                                  "private": private.about(con, looks.private, viewer, sha)})
         finally:
             con.close()
 
@@ -821,6 +889,44 @@ class PhotoApp:
         if got.get("changed") and relook:
             self.on_hidden_change(self.relook())
         return json_response(got)
+
+    # -- private photos (private.py) ----------------------------------------------------------------
+
+    def private_write(self, body, m: Member | None) -> Response:
+        """POST /api/private {shas | which: held | private, private: true | false, until?: YYYY-MM-DD | null}: the
+        member makes photos they shared private (withdrawn), sets the day they are released on, or releases them.
+        A photo they may not be shown is a 404, as one that does not exist; one they did not share, a 403. Outside
+        the gate, like a lens: the change is in every view (relook) before this answers; the feeds and People follow
+        in the background."""
+        if not isinstance(body, dict) or not isinstance(body.get("private"), bool):
+            return json_response({"error": "say private: true or false"}, 400)
+        viewer = m.id if m else None
+        if viewer is None:
+            return json_response({"error": "only a member's photos are private"}, 403)
+        con = connect(self.a.db)
+        try:
+            if body.get("which") in ("held", "private"):
+                shas = private.held_by(con, viewer, body["which"])
+            elif isinstance(body.get("shas"), list) and 0 < len(body["shas"]) <= 20000 and \
+                    all(isinstance(x, str) and re.fullmatch(r"[0-9a-f]{64}", x) for x in body["shas"]):
+                shas = body["shas"]
+                with self.live.gate:
+                    if not all(self.may_see(sha, viewer) for sha in shas):
+                        return json_response({"error": "no such photo"}, 404)
+            else:
+                return json_response({"error": "say which photos: shas, or which: held | private"}, 400)
+            got = private.change(con, viewer, shas, body["private"], body["until"] if "until" in body else private.KEEP)
+            if len(shas) == 1 and "shas" in body:   # (the viewer's line: the photo as it is now)
+                got["private"] = private.about(con, private.read(con, self.sysadmin.id if self.sysadmin else None), viewer, shas[0])
+        except ValueError as e:
+            return json_response({"error": str(e)}, 400)
+        except private.PrivateError as e:
+            return json_response({"error": str(e)}, e.status)
+        finally:
+            con.close()
+        if got["changed"]:
+            self.on_hidden_change(self.relook())
+        return json_response({**got, "photos": len(shas)})
 
     # -- the inbox (member_inbox.py) -----------------------------------------------------------------
 
@@ -940,7 +1046,7 @@ class PhotoApp:
         sees (a month's cover is a favourite if it has one): MEMBER, checked in route()."""
         sha, on = (body.get("sha"), body.get("fav")) if isinstance(body, dict) else (None, None)
         with self.live.gate:              # (here without it: handle() leaves it to set_favorites)
-            known = isinstance(sha, str) and sha in self.live.cat.index
+            known = isinstance(sha, str) and self.may_see(sha, actor)   # (one they may not be shown: as one that is not there)
         if not known or not isinstance(on, bool):
             return json_response({"error": "say which photo (sha) and fav: true or false"}, 400)
         self.set_favorites([sha], on, who, actor, sha)
@@ -1071,7 +1177,7 @@ def make_handler(app: PhotoApp):
             self.close_connection = True            # until admin says the body was read
             m = app.who(self.headers, is_local(self))
             got, unread = app.admin.upload(self.command, urlparse(self.path).path, self.headers, self.rfile,
-                                           m.login if m else "", Auth.MEMBER.allows(m))
+                                           m.login if m else "", Auth.MEMBER.allows(m), app.folder_of(m))
             self.close_connection = client_closes or unread
             self.send(Response.of(got))
 

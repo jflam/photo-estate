@@ -117,7 +117,9 @@ def _make(job: tuple[str, str | None, str | None]) -> bool:
 
 class Images:
     """`may_see(sha, member)`: whether a member may be shown that photo at all. PhotoApp gives Live.shared_for
-    (every photo, until private photos: multiplayer phase 5); by default, everyone may see everything."""
+    (every photo but those private to their sharers when the member is not one: private.py); by default,
+    everyone may see everything. Every route here answers a photo they may not be shown exactly as one that
+    does not exist: 404, an empty body, no-store."""
 
     def __init__(self, live: Live, store: Path, cache: Path, seed: Path, may_see=None):
         self.live, self.store, self.cache, self.seed = live, store, cache, seed
@@ -156,8 +158,8 @@ class Images:
 
     def video_file(self, sha: str, original: bool = False, member: int | None = None) -> tuple[Path, str, str] | None:
         """(the file to send, the type to send it as, its name) for a video in the catalog or a Live Photo's
-        clip; None for anything else, a video `member` may not be shown (shared_for), or a file that is not
-        on the disk. The file is the copy to play from if one has been made (_streams), unless `original`:
+        clip; None for anything else, a video `member` may not be shown (shared_for), a clip none of whose
+        stills they may be shown, or a file that is not on the disk. The file is the copy to play from if one has been made (_streams), unless `original`:
         then always the stored file."""
         if not sha_re.match(sha):
             return None
@@ -165,6 +167,8 @@ class Images:
         m = cat.meta.get(sha)
         if m is not None and not self.may_see(sha, member):
             return None
+        if m is None and not any(self.may_see(still, member) for still in cat.stills.get(sha, ())):
+            return None      # a Live Photo's clip is shown to whoever may be shown one of its stills, and no one else
         ext = m["ext"] if m and m.get("kind") == "video" else cat.clips.get(sha)
         if not ext or ext not in VIDEO_TYPES:
             return None

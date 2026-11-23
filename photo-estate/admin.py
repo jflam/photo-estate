@@ -2,7 +2,8 @@
 admin.py — looking after the photo app (`embed.py serve`): photos arriving from the phone, the ingest
 that catalogues them, restarting, the Library info page, and the catalog's backups.
 
-  PUT|POST /api/upload/<YYYY/MM/DD/name.ext>   one file from the phone into the inbox (upload.py)
+  PUT|POST /api/upload/<YYYY/MM/DD/name.ext>   one file from the phone into the inbox (upload.py), in the folder
+                                               of the member it is for: <inbox>/m<member id>/YYYY/MM/DD/...
   OPTIONS  /api/upload/...                     501: send each file in one request (no resumable uploads)
   GET      /api/ingest                         the ingest's state (upload.IngestJob)
   POST     /api/ingest                         run ingest-iphone.sh now
@@ -40,7 +41,7 @@ from core.media import DECODABLE_EXT
 from catalog import Live
 from estate import facts_of as estate_facts
 from images import THUMB_EXT, write_image
-from upload import save_upload, staging_dir
+from upload import clean_path, save_upload, staging_dir
 
 
 
@@ -113,8 +114,10 @@ class Admin:
         threading.Timer(0.5, os._exit, (0,)).start()   # KeepAlive starts it again
         return js({"restarting": True}, 202)
 
-    def upload(self, method: str, path: str, headers, rfile, who: str, allowed: bool):
-        """PUT or POST /api/upload/<YYYY/MM/DD/name.ext>: one file from the phone into the inbox (upload.py).
+    def upload(self, method: str, path: str, headers, rfile, who: str, allowed: bool, folder: tuple[str, bool] = ("", True)):
+        """PUT or POST /api/upload/<YYYY/MM/DD/name.ext>: one file from the phone into the inbox (upload.py), in
+        the folder of the member it is for (`folder`: ("m<id>", whether the inbox itself was theirs before member
+        folders), PhotoApp.folder_of), which is how ingest knows who shared it. The phone's path is unchanged.
         Returns the answer and whether to close the connection: every early answer leaves the body unread."""
         prefix = "/api/upload/"
         if not path.startswith(prefix) or self.inbox is None:
@@ -131,8 +134,11 @@ class Admin:
             meta = {"taken": h.get("X-Taken"), "lat": h.get("X-Latitude"), "lon": h.get("X-Longitude"),
                     "fav": h.get("X-Favorite")}
             stored = {}
-            code, msg = save_upload(self.inbox, unquote(path[len(prefix):]), rfile, length,
-                                    h.get("X-Content-SHA256"), meta, stored)
+            rel, (sub, old) = unquote(path[len(prefix):]), folder
+            if sub and old and clean_path(rel) is not None and (self.inbox / rel.strip("/")).exists():
+                sub = ""             # sent before member folders: it is there already (save_upload says 200, or 409)
+            code, msg = save_upload(self.inbox / sub if sub else self.inbox, rel, rfile, length,
+                                    h.get("X-Content-SHA256"), meta, stored, stage=staging_dir(self.inbox))
             if stored and stored["path"].suffix.lower() in DECODABLE_EXT:   # an upload's stills, less DNG
                 self.arrivals.put((stored["sha256"], stored["path"]))
             close = code >= 400   # a refused body may still be on the wire
@@ -207,12 +213,18 @@ class Admin:
             self.st["lib"], self.st_gen = None, self.st_gen + 1
 
     def library_stats(self):
-        """The library numbers, from the catalog being served: every photo, the same for every member but for
-        the favourites, which stats_payload counts for the member asking. The caller holds the catalog gate
-        (a request does; stats_job takes it just for this)."""
+        """The library numbers, from the catalog being served: every photo the first sysadmin (who alone opens
+        /stats) may be shown, so none private to another member (shared_for); the favourites stats_payload counts
+        for the member asking. The caller holds the catalog gate (a request does; stats_job takes it just for this)."""
         import stats
-        c = self.live.cat
-        return stats.library_stats(c.meta, list(c.when), c.people_ix, c.trips, c.events)
+        c, shared = self.live.cat, self.live.shared_for(None)
+        if shared.all():
+            return stats.library_stats(c.meta, list(c.when), c.people_ix, c.trips, c.events)
+        keep = [s for s, ok in zip(c.shas, shared) if ok]
+        trips = {t: x for t, x in c.trips.items() if (shared & (c.trip_of == t)).any()}
+        events = {e: x for e, x in c.events.items() if (shared & (c.event_of == e)).any()}
+        trips = {t: {**x, "n": int((shared & (c.trip_of == t)).sum())} for t, x in trips.items()}
+        return stats.library_stats({s: c.meta[s] for s in keep}, list(c.when[shared]), c.people_ix, trips, events)
 
     def disk_stats(self):
         import stats

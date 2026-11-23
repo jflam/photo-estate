@@ -149,7 +149,9 @@ def test_bens_filter_hides_for_ben_only(app):
 def test_why_says_whose_lens(app):
     x = app.live.cat.shas[7]
     assert call(app, "GET", f"/api/photos/{x}/why", BEN) == {"sha": x, "hidden": False, "shown_anyway": False,
-                                                              "reasons": [], "text": None, "visible": True}
+                                                              "reasons": [], "text": None, "visible": True,
+                                                              # (phase 5: the viewer's private line; Ada shared it, not Ben)
+                                                              "private": {"sharer": False, "mine": None, "others_sharing": None}}
     sid = hide(app, BEN, [x])
     why = call(app, "GET", f"/api/photos/{x}/why", BEN)
     assert why["hidden"] and not why["visible"] and why["reasons"][0]["set"]["id"] == sid
@@ -487,7 +489,7 @@ def test_before_and_after_migrate(tmp_path):
 # -- the one way to ask ----------------------------------------------------------------------------------
 
 ROUTES = ("browse.py", "photo_app.py", "images.py", "admin.py", "compare.py", "changes.py", "estate_mcp.py",
-          "faces.py", "tasks.py", "lenses.py", "sync.py", "stats.py", "pages.py", "upload.py", "embed.py")
+          "faces.py", "tasks.py", "lenses.py", "sync.py", "stats.py", "pages.py", "upload.py", "embed.py", "private.py")
 
 
 def test_no_route_reads_a_mask_but_through_visible_for():
@@ -518,6 +520,25 @@ def test_no_route_reads_a_mask_but_through_visible_for():
         if name not in allowed_hidden_sql:
             for m in re.finditer(r"FROM\s+hidden\b", src):
                 bad.append(f"{name}:{src.count(chr(10), 0, m.start()) + 1}: reads the hidden table itself")
+    # who may be shown a private photo (multiplayer phase 5) is private.py's: only it, and the readers that build
+    # what is the same for everyone without any private photo (People, the inbox's count, /stats's file names), read
+    # the table itself; every other route asks Live.shared_for (may_see) or lenses.State (refused)
+    for name in ROUTES:
+        if name not in ("private.py", "faces.py", "member_inbox.py", "stats.py"):
+            for m in re.finditer(r"FROM\s+private\b", (ROOT / name).read_text()):
+                bad.append(f"{name}: reads the private table itself")
+    # every pixel route answers through may_see (images.py) or `see` (a face crop: faces.py)
+    import inspect
+    import images
+    src = inspect.getsource(images.Images.handle)
+    for part in re.split(r"\n {8}(?=if path\.startswith|for prefix)", src)[1:]:
+        if "may_see" not in part:
+            bad.append(f"images.py: a route of Images.handle does not ask may_see: {part.strip().splitlines()[0]}")
+    if "may_see" not in inspect.getsource(images.Images.video_file):
+        bad.append("images.py: video_file does not ask may_see")
+    crop = inspect.getsource(faces.People.handle)
+    if not re.search(r'startswith\("/face/"\).*\n.*\n.*see\(', crop):
+        bad.append("faces.py: a face crop (/face/<id>) does not ask `see`")
     # and each route module that answers from the catalog asks for the member's view
     for name in ("browse.py", "photo_app.py", "compare.py", "admin.py", "images.py", "changes.py"):
         src = (ROOT / name).read_text()

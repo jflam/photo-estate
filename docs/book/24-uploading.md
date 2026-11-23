@@ -19,7 +19,7 @@ flowchart LR
       SYS -->|"POST, even with the app closed"| SRV
     end
     subgraph Server["embed.py serve"]
-      SRV["POST or PUT /api/upload/..."] --> INB[("inbox/YYYY/MM/DD/<br/>name-id.HEIC<br/>+ name-id.HEIC.xmp")]
+      SRV["POST or PUT /api/upload/..."] --> INB[("inbox/m&lt;member&gt;/YYYY/MM/DD/<br/>name-id.HEIC<br/>+ name-id.HEIC.xmp")]
       SRV -->|"poke: a file arrived"| JOB["IngestJob"]
       JOB -->|"batch complete,<br/>or quiet for 60 s"| ING["ingest-iphone.sh"]
       ING --> CATALOG[("catalog + store")]
@@ -91,6 +91,15 @@ iCloud mirror (chapter 3), `<db dir>/iphone/YYYY/MM/DD/...`, and `estate.py inge
 any other folder source. The reasons, in the file's own words: it keeps `ingest` the single writer of what
 the catalog holds, and **a half-finished upload can never be mistaken for a photo**.
 
+**Whose it is** (multiplayer phase 5). The server puts each upload in the folder of the member the request is
+for: `<db dir>/iphone/m<member id>/YYYY/MM/DD/...` (`PhotoApp.folder_of`). The phone's path is unchanged, so
+an iPhone app that knows nothing of members goes on uploading as before; a member cannot write into another's
+folder (the member folder is the server's, put in front of whatever the phone sends). Ingest reads the sharer
+back from the folder (`estate.py ingest --uploads`; [chapter 11](11-server.md#private-photos)); what is in the
+inbox with no member folder, sent before there were member folders, is the first sysadmin's, and a file of
+his sent again is found where it was (`200 exists`). Staging stays beside the inbox, never in a member's
+folder. A new upload is private to its sharer until it has been checked: see the hold at ingestion, below.
+
 `save_upload(inbox, rel, fp, length, sha256, meta)`:
 
 1. **Validate the path** (`clean_path`): relative, no `..`, the right shape, and a **media extension**
@@ -142,6 +151,10 @@ A photo is useful when it's *searchable*, not when it's stored. The server runs 
   made on upload, the embedding is computed in the server's own process using the model it already holds,
   and a HEIC's size, date and perceptual hash are left in a "facts" file so ingest need not decode it a
   second time.
+- **The hold.** After the embeddings and before the catalog is reloaded, `private.py check` scores each new
+  upload: one that looks like a receipt, a screenshot or a document stays private to the member who sent it,
+  and their inbox says so; the rest are shared ([chapter 11](11-server.md#private-photos)). Until then, a new
+  upload is private to its sharer from the moment ingest records it, whenever a reload comes.
 - **Hot reload.** When the catalog is ready, the server re-reads what changed *in the background* and swaps
   it in without a restart; searches are answered from the old catalog until the new one is ready. It then
   calls `feed_update()`, which is what makes the new photos appear in `/api/sync` (chapter 20) and so on

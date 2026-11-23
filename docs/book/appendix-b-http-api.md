@@ -22,6 +22,7 @@ each request to the module that answers it ([chapter 11](11-server.md)):
 |---|---|
 | `/`, the app files, `/api/info`, `/api/sync`, `/api/favorite`, `/api/albums/<id>/download`, `/request-access`, `/api/request-access`, `/api/me`, `/members`, `/api/members*` | `PhotoApp` in [photo_app.py](../../photo-estate/photo_app.py), with [members.py](../../photo-estate/members.py) |
 | `/api/lenses*`, `/api/albums/<id>/publish`, `/api/photos/<sha>/show`, `/api/photos/<sha>/why` | `PhotoApp`, with [lenses.py](../../photo-estate/lenses.py) |
+| `/api/private` | `PhotoApp`, with [private.py](../../photo-estate/private.py) |
 | `/inbox`, `/api/inbox`, `/api/inbox/<id>/dismiss` | `PhotoApp`, with [member_inbox.py](../../photo-estate/member_inbox.py) |
 | `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log` | `Browse` in [browse.py](../../photo-estate/browse.py) |
 | `/thumb/`, `/preview/`, `/large/`, `/original/` | `Images` in [images.py](../../photo-estate/images.py) |
@@ -54,7 +55,7 @@ The rules are one table, `ROUTE_AUTH` in photo_app.py (`http_util.Auth`). A refu
 | Rule | Who | Routes |
 |---|---|---|
 | `PUBLIC` | anyone who can reach the app | `GET /request-access`, `POST /api/request-access`, `GET /api/info` (a non-member gets only `{"member": false}`), `GET /manifest.webmanifest`, `/sw.js`, `/icon-*.png` |
-| `SYSADMIN` | an active sysadmin, or this computer | `GET /members`, `GET /api/members`, `POST /api/members/<id>`, `GET /setup`, `GET` and `POST /api/intake/...`, `POST /api/restart` |
+| `SYSADMIN` | an active sysadmin, or this computer | `GET /members`, `GET /api/members`, `POST /api/members/<id>`, `GET /setup`, `GET` and `POST /api/intake/...`, `POST /api/restart`; and since phase 5, `GET /stats`, `GET /api/stats` and `GET /api/ingest` (they count every member's photos, private ones too, and the ingest's log names files) |
 | `MEMBER` | an active member of any role, or this computer | everything else: every other page, `GET` and write, `/app/*.js`, images and `/video/`, album downloads, `/api/sync`, `/mcp`, uploads, `OPTIONS /api/upload/...` |
 | `LOCAL` | this computer only | nothing yet |
 
@@ -99,7 +100,7 @@ The setup server (`intake/server.py`) and `faces.py serve` read bodies the same 
 
 | Request | Returns |
 |---|---|
-| `PUT /api/upload/<YYYY/MM/DD/name.ext>` | Saves the body to the inbox (`--inbox`, default `<db dir>/iphone`; none with `--demo`). `Content-Length` is required; an optional `X-Content-SHA256` is checked against the bytes received. `201 {"status":"stored"}`; `200 "exists"` if the same path and size is already there (so retries are safe); `409` if the path exists with a different size; `400` for a bad path, short body or wrong checksum; `403` if the caller is not an active member and the request is not from this computer; `411` without a length |
+| `PUT /api/upload/<YYYY/MM/DD/name.ext>` | Saves the body to the inbox (`--inbox`, default `<db dir>/iphone`; none with `--demo`), in the folder of the member the request is for: `<inbox>/m<member id>/YYYY/MM/DD/name.ext` (the path the phone sends is unchanged; ingest reads who shared it from the folder). For the first sysadmin, a file already at the inbox's top (sent before member folders) is found there. `Content-Length` is required; an optional `X-Content-SHA256` is checked against the bytes received. `201 {"status":"stored"}`; `200 "exists"` if the same path and size is already there (so retries are safe); `409` if the path exists with a different size; `400` for a bad path, short body or wrong checksum; `403` if the caller is not an active member and the request is not from this computer; `411` without a length |
 
 The extension must be a photo or video type, or `X.<media ext>.xmp` for a sidecar. The server never
 writes the catalog: `ingest-iphone.sh` ingests the inbox ([upload.py](../../photo-estate/upload.py)).
@@ -111,12 +112,18 @@ these. Both POSTs take the write rule, and their body, if any, is not looked at:
 arguments are fixed.
 
 `GET /api/ingest` returns `{enabled, running, started_at, finished_at, exit_code, log: [last 300
-lines], restart_needed, waiting: {files, bytes}, can_restart}`; `{"enabled": false}` with `--demo`.
+lines], restart_needed, waiting: {files, bytes}, can_restart}`; `{"enabled": false}` with `--demo`. It
+takes the `SYSADMIN` rule (the log names files of every member's uploads); `POST /api/ingest` the `MEMBER` rule.
 
 ### Search and browse
 
 `GET /api/search` and `GET /api/similar` take the same parameters; `/api/similar` additionally
-requires `sha` and ranks by that photo's vector (404 `{"error":"unknown photo"}` if unknown).
+requires `sha` and ranks by that photo's vector (404 `{"error":"unknown photo"}` if unknown, or private to
+someone else: the same answer). In `q`, `is:private`, `is:held` and `is:withdrawn` keep the member's own
+private photos (all of them, those held at ingestion, those they withdrew); a row of theirs carries `private`
+(`held`, `withdrawn`, or `new`: not checked yet). A photo private to someone else is in no result, count,
+facet, trip, cover or "similar" list; a `stack` named by it, an `event` or `trip` only such photos are in, and a
+name or place only they carry are answered as ones the library does not have.
 
 | Parameter | Repeatable | Meaning |
 |---|---|---|
@@ -178,7 +185,7 @@ none of these. A video's score in a ranking is its best frame's or its mean's, w
 | `GET /api/layout?...` (same filter parameters, plus `sort`) | One byte per photo, in `/api/search`'s order with the same parameters: its aspect ratio between 0.5 and 2.6 in 255 steps, so the page can lay a month out before fetching it. `application/octet-stream` with an `ETag` |
 | `GET /api/info` | For a member: `{"total", "videos", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in, all of it what this member sees (`fav`: their own favourites). `videos` is how many of `total` are videos. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
 | `GET /stats` | The library info page ([stats.html](../../photo-estate/stats.html)) |
-| `GET /api/stats[?refresh=1]` | `{state: working\|ready\|error, library, disk, app}`: library figures from memory (every photo in the catalog; `favourites` is the asking member's own), disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
+| `GET /api/stats[?refresh=1]` | The `SYSADMIN` rule. `{state: working\|ready\|error, library, disk, app}`: library figures from memory (every photo in the catalog the first sysadmin may be shown, none private to another member; `favourites` is the asking member's own), disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
 | `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. `deleted` holds the deletions between the cursor sent and the one returned (each is sent once; none to a device that is up to date; apply them from every page). `limit` counts rows. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start. Each member has their own feed, of what they see: the first sysadmin's is `sync-feed.db` beside the catalog, as before members; anyone else's is `sync-feed-<member id>.db`, made the first time one of their phones asks (that first answer takes as long as reading every row once, about a second for 100,000 photos) and kept up to date from then on |
 | `GET /api/log?ev=open\|share&sha=...&pos=N` plus the search's parameters | Appends an event to the query log; `204` |
 | `GET /api/layout?...` (same filter parameters, plus `sort`) | Every matching photo's shape, one byte each, in `/api/search`'s order: the aspect ratio between 0.5 and 2.6 in 255 steps (`application/octet-stream`, with an `ETag`). The page lays a month out from it before it knows which photos are in it |
@@ -233,14 +240,31 @@ sync feeds follow a moment later. Errors are `{"error"}` with the status given.
 | `POST /api/lenses/<id>/propose` | Propose a filter of the member's as an estate default (it is published too): `{lens, proposed_at, changed}`. `409` a series, or one that is an estate default already. Nothing changes for anyone until a sysadmin decides: every other active sysadmin gets a `lens_proposed` inbox item, which deciding (or taking the filter back with `publish {on: false}`) closes |
 | `POST /api/lenses/<id>/decide {accept?}` | A sysadmin accepts a proposed filter as an estate default (every member then sees through it unless they opt out), or declines it (`accept: false`: it stays its owner's, published): `{lens, estate_default, changed}`. `403` not a sysadmin, `409` not proposed |
 | `POST /api/photos/<sha>/show {on?}` | "Show it anyway": a photo the member's filters hide is shown to them all the same, or no longer (`on: false`): `{sha, shown, changed}`. `404` for a photo they may not be shown |
-| `GET /api/photos/<sha>/why` | Why the member does not see a photo, from the state tables: `{sha, visible, hidden, shown_anyway, text, reasons: [{set: {id, title}, hidden_at, lens: {id, title, estate_default} or null (a set from before lenses, hiding for everyone), owner: {id, name}, mine}]}`, newest first, only the filters that are on for this member (another member's hides are not theirs to see). `text` says the first in words: "Hidden by Ada's lens “Estate defaults” on Nov 3", "Hidden by your lens “Hidden photos” on Nov 23" (the year too when it is not this one), "Shown anyway; hidden by ...". The day in `text` is the UTC day of `hidden_at`; the viewer words the line itself from `reasons`, with the day in the viewer's own time zone. `404` for a photo they may not be shown |
+| `GET /api/photos/<sha>/why` | Why the member does not see a photo, from the state tables: `{sha, visible, hidden, shown_anyway, text, reasons: [{set: {id, title}, hidden_at, lens: {id, title, estate_default} or null (a set from before lenses, hiding for everyone), owner: {id, name}, mine}], private: {sharer, mine: {why, since, until} or null, others_sharing}}` (`private`, phase 5: whether they shared the photo, whether it is private to them, and how many other sharers do not hold it private; `others_sharing` is null when they are no sharer), newest first, only the filters that are on for this member (another member's hides are not theirs to see). `text` says the first in words: "Hidden by Ada's lens “Estate defaults” on Nov 3", "Hidden by your lens “Hidden photos” on Nov 23" (the year too when it is not this one), "Shown anyway; hidden by ...". The day in `text` is the UTC day of `hidden_at`; the viewer words the line itself from `reasons`, with the day in the viewer's own time zone. `404` for a photo they may not be shown |
+
+### Private photos
+
+Answered by `PhotoApp` with [private.py](../../photo-estate/private.py) ([chapter 11](11-server.md#private-photos)).
+The `MEMBER` rule; outside the gate, like a lens: the change is in every view before it answers, and the sync
+feeds and People follow.
+
+| Request | Does |
+|---|---|
+| `POST /api/private {shas: [sha], private: true, until?}` | Withdraw photos the member shared (private to them, `withdrawn`), and with `until` (`YYYY-MM-DD`) set the day each is released on by itself; for one already private, `until` sets or (`null`) clears its day. `{withdrawn, release_set, released, changed, photos}`, and for one photo `private` (as the why answer's). One `photo.withdrawn` (and `photo.release_set`) journal entry |
+| `POST /api/private {shas: [sha], private: false}` | Release them now: `{released, ...}`, one `photo.released` entry; a `held` inbox item none of whose photos is still held is done |
+| `POST /api/private {which: "held" \| "private", private: false}` | Release every photo held at ingestion (the held view's "Release all"), or every one private to the member |
+
+`400` for a body without `private` (a boolean), without `shas` (at most 20,000 sha256s) or `which`, or with an
+`until` that is not a day; `404 {"error": "no such photo"}` when any photo is one the member may not be shown
+(as for an unknown sha); `403` for a photo they did not share, or a request for no member. A timer in the app
+releases photos whose day has come (`photo.released {auto: true}`, by no actor, acting for their sharer).
 
 ### The inbox
 
 Answered by `PhotoApp` with [member_inbox.py](../../photo-estate/member_inbox.py) ([chapter 11](11-server.md#the-inbox)).
 All take the `MEMBER` rule, and a member only ever sees and changes their own items. The kinds are
-`member_request`, `review`, `lens_proposed` and `lens_changed`; each is closed by the decision it waits for,
-wherever that is made, not here.
+`member_request`, `review`, `lens_proposed`, `lens_changed` and `held` (photos kept private at ingestion, `held:<batch>`,
+opening `/?q=is:held`); each is closed by the decision it waits for, wherever that is made, not here.
 
 | Request | Does |
 |---|---|
@@ -253,11 +277,11 @@ wherever that is made, not here.
 | Request | Does |
 |---|---|
 | `POST /mcp` | The [MCP](https://modelcontextprotocol.io/) endpoint ([estate_mcp.py](../../photo-estate/estate_mcp.py)): streamable HTTP in its simplest form, one JSON-RPC message (or a batch) per POST, answered with JSON, no stream and no session. Tools: `library_overview`, `search_photos`, `similar_photos`, `get_photos`, `list_albums`, `get_album`, `create_album`, `amend_album`, `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set`, `submit_task`, `get_task`, `cancel_task`. `search_photos` takes `kind` (`photo` or `video`), and its rows carry `kind`, `seconds` and `live_photo`. Every tool answers as a member sees the library, and what it makes is theirs: the caller's login's member; from this computer the sysadmin; and with `X-Estate-Task: <id>` (honoured only from this computer: the estate's agent) the member that task was submitted by (`acting_for`), whose writes are journaled with no actor, acting for them |
-| `GET /api/tasks` | Whether an agent can run on this computer, and every task, newest first ([tasks.py](../../photo-estate/tasks.py)) |
-| `GET /api/tasks/<id>?after=N` | One task, its events after event N, and the change set it made |
+| `GET /api/tasks` | Whether an agent can run on this computer, and the member's own tasks (those acting for them; one from before members is the first sysadmin's), newest first ([tasks.py](../../photo-estate/tasks.py)) |
+| `GET /api/tasks/<id>?after=N` | One task, its events after event N, and the change set it made; `404` for a task acting for someone else (what its agent saw is what that member sees, their private photos too) |
 | `POST /api/tasks {prompt}` | Start one: Claude Code, run headless with only the library's MCP tools. The task records who asked (`acting_for`, the member's id; the sysadmin's from this computer), which every task in these answers carries |
 | When a task ends | Each hiding set its agent made that has photos and hides none yet becomes a `review` item in the inbox of whoever asked ([the inbox](#the-inbox)) |
-| `POST /api/tasks/<id>/cancel` | Stop a task that is queued or running: a queued one never starts, a running one's agent gets SIGTERM, then SIGKILL after ten seconds, and the task stays `cancelled` however the agent ends. Answers the task (`404` if there is none); one already finished is returned unchanged |
+| `POST /api/tasks/<id>/cancel` | Stop a task that is queued or running: a queued one never starts, a running one's agent gets SIGTERM, then SIGKILL after ten seconds, and the task stays `cancelled` however the agent ends. Answers the task (`404` if there is none; for a task acting for someone else, only `{id, status, created_at, finished_at}`); one already finished is returned unchanged |
 
 ### Bringing photos in (the setup page)
 
@@ -289,6 +313,9 @@ protect, has no rule of its own.
 | `GET /video/<sha>` | A video in the catalog, or a Live Photo's clip by the clip's sha, as stored, read from the disk as it is sent. `Range: bytes=a-b` (or `a-`, or `-n`) answers `206` with those bytes and `Content-Range`; no `Range`, or one it does not handle (several ranges, not `bytes=`), answers `200` with the whole file; a range that starts at or after the end, or `bytes=-0`, answers `416` with `Content-Range: bytes */<size>`. `Content-Type` from `VIDEO_TYPES` in core/media.py (`.mov` and `.m4v` as `video/mp4`), `Accept-Ranges: bytes`, `Content-Disposition: inline; filename*=UTF-8''<original name>`, `Cache-Control: private, max-age=2592000, immutable`. 404 for anything that is not a video or a clip, or a file not on the disk. Anyone who can reach the app may ask, as for the images. `HEAD` is a 501, as for every route of this server |
 
 For a video, `/thumb/`, `/preview/` and `/large/` are made from its poster frame (about a second in).
+A photo private to someone else (phase 5) is answered exactly as a sha the server does not have, on every one
+of these: `404`, an empty body (`/video/`: `not found`), `no-store`; so is a Live Photo's clip none of whose
+stills the member may be shown, and `GET /face/<id>` for a face in such a photo.
 The first four validate `<sha>` as 64 lowercase hex characters of a known photo (else 404) and are
 served `public, max-age=2592000, immutable`; `/video/` validates it the same way.
 

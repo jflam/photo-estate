@@ -5,14 +5,16 @@
   ADDED                 area -> {table: ((column, type), ...)}: columns newer than some existing databases
   CATALOG_AREAS         the areas that live in the catalog (estate.db), for tests and tools
   APPEND_ONLY           sharers, tombstones and the protected-table triggers (part of the catalog area)
+  PRIVATE               private: photos private to a sharer (part of the catalog area; private.py)
   EXIF_APP_INDEX        the index catalog.load adds to exif for the app's startup read
 
 Areas, and who opens them (each owner calls ensure when it opens the database, never per request):
 
   estate.db, the catalog
     catalog      estate.connect: sources, assets, occurrences, sidecars, albums, xmp, flickr, exif,
-                 places, events, trips, tags, and the full-text `search` table; and APPEND_ONLY: sharers,
-                 tombstones, and the triggers that protect assets, occurrences, sharers and tombstones
+                 places, events, trips, tags, and the full-text `search` table; APPEND_ONLY: sharers,
+                 tombstones, and the triggers that protect assets, occurrences, sharers and tombstones; and
+                 PRIVATE: `private`, the photos private to a sharer (ingest writes it for a phone upload)
     embeddings   embed.connect: one SigLIP 2 vector per (photo, model)
     video        estate.connect and embed.connect: live_pairs (a Live Photo's clip and its still) and
                  video_frames (the frames a video is searched by)
@@ -146,6 +148,18 @@ CREATE TRIGGER IF NOT EXISTS tombstones_only_lift BEFORE UPDATE ON tombstones
 CREATE TRIGGER IF NOT EXISTS tombstones_no_replace BEFORE INSERT ON tombstones
   WHEN EXISTS (SELECT 1 FROM tombstones WHERE sha256 = NEW.sha256 AND member_id = NEW.member_id)
   BEGIN SELECT RAISE(IGNORE); END;
+"""
+# Private photos (private.py; multiplayer phase 5): the current state, not protected (the journal is its history).
+# A row stays when it is released (released_at), so a photo its sharer let go is never held again.
+PRIVATE = """
+CREATE TABLE IF NOT EXISTS private(      -- a photo private to one of its sharers (private.py says who may see it)
+  sha256 TEXT, member_id INT,
+  why TEXT,                              -- new (a phone upload not checked yet) | held | withdrawn
+  since TEXT,
+  until TEXT,                            -- a day (YYYY-MM-DD) it is released on by itself, or NULL
+  released_at TEXT,                      -- NULL while it is private
+  batch INT,                             -- held: the journal entry of the hold (its inbox item is held:<batch>)
+  PRIMARY KEY(sha256, member_id));
 """
 EMBEDDINGS = """
 CREATE TABLE IF NOT EXISTS embeddings(
@@ -312,7 +326,7 @@ CREATE INDEX IF NOT EXISTS events_job ON events(job_id, id);
 # the columns the app reads, so startup scans ~15 MB instead of ~700 MB.
 EXIF_APP_INDEX = "CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)"
 
-AREAS = {"catalog": CATALOG + APPEND_ONLY, "embeddings": EMBEDDINGS, "video": VIDEO, "faces": FACES, "changes": CHANGES, "tasks": TASKS,
+AREAS = {"catalog": CATALOG + APPEND_ONLY + PRIVATE, "embeddings": EMBEDDINGS, "video": VIDEO, "faces": FACES, "changes": CHANGES, "tasks": TASKS,
          "scores": SCORES, "favorites": FAVORITES, "members": MEMBERS, "lenses": LENSES, "sync": SYNC, "intake": INTAKE}
 CATALOG_AREAS = ("catalog", "embeddings", "video", "faces", "changes", "tasks", "scores", "favorites", "members", "lenses")
 ADDED = {

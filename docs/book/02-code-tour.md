@@ -76,6 +76,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
   lenses.py            360  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
                             out of an estate default), "show it anyway", each member's favourites, why a photo is
                             hidden; State, the looks every member view is worked out from (chapter 11)
+  private.py           330  photos private to their sharer (chapter 11): who may be shown a photo, the sharer ingest
+                            records from the inbox's member folder, withdrawing and releasing (now, or on a day:
+                            the app's timer), the hold at ingestion (PROMPTS and HOLD_AT, in one place) and the
+                            one-off run over the library (`private.py library --dry-run`)
+  hold-prompts.json         the hold's prompts as SigLIP text vectors, made once by `embed.py hold-prompts`
   member_inbox.py      110  each member's inbox (inbox_items; not the upload folder): put and close, called by the
                             code that makes and decides each kind, what an item opens, the member's list,
                             dismissing; a lens that changed tells its live subscribers once (chapter 11)
@@ -175,6 +180,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                               stays, "show it anyway"), and the words for a lens that changes.html shares
     inbox-flow.js       60    inbox.html's strict machine (loading, ready, dismissing one item at a time, failed),
                               what each kind's button says, and the count the Library's menu shows
+    private-flow.js    125    private photos on search.html: the viewer's private line (withdraw, release, a release
+                              day) and the held view (`is:held`: release all, or those chosen)
     video-flow.js       63    what plays in search.html's viewer: still, video, failed, live; every step out of
                               video or live lets the element's stream go (chapter 13)
     tests/           2,800    their unit tests (video-flow.test.js, lens-flow.test.js among them), run by Node's own runner: `npm test` (chapter 17)
@@ -192,6 +199,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_journal.py checks journal.py and the one entry each write appends;
                             test_lenses.py checks lenses.py's rules and writes on a scratch catalog;
                             test_member_inbox.py checks member_inbox.py and each kind's making and closing there;
+                            test_private.py checks private photos: who may be shown one with one to three sharers,
+                            every way a photo leaves the app (over real HTTP too), People, release on a day, an
+                            agent, ingest's sharers and the hold before any reload, and the one-off run;
                             test_multiplayer.py checks, as the demo's three members, what each sees everywhere, and
                             that no route asks it any way but Live.visible_for (it reads the code);
                             test_append_only.py checks the protected tables, the sources only adding, the
@@ -213,7 +223,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             browser with Playwright and makes their requests fail or never end (issue #80);
                             test_video_browser.py (slow tier) plays videos and Live Photos in search.html, in Chrome;
                             test_lenses_browser.py (slow tier) uses the lenses on the pages as Ada, Ben and Cleo;
-                            test_inbox_browser.py (slow tier) uses the inbox as them, and a stranger asking in
+                            test_inbox_browser.py (slow tier) uses the inbox as them, and a stranger asking in;
+                            test_private_browser.py (slow tier) withdraws, releases and reviews held photos as Ben and Cleo
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it, and the tables and columns
                             added since), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)

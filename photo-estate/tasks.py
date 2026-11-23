@@ -8,8 +8,10 @@ cloud; what reaches it is the request, and what those tools return. It can propo
 cannot apply one. A task outlives the chat or page that started it, and what the agent did is kept as
 a list of events, so the work can be watched while it runs and read afterwards. Tasks run one at a time.
 
-  GET  /api/tasks                 whether an agent can run here, and every task, newest first
-  GET  /api/tasks/<id>?after=N    one task, with its events after event N, and the change set it made
+  GET  /api/tasks                 whether an agent can run here, and the member's own tasks, newest first
+  GET  /api/tasks/<id>?after=N    one task, with its events after event N, and the change set it made (a task
+                                  acting for someone else: 404, as one that does not exist: what its agent saw
+                                  is what that member sees, their private photos too)
   POST /api/tasks      {prompt}   start one (it records the member who asked: acting_for)
   POST /api/tasks/<id>/cancel
 
@@ -157,18 +159,33 @@ class Tasks:
                 "SELECT id, at, kind, text FROM agent_events WHERE task_id=? AND id>? ORDER BY id", (tid, after))]
         return t
 
-    def get(self, tid: int, after: int | None = 0) -> dict | None:
+    ANYONE = object()      # get()/listing() for the app itself (the /mcp header's lookup), not for a member
+
+    @staticmethod
+    def whose(con, acting_for) -> int | None:
+        """Whose a task is: who it acts for; one from before members (no acting_for) is the first sysadmin's."""
+        return acting_for if acting_for is not None else (member_inbox.sysadmins(con) or [None])[0]
+
+    def get(self, tid: int, after: int | None = 0, viewer=ANYONE) -> dict | None:
+        """One task, or None: also for a member it does not act for (`viewer`, members.id; None: no members yet).
+        A task's events and report hold what its agent saw, which is what that member sees (their private photos
+        too): nobody else's to read."""
         con = self.con()
         try:
-            return self.task(con, tid, after)
+            t = self.task(con, tid, after)
+            if t and viewer is not self.ANYONE and viewer is not None and self.whose(con, t["acting_for"]) != viewer:
+                return None
+            return t
         finally:
             con.close()
 
-    def listing(self) -> dict:
+    def listing(self, viewer=ANYONE) -> dict:
+        """Whether an agent can run here, and the newest tasks (for a member: only those that act for them)."""
         con = self.con()
         try:
             ok, why = self.available()
-            ids = [r[0] for r in con.execute("SELECT id FROM agent_tasks ORDER BY id DESC LIMIT 50")]
+            ids = [i for i, af in con.execute("SELECT id, acting_for FROM agent_tasks ORDER BY id DESC")
+                   if viewer is self.ANYONE or viewer is None or self.whose(con, af) == viewer][:50]
             return {"available": ok, "why": why, "tasks": [self.task(con, i) for i in ids]}
         finally:
             con.close()
@@ -254,7 +271,8 @@ class Tasks:
         return out, 201
 
     def cancel(self, tid: int, actor: int | None = None) -> tuple[dict, int]:
-        """`actor`: the member who cancelled it (members.id), for the journal."""
+        """`actor`: the member who cancelled it (members.id), for the journal. Any member may stop a run (it spends
+        the owner's subscription); what it saw is told only to whom it acts for (get)."""
         t = self.get(tid, None)
         if not t:
             return {"error": "no such task"}, 404
@@ -263,7 +281,10 @@ class Tasks:
             proc = self.procs.get(tid) if moved else None
         if proc:             # SIGTERM, then SIGKILL after the grace: not in this request's thread
             threading.Thread(target=stop, args=(proc, self.grace), daemon=True, name=f"stop task {tid}").start()
-        return self.get(tid, None) or t, 200
+        got = self.get(tid, None) or t
+        if actor is not None and self.get(tid, None, actor) is None:      # someone else's: only how it stands
+            got = {k: got[k] for k in ("id", "status", "created_at", "finished_at") if k in got}
+        return got, 200
 
     # -- running ---------------------------------------------------------------------------------
 
@@ -378,9 +399,9 @@ class Tasks:
         tid, what = int(m[1]) if m[1] else None, m[2]
         if method == "GET" and not what:
             if tid is None:
-                return js(self.listing())
+                return js(self.listing(acting_for))
             after = (qs.get("after") or ["0"])[0]
-            got = self.get(tid, int(after) if after.isdigit() else 0)
+            got = self.get(tid, int(after) if after.isdigit() else 0, acting_for)
             return js(got) if got else js({"error": "no such task"}, 404)
         if method == "POST" and isinstance(body, dict):
             if tid is None:

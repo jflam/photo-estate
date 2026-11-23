@@ -30,6 +30,10 @@ The kinds, who each is for, what makes and closes it (all in the caller's transa
                                           Nothing waits on it: it is closed when they leave the lens
                                           (lenses.unsubscribe, or a snapshot instead) or put away. Opens Albums
                                           (a filter) or the series (/?album=<id>)
+  held            the photos' sharer      private.py, when a hold (a batch of phone uploads checked, or the
+                  held:<batch>            one-off run over the library) kept photos private to them; done once
+                                          none of that batch is still held (released, by hand or on its day).
+                                          Opens the held view (/?q=is:held)
 
 Adding a kind (a later phase): a row in OPENS, and a put() and a close() in the code that makes and
 decides it. Nothing else.
@@ -57,6 +61,7 @@ OPENS = {
     "review": lambda ref: f"/changes/{_num(ref)}",
     "lens_proposed": lambda ref: "/?albums",
     "lens_changed": lambda ref: f"/?album={_num(ref)}" if ref.startswith("album:") else "/?albums",
+    "held": lambda ref: "/?q=is:held",
 }
 STATES = ("open", "done", "dismissed")
 
@@ -152,9 +157,12 @@ def lens_changed(con: sqlite3.Connection, actor: int | None, lens: int | None = 
     if not subs:
         return []
     name = (con.execute("SELECT name FROM members WHERE id=?", (owner,)).fetchone() or ["Someone"])[0]
-    if kind == "filter":
-        n = con.execute("SELECT count(DISTINCT h.sha256) FROM hidden h JOIN change_sets s ON s.id = h.set_id"
-                        " WHERE s.lens_id=?", (lid,)).fetchone()[0]
+    if kind == "filter":       # (counting no photo private to anyone: the same title goes to every subscriber)
+        q = "SELECT count(DISTINCT h.sha256) FROM hidden h JOIN change_sets s ON s.id = h.set_id WHERE s.lens_id=?"
+        try:
+            n = con.execute(q + " AND h.sha256 NOT IN (SELECT sha256 FROM private WHERE released_at IS NULL)", (lid,)).fetchone()[0]
+        except sqlite3.OperationalError:     # a catalog from before private photos
+            n = con.execute(q, (lid,)).fetchone()[0]
         what = f"{name}’s lens “{title}” changed: it hides {n} photo{'' if n == 1 else 's'} now"
     else:
         what = f"{name}’s series “{title}” changed"

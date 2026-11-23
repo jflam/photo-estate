@@ -28,7 +28,9 @@ mini's: deploy/MAC-MINI.md), ingest sets the user-immutable flag (chflags uchg) 
 even `rm -rf` in the wrong folder fails; never in the checked-in demo store, and not where there is no
 such file (a scratch store, a test's), which can then be deleted as usual. A photo `purge` removed is
 refused by every later ingest (its tombstone). Each source that brought anything is one ingest.finished
-entry in the journal (journal.py), as are a purge and the migration.
+entry in the journal (journal.py), as are a purge and the migration. Ingest records who shared each photo
+(`sharers`): the first sysadmin, or for the phone inbox (--uploads) the member whose folder it is in, and a
+new phone upload is private to its sharer until it has been scored (private.py).
 """
 from __future__ import annotations
 
@@ -55,6 +57,7 @@ from PIL import Image, ImageOps
 
 import journal
 import members
+import private
 from core import config, events, schema
 from core.media import IMAGE_EXT, RAW_EXT, VIDEO_EXT, kind_of  # noqa: F401  (kind_of and the sets are estate's API)
 
@@ -70,7 +73,8 @@ Image.MAX_IMAGE_PIXELS = None  # panoramas are legitimate
 YEAR_DIR = re.compile(r"^(Photos from|Fotos von|Photos de|Fotos de|Foto dal|Foto's uit) \d{4}$")
 EDITED = re.compile(r"-(edited|bearbeitet|modifié|editado|modificato|bewerkt|redigeret|muokattu)$", re.I)
 DUPN = re.compile(r"\(\d+\)$")
-DATE_DIR = re.compile(r"^\d{4}(/\d{2}){0,2}$")  # icloudpd's YYYY/MM/DD folders are dates, not albums
+DATE_DIR = re.compile(r"^(m\d+/)?\d{4}(/\d{2}){0,2}$")  # icloudpd's YYYY/MM/DD folders are dates, not albums (and
+# the phone inbox's m<member id>/YYYY/MM/DD: private.py)
 # Flickr data-download originals: "<title>_<id>_o.jpg" or "<id>_<secret>_o.jpg"
 FLICKR_FILE = re.compile(r"(\d+)(?:_[0-9a-f]{10})?_o\.[A-Za-z0-9]+$")
 # Titles Flickr copied from the filename at upload (DSCF0721.jpg, dsc_5300) say nothing
@@ -111,10 +115,12 @@ def immutable(store: Path) -> bool:
 
 def set_immutable(path: Path, on: bool = True) -> None:
     """chflags uchg (or nouchg) on one file. OSError where the flag cannot be set (not macOS or BSD)."""
-    if not hasattr(os, "chflags"):
+    # By getattr: os.chflags and st_flags exist only on macOS and the BSDs, and pyright checks on Linux too.
+    chflags = getattr(os, "chflags", None)
+    flags = getattr(os.stat(path, follow_symlinks=False), "st_flags", None)
+    if chflags is None or flags is None:
         raise OSError("this system has no file flags (chflags)")
-    flags = os.stat(path, follow_symlinks=False).st_flags
-    os.chflags(path, flags | stat.UF_IMMUTABLE if on else flags & ~stat.UF_IMMUTABLE, follow_symlinks=False)
+    chflags(path, flags | stat.UF_IMMUTABLE if on else flags & ~stat.UF_IMMUTABLE, follow_symlinks=False)
 
 
 def purged(con, sha: str) -> bool:
@@ -286,6 +292,7 @@ def cmd_ingest(a) -> None:
     (store / ".tmp").mkdir(parents=True, exist_ok=True)
     con = connect(a.db)
     lock, actor = immutable(store), sysadmin_id(con)
+    known = {m for m, in con.execute("SELECT id FROM members")}
     done_before = 0           # photos and videos read from the sources before this one (for --progress)
     for src in map(Path, a.sources):
         name = src.name
@@ -294,7 +301,7 @@ def cmd_ingest(a) -> None:
             print(f"skip {name}: already ingested at {row[0]}")
             continue
         t0 = time.time()
-        st = dict(entries=0, media=0, new=0, dup=0, sidecars=0, seen=0, new_bytes=0, unreadable=0, refused=0)
+        st = dict(entries=0, media=0, new=0, dup=0, sidecars=0, seen=0, new_bytes=0, unreadable=0, refused=0, held=0)
         for i, (path, opener) in enumerate(iter_entries(src), 1):
             st["entries"] += 1
             pp = PurePosixPath(path)
@@ -325,15 +332,15 @@ def cmd_ingest(a) -> None:
                 st["refused"] += 1     # purged by the sysadmin: not in the store, the catalog, or this source's record
                 continue
             st["seen"] += size
-            known = None               # what the photo app worked out when it received the file
+            worked = None              # what the photo app worked out when it received the file
             if a.facts and (f := Path(a.facts) / f"{sha}.json").exists():
                 try:
-                    known = json.loads(f.read_text())
+                    worked = json.loads(f.read_text())
                 except (OSError, ValueError):
                     pass
                 f.unlink(missing_ok=True)
             if dest:
-                facts = (known or image_facts(dest)) if kind == "image" else {}
+                facts = (worked or image_facts(dest)) if kind == "image" else {}
                 st["unreadable"] += "error" in facts
                 con.execute(
                     "INSERT INTO assets(sha256, ext, kind, size, width, height, dhash, exif_taken_at,"
@@ -344,6 +351,12 @@ def cmd_ingest(a) -> None:
                 st["new_bytes"] += size
             else:
                 st["dup"] += 1
+            # Who shared it (private.py), in this transaction: from a phone inbox (--uploads) the member its
+            # folder names (m<id>/...; none: the first sysadmin), else the first sysadmin. A phone upload that
+            # nobody else is shown yet is private to its sharer until `private.py check` has scored it.
+            by = private.member_of(path) if a.uploads else None
+            st["held"] += private.record_sharer(con, sha, by if by in known else actor, bool(dest), kind == "image",
+                                                a.uploads, actor)
             con.execute("INSERT OR IGNORE INTO occurrences(sha256, source, path, dir, filename, album)"
                         " VALUES (?,?,?,?,?,?)", (sha, name, path, d, fn, default_album(d)))
             if i % 200 == 0:
@@ -360,7 +373,8 @@ def cmd_ingest(a) -> None:
               f"{st['dup']} exact dups, {st['sidecars']} sidecars, "
               f"{st['new_bytes'] / 1e6:.1f} MB written ({st['seen'] / 1e6 / dt:.1f} MB/s)"
               + (f", {st['unreadable']} not decodable (kept, no dHash)" if st["unreadable"] else "")
-              + (f", {st['refused']} refused (purged)" if st["refused"] else ""))
+              + (f", {st['refused']} refused (purged)" if st["refused"] else "")
+              + (f", {st['held']} private to their sharer until checked" if st["held"] else ""))
         if a.delete_after and src.is_file():
             src.unlink()
             print(f"  deleted {src}")
@@ -1379,6 +1393,8 @@ def main() -> None:
     s.add_argument("--facts", help="folder of <sha256>.json image facts worked out on upload (used, then removed)")
     s.add_argument("--delete-after", action="store_true", help="delete each zip after it is ingested")
     s.add_argument("--progress", action="store_true", help="print `progress N` every 25 photos and videos read")
+    s.add_argument("--uploads", action="store_true", help="the phone inbox: m<member id>/ says who shared each file,"
+                   " and a new photo is private to its sharer until `private.py check` has scored it")
     s.set_defaults(fn=cmd_ingest)
 
     s = sub.add_parser("link", help="match sidecars and merge metadata")

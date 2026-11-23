@@ -134,6 +134,12 @@
   ],
   [
    "index",
+   "sqlite_autoindex_private_1",
+   "private",
+   null
+  ],
+  [
+   "index",
    "sqlite_autoindex_scorers_1",
    "scorers",
    null
@@ -335,6 +341,12 @@
    "places",
    "places",
    "CREATE TABLE places(    -- places.py: where and when (rebuilt on every run)\n  sha256 TEXT PRIMARY KEY, city TEXT,\n  locality TEXT,             -- the nearer suburb/neighbourhood when a big city was chosen as `city`\n  admin2 TEXT, admin1 TEXT, country TEXT, cc TEXT,\n  place_source TEXT,         -- gps | event (inferred from the photo's event)\n  tz TEXT, tz_source TEXT,   -- IANA name or fixed offset, from gps | exif | event | home\n  local_time TEXT,           -- wall-clock time where the photo was taken, no offset\n  utc_time TEXT, event_id INT)"
+  ],
+  [
+   "table",
+   "private",
+   "private",
+   "CREATE TABLE private(      -- a photo private to one of its sharers (private.py says who may see it)\n  sha256 TEXT, member_id INT,\n  why TEXT,                              -- new (a phone upload not checked yet) | held | withdrawn\n  since TEXT,\n  until TEXT,                            -- a day (YYYY-MM-DD) it is released on by itself, or NULL\n  released_at TEXT,                      -- NULL while it is private\n  batch INT,                             -- held: the journal entry of the hold (its inbox item is held:<batch>)\n  PRIMARY KEY(sha256, member_id))"
   ],
   [
    "table",

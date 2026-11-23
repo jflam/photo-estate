@@ -21,7 +21,7 @@ and embed.py's own routes all answer from one `Catalog`.
   Gate                requests share it; a swap takes it alone (not re-entrant: swap() inside it raises)
 
 Every route asks Live.visible_for(member) what a member sees, and Live.shared_for(member) what a member may
-ever be shown (everything until private photos, multiplayer phase 5): nothing reads a mask of its own.
+ever be shown (every photo but those private to their sharers: private.py): nothing reads a mask of its own.
 A Catalog is never changed after it is built; a View only to show a favourite at once (View.show_favorites,
 through Live.update), rather than waiting for the next one.
 """
@@ -280,8 +280,10 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     pairs = sorted(optional("SELECT l.still, a.ext != '.mp4', l.clip, a.ext FROM live_pairs l JOIN assets a ON a.sha256 = l.clip"))
     clips: dict[str, str] = {clip: ext for _, _, clip, ext in pairs}
     live: dict[str, str] = {}
+    stills: dict[str, tuple[str, ...]] = {}     # a clip -> every still it is paired with (who may be shown it)
     for still, _, clip, _ in pairs:
         live.setdefault(still, clip)
+        stills[clip] = stills.get(clip, ()) + (still,)
     if prev is not None and clips.keys() & prev["index"].keys():
         prev = None    # a video the app was showing has been found to be a clip (its still came later): read everything again
     if prev is None:
@@ -537,7 +539,7 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
         year=year, ym=ym, m0=m0, nmonths=nmonths, cols=cols, event_of=event_of, trip_of=trip_of, said_fav=said_fav,
         fav_sharers=fav_sharers, shot=shot, ars=ars, oldest=oldest, newest=newest, single=single, multi=multi,
         people_ix=people_ix, who=who, where=where, cities=cities, common_place=common_place, word_re=word_re,
-        video=video, clips=clips, live=live, F=F, frame_of=frame_of, frame_t=frame_t, best=best,
+        video=video, clips=clips, live=live, stills=stills, F=F, frame_of=frame_of, frame_t=frame_t, best=best,
         rank=rank, secs=secs, score=score, raw=raw, model=model, demo=demo)
 
 
@@ -583,6 +585,8 @@ class Catalog:
     video: NDArray[np.bool_]             # a video (never a Live Photo's clip: those are in `clips`, not in the catalog)
     clips: dict[str, str]                # a Live Photo clip's sha -> its extension (images.py serves it at /video/)
     live: dict[str, str]                 # a still's sha -> the sha of its Live Photo clip
+    stills: dict[str, tuple[str, ...]]   # a Live Photo clip's sha -> the stills it is paired with: whoever may be
+                                         #   shown one of them may be shown the clip (images.py)
     F: NDArray[np.float32]               # the videos' frame vectors, one row per frame kept (embed.py video_rows)
     frame_of: NDArray[np.int64]          # the place in the catalog of the video each row of F is from
     frame_t: NDArray[np.float32]         # seconds into its video
@@ -594,10 +598,11 @@ class Catalog:
     model: str
     demo: bool
 
-    def view(self, member: int | None, hide, fav, shared=None) -> View:
+    def view(self, member: int | None, hide, fav, shared=None, mine=None) -> View:
         """What `member` sees: every photo `shared` lets them be shown (all, by default) that `hide` (a bool
-        per photo) does not leave out, with `fav` (a bool per photo) their favourites. Its stacks, trip
-        cards and counts are worked out here, over just those photos. Live.visible_for keeps it."""
+        per photo) does not leave out, with `fav` (a bool per photo) their favourites, and `mine` their own
+        private photos (sha -> {why, since, until}: private.py). Its stacks, trip cards and counts are worked
+        out here, over just those photos. Live.visible_for keeps it."""
         shared = np.ones(self.N, bool) if shared is None else shared
         visible = shared & ~np.asarray(hide, bool)
         # Near-identical shots taken together are one stack (stacks.py): the best one shows, the rest are behind
@@ -614,7 +619,8 @@ class Catalog:
                 if g not in held or r < held[g]:
                     held[g], stack_live[g] = r, its_clip
         v = View(cat=self, member=member, shared=shared, visible=visible, fav=np.asarray(fav, bool).copy(),
-                 stack_of=stack_of, stack_n=stack_n, dup=~top, stack_live=stack_live, trip_list=[])
+                 stack_of=stack_of, stack_n=stack_n, dup=~top, stack_live=stack_live, trip_list=[],
+                 mine={s: x for s, x in (mine or {}).items() if s in self.index})
         v.trip_list = v.trip_cards()
         v.info = {"total": int(visible.sum()), "videos": int((visible & self.video).sum()),
                   "model": self.model, "m0": self.m0, "months": self.nmonths,
@@ -712,6 +718,13 @@ class View:
     stack_live: dict[int, str]           # a stack with a Live Photo in it (named as stack_of does) -> the clip of its best such shot
     trip_list: list[TripCard]            # trips with a visible photo, newest first
     info: dict[str, Any] = field(default_factory=dict)   # what /api/info answers
+    mine: dict[str, dict] = field(default_factory=dict)  # the member's own private photos: sha -> {why, since, until}
+
+    def private_mask(self, why: str | None = None):
+        """The member's own private photos (`why`: only those held, or withdrawn), a bool per photo."""
+        out = np.zeros(self.cat.N, bool)
+        out[[self.cat.index[s] for s, x in self.mine.items() if why is None or x["why"] == why]] = True
+        return out
 
     def trip_cards(self) -> list[TripCard]:
         c, visible, fav, rank = self.cat, self.visible, self.fav, self.cat.rank
@@ -754,8 +767,12 @@ class View:
                 "fav": int((self.combine(masks, skip="fav") & self.fav).sum()), "matching": int(self.combine(masks).sum())}
 
     def row(self, sha: str) -> dict:
-        """A photo as a result list sends it: its facts, and `fav`, whether it is this member's favourite."""
-        return dict(sha=sha, **self.cat.meta[sha], fav=bool(self.fav[self.cat.index[sha]]))
+        """A photo as a result list sends it: its facts, `fav`, whether it is this member's favourite, and for one
+        private to them, `private`: why (held, withdrawn, or new: not checked yet)."""
+        out = dict(sha=sha, **self.cat.meta[sha], fav=bool(self.fav[self.cat.index[sha]]))
+        if sha in self.mine:
+            out["private"] = self.mine[sha]["why"]
+        return out
 
     def feed_extra(self, i: int) -> dict:
         """What a device needs to order and stack a photo as the app does, and cannot work out without the
@@ -932,15 +949,17 @@ class Live:
                 return v
             cat, looks = self.cat, self.looks
         shared, hide, fav = looks(cat, member)
-        v = cat.view(member, hide, fav, shared)
+        mine = getattr(looks, "mine", None)
+        v = cat.view(member, hide, fav, shared, mine(member) if mine else None)
         with self.views_lock:
             if self.cat is cat and self.looks is looks:
                 v = self.views.setdefault(member, v)
             return v
 
     def shared_for(self, member: int | None):
-        """What `member` may ever be shown, a bool per photo: everything, until private photos (phase 5). Asked
-        of the looks (lenses.State.shared) without working a whole View out, for the pixel routes."""
+        """What `member` may ever be shown, a bool per photo: every photo but those private to their sharers when
+        they are not one (private.py). Asked of the looks (lenses.State.shared) without working a whole View out,
+        for the pixel routes."""
         with self.views_lock:
             if (v := self.views.get(member)) is not None and v.cat is self.cat:
                 return v.shared
@@ -960,11 +979,16 @@ class Live:
             self.views.clear()
             self.shares.clear()
 
-    def install(self, cat: Catalog, then=None) -> None:
-        """Serve `cat` from now on; then(cat) runs in the same swap, before any request sees it."""
+    def install(self, cat: Catalog, then=None, looks: Callable[[Any], Looks] | None = None) -> None:
+        """Serve `cat` from now on; with `looks`, see it through looks(the looks now), worked out in the same swap
+        (PhotoApp.with_private: the photos private to a sharer, read after `cat` was); then(cat) runs in the
+        same swap too, before any request sees it."""
         def swap_in():
+            fresh = looks(self.looks) if looks is not None else None
             with self.views_lock:
                 self.cat = cat
+                if fresh is not None:
+                    self.looks = fresh
             self.forget_views()
             self.generation += 1
             if then:

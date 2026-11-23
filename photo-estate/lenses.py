@@ -17,7 +17,8 @@ member is subscribed to unless they opt out: "Estate defaults" is the owner's hi
 which a sysadmin accepts or declines.
 
 What a member M sees (State.masks, which catalog.Live.visible_for works a View out from):
-  - shared: every photo (private photos come in phase 5: shared_for changes here, and nowhere else);
+  - shared: every photo but those private to their sharers when M is not one of them (private.py: rule 1 of
+    the plan's "What a member sees"); catalog.Live.shared_for, and so every pixel route, asks it;
   - hidden by M's filters: what the hiding sets hide whose lens is on for M: M's own filters; every estate
     default M has not opted out of (subscriptions.mode 'opted_out', or 'snapshot'); every other published
     filter M subscribes to live. A hiding set with no lens (one from before `estate.py migrate`) hides for
@@ -32,7 +33,9 @@ of M's and one applied hiding set; a series: a new album of M's): later changes 
   State, read(con) -> State      every lens, hiding set, subscription, shown photo and favourite: Live's looks
   State.masks(cat, member)       (shared, hide, fav) for that member, a bool per photo
   State.on(member) / hidden_for(member) / default_hidden()   which filters are on; what they hide; what the
-                                 estate defaults hide (People is built without those: faces.py)
+                                 estate defaults hide
+  State.mine(member) / people_out()   the member's own private photos; what People is built without (what the
+                                 estate defaults hide, and every photo private to anyone: faces.py)
   add(con, owner, title, ...)    a lens row (and its lens.created entry), in the caller's transaction
   mine(con, member)              the member's own filter lens, made on first use ("Hidden photos": MINE_TITLE)
   estate_default(con)            the Estate defaults lens, made if there is none (both: in the caller's transaction)
@@ -64,6 +67,7 @@ from typing import Any
 
 import journal
 import member_inbox
+import private
 
 KINDS = ("filter", "series")
 MODES = ("live", "snapshot")              # what a member asks for; 'opted_out' is an estate default left
@@ -119,6 +123,7 @@ class State:
     shown: dict[int, set[str]] = field(default_factory=dict)        # member -> photos shown anyway
     favs: dict[int, dict[str, bool]] = field(default_factory=dict)  # member -> {sha: their word} (member_favorites)
     legacy: dict[str, bool] = field(default_factory=dict)           # the old favorites table: the first sysadmin's
+    private: private.Private = field(default_factory=private.Private)   # photos private to a sharer (private.py)
 
     def who(self, member: int | None) -> int | None:
         return member if member is not None else self.sysadmin
@@ -162,11 +167,23 @@ class State:
                 out |= shas
         return out
 
+    def people_out(self) -> set[str]:
+        """What People is built without: what the estate defaults hide, and every photo private to anyone."""
+        return self.default_hidden() | set(self.private.rows)
+
     def shared(self, cat, member: int | None):
-        """What `member` may ever be shown, a bool per photo: every photo, until private photos (multiplayer
-        phase 5 changes this, and nothing else: catalog.Live.shared_for, and so every pixel route, asks it)."""
+        """What `member` may ever be shown, a bool per photo: every photo but those private to their sharers when
+        `member` is not one of them (private.Private.refused). catalog.Live.shared_for, and so every pixel route,
+        asks it."""
         import numpy as np
-        return np.ones(cat.N, bool)
+        out = np.ones(cat.N, bool)
+        gone = [cat.index[s] for s in self.private.out_for(member) if s in cat.index]
+        out[gone] = False
+        return out
+
+    def mine(self, member: int | None) -> dict[str, dict]:
+        """The member's own private photos: sha -> {why, since, until} (catalog.View.mine; `is:private`)."""
+        return self.private.mine(member)
 
     def masks(self, cat, member: int | None):
         """(shared, hide, fav) for `member`: a bool per photo of `cat` (catalog.Looks)."""
@@ -213,6 +230,7 @@ def read(con: sqlite3.Connection) -> State:
     for sha, mid, on in _rows(con, "SELECT sha256, member_id, fav FROM member_favorites"):
         st.favs.setdefault(mid, {})[sha] = bool(on)
     st.legacy = {s: bool(on) for s, on in _rows(con, "SELECT sha256, fav FROM favorites")}
+    st.private = private.read(con, st.sysadmin)
     return st
 
 
@@ -334,7 +352,8 @@ def subscribe(con, member: int | None, lid, mode: str, shas=None, title: str | N
         if mode == "snapshot":
             name = title or f"{lens.title} (a copy)"
             if lens.kind == "filter":
-                photos = hides(con, lens.id)
+                out = private.read(con, sysadmin_id(con))      # (not a photo private to someone else: it is not theirs to copy)
+                photos = [s for s in hides(con, lens.id) if not out.refused(s, m)]
                 copy = add(con, m, name, entry=False)
                 sid = con.execute("INSERT INTO change_sets(title, prompt, op, status, created_by, created_at, updated_at,"
                                   " applied_at, kind, owner, lens_id) VALUES (?,?,'hide','open',?,?,?,?,'list',?,?)",
@@ -497,7 +516,8 @@ def brief(con, st: State, lens: Lens, member: int | None, names: dict) -> dict:
     del out["proposed_at"]
     if lens.kind == "filter":
         out["on"] = lens.id in st.on(member)
-        out["photos"] = len(set().union(*(shas for sid, (lid, shas) in st.sets.items() if lid == lens.id)))
+        out["photos"] = len(set().union(*(shas for sid, (lid, shas) in st.sets.items() if lid == lens.id))
+                            - set(st.private.out_for(member)))   # (a photo private to someone else is in no count of theirs)
         if owner == m:
             out["sets"] = sorted(sid for sid, (lid, _) in st.sets.items() if lid == lens.id) or \
                 [r[0] for r in con.execute("SELECT id FROM change_sets WHERE lens_id=? AND status IS NOT 'discarded'"

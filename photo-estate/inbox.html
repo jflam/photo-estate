@@ -75,7 +75,7 @@ function draw() {
   $("#main").innerHTML = `<h1 class="display">Inbox</h1>
     <p class="sub">What waits for you. Each opens the page where it is decided, and deciding it there takes it out of here.</p>`
     + (d.items.length ? `<div class="list" id="list">${d.items.map(card).join("")}</div>`
-      : `<div class="blank">${MARK}<h3>Nothing to decide</h3><p>Someone asking to be let in, a filter proposed as an estate default, a lens you follow that changes, photos an agent proposes for you to look over: each comes here.</p></div>`);
+      : `<div class="blank">${MARK}<h3>Nothing to decide</h3><p>Someone asking to be let in, a filter proposed as an estate default, a lens you follow that changes, photos an agent proposes for you to look over, photos of yours kept private when they came in: each comes here.</p></div>`);
 }
 
 $("#main").addEventListener("click", async e => {

@@ -66,6 +66,8 @@ trip.
 
 **Hamming distance.** The number of bits in which two bit strings differ.
 
+**Held.** A photo kept private to its sharer when it came in from a phone, because it looks like a receipt, a screenshot or a document (`private.py check`: three prompts scored against its SigLIP vector, and `is_screenshot`), or by the one-off run over the library. Its sharer is told in their inbox and releases it from the held view (`is:held`) ([11](11-server.md#private-photos)).
+
 **Home.** The place (per year) with photos on the most distinct days; used to decide what is "away".
 
 **icloudpd.** The open-source iCloud Photos downloader the project uses.
@@ -74,12 +76,14 @@ trip.
 
 **Inbox.** The folder (`iphone/` next to the catalog) where phone uploads land, in the same shape as the iCloud mirror; `ingest-iphone.sh` catalogues it ([24](24-uploading.md)).
 
-**Inbox (a member's).** What waits for a member to decide (member_inbox.py, the table `inbox_items`, the page `/inbox`): someone asking to be let in, a change set an agent made for them, a filter proposed as an estate default, a lens they follow that changed. Each item is made by the code that needs the decision, opens the page that decides it, and is closed by that decision; a member can also dismiss one. Not the upload folder above, which only shares the word ([11](11-server.md#the-inbox)).
+**Inbox (a member's).** What waits for a member to decide (member_inbox.py, the table `inbox_items`, the page `/inbox`): someone asking to be let in, a change set an agent made for them, a filter proposed as an estate default, a lens they follow that changed, photos of theirs held as private. Each item is made by the code that needs the decision, opens the page that decides it, and is closed by that decision; a member can also dismiss one. Not the upload folder above, which only shares the word ([11](11-server.md#the-inbox)).
 
 **Journal.** The estate's append-only log of what happened (journal.py), one row of `journal` per action with who did it (`actor`), its `kind` (`album.applied`, `favorite.set`, `faces.labeled`, `task.finished`, `ingest.finished`, `photo.purged`, `member.changed`, ...) and what it is about (`subject`, such as `album:12` or a sha); one entry per action, never one per photo. Appended in the same transaction as the change; triggers refuse changing or deleting it; nothing reads it yet. Not the face journal below, nor the `events` tables ([11](11-server.md#the-journal)).
 
 **Journal (face).** `face-labels.jsonl`: an append-only record of your face decisions, keyed by photo
 hash and box.
+
+**Released.** A private photo shared with the family again, by its sharer (now, or in a batch from the held view) or by itself on the day they set ("private until Dec 26": the app's timer). Its row stays, so it is never held again ([11](11-server.md#private-photos)).
 
 **Replica.** The phone's read-only copy of the catalog, in `catalog.db`; the server is the only writer ([20](20-sync.md)).
 
@@ -118,6 +122,8 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **PWA.** Progressive Web App: a web page that can be installed on a phone's home screen.
 
+**Private (photo).** Private to its sharer: a row of `private` names them and is not released, so only they see it; reached by being *held* or *withdrawn*. A photo all of whose sharers hold it private is shown to those sharers only; one another sharer still shares is shown to everyone. To everyone else it does not exist: every route answers it as a sha the library does not have ([11](11-server.md#private-photos)).
+
 **Protected table.** One the catalog's triggers keep append-only: no `DELETE` from `assets`, `occurrences`, `sharers`, `tombstones`, `members`, `member_logins` or `journal`, no `UPDATE` of `journal`, no change of a key (a sha, an id) of the others, and no insert that replaces a row ([5](05-catalog.md#protected-tables)).
 
 **Purge.** `estate.py purge <sha> --reason "..."`: the one way a photo leaves the estate, run by hand by the sysadmin. It backs the catalog up, journals `photo.purged`, adds a tombstone for everyone and removes the photo's rows and file ([4](04-store-and-ingest.md#append-only-sources-only-add)).
@@ -130,7 +136,7 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Scrubber.** The handle at the iPhone grid's right edge that shows the month you are in and lets you drag to any date ([23](23-native-interface.md)).
 
-**Sharer.** A member who shared a photo (`sharers`: photo, member, when). A photo two members sent has two. `estate.py migrate` makes the sysadmin the sharer of every photo that has none; ingest records sharers from a later phase of the multiplayer plan on.
+**Sharer.** A member who shared a photo (`sharers`: photo, member, when). A photo two members sent has two. Ingest records it: the member whose inbox folder a phone upload is in (`m<member id>/`), else the first sysadmin (bulk imports, uploads from before member folders); `estate.py migrate` made the sysadmin the sharer of every photo that had none ([4](04-store-and-ingest.md#who-shared-it)).
 
 **Series.** A lens that picks and orders photos: an album (`lenses.set_id`), given its lens when its owner publishes it. Opened, never on: subscribing puts it in the member's Albums, and its photos are listed through the viewer's own filters ([11](11-server.md#what-each-member-sees-lenses)).
 
@@ -190,6 +196,8 @@ faces everything else is compared with.
 
 **VLM.** A vision-language model that answers questions about images; here, any OpenAI-compatible
 server used by `estate.py tag`.
+
+**Withdrawn.** A photo its sharer took back from the family, from the viewer: private to them until they release it ([11](11-server.md#private-photos)).
 
 **WAL (write-ahead log).** SQLite's journal mode that lets readers and a writer work at once.
 

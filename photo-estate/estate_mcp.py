@@ -26,7 +26,10 @@ library (catalog.Live.visible_for), and what a tool makes is theirs. For a login
 task's agent it is the member the task was submitted by (agent_tasks.acting_for, looked up from
 X-Estate-Task), never the sysadmin it calls as: a task Ben submits searches as Ben. A task's writes are
 journaled with no actor (the agent is no member yet) acting for that member (journal.py); anyone else's
-with them as the actor.
+with them as the actor. A task's agent acting for no member reads as NOBODY: it is shown only photos private to
+nobody (private.py), with the estate defaults applied. A photo private to someone else does not exist for the
+member a tool answers for: get_photos says "no such photo", similar_photos "no photo has that id", as for an
+unknown id, and no count, place, person, album or neighbour comes from it.
 """
 from __future__ import annotations
 
@@ -41,6 +44,7 @@ if TYPE_CHECKING:     # for the types only: the tools reach these through `app`
     from changes import Changes
     from tasks import Tasks
 
+NOBODY = 0     # the member an agent acting for no one reads as (private.NOBODY): only photos private to nobody
 Found = tuple[list[str], list[float] | None]   # ids best first, and their scores (None: ranked by date)
 
 
@@ -260,7 +264,7 @@ class Tools:
         return {**self.task_brief(got), "next": "get_task shows how it is going; it usually takes a few minutes"}
 
     def get_task(self, args, cx: Caller):
-        got = self.app.tasks.get(int(args["task"]), max(0, int(args.get("after") or 0)))
+        got = self.app.tasks.get(int(args["task"]), max(0, int(args.get("after") or 0)), cx.viewer)
         if not got:
             raise ValueError("no such task")
         return self.task_brief(got)
@@ -489,8 +493,8 @@ class Server:
         cx = Caller(who, member, None, member)
         if in_task:   # the estate's agent, working for whoever submitted the task: it sees what they see
             t = self.tools.app.tasks.get(int(task), None) or {}
-            af = t.get("acting_for")       # (no such task: as the caller from this computer, acting for nobody)
-            cx = Caller(f"task:{task}", None, af, af if af is not None else member)
+            af = t.get("acting_for")       # acting for nobody (no such task, or one from before members): it sees
+            cx = Caller(f"task:{task}", None, af, af if af is not None else NOBODY)   # what is private to nobody
         if isinstance(body, list):
             got = [r for r in (self.call(m, can_write, cx, in_task) for m in body) if r is not None]
             return js(got) if got else (202, b"", "application/json", "no-store")

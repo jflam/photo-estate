@@ -136,12 +136,15 @@ class Changes:
     for live albums; `favorite(shas, on, who, actor, subject, member)` makes photos `member`'s favourites or not
     and returns how many changed; `visible_for(viewer)` is what that member sees (catalog.View, Live.visible_for):
     its photos, its favourites, and the front of an album, picked as the app picks a month's; `reading(fn)`
-    runs fn as a request reads the catalog (the album favourite is answered outside the gate). `viewer` is
-    members.id (None: nobody, a catalog with no members)."""
+    runs fn as a request reads the catalog (the album favourite is answered outside the gate); `refused(sha,
+    viewer)` is true for a photo private to someone else (private.py), which does not exist for that member:
+    it is in no count, cover, listing or review of theirs, and adding it is as adding an unknown sha. `viewer`
+    is members.id (None: nobody, a catalog with no members)."""
 
     def __init__(self, db: str, facts, shown, busy=lambda: False, on_change=lambda: None, find=None, favorite=None,
-                 visible_for=None, reading=lambda fn: fn()):
+                 visible_for=None, reading=lambda fn: fn(), refused=lambda sha, viewer: False):
         self.db, self.facts, self.shown, self.busy, self.on_change = db, facts, shown, busy, on_change
+        self.refused = refused
         self.find, self.favorite, self.visible_for = find, favorite, visible_for
         self.reading = reading   # reading(fn): fn() as a request reads the catalog (inside photo_app's gate)
         self.lock = threading.Lock()   # one writer at a time; reads take no lock (WAL)
@@ -179,18 +182,18 @@ class Changes:
         s["mine"] = viewer is None or s["owner"] == viewer
         if not s["mine"] and not (s["published"] and s["op"] == ChangeOp.VIEW):
             return None
+        items = [r for r in con.execute("SELECT sha256, decision, applied FROM change_items WHERE set_id=?", (sid,))
+                 if not self.refused(r[0], viewer)]      # (a photo private to someone else is in no count of theirs)
         if s["op"] == ChangeOp.VIEW:     # an album to look at: it is what it holds, and nothing is pending
-            n = len(self.members(con, s, viewer)) if s["kind"] == AlbumKind.LIVE else con.execute(
-                "SELECT count(*) FROM change_items WHERE set_id=?", (sid,)).fetchone()[0]
+            n = len(self.members(con, s, viewer)) if s["kind"] == AlbumKind.LIVE else len(items)
             return {**s, "state": SetState.ALBUM if n or s["kind"] == AlbumKind.LIVE else SetState.EMPTY, "n": n,
                     **{d: 0 for d in DECISIONS}, "applied": 0, "todo": 0}
         n = {d: 0 for d in DECISIONS}
         applied = todo = 0
-        for decision, was_applied, k in con.execute(
-                "SELECT decision, applied, count(*) FROM change_items WHERE set_id=? GROUP BY 1, 2", (sid,)):
-            n[decision] += k
-            applied += k if was_applied else 0
-            todo += k if (decision != Decision.REJECT) != bool(was_applied) else 0
+        for _, decision, was_applied in items:
+            n[decision] += 1
+            applied += 1 if was_applied else 0
+            todo += 1 if (decision != Decision.REJECT) != bool(was_applied) else 0
         total = sum(n.values())
         # what the set has come to: nothing in it, reverted, still being looked over, applied in full
         # and waiting to be committed or reverted, or done
@@ -211,7 +214,7 @@ class Changes:
             return [{"sha": sha, "score": scores[i] if scores else None} for i, sha in enumerate(ids[:LIVE_MAX])]
         rows = con.execute("SELECT sha256, section, reason, score, decision, applied, position, rowid FROM change_items"
                            " WHERE set_id=?", (s["id"],)).fetchall()
-        rows = [r for r in rows if self.facts(r[0]) is not None]
+        rows = [r for r in rows if self.facts(r[0]) is not None and not self.refused(r[0], viewer)]
         rows.sort(key=lambda r: (r[6] is None, r[6] or 0, r[7]))
         first = {}
         for i, r in enumerate(rows):
@@ -237,8 +240,11 @@ class Changes:
                     s["cover"] = ([front] if front else []) + [x for x in mem[:6] if x != front][:5 if front else 6]
                 else:
                     s["cover"] = [r[0] for r in con.execute(
-                        "SELECT sha256 FROM change_items WHERE set_id=? ORDER BY score DESC, sha256 LIMIT 6", (s["id"],))]
-            return {"sets": sets, "hidden": len(lenses.read(con).hidden_for(viewer)), "busy": bool(self.busy())}
+                        "SELECT sha256 FROM change_items WHERE set_id=? ORDER BY score DESC, sha256", (s["id"],))
+                        if not self.refused(r[0], viewer)][:6]
+            st = lenses.read(con)
+            return {"sets": sets, "hidden": len(st.hidden_for(viewer) - set(st.private.out_for(viewer))),
+                    "busy": bool(self.busy())}
         finally:
             con.close()
 
@@ -306,6 +312,8 @@ class Changes:
             items = []
             for sha, decision, applied, score, reason in con.execute(
                     "SELECT sha256, decision, applied, score, reason FROM change_items WHERE set_id=?", (sid,)):
+                if self.refused(sha, viewer):    # private to someone else: not a photo of this set, for them
+                    continue
                 m = self.facts(sha) or {}
                 it = {"sha": sha, "decision": decision, "applied": bool(applied), "score": score, "reason": reason,
                       "when": self.when(sha), "ar": m.get("ar") or 1.5,
@@ -333,7 +341,8 @@ class Changes:
             if not s:
                 return None
             hidden = lenses.read(con).hidden_for(viewer)
-            rows = con.execute("SELECT sha256, decision, applied FROM change_items WHERE set_id=?", (sid,)).fetchall()
+            rows = [r for r in con.execute("SELECT sha256, decision, applied FROM change_items WHERE set_id=?", (sid,))
+                    if not self.refused(r[0], viewer)]
         finally:
             con.close()
         out = {"hidden": 0, "visible": 0, "missing": 0, "wrong": []}
@@ -356,14 +365,14 @@ class Changes:
 
     # -- writing ---------------------------------------------------------------------------------
 
-    def add_items(self, con, sid: int, items) -> dict:
+    def add_items(self, con, sid: int, items, viewer: int | None = None) -> dict:
         added = unknown = 0
         at = con.execute("SELECT coalesce(max(position), 0) FROM change_items WHERE set_id=?", (sid,)).fetchone()[0]
         for it in items or []:
             if isinstance(it, str):
                 it = {"sha": it}
             sha = it.get("sha") if isinstance(it, dict) else None
-            if not isinstance(sha, str) or not SHA.match(sha) or self.facts(sha) is None:
+            if not isinstance(sha, str) or not SHA.match(sha) or self.facts(sha) is None or self.refused(sha, viewer):
                 unknown += 1
                 continue
             score, at = it.get("score"), at + 1
@@ -388,7 +397,7 @@ class Changes:
         if query is not None:            # a live album: its search must be one that can be run
             if op != ChangeOp.VIEW or body.get("items"):
                 return {"error": "a live album is a search and nothing else: no items, and it is not up for hiding"}, 400
-            bad = self.bad_query(query)
+            bad = self.bad_query(query, acting_for if acting_for is not None else actor)
             if bad:
                 return {"error": bad}, 400
         with self.lock:
@@ -401,7 +410,7 @@ class Changes:
                                   (title[:200], body.get("prompt"), op, who or None, t, t, AlbumKind.LIVE if query is not None else AlbumKind.LIST,
                                    json.dumps(query) if query is not None else None, owner)).lastrowid
                 assert sid is not None
-                got = self.add_items(con, sid, body.get("items"))
+                got = self.add_items(con, sid, body.get("items"), owner)
                 journal.append(con, actor, "album.created", f"album:{sid}",
                                {"title": title[:200], "op": op, "kind": AlbumKind.LIVE if query is not None else AlbumKind.LIST,
                                 "added": got["added"]}, acting_for)
@@ -410,11 +419,12 @@ class Changes:
             finally:
                 con.close()
 
-    def bad_query(self, query) -> str | None:
+    def bad_query(self, query, viewer: int | None = None) -> str | None:
+        """Why a live album's search can not be run, as `viewer` (its owner) would run it; None if it can."""
         if not isinstance(query, dict) or not self.find:
             return "a live album's `query` is a search, as search_photos takes it"
         try:
-            self.find(query, None)
+            self.find(query, viewer)
         except (ValueError, KeyError, TypeError) as e:
             return str(e)
         return None
@@ -460,7 +470,7 @@ class Changes:
                     entry = {k: [old, new] for k, old, new in (("title", was["title"], title), ("prompt", was["prompt"], prompt))
                              if old != new} or None
                 elif what == "query":
-                    bad = "only a live album has a search" if was["kind"] != AlbumKind.LIVE else self.bad_query(body.get("query"))
+                    bad = "only a live album has a search" if was["kind"] != AlbumKind.LIVE else self.bad_query(body.get("query"), viewer)
                     if bad:
                         return {"error": bad}, 409 if was["kind"] != AlbumKind.LIVE else 400
                     con.execute("UPDATE change_sets SET query=? WHERE id=?", (json.dumps(body["query"]), sid))
@@ -468,7 +478,7 @@ class Changes:
                 elif what == "hide":             # the album becomes a change set: reviewed, then applied, as any other
                     if was["op"] != ChangeOp.HIDE:
                         if was["kind"] == AlbumKind.LIVE:    # fixed as what it finds now: a review needs photos that stay put
-                            extra = self.add_items(con, sid, self.members(con, was, viewer))
+                            extra = self.add_items(con, sid, self.members(con, was, viewer), viewer)
                         con.execute("UPDATE change_sets SET op='hide', kind='list', status='open' WHERE id=?", (sid,))
                         entry = {"added": extra.get("added", 0)}
                 elif what == "view":             # a plain album again, once it hides nothing
@@ -478,8 +488,8 @@ class Changes:
                     con.execute("UPDATE change_items SET decision='pending', applied=0 WHERE set_id=?", (sid,))
                     entry = {} if was["op"] != ChangeOp.VIEW else None
                 elif what == "items":
-                    extra = self.add_items(con, sid, body.get("items"))
-                    gone = [s for s in body.get("remove") or [] if isinstance(s, str)]
+                    extra = self.add_items(con, sid, body.get("items"), viewer)
+                    gone = [s for s in body.get("remove") or [] if isinstance(s, str) and not self.refused(s, viewer)]
                     # a photo the set is hiding is shown again before it leaves the set
                     changed = bool(con.executemany("DELETE FROM hidden WHERE set_id=? AND sha256=?",
                                                    ((sid, s) for s in gone)).rowcount)
@@ -512,14 +522,16 @@ class Changes:
                     con.executemany("UPDATE change_items SET applied=1 WHERE set_id=? AND sha256=?", ((sid, s) for s in hide))
                     con.executemany("UPDATE change_items SET applied=0 WHERE set_id=? AND sha256=?", ((sid, s) for s in show))
                     con.execute("UPDATE change_sets SET status='open', applied_at=?, lens_id=? WHERE id=?", (t, lens, sid))
-                    extra, changed = {"hid": len(hide), "showed": len(show), "lens": lens}, bool(hide or show)
+                    mine = lambda xs: len([x for x in xs if not self.refused(x, viewer)])   # noqa: E731  (what they may know of)
+                    extra, changed = {"hid": mine(hide), "showed": mine(show), "lens": lens}, bool(hide or show)
                     entry = ({**extra, "through": through, **({"lens_made": True} if made else {})}
                              if changed or was["status"] != ChangeStatus.OPEN or lens != was["lens"] else None)
                 elif what == "revert":
+                    back = [x for x, in con.execute("SELECT sha256 FROM hidden WHERE set_id=?", (sid,))]
                     shown = con.execute("DELETE FROM hidden WHERE set_id=?", (sid,)).rowcount
                     con.execute("UPDATE change_items SET applied=0 WHERE set_id=?", (sid,))
                     con.execute("UPDATE change_sets SET status='reverted', reverted_at=? WHERE id=?", (t, sid))
-                    extra, changed = {"showed": shown}, bool(shown)
+                    extra, changed = {"showed": len([x for x in back if not self.refused(x, viewer)])}, bool(shown)
                     entry = {"showed": shown} if shown or was["status"] != ChangeStatus.REVERTED else None
                 elif what == "commit":
                     if was["todo"] or not was["n"]:

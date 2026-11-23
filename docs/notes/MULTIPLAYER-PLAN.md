@@ -561,6 +561,63 @@ phase, a list of done or dismissed items, push notifications.*
 
 ### Phase 5: sharers, private photos, the hold at ingestion
 
+*Built 2026-11-22 (branch `multiplayer`); [chapter 11](../book/11-server.md#private-photos) describes it,
+[chapter 26](../book/26-albums-and-agents.md#private-photos-on-the-pages) the pages, appendix A the commands,
+appendix B the endpoint, MAC-MINI.md the by-hand steps. One module, `private.py`, with the rule (`Private`, read
+into `lenses.State`, so `shared_for` changes there and nowhere else), the sharer ingest records, the writes, the
+hold and the one-off run. The choices:*
+
+- *Who shared it: uploads land in `<inbox>/m<member id>/...` (admin.py, from the member the request is for; the
+  first sysadmin's file already at the inbox's top is found there, so an old phone's retry is a `200 exists`),
+  and `estate.py ingest --uploads` (ingest-iphone.sh passes it) reads the member back; everything else, and a
+  folder of no member's, is the first sysadmin's. A photo that had no sharer row gets the first sysadmin's first,
+  so a second member's copy never takes the photo from its owner. Before this phase ingest wrote no sharer at
+  all (only `migrate` did); now it writes one for every file it reads. A member folder is no album.*
+- *`private` gained two columns beyond the plan's: `released_at` (a released row stays, so the one-off run never
+  holds again what a member let go) and `batch` (the `photo.held` entry that held it: its inbox item is
+  `held:<batch>`, done once none of the batch is still held). And a third state beside held and withdrawn:
+  **`new`**, a phone upload not checked yet.*
+- *Where the hold runs, and why it cannot race: ingest writes the `new` row in the transaction that adds the
+  photo, so no catalog, loaded at any moment, holds a new upload without it, and the app reads who is private
+  after it reads a catalog, inside the swap that installs it (and at startup after the catalog). The check is
+  then a step of ingest-iphone.sh after the embeddings and before `catalog_ready` (`private.py check`): it holds
+  or lets go each `new` row that has a vector; one with none waits, in no view meanwhile. So the order of the
+  script is not what keeps a photo private, the row is: a reload by another job, or a restart, between ingest and
+  the check shows the photo to its sharer only. Not chosen: scoring in the app before it installs a catalog,
+  because a restart, a setup job's reload or a second process would each need it too.*
+- *What is held: images of phone uploads (videos are not scored), from every member, the owner too, that nobody
+  else is shown yet: a new photo, or one every sharer holds private (a second member's copy of a held receipt is
+  held for them too). Not bulk imports, and not a photo the family already sees.*
+- *The prompts' text vectors are a checked-in file, `hold-prompts.json`, made by `embed.py hold-prompts`: the
+  check needs numpy and the catalog, never the model or the app. Without them it stops and the photos stay
+  private.*
+- *Prompts and threshold (`private.PROMPTS`, `HOLD_AT`, in one place): "a receipt", "a screenshot of a phone",
+  "a document", each a plain cosine with the photo's vector, held at 0.075 or over on any, or by
+  `catalog.is_screenshot`. On the demo's 104 photos the highest score of any prompt is 0.058 (it holds none);
+  receipts, phone screenshots and documents made with Pillow (a test in the model's environment makes and scores
+  some) score 0.086-0.17 on their prompt. 0.075 sits below the search's own floor (0.085), leaning towards
+  holding. Not yet checked on a sample of the real library: that is the dry run's job (MAC-MINI.md).*
+- *A photo private to someone else does not exist for a member: every route answers it as a sha it does not have
+  (the pixel routes, `why`, similar, a stack, the MCP tools, favourites, adding it to an album). Found while doing
+  it and fixed, beyond the routes listed: an event's or trip's title, count and dates in a search's scope; a
+  person's name or a place read from a typed search (and the MCP's `people`); a hiding set's covers, counts and
+  review page; a filter lens's count (and the inbox's `lens_changed` title, counted without any private photo);
+  a snapshot of a filter; a live album's search checked as the sysadmin instead of its owner; a Live Photo's
+  clip (served for any sha before: now whoever may see one of its stills); a face crop; a task's events and
+  report, which any member could read (now its member's only); `/stats` and `GET /api/ingest`, which counted
+  and named every file (now the sysadmin's; `/stats`'s library figures leave other members' private photos out).*
+- *The estate's agent acting for no member reads as member 0, `NOBODY`: only photos private to nobody.*
+- *Release on a day is by the computer's own date (the family's time zone), checked every minute by a thread
+  `start()` starts; its entry has no actor, acting for the sharer. The held view is a search (`is:held`), with a
+  bar that releases all of them or those chosen (a tile tapped is chosen while choosing): the pages had no
+  selection to reuse; the review page's marks were the nearest, but a change set is the wrong thing to hold
+  private photos in.*
+- *Not built: the phone's screenshot header and withdrawing from the phone (phase 6); scoring videos; a list
+  of what was released. Known and left: places.py works an event's place out from all its photos, so a shared
+  photo can carry a place (or an event title) inferred from a private one of the same event; `/compare`'s runs
+  and reports are shared by every member and keep the ids the runner's searches found; the local tools
+  (`estate.py review`, `faces.py serve`, `embed.py search`) read the whole catalog, as before.*
+
 - **Who shared it.** Uploads land in `<inbox>/m<member id>/YYYY/MM/DD/...` (the upload path keeps its
   shape below the member folder; the `m` keeps a member apart from a year, and what is already in the
   inbox with no member folder is the first sysadmin's), so `ingest`, still the only writer of the

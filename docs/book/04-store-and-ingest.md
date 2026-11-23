@@ -298,6 +298,19 @@ hold it in place:
   source metadata keyed by path (`sidecars`, `xmp`, `flickr`), and in the sources themselves, which purge
   lists and never touches.
 
+## Who shared it
+
+Ingest records, in the transaction that records each photo, who shared it (`sharers`, multiplayer phase 5;
+[private.py](../../photo-estate/private.py) `record_sharer`): for every file it reads, new or a copy of a
+photo already stored, the first sysadmin, or, for the phone's inbox read with `--uploads` (as
+ingest-iphone.sh reads it), the member whose folder it is in (`m<member id>/YYYY/MM/DD/...`; a folder of
+no member's, or none, is the first sysadmin's). A photo that was in the estate with no sharer (before
+`estate.py migrate` gave every photo one) was the first sysadmin's, so that row is written first. With
+`--uploads`, an image nobody else is shown yet (a new photo, or one all of whose sharers hold it private)
+also gets a `new` row in `private`: it is private to its sharer until `private.py check` has scored it
+([chapter 11](11-server.md#private-photos)). A member folder is not an album (`default_album` reads
+`m3/2026/11/14` as a date, as it reads `2026/11/14`).
+
 ## The catalog-side effects of ingest
 
 After an ingest the database holds, for the new source:
@@ -306,6 +319,8 @@ After an ingest the database holds, for the new source:
 |---|---|
 | `assets` | One row per new unique file |
 | `occurrences` | One row per file found, new or duplicate |
+| `sharers` | Who shared each file found (the first sysadmin, or the inbox folder's member) |
+| `private` | With `--uploads`: a `new` row for each phone upload the family is not shown yet |
 | `sidecars` | One row per Google photo JSON (whole JSON kept) |
 | `albums` | One row per album folder's `metadata.json` (its localised title) |
 | `xmp` | One row per iCloud XMP sidecar, with the few parsed fields as JSON |

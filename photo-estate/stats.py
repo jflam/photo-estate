@@ -130,9 +130,14 @@ def disk_stats(db: str, store: str, caches: list) -> dict:
     seen = one("SELECT coalesce(sum(a.size), 0) FROM occurrences o JOIN assets a USING(sha256)")[0]
     stored = sum(v["bytes"] for v in kinds.values())
     mp = one("SELECT coalesce(sum(width * height), 0) / 1e6 FROM assets WHERE kind='image'")[0]
+    try:       # (no file of a photo private to anyone: private.py; the counts here are the machine's, of every file)
+        con.execute("SELECT 1 FROM private LIMIT 1")
+        not_private = " WHERE a.sha256 NOT IN (SELECT sha256 FROM private WHERE released_at IS NULL)"
+    except sqlite3.OperationalError:
+        not_private = ""
     biggest = [[s, e, p] for s, e, p in con.execute(
         "SELECT a.size, a.ext, (SELECT filename FROM occurrences o WHERE o.sha256 = a.sha256 LIMIT 1)"
-        " FROM assets a ORDER BY a.size DESC LIMIT 5")]
+        f" FROM assets a{not_private} ORDER BY a.size DESC LIMIT 5")]
     video = opt("SELECT coalesce(sum(duration), 0), count(*) FROM exif WHERE duration > 0")
     counts = {}
     for name, q in (("embeddings", "SELECT count(*) FROM embeddings WHERE vec IS NOT NULL"),
