@@ -52,7 +52,7 @@ stateDiagram-v2
     applied --> proposed: revert (as one unit)
     applied --> done: commit
     done --> applied: reopen
-    proposed --> [*]: discard (only if it hides nothing)
+    proposed --> [*]: discard (only if it hides nothing: marked, never deleted)
 ```
 
 The rules that make this safe:
@@ -66,6 +66,12 @@ The rules that make this safe:
    the whole set or `through` the last photo you have looked at. Apply as you go.
 4. **A set is undone as one unit.** `revert` takes back everything it did, and keeps your marks.
    `commit` says it is finished; nothing about it changes until it is `reopen`ed.
+5. **Nothing is deleted, and every step is in the journal.** Discarding a set (or an album) that hides
+   nothing marks it `discarded`: its rows stay in the catalog, and it is in no listing and answers no
+   request, as if it were gone (its id is never given to another). Each step that changes something
+   (made, photos added or taken out, marks, applied, reverted, committed, reopened, put up for hiding,
+   renamed, discarded) is one journal entry naming the set and the member it was done for, never one per
+   photo ([chapter 11](11-server.md#the-journal)).
 
 The page keeps itself honest about what the server has
 ([app/changes-flow.js](../../photo-estate/app/changes-flow.js), issue #80). A mark shows at once and is

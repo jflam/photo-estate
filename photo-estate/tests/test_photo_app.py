@@ -208,8 +208,8 @@ class StubPeople:
     def __init__(self):
         self.calls = []
 
-    def handle(self, method, path, qs, body):
-        self.calls.append((method, path, body))
+    def handle(self, method, path, qs, body, actor=None):   # actor: the member the journal names (members.id)
+        self.calls.append((method, path, body, actor))
         return 200, b'{"ok":true}', "application/json", "no-store"
 
 
@@ -229,7 +229,7 @@ def test_people_writes_need_a_member(with_people, path):
     assert r.status == 403 and r.json() == {"error": "not allowed"} and stub.calls == []
     assert app.request("POST", path, AS_BEN, body={"id": 1}).status == 200
     assert app.request("POST", path, {}, body={"id": 1}, local=True).status == 200   # the agent on this computer
-    assert len(stub.calls) == 2
+    assert [c[3] for c in stub.calls] == [app.roster["ben"].id, app.roster["ada"].id]   # who each write is journaled as
     assert app.request("GET", "/api/people", AS_STRANGER).status == 403              # reading takes a member too
     assert app.request("GET", "/api/people", AS_BEN).status == 200
 

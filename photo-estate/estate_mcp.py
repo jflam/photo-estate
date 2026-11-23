@@ -20,7 +20,9 @@ the tools are made of:
 That agent uses this same endpoint. It is told apart by a header (X-Estate-Task, honoured only from
 this computer): the change sets it makes carry its task's name, and it is not offered the task tools.
 Who may call it is the app's rule for every route (an active member, or this computer: photo_app.py); a
-task submitted here records the member it was submitted by (`acting_for`, agent_tasks.acting_for).
+task submitted here records the member it was submitted by (`acting_for`, agent_tasks.acting_for), and
+every tool that writes is journaled as that member (journal.py). A task's agent calls from this computer,
+so it writes as the sysadmin; its change sets carry the task's name (created_by task:<id>).
 """
 from __future__ import annotations
 
@@ -237,8 +239,8 @@ class Tools:
             out["events"] = [{"kind": e["kind"], "text": e["text"]} for e in t["events"][-40:]]
         return {k: v for k, v in out.items() if v is not None}
 
-    def submit_task(self, args, who="", acting_for=None):
-        got, code = self.app.tasks.submit(args.get("request"), who, acting_for)
+    def submit_task(self, args, who="", actor=None):
+        got, code = self.app.tasks.submit(args.get("request"), who, actor)
         if code >= 400:
             raise ValueError(got["error"])
         return {**self.task_brief(got), "next": "get_task shows how it is going; it usually takes a few minutes"}
@@ -249,8 +251,8 @@ class Tools:
             raise ValueError("no such task")
         return self.task_brief(got)
 
-    def cancel_task(self, args, who=""):
-        got, code = self.app.tasks.cancel(int(args["task"]))
+    def cancel_task(self, args, who="", actor=None):
+        got, code = self.app.tasks.cancel(int(args["task"]), actor)
         if code >= 400:
             raise ValueError(got["error"])
         return self.task_brief(got)
@@ -327,28 +329,28 @@ class Tools:
                 "photos": [{**row, **extra.get(row["id"], {})} for row in self.rows([r["sha"] for r in got["results"]])],
                 "next_offset": got["next"]}
 
-    def create_album(self, args, who=""):
+    def create_album(self, args, who="", actor=None):
         got, code = self.app.changes.create({"title": args.get("title"), "prompt": args.get("prompt"), "op": "view",
-                                             **({"query": args["search"]} if args.get("search") is not None else {})}, who)
+                                             **({"query": args["search"]} if args.get("search") is not None else {})}, who, actor)
         if code >= 400:
             raise ValueError(got["error"])
         return {**self.album_brief(got), "next": "amend_album adds photos; then give the person the view link"
                 if got["kind"] != "live" else "it holds what the search finds; give the person the view link"}
 
-    def amend_album(self, args, who=""):
+    def amend_album(self, args, who="", actor=None):
         sid = int(args["album"])
         if args.get("title") or "prompt" in args:
-            got, code = self.app.changes.write(sid, "rename", {k: args[k] for k in ("title", "prompt") if k in args})
+            got, code = self.app.changes.write(sid, "rename", {k: args[k] for k in ("title", "prompt") if k in args}, who, actor)
             if code >= 400:
                 raise ValueError(got["error"].replace("change set", "album"))
             if not any(args.get(k) for k in ("add_ids", "add_search", "remove_ids", "remove_search")):
                 return self.album_brief(got)
-        out = self.amend_set({**args, "change_set": sid}, who)
+        out = self.amend_set({**args, "change_set": sid}, who, actor)
         return {**{k: v for k, v in out.items() if k not in ("change_set", "state", "hidden_now", "kept_by_person", "review")},
                 "album": sid, "view": f"/?album={sid}"}
 
-    def hide_album(self, args, who=""):
-        got, code = self.app.changes.write(int(args["album"]), "hide", {})
+    def hide_album(self, args, who="", actor=None):
+        got, code = self.app.changes.write(int(args["album"]), "hide", {}, who, actor)
         if code >= 400:
             raise ValueError(got["error"].replace("change set", "album"))
         return {**self.album_brief(got), "next": "give the person the review link: they look it over and apply it"}
@@ -377,8 +379,8 @@ class Tools:
             out["sample"] = listed(rest[::max(1, len(rest) // n)][:n])
         return out
 
-    def create_set(self, args, who=""):
-        got, code = self.app.changes.create({"title": args.get("title"), "prompt": args.get("prompt"), "op": "hide"}, who)
+    def create_set(self, args, who="", actor=None):
+        got, code = self.app.changes.create({"title": args.get("title"), "prompt": args.get("prompt"), "op": "hide"}, who, actor)
         if code >= 400:
             raise ValueError(got["error"])
         return {**self.brief(got), "next": "amend_change_set adds photos; then give the person the review link"}
@@ -389,7 +391,7 @@ class Tools:
         why = reason or (f"Matches \"{spec['query']}\"" if spec.get("query") else "Looks like a photo of the set" if spec.get("like") else None)
         return [{"sha": s, "score": scores[i] if scores else None, "reason": why} for i, s in enumerate(ids[:n])], len(ids)
 
-    def amend_set(self, args, who=""):
+    def amend_set(self, args, who="", actor=None):
         sid, reason, section = int(args["change_set"]), args.get("reason"), args.get("section")
         items = [{"sha": str(s), "reason": reason} for s in args.get("add_ids") or []]
         out = {}
@@ -402,7 +404,7 @@ class Tools:
             remove += [it["sha"] for it in got]
         for it in items:
             it["section"] = section
-        got, code = self.app.changes.write(sid, "items", {"items": items, "remove": remove})
+        got, code = self.app.changes.write(sid, "items", {"items": items, "remove": remove}, who, actor)
         if code >= 400:
             raise ValueError(got["error"])
         return {**self.brief(got), **out, "added": got["added"], "already_in_set": len(items) - got["added"] - got["unknown"],
@@ -443,7 +445,7 @@ class Server:
                     raise ValueError("arguments must be an object")
                 if writes and not can_write:
                     raise PermissionError("this caller may look but not propose changes")
-                out = fn(args, who, acting_for) if name == "submit_task" else fn(args, who) if writes else fn(args)
+                out = fn(args, who, acting_for) if writes else fn(args)   # acting_for: the member, for the journal
                 return ok({"content": [{"type": "text", "text": json.dumps(out, separators=(",", ":"), default=str)}],
                            "structuredContent": out, "isError": False})
             except (ValueError, KeyError, TypeError, PermissionError, Unavailable) as e:   # the agent can read it and try again

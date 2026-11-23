@@ -66,9 +66,11 @@ trip.
 
 **icloudpd.** The open-source iCloud Photos downloader the project uses.
 
+**Immutable flag.** The user-immutable file flag (`chflags uchg`) ingest sets on each file it writes to a store marked with a `.immutable` file (the Mac mini's), so not even `rm -rf` removes it by accident. Any user of the Mac can clear it (`chflags nouchg`): it guards against accidents, not intent ([4](04-store-and-ingest.md#append-only-sources-only-add)).
+
 **Inbox.** The folder (`iphone/` next to the catalog) where phone uploads land, in the same shape as the iCloud mirror; `ingest-iphone.sh` catalogues it ([24](24-uploading.md)).
 
-**Journal.** The estate's append-only log of what happened, one row of `journal` per change with who did it (`actor`), its `kind` (`member.added`, `member.requested`, `member.changed` so far) and what it is about (`subject`, such as `member:3`). Never changed or deleted; nothing reads it yet. Not the face journal below, nor the `events` tables ([11](11-server.md#members-and-who-may-do-what)).
+**Journal.** The estate's append-only log of what happened (journal.py), one row of `journal` per action with who did it (`actor`), its `kind` (`album.applied`, `favorite.set`, `faces.labeled`, `task.finished`, `ingest.finished`, `photo.purged`, `member.changed`, ...) and what it is about (`subject`, such as `album:12` or a sha); one entry per action, never one per photo. Appended in the same transaction as the change; triggers refuse changing or deleting it; nothing reads it yet. Not the face journal below, nor the `events` tables ([11](11-server.md#the-journal)).
 
 **Journal (face).** `face-labels.jsonl`: an append-only record of your face decisions, keyed by photo
 hash and box.
@@ -106,6 +108,10 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **PWA.** Progressive Web App: a web page that can be installed on a phone's home screen.
 
+**Protected table.** One the catalog's triggers keep append-only: no `DELETE` from `assets`, `occurrences`, `sharers`, `tombstones`, `members`, `member_logins` or `journal`, no `UPDATE` of `journal`, no change of a key (a sha, an id) of the others, and no insert that replaces a row ([5](05-catalog.md#protected-tables)).
+
+**Purge.** `estate.py purge <sha> --reason "..."`: the one way a photo leaves the estate, run by hand by the sysadmin. It backs the catalog up, journals `photo.purged`, adds a tombstone for everyone and removes the photo's rows and file ([4](04-store-and-ingest.md#append-only-sources-only-add)).
+
 **Quality (score).** A photo's score from the general aesthetic scorer, about 1 to 7; at least 5.0 counts as a good photo ([25](25-best-photos.md)).
 
 **Request access.** What someone whose login is no member's does on the page they are shown (`/request-access`): it makes a `pending` member, whom a sysadmin lets in on `/members` ([11](11-server.md#members-and-who-may-do-what)).
@@ -113,6 +119,8 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 **Role.** What a member may do: `sysadmin` (let people in, bring photos in from a folder, restart) or `member` (everything else). Several members may be sysadmins, and there is always at least one ([11](11-server.md#members-and-who-may-do-what)).
 
 **Scrubber.** The handle at the iPhone grid's right edge that shows the month you are in and lets you drag to any date ([23](23-native-interface.md)).
+
+**Sharer.** A member who shared a photo (`sharers`: photo, member, when). A photo two members sent has two. `estate.py migrate` makes the sysadmin the sharer of every photo that has none; ingest records sharers from a later phase of the multiplayer plan on.
 
 **Sidecar.** A small metadata file next to a photo. Google's is JSON; iCloud's (via `icloudpd`) is XMP.
 
@@ -146,6 +154,8 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 2026-11-20 (a JPEG before). Chapter 11.
 
 **Tile.** What the iPhone grid needs to draw a photo and nothing else: its hash, aspect ratio, local time, city and favourite flag ([21](21-offline-search.md)).
+
+**Tombstone.** A photo the estate refuses, by its sha (`tombstones`): one the sysadmin purged (member 0: refused from every source, for good), or, in a later phase, one a member opted out of on their phone. Never deleted; an opt-out is taken back with `lifted_at` ([4](04-store-and-ingest.md#append-only-sources-only-add)).
 
 **Trip.** A run of events more than 100 km (configurable) from home, spanning at least two dates.
 

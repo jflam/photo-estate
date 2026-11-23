@@ -4,13 +4,15 @@
   AREAS                 area -> its DDL, as each owner has always created it (CREATE ... IF NOT EXISTS)
   ADDED                 area -> {table: ((column, type), ...)}: columns newer than some existing databases
   CATALOG_AREAS         the areas that live in the catalog (estate.db), for tests and tools
+  APPEND_ONLY           sharers, tombstones and the protected-table triggers (part of the catalog area)
   EXIF_APP_INDEX        the index catalog.load adds to exif for the app's startup read
 
 Areas, and who opens them (each owner calls ensure when it opens the database, never per request):
 
   estate.db, the catalog
     catalog      estate.connect: sources, assets, occurrences, sidecars, albums, xmp, flickr, exif,
-                 places, events, trips, tags, and the full-text `search` table
+                 places, events, trips, tags, and the full-text `search` table; and APPEND_ONLY: sharers,
+                 tombstones, and the triggers that protect assets, occurrences, sharers and tombstones
     embeddings   embed.connect: one SigLIP 2 vector per (photo, model)
     video        estate.connect and embed.connect: live_pairs (a Live Photo's clip and its still) and
                  video_frames (the frames a video is searched by)
@@ -19,8 +21,19 @@ Areas, and who opens them (each owner calls ensure when it opens the database, n
     tasks        tasks.Tasks: agent_tasks, agent_events
     scores       scores.save: scorers ("Best first")
     favorites    photo_app.PhotoApp, when it opens the catalog: favourites set in the app
-    members      photo_app.PhotoApp, when it opens the catalog (members.py): members, member_logins, and
-                 the journal (members.py writes its first entries; journal.py is phase 2 of the multiplayer plan)
+    members      members, member_logins and the journal (journal.py), with the triggers that keep them
+                 append-only: photo_app.PhotoApp when it opens the catalog, and everything that appends to the
+                 journal (estate.connect, faces.connect, changes.Changes, tasks.Tasks)
+
+Protected tables (the multiplayer plan's Append-only): a DELETE from journal, assets, occurrences, sharers,
+tombstones, members or member_logins raises, as does any UPDATE of journal and an UPDATE that changes a key
+(assets.sha256; occurrences.id, sha256; sharers.sha256, member_id; members.id; member_logins.login,
+member_id; anything of tombstones but lifted_at, and lifted_at of a purge's, member 0). An INSERT whose
+key is already there never replaces the row (an INSERT OR REPLACE would otherwise delete it without any
+delete trigger firing): it raises for journal, members and member_logins, which the code only plain-INSERTs,
+and is skipped (RAISE(IGNORE)) for assets, occurrences (the id, or the same source and path), sharers and
+tombstones, so INSERT OR IGNORE works as before and a REPLACE changes nothing. The triggers do not stop
+DROP TABLE or DROP TRIGGER: they are a guard against accidents, not against intent.
   sync-feed.db   sync         sync.Feed: kv, rows (the phones' change feed, beside the catalog)
   intake.db      intake       intake.engine.Store: jobs, events (the setup page's jobs)
 
@@ -82,6 +95,52 @@ CREATE TABLE IF NOT EXISTS tags(
   sha256 TEXT, model TEXT, caption TEXT, tags TEXT, data TEXT, seconds REAL, created_at TEXT,
   PRIMARY KEY(sha256, model));
 CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(sha256 UNINDEXED, text);
+"""
+# Append-only (docs/notes/MULTIPLAYER-PLAN.md): who shared each photo, the photos refused for good, and the
+# triggers that keep a photo and its history from being deleted or re-keyed. Other columns of assets and
+# occurrences stay updatable (link, exif and embed correct dates, places, sizes and sidecar links). Only
+# `estate.py purge` deletes from these tables: it drops the *_no_delete triggers inside its own transaction.
+APPEND_ONLY = """
+CREATE TABLE IF NOT EXISTS sharers(      -- the members who shared a photo (a copy two members sent has two)
+  sha256 TEXT, member_id INT, shared_at TEXT, PRIMARY KEY(sha256, member_id));
+CREATE TABLE IF NOT EXISTS tombstones(   -- a photo refused: opted out by one member, or purged (member 0: everyone)
+  sha256 TEXT, member_id INT,
+  why TEXT,                              -- opted_out | purged
+  at TEXT,
+  lifted_at TEXT,                        -- an opt-out taken back (a purge never is)
+  PRIMARY KEY(sha256, member_id));
+CREATE TRIGGER IF NOT EXISTS assets_no_delete BEFORE DELETE ON assets
+  BEGIN SELECT RAISE(ABORT, 'assets are append-only: a photo is removed only by estate.py purge'); END;
+CREATE TRIGGER IF NOT EXISTS assets_keep_key BEFORE UPDATE OF sha256 ON assets WHEN NEW.sha256 IS NOT OLD.sha256
+  BEGIN SELECT RAISE(ABORT, 'assets: sha256 never changes'); END;
+CREATE TRIGGER IF NOT EXISTS assets_no_replace BEFORE INSERT ON assets
+  WHEN EXISTS (SELECT 1 FROM assets WHERE sha256 = NEW.sha256)
+  BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER IF NOT EXISTS occurrences_no_delete BEFORE DELETE ON occurrences
+  BEGIN SELECT RAISE(ABORT, 'occurrences are append-only: removed only by estate.py purge'); END;
+CREATE TRIGGER IF NOT EXISTS occurrences_keep_key BEFORE UPDATE OF id, sha256 ON occurrences
+  WHEN NEW.id IS NOT OLD.id OR NEW.sha256 IS NOT OLD.sha256
+  BEGIN SELECT RAISE(ABORT, 'occurrences: id and sha256 never change'); END;
+CREATE TRIGGER IF NOT EXISTS occurrences_no_replace BEFORE INSERT ON occurrences
+  WHEN EXISTS (SELECT 1 FROM occurrences WHERE id = NEW.id OR (source = NEW.source AND path = NEW.path))
+  BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER IF NOT EXISTS sharers_no_delete BEFORE DELETE ON sharers
+  BEGIN SELECT RAISE(ABORT, 'sharers are append-only: removed only by estate.py purge'); END;
+CREATE TRIGGER IF NOT EXISTS sharers_keep_key BEFORE UPDATE OF sha256, member_id ON sharers
+  WHEN NEW.sha256 IS NOT OLD.sha256 OR NEW.member_id IS NOT OLD.member_id
+  BEGIN SELECT RAISE(ABORT, 'sharers: sha256 and member_id never change'); END;
+CREATE TRIGGER IF NOT EXISTS sharers_no_replace BEFORE INSERT ON sharers
+  WHEN EXISTS (SELECT 1 FROM sharers WHERE sha256 = NEW.sha256 AND member_id = NEW.member_id)
+  BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER IF NOT EXISTS tombstones_no_delete BEFORE DELETE ON tombstones
+  BEGIN SELECT RAISE(ABORT, 'tombstones are never deleted: an opt-out is lifted (lifted_at)'); END;
+CREATE TRIGGER IF NOT EXISTS tombstones_only_lift BEFORE UPDATE ON tombstones
+  WHEN NEW.sha256 IS NOT OLD.sha256 OR NEW.member_id IS NOT OLD.member_id OR NEW.why IS NOT OLD.why OR NEW.at IS NOT OLD.at
+    OR (OLD.member_id = 0 AND NEW.lifted_at IS NOT OLD.lifted_at)
+  BEGIN SELECT RAISE(ABORT, 'tombstones: only lifted_at changes, and a purge is never lifted'); END;
+CREATE TRIGGER IF NOT EXISTS tombstones_no_replace BEFORE INSERT ON tombstones
+  WHEN EXISTS (SELECT 1 FROM tombstones WHERE sha256 = NEW.sha256 AND member_id = NEW.member_id)
+  BEGIN SELECT RAISE(IGNORE); END;
 """
 EMBEDDINGS = """
 CREATE TABLE IF NOT EXISTS embeddings(
@@ -172,6 +231,28 @@ CREATE TABLE IF NOT EXISTS journal(      -- what happened, appended to and never
   kind TEXT,                             -- member.added, member.requested, member.changed, ...
   subject TEXT,                          -- what it is about: member:<id>, a sha, album:<id> ...
   data TEXT);                            -- JSON: whatever else the kind needs
+CREATE TRIGGER IF NOT EXISTS journal_no_delete BEFORE DELETE ON journal
+  BEGIN SELECT RAISE(ABORT, 'the journal is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS journal_no_update BEFORE UPDATE ON journal
+  BEGIN SELECT RAISE(ABORT, 'the journal is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS journal_no_replace BEFORE INSERT ON journal
+  WHEN EXISTS (SELECT 1 FROM journal WHERE id = NEW.id)
+  BEGIN SELECT RAISE(ABORT, 'the journal is append-only: an entry is never replaced'); END;
+CREATE TRIGGER IF NOT EXISTS members_no_delete BEFORE DELETE ON members
+  BEGIN SELECT RAISE(ABORT, 'a member is never deleted: revoke it (status revoked)'); END;
+CREATE TRIGGER IF NOT EXISTS members_keep_key BEFORE UPDATE OF id ON members WHEN NEW.id IS NOT OLD.id
+  BEGIN SELECT RAISE(ABORT, 'members: id never changes'); END;
+CREATE TRIGGER IF NOT EXISTS members_no_replace BEFORE INSERT ON members
+  WHEN EXISTS (SELECT 1 FROM members WHERE id = NEW.id)
+  BEGIN SELECT RAISE(ABORT, 'a member is never replaced'); END;
+CREATE TRIGGER IF NOT EXISTS member_logins_no_delete BEFORE DELETE ON member_logins
+  BEGIN SELECT RAISE(ABORT, 'a login is never deleted: revoke its member'); END;
+CREATE TRIGGER IF NOT EXISTS member_logins_keep_key BEFORE UPDATE OF login, member_id ON member_logins
+  WHEN NEW.login IS NOT OLD.login OR NEW.member_id IS NOT OLD.member_id
+  BEGIN SELECT RAISE(ABORT, 'member_logins: login and member_id never change'); END;
+CREATE TRIGGER IF NOT EXISTS member_logins_no_replace BEFORE INSERT ON member_logins
+  WHEN EXISTS (SELECT 1 FROM member_logins WHERE login = NEW.login)
+  BEGIN SELECT RAISE(ABORT, 'a login is never replaced: it stays its member''s'); END;
 """
 SYNC = """
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
@@ -196,7 +277,7 @@ CREATE INDEX IF NOT EXISTS events_job ON events(job_id, id);
 # the columns the app reads, so startup scans ~15 MB instead of ~700 MB.
 EXIF_APP_INDEX = "CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)"
 
-AREAS = {"catalog": CATALOG, "embeddings": EMBEDDINGS, "video": VIDEO, "faces": FACES, "changes": CHANGES, "tasks": TASKS,
+AREAS = {"catalog": CATALOG + APPEND_ONLY, "embeddings": EMBEDDINGS, "video": VIDEO, "faces": FACES, "changes": CHANGES, "tasks": TASKS,
          "scores": SCORES, "favorites": FAVORITES, "members": MEMBERS, "sync": SYNC, "intake": INTAKE}
 CATALOG_AREAS = ("catalog", "embeddings", "video", "faces", "changes", "tasks", "scores", "favorites", "members")
 ADDED = {

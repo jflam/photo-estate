@@ -17,17 +17,19 @@ appends its journal entry in the same transaction, and commits.
   ROLES, STATUSES, POLICIES
 
 Words (docs/notes/MULTIPLAYER-PLAN.md). A member is not a `persons` row, which is someone *in* photos
-(faces.py); a member may be linked to one. A member is never deleted: revoked is a status. Logins are kept
-lower-case. Roles are sysadmin and member (the plan's viewer is for devices, later). The journal kinds
-written here, each with the subject member:<id>: member.added and member.requested (data: the login),
-member.changed (data: {field: [before, after]}).
+(faces.py); a member may be linked to one. A member is never deleted: revoked is a status (and triggers
+refuse a DELETE of members or member_logins: core/schema.py). Logins are kept lower-case. Roles are
+sysadmin and member (the plan's viewer is for devices, later). The journal kinds written here
+(journal.append), each with the subject member:<id>: member.added and member.requested (data: the
+login), member.changed (data: {field: [before, after]}).
 """
 from __future__ import annotations
 
-import json
 import sqlite3
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
+
+import journal
 
 ROLES = ("sysadmin", "member")
 STATUSES = ("pending", "active", "revoked")
@@ -72,12 +74,6 @@ def norm(login: str | None) -> str:
 
 def _member(row, login: str = "") -> Member:
     return Member(*row, login=login)
-
-
-def journal(con: sqlite3.Connection, actor: int | None, kind: str, subject: str, data=None) -> None:
-    """One journal entry, in the caller's transaction."""
-    con.execute("INSERT INTO journal(at, actor, kind, subject, data) VALUES (?,?,?,?,?)",
-                (now(), actor, kind, subject, None if data is None else json.dumps(data, separators=(",", ":"))))
 
 
 def get(con: sqlite3.Connection, mid: int) -> Member | None:
@@ -132,7 +128,7 @@ def _add(con, name: str, login: str | None, role: str, status: str, upload_polic
     assert mid is not None
     if login:
         con.execute("INSERT INTO member_logins(login, member_id, added_at) VALUES (?,?,?)", (login, mid, t))
-    journal(con, mid if entry == "member.requested" else actor, entry, f"member:{mid}",
+    journal.append(con, mid if entry == "member.requested" else actor, entry, f"member:{mid}",
             {"login": login, "name": name, "role": role, "status": status})
     got = get(con, mid)
     assert got is not None
@@ -201,7 +197,7 @@ def change(con: sqlite3.Connection, mid: int, actor: int | None, **fields) -> Me
                     (new["name"], new["role"], new["status"], new["upload_policy"], new["person_id"], joined, mid))
         if not con.execute("SELECT 1 FROM members WHERE role='sysadmin' AND status='active'").fetchone():
             raise ValueError("the estate must keep an active sysadmin")   # (the `with` rolls the update back)
-        journal(con, actor, "member.changed", f"member:{mid}", diff)
+        journal.append(con, actor, "member.changed", f"member:{mid}", diff)
     got = get(con, mid)
     assert got is not None
     return got

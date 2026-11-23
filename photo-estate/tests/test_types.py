@@ -133,7 +133,7 @@ def test_catalog_with_scorers(tmp_path):
 def test_enum_values_are_the_legacy_strings():
     legacy = {
         states.ChangeOp: ("hide", "view"),
-        states.ChangeStatus: ("open", "reverted", "done"),
+        states.ChangeStatus: ("open", "reverted", "done", "discarded"),   # discarded: phase 2 of the multiplayer plan
         states.AlbumKind: ("list", "live"),
         states.SetState: ("empty", "album", "review", "applied", "reverted", "done"),
         states.Decision: ("pending", "accept", "reject"),

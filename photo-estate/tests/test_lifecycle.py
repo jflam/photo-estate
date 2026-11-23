@@ -260,7 +260,7 @@ class StubPeople:
     def __init__(self, *a, **k):
         pass
 
-    def handle(self, method, path, qs, body):
+    def handle(self, method, path, qs, body, actor=None):   # actor: as faces.People.handle takes it
         return 200, b'{"ok":true}', "application/json", "no-store"
 
 

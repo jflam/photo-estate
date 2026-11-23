@@ -7,7 +7,7 @@ value read back from SQLite or a JSON body is a plain str; `Decision("accept")` 
 else) turns it into a member where the code needs one.
 
   ChangeOp       change_sets.op        hide | view
-  ChangeStatus   change_sets.status    open | reverted | done
+  ChangeStatus   change_sets.status    open | reverted | done | discarded (put away: in no listing, never deleted)
   AlbumKind      change_sets.kind      list | live
   SetState       what a set has come to (derived): empty | album | review | applied | reverted | done
   Decision       change_items.decision pending | accept | reject
@@ -51,6 +51,7 @@ class ChangeStatus(StrEnum):
     OPEN = "open"
     REVERTED = "reverted"
     DONE = "done"
+    DISCARDED = "discarded"   # put away: its rows are kept (append-only), and it answers as if it were gone
 
 
 class Decision(StrEnum):

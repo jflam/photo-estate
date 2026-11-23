@@ -197,12 +197,12 @@ also answers under `/api/albums`; `/api/changes` lists only the albums that are 
 | `POST /api/albums/<id>/query {query}` | What a live album searches for |
 | `POST /api/albums/<id>/favorite {fav}` | Make every photo in it a favourite, or not |
 | `POST /api/albums/<id>/hide`, `/view` | Put it up for hiding (it becomes a change set), or take it down again |
-| `POST /api/albums/<id>/discard` | Forget it (it must hide nothing) |
+| `POST /api/albums/<id>/discard` | Put it away (it must hide nothing): marked `discarded`, its rows kept; it is in no listing and every address of it answers 404 |
 | `GET /api/changes/<id>`, `/api/changes/<id>/check` | One set and its photos; whether every photo is where the set says it should be |
 | `POST /api/changes {title, prompt?, op?, items}` | Propose a set |
 | `POST /api/changes/<id>/decide {shas, decision}` | Mark photos `accept`, `reject` (keep) or `pending` |
 | `POST /api/changes/<id>/apply {through?}` | Hide every photo not marked reject, and put back those that are; with `through`, only as far as that photo in the page's order |
-| `POST /api/changes/<id>/revert`, `/commit`, `/reopen`, `/discard` | Undo everything the set did; mark it done; make a done set changeable again; forget a set that hides nothing |
+| `POST /api/changes/<id>/revert`, `/commit`, `/reopen`, `/discard` | Undo everything the set did; mark it done; make a done set changeable again; put away a set that hides nothing (marked `discarded`, never deleted) |
 
 ### Agents: MCP and tasks
 

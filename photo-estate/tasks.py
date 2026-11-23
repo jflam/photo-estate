@@ -26,6 +26,10 @@ status=?), so whichever of the worker and a cancel gets there first wins and the
 the worker runs a task only if its claim (queued -> running) took, and a run's ending (running -> done |
 failed) never overwrites a cancel. A cancel stops the agent with SIGTERM, then SIGKILL after `grace`
 seconds (core.procs.stop), as the timeout does.
+
+The journal (journal.py) gets task.submitted (the actor is who asked) and task.finished when a task reaches
+done, failed or cancelled, in the transaction of that move: the actor is who cancelled it, or NULL for a
+run's own end (the agent is not a member yet), acting for whoever asked.
 """
 from __future__ import annotations
 
@@ -42,6 +46,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import journal
 from core import schema
 from core.procs import stop
 from core.states import TASK_ACTIVE, TASK_MOVES, TaskStatus, check_move
@@ -96,10 +101,12 @@ class Tasks:
         self.command, self.env_file = find_command(command), Path(env_file) if env_file else DEFAULT_ENV
         self.lock, self.wake, self.procs = threading.Lock(), threading.Event(), {}
         with closing(self.con()) as con:
-            schema.ensure(con, "tasks", "changes")   # changes: a task's change sets are read from change_sets
+            schema.ensure(con, "tasks", "changes", "members")   # changes: a task's change sets; members: the journal
             # whatever was running when the app last stopped did not finish (running -> failed)
-            con.execute("UPDATE agent_tasks SET status='failed', error='the app restarted while this was running', finished_at=?"
-                        " WHERE status='running'", (now(),))
+            why = "the app restarted while this was running"
+            for tid, af in con.execute("SELECT id, acting_for FROM agent_tasks WHERE status='running'").fetchall():
+                con.execute("UPDATE agent_tasks SET status='failed', error=?, finished_at=? WHERE id=?", (why, now(), tid))
+                journal.append(con, None, "task.finished", f"task:{tid}", {"status": TaskStatus.FAILED, "error": why}, af)
             con.commit()
         threading.Thread(target=self.worker, daemon=True).start()
 
@@ -126,7 +133,7 @@ class Tasks:
         # the change set(s) the agent made, by the name it was given while it worked
         t["change_sets"] = [{"id": i, "title": title, "photos": n, "review": f"/changes/{i}"} for i, title, n in con.execute(
             "SELECT s.id, s.title, (SELECT count(*) FROM change_items WHERE set_id=s.id) FROM change_sets s"
-            " WHERE s.created_by=? ORDER BY s.id", (f"task:{tid}",))]
+            " WHERE s.created_by=? AND s.status IS NOT 'discarded' ORDER BY s.id", (f"task:{tid}",))]
         last = con.execute("SELECT id, kind, text FROM agent_events WHERE task_id=? ORDER BY id DESC LIMIT 1", (tid,)).fetchone()
         t["last"] = {"id": last[0], "kind": last[1], "text": last[2]} if last else None
         if after is not None:
@@ -171,9 +178,11 @@ class Tasks:
         with closing(self.con()) as con, con:
             con.execute(f"UPDATE agent_tasks SET {', '.join(k + '=?' for k in fields)} WHERE id=?", (*fields.values(), tid))
 
-    def move(self, tid: int, to: TaskStatus, frm: TaskStatus | frozenset[TaskStatus], **fields) -> bool:
+    def move(self, tid: int, to: TaskStatus, frm: TaskStatus | frozenset[TaskStatus], actor: int | None = None,
+             **fields) -> bool:
         """Move a task from `frm` (one status or a set) to `to`, with FIELDS beside it, in one conditional
         UPDATE. True if it moved; False if the task was not in `frm` by then (someone else got there first).
+        A move to done, failed or cancelled appends task.finished (by `actor`) in the same transaction.
         IllegalMove if TASK_MOVES does not allow the step, ValueError for an unknown field."""
         frms = frozenset({frm}) if isinstance(frm, str) else frm
         for f in frms:
@@ -184,6 +193,10 @@ class Tasks:
         with closing(self.con()) as con, con:
             cur = con.execute(f"UPDATE agent_tasks SET {sets} WHERE id=? AND status IN ({', '.join('?' * len(frms))})",
                               (to, *fields.values(), tid, *sorted(frms)))
+            if cur.rowcount == 1 and to not in TASK_ACTIVE:
+                af = con.execute("SELECT acting_for FROM agent_tasks WHERE id=?", (tid,)).fetchone()[0]
+                journal.append(con, actor, "task.finished", f"task:{tid}",
+                               {"status": to, **({"error": fields["error"]} if fields.get("error") else {})}, af)
             return cur.rowcount == 1
 
     def submit(self, prompt, who: str = "", acting_for: int | None = None) -> tuple[dict, int]:
@@ -198,8 +211,9 @@ class Tasks:
         try:
             tid = con.execute("INSERT INTO agent_tasks(prompt, created_by, created_at, acting_for) VALUES (?,?,?,?)",
                               (prompt[:8000], who or None, now(), acting_for)).lastrowid
-            con.commit()
             assert tid is not None
+            journal.append(con, acting_for, "task.submitted", f"task:{tid}", {"prompt": prompt[:500]})
+            con.commit()
             out = self.task(con, tid)
             assert out is not None   # just written
         finally:
@@ -207,12 +221,13 @@ class Tasks:
         self.wake.set()
         return out, 201
 
-    def cancel(self, tid: int) -> tuple[dict, int]:
+    def cancel(self, tid: int, actor: int | None = None) -> tuple[dict, int]:
+        """`actor`: the member who cancelled it (members.id), for the journal."""
         t = self.get(tid, None)
         if not t:
             return {"error": "no such task"}, 404
         with self.lock:      # beside run()'s check before it starts the agent: one or the other goes first
-            moved = self.move(tid, TaskStatus.CANCELLED, TASK_ACTIVE, finished_at=now())
+            moved = self.move(tid, TaskStatus.CANCELLED, TASK_ACTIVE, actor, finished_at=now())
             proc = self.procs.get(tid) if moved else None
         if proc:             # SIGTERM, then SIGKILL after the grace: not in this request's thread
             threading.Thread(target=stop, args=(proc, self.grace), daemon=True, name=f"stop task {tid}").start()
@@ -322,7 +337,8 @@ class Tasks:
     # -- http ------------------------------------------------------------------------------------
 
     def handle(self, method: str, path: str, qs: dict, body: dict | None, who: str = "", acting_for: int | None = None):
-        """One request -> (status, body bytes, content type, Cache-Control), or None if it isn't ours."""
+        """One request -> (status, body bytes, content type, Cache-Control), or None if it isn't ours.
+        `acting_for`: the member the request is for (members.id), who submits or cancels."""
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":")).encode(), "application/json", "no-store")
         m = ROUTE.match(path)
         if not m:
@@ -338,5 +354,5 @@ class Tasks:
             if tid is None:
                 return js(*self.submit(body.get("prompt"), who, acting_for))
             if what == "cancel":
-                return js(*self.cancel(tid))
+                return js(*self.cancel(tid, acting_for))
         return js({"error": "not found"}, 404)

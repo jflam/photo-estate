@@ -404,6 +404,24 @@ a non-member is told only `{"member": false}`.*
 
 ### Phase 2: the journal and append-only
 
+*Built 2026-11-22 (branch `multiplayer`); [chapter 4](../book/04-store-and-ingest.md#append-only-sources-only-add),
+[chapter 5](../book/05-catalog.md#protected-tables) and [chapter 11](../book/11-server.md#the-journal)
+describe it. As listed, with these choices: the actor reaches each write as the member id beside the
+login the code already passed (`m.id` from `who()`; a request from the mini is the sysadmin), so a task's
+agent writes as the sysadmin until phase 3 reads `agent_tasks.acting_for`, and a run's own end is
+journaled with no actor, acting for whoever asked; a write that changes nothing appends nothing. The
+immutable flag is set by ingest only in a store whose root holds a `.immutable` file, made by the
+one-off step in MAC-MINI.md, so scratch, test, practice and demo stores are never flagged and can be
+deleted as before. The `tombstones` table is made now (the purge needs it), and ingest refuses a purged
+hash; the purge also removes what is worked out from the photo (vectors, faces, places, its text index
+row, album items) and, with `--cache`, its cached copies, and lists the sources that still have it. The
+migration is `estate.py migrate` and does only the sharers half: the estate-default half comes with
+lenses (phase 3), in the same command. The test of sources losing a file is one per kind (a Takeout
+zip, an iCloud folder, the OneDrive mirror, the phone's inbox). Beyond the plan's triggers, found in review:
+`BEFORE INSERT` triggers stop an `INSERT OR REPLACE` from deleting a protected row (refused for the
+journal and members, skipped for the rest), and a purge's tombstone can never be lifted. Not built: no
+endpoint, and nothing reads the journal.*
+
 This phase is the easiest to over-build. Keep it to this list, each item as small as it can be:
 
 - `journal.py` (unit-tested): two functions, `append(con, actor, kind, subject, data, acting_for=None)`

@@ -128,6 +128,12 @@
   ],
   [
    "index",
+   "sqlite_autoindex_sharers_1",
+   "sharers",
+   null
+  ],
+  [
+   "index",
    "sqlite_autoindex_sidecars_1",
    "sidecars",
    null
@@ -142,6 +148,12 @@
    "index",
    "sqlite_autoindex_tags_1",
    "tags",
+   null
+  ],
+  [
+   "index",
+   "sqlite_autoindex_tombstones_1",
+   "tombstones",
    null
   ],
   [
@@ -326,6 +338,12 @@
   ],
   [
    "table",
+   "sharers",
+   "sharers",
+   "CREATE TABLE sharers(      -- the members who shared a photo (a copy two members sent has two)\n  sha256 TEXT, member_id INT, shared_at TEXT, PRIMARY KEY(sha256, member_id))"
+  ],
+  [
+   "table",
    "sidecars",
    "sidecars",
    "CREATE TABLE sidecars(\n  id INTEGER PRIMARY KEY, dir TEXT, filename TEXT, title TEXT, data TEXT, UNIQUE(dir, filename))"
@@ -344,6 +362,12 @@
   ],
   [
    "table",
+   "tombstones",
+   "tombstones",
+   "CREATE TABLE tombstones(   -- a photo refused: opted out by one member, or purged (member 0: everyone)\n  sha256 TEXT, member_id INT,\n  why TEXT,                              -- opted_out | purged\n  at TEXT,\n  lifted_at TEXT,                        -- an opt-out taken back (a purge never is)\n  PRIMARY KEY(sha256, member_id))"
+  ],
+  [
+   "table",
    "trips",
    "trips",
    "CREATE TABLE trips(\n  id INTEGER PRIMARY KEY, start_local TEXT, end_local TEXT, n INT, n_events INT, title TEXT, place TEXT)"
@@ -353,6 +377,132 @@
    "xmp",
    "xmp",
    "CREATE TABLE xmp(       -- icloudpd --xmp-sidecar files: X.HEIC.xmp next to X.HEIC\n  dir TEXT, filename TEXT, data TEXT, PRIMARY KEY(dir, filename))"
+  ],
+  [
+   "trigger",
+   "assets_keep_key",
+   "assets",
+   "CREATE TRIGGER assets_keep_key BEFORE UPDATE OF sha256 ON assets WHEN NEW.sha256 IS NOT OLD.sha256\n  BEGIN SELECT RAISE(ABORT, 'assets: sha256 never changes'); END"
+  ],
+  [
+   "trigger",
+   "assets_no_delete",
+   "assets",
+   "CREATE TRIGGER assets_no_delete BEFORE DELETE ON assets\n  BEGIN SELECT RAISE(ABORT, 'assets are append-only: a photo is removed only by estate.py purge'); END"
+  ],
+  [
+   "trigger",
+   "assets_no_replace",
+   "assets",
+   "CREATE TRIGGER assets_no_replace BEFORE INSERT ON assets\n  WHEN EXISTS (SELECT 1 FROM assets WHERE sha256 = NEW.sha256)\n  BEGIN SELECT RAISE(IGNORE); END"
+  ],
+  [
+   "trigger",
+   "journal_no_delete",
+   "journal",
+   "CREATE TRIGGER journal_no_delete BEFORE DELETE ON journal\n  BEGIN SELECT RAISE(ABORT, 'the journal is append-only'); END"
+  ],
+  [
+   "trigger",
+   "journal_no_replace",
+   "journal",
+   "CREATE TRIGGER journal_no_replace BEFORE INSERT ON journal\n  WHEN EXISTS (SELECT 1 FROM journal WHERE id = NEW.id)\n  BEGIN SELECT RAISE(ABORT, 'the journal is append-only: an entry is never replaced'); END"
+  ],
+  [
+   "trigger",
+   "journal_no_update",
+   "journal",
+   "CREATE TRIGGER journal_no_update BEFORE UPDATE ON journal\n  BEGIN SELECT RAISE(ABORT, 'the journal is append-only'); END"
+  ],
+  [
+   "trigger",
+   "member_logins_keep_key",
+   "member_logins",
+   "CREATE TRIGGER member_logins_keep_key BEFORE UPDATE OF login, member_id ON member_logins\n  WHEN NEW.login IS NOT OLD.login OR NEW.member_id IS NOT OLD.member_id\n  BEGIN SELECT RAISE(ABORT, 'member_logins: login and member_id never change'); END"
+  ],
+  [
+   "trigger",
+   "member_logins_no_delete",
+   "member_logins",
+   "CREATE TRIGGER member_logins_no_delete BEFORE DELETE ON member_logins\n  BEGIN SELECT RAISE(ABORT, 'a login is never deleted: revoke its member'); END"
+  ],
+  [
+   "trigger",
+   "member_logins_no_replace",
+   "member_logins",
+   "CREATE TRIGGER member_logins_no_replace BEFORE INSERT ON member_logins\n  WHEN EXISTS (SELECT 1 FROM member_logins WHERE login = NEW.login)\n  BEGIN SELECT RAISE(ABORT, 'a login is never replaced: it stays its member''s'); END"
+  ],
+  [
+   "trigger",
+   "members_keep_key",
+   "members",
+   "CREATE TRIGGER members_keep_key BEFORE UPDATE OF id ON members WHEN NEW.id IS NOT OLD.id\n  BEGIN SELECT RAISE(ABORT, 'members: id never changes'); END"
+  ],
+  [
+   "trigger",
+   "members_no_delete",
+   "members",
+   "CREATE TRIGGER members_no_delete BEFORE DELETE ON members\n  BEGIN SELECT RAISE(ABORT, 'a member is never deleted: revoke it (status revoked)'); END"
+  ],
+  [
+   "trigger",
+   "members_no_replace",
+   "members",
+   "CREATE TRIGGER members_no_replace BEFORE INSERT ON members\n  WHEN EXISTS (SELECT 1 FROM members WHERE id = NEW.id)\n  BEGIN SELECT RAISE(ABORT, 'a member is never replaced'); END"
+  ],
+  [
+   "trigger",
+   "occurrences_keep_key",
+   "occurrences",
+   "CREATE TRIGGER occurrences_keep_key BEFORE UPDATE OF id, sha256 ON occurrences\n  WHEN NEW.id IS NOT OLD.id OR NEW.sha256 IS NOT OLD.sha256\n  BEGIN SELECT RAISE(ABORT, 'occurrences: id and sha256 never change'); END"
+  ],
+  [
+   "trigger",
+   "occurrences_no_delete",
+   "occurrences",
+   "CREATE TRIGGER occurrences_no_delete BEFORE DELETE ON occurrences\n  BEGIN SELECT RAISE(ABORT, 'occurrences are append-only: removed only by estate.py purge'); END"
+  ],
+  [
+   "trigger",
+   "occurrences_no_replace",
+   "occurrences",
+   "CREATE TRIGGER occurrences_no_replace BEFORE INSERT ON occurrences\n  WHEN EXISTS (SELECT 1 FROM occurrences WHERE id = NEW.id OR (source = NEW.source AND path = NEW.path))\n  BEGIN SELECT RAISE(IGNORE); END"
+  ],
+  [
+   "trigger",
+   "sharers_keep_key",
+   "sharers",
+   "CREATE TRIGGER sharers_keep_key BEFORE UPDATE OF sha256, member_id ON sharers\n  WHEN NEW.sha256 IS NOT OLD.sha256 OR NEW.member_id IS NOT OLD.member_id\n  BEGIN SELECT RAISE(ABORT, 'sharers: sha256 and member_id never change'); END"
+  ],
+  [
+   "trigger",
+   "sharers_no_delete",
+   "sharers",
+   "CREATE TRIGGER sharers_no_delete BEFORE DELETE ON sharers\n  BEGIN SELECT RAISE(ABORT, 'sharers are append-only: removed only by estate.py purge'); END"
+  ],
+  [
+   "trigger",
+   "sharers_no_replace",
+   "sharers",
+   "CREATE TRIGGER sharers_no_replace BEFORE INSERT ON sharers\n  WHEN EXISTS (SELECT 1 FROM sharers WHERE sha256 = NEW.sha256 AND member_id = NEW.member_id)\n  BEGIN SELECT RAISE(IGNORE); END"
+  ],
+  [
+   "trigger",
+   "tombstones_no_delete",
+   "tombstones",
+   "CREATE TRIGGER tombstones_no_delete BEFORE DELETE ON tombstones\n  BEGIN SELECT RAISE(ABORT, 'tombstones are never deleted: an opt-out is lifted (lifted_at)'); END"
+  ],
+  [
+   "trigger",
+   "tombstones_no_replace",
+   "tombstones",
+   "CREATE TRIGGER tombstones_no_replace BEFORE INSERT ON tombstones\n  WHEN EXISTS (SELECT 1 FROM tombstones WHERE sha256 = NEW.sha256 AND member_id = NEW.member_id)\n  BEGIN SELECT RAISE(IGNORE); END"
+  ],
+  [
+   "trigger",
+   "tombstones_only_lift",
+   "tombstones",
+   "CREATE TRIGGER tombstones_only_lift BEFORE UPDATE ON tombstones\n  WHEN NEW.sha256 IS NOT OLD.sha256 OR NEW.member_id IS NOT OLD.member_id OR NEW.why IS NOT OLD.why OR NEW.at IS NOT OLD.at\n    OR (OLD.member_id = 0 AND NEW.lifted_at IS NOT OLD.lifted_at)\n  BEGIN SELECT RAISE(ABORT, 'tombstones: only lifted_at changes, and a purge is never lifted'); END"
   ]
  ],
  "sync": [

@@ -17,8 +17,17 @@ estate.py — proof of concept for repatriating a Google Photos library.
   tag     caption + tag images with a local vision model (any OpenAI-compatible server)
   search  full-text search over filenames, albums, people, descriptions, captions, tags
   stats   summary of the estate
+  purge   remove one photo for good, by hand (the sysadmin, on the computer that holds the estate)
+  migrate the one-off multiplayer migration: every photo with no sharer gets the first sysadmin
 
-Originals are never modified or deleted (except the source zip with --delete-after).
+Originals are never modified or deleted (except the source zip with --delete-after, and `purge`). The
+estate only grows: a source that loses a file changes nothing here, and triggers refuse a DELETE from
+assets or occurrences (core/schema.py). In a store whose root holds a file named `.immutable` (the Mac
+mini's: deploy/MAC-MINI.md), ingest sets the user-immutable flag (chflags uchg) on each file it writes, so
+even `rm -rf` in the wrong folder fails; never in the checked-in demo store, and not where there is no
+such file (a scratch store, a test's), which can then be deleted as usual. A photo `purge` removed is
+refused by every later ingest (its tombstone). Each source that brought anything is one ingest.finished
+entry in the journal (journal.py), as are a purge and the migration.
 """
 from __future__ import annotations
 
@@ -32,6 +41,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -42,6 +52,8 @@ from pathlib import Path, PurePosixPath
 
 from PIL import Image, ImageOps
 
+import journal
+import members
 from core import config, events, schema
 from core.media import IMAGE_EXT, RAW_EXT, VIDEO_EXT, kind_of  # noqa: F401  (kind_of and the sets are estate's API)
 
@@ -65,6 +77,8 @@ FILENAME_TITLE = re.compile(r"^[A-Za-z]{0,6}[_-]?\d+(\.[A-Za-z0-9]{3,4})?$")
 U64 = (1 << 64) - 1
 
 SCHEMA = schema.CATALOG   # the catalog's own tables (core/schema.py); places.py reads it too
+HERE = Path(__file__).resolve().parent
+IMMUTABLE = ".immutable"  # in a store's root: ingest sets chflags uchg on every file it writes there
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -77,8 +91,38 @@ def connect(db: str) -> sqlite3.Connection:
     con = sqlite3.connect(db)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
-    schema.ensure(con, "catalog", "video")
+    schema.ensure(con, "catalog", "video", "members")   # members: who did it, and the journal
     return con
+
+
+def sysadmin_id(con) -> int | None:
+    """Who the journal names for what this computer does by itself (ingest, purge, migrate): the first
+    active sysadmin, or None before the app has made any member."""
+    m = members.sysadmin(con)
+    return m.id if m else None
+
+
+def immutable(store: Path) -> bool:
+    """Does ingest set the user-immutable flag on what it writes to this store? Only when its root holds
+    IMMUTABLE, and never in the checked-in demo store (git must be able to change it)."""
+    return (store / IMMUTABLE).exists() and store.resolve() != (HERE / "demo" / "store").resolve()
+
+
+def set_immutable(path: Path, on: bool = True) -> None:
+    """chflags uchg (or nouchg) on one file. OSError where the flag cannot be set (not macOS or BSD)."""
+    if not hasattr(os, "chflags"):
+        raise OSError("this system has no file flags (chflags)")
+    flags = os.stat(path, follow_symlinks=False).st_flags
+    os.chflags(path, flags | stat.UF_IMMUTABLE if on else flags & ~stat.UF_IMMUTABLE, follow_symlinks=False)
+
+
+def purged(con, sha: str) -> bool:
+    """Has the sysadmin purged this photo (a tombstone for everyone, member 0)? Then no source brings it back."""
+    return con.execute("SELECT 1 FROM tombstones WHERE sha256=? AND member_id=0", (sha,)).fetchone() is not None
+
+
+class Purged(Exception):
+    """store_blob read a photo that was purged: nothing was written."""
 
 
 def blob_path(store: Path, sha: str, ext: str) -> Path:
@@ -114,8 +158,10 @@ def iter_entries(src: Path):
 
 # ----------------------------------------------------------------------------- ingest
 
-def store_blob(con, store: Path, fp, ext: str) -> tuple[str, int, Path | None]:
-    """Stream fp into the store while hashing. Returns (sha, size, new_path or None if dup)."""
+def store_blob(con, store: Path, fp, ext: str, lock: bool = False) -> tuple[str, int, Path | None]:
+    """Stream fp into the store while hashing. Returns (sha, size, new_path or None if dup). Raises Purged,
+    with nothing written, for a photo the sysadmin purged. A file already at its place in the store (an
+    ingest stopped before it recorded it) is kept, never replaced. `lock`: set the user-immutable flag."""
     tmp = store / ".tmp" / f"{os.getpid()}.{time.time_ns()}"
     h, n = hashlib.sha256(), 0
     with open(tmp, "wb") as out:
@@ -124,12 +170,23 @@ def store_blob(con, store: Path, fp, ext: str) -> tuple[str, int, Path | None]:
             out.write(chunk)
             n += len(chunk)
     sha = h.hexdigest()
+    if purged(con, sha):
+        tmp.unlink()
+        raise Purged(sha)
     if con.execute("SELECT 1 FROM assets WHERE sha256=?", (sha,)).fetchone():
         tmp.unlink()
         return sha, n, None
     dest = blob_path(store, sha, ext)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    os.replace(tmp, dest)
+    if dest.exists():          # the same bytes (content-addressed): an immutable file could not be replaced anyway
+        tmp.unlink()
+    else:
+        os.replace(tmp, dest)
+    if lock:
+        try:
+            set_immutable(dest)
+        except OSError as e:   # the photo is kept either way; say why it is not locked
+            print(f"warning: could not set the immutable flag on {dest}: {e}", file=sys.stderr)
     return sha, n, dest
 
 
@@ -227,6 +284,7 @@ def cmd_ingest(a) -> None:
     store = Path(a.store)
     (store / ".tmp").mkdir(parents=True, exist_ok=True)
     con = connect(a.db)
+    lock, actor = immutable(store), sysadmin_id(con)
     done_before = 0           # photos and videos read from the sources before this one (for --progress)
     for src in map(Path, a.sources):
         name = src.name
@@ -235,7 +293,7 @@ def cmd_ingest(a) -> None:
             print(f"skip {name}: already ingested at {row[0]}")
             continue
         t0 = time.time()
-        st = dict(entries=0, media=0, new=0, dup=0, sidecars=0, seen=0, new_bytes=0, unreadable=0)
+        st = dict(entries=0, media=0, new=0, dup=0, sidecars=0, seen=0, new_bytes=0, unreadable=0, refused=0)
         for i, (path, opener) in enumerate(iter_entries(src), 1):
             st["entries"] += 1
             pp = PurePosixPath(path)
@@ -259,8 +317,12 @@ def cmd_ingest(a) -> None:
                            (name, path)).fetchone():
                 continue  # resuming an interrupted run
             ext = pp.suffix.lower()
-            with opener() as fp:
-                sha, size, dest = store_blob(con, store, fp, ext)
+            try:
+                with opener() as fp:
+                    sha, size, dest = store_blob(con, store, fp, ext, lock)
+            except Purged:
+                st["refused"] += 1     # purged by the sysadmin: not in the store, the catalog, or this source's record
+                continue
             st["seen"] += size
             known = None               # what the photo app worked out when it received the file
             if a.facts and (f := Path(a.facts) / f"{sha}.json").exists():
@@ -287,13 +349,17 @@ def cmd_ingest(a) -> None:
                 con.commit()
         con.execute("INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?,?,?)",
                     (name, st["entries"], st["media"], st["new"], st["seen"], st["new_bytes"], now()))
+        if st["new"] or st["dup"]:     # a run that added nothing (nothing unseen, or only purged photos) leaves none
+            journal.append(con, actor, "ingest.finished", f"source:{name}",
+                           {k: st[k] for k in ("new", "dup", "refused", "new_bytes")})
         con.commit()
         done_before += st["media"]
         dt = max(time.time() - t0, 1e-6)
         print(f"{name}: {st['entries']} entries, {st['media']} media -> {st['new']} new, "
               f"{st['dup']} exact dups, {st['sidecars']} sidecars, "
               f"{st['new_bytes'] / 1e6:.1f} MB written ({st['seen'] / 1e6 / dt:.1f} MB/s)"
-              + (f", {st['unreadable']} not decodable (kept, no dHash)" if st["unreadable"] else ""))
+              + (f", {st['unreadable']} not decodable (kept, no dHash)" if st["unreadable"] else "")
+              + (f", {st['refused']} refused (purged)" if st["refused"] else ""))
         if a.delete_after and src.is_file():
             src.unlink()
             print(f"  deleted {src}")
@@ -1162,6 +1228,118 @@ def cmd_stats(a) -> None:
         print(f"tagged by {model}: {n} (avg {avg:.2f}s)")
 
 
+# ----------------------------------------------------------------------------- append-only: purge, migrate
+
+SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+PURGE_TRIGGERS = ("assets_no_delete", "occurrences_no_delete", "sharers_no_delete")
+
+
+def cmd_purge(a) -> None:
+    """Remove one photo for good: run by hand by the sysadmin, never from a page, a phone or an agent.
+    A catalog backup first; then, in one transaction, a photo.purged journal entry and a tombstone for
+    everyone (member 0, so no source brings it back), and its rows; then its file and cached copies."""
+    sha, reason, store = a.sha.strip().lower(), " ".join((a.reason or "").split()), Path(a.store)
+    if not SHA_RE.match(sha):
+        sys.exit("purge takes the photo's sha256: 64 hex digits")
+    if not reason:
+        sys.exit('say why: --reason "..." (it is kept in the journal)')
+    con = connect(a.db)
+    row = con.execute("SELECT ext, kind, size, taken_at, first_seen FROM assets WHERE sha256=?", (sha,)).fetchone()
+    if row is None:
+        if not purged(con, sha):
+            sys.exit(f"no photo {sha} in {a.db}")
+        left = list(blob_path(store, sha, "").parent.glob(f"{sha}.*"))
+        for f in left:            # a purge that stopped after its transaction, before the file went
+            unlink_original(f)
+        print(f"{sha} was purged already" + (f"; removed {', '.join(map(str, left))}" if left else ""))
+        return
+    ext, kind, size, taken, first = row
+    sources = con.execute("SELECT source, path FROM occurrences WHERE sha256=? ORDER BY id", (sha,)).fetchall()
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = Path(a.backup_dir or Path(a.db).resolve().parent) / f"estate.db.before-purge-{sha[:12]}-{stamp}"
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    copy = sqlite3.connect(backup)
+    try:
+        con.backup(copy)
+        check = copy.execute("PRAGMA quick_check").fetchone()[0]
+    finally:
+        copy.close()
+    if check != "ok":
+        sys.exit(f"the backup {backup} fails quick_check ({check}): nothing was purged")
+    print(f"backup: {backup} (quick_check ok)")
+
+    actor = sysadmin_id(con)
+    tables = [t for (t,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+    keyed = [t for t in tables      # occurrences, sharers, and what is worked out from the photo (vectors, faces, places ...)
+             if t not in ("assets", "journal", "tombstones") and "sha256" in {r[1] for r in con.execute(f"PRAGMA table_info({t})")}]
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        journal.append(con, actor, "photo.purged", sha, {"reason": reason, "ext": ext, "kind": kind, "size": size,
+                                                         "taken_at": taken, "first_seen": first, "sources": sources[:100]})
+        con.execute("INSERT OR IGNORE INTO tombstones(sha256, member_id, why, at) VALUES (?, 0, 'purged', ?)", (sha, now()))
+        guards = con.execute(f"SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name IN ({','.join('?' * len(PURGE_TRIGGERS))})",
+                             PURGE_TRIGGERS).fetchall()
+        for name, _ in guards:   # the one place the protection is lifted, inside this transaction only
+            con.execute(f"DROP TRIGGER {name}")
+        for t in ("face_not", "face_later"):
+            if t in tables and "faces" in tables:
+                con.execute(f"DELETE FROM {t} WHERE face_id IN (SELECT id FROM faces WHERE sha256=?)", (sha,))
+        con.execute("DELETE FROM live_pairs WHERE clip=? OR still=?", (sha, sha))
+        for t in keyed:
+            con.execute(f"DELETE FROM {t} WHERE sha256=?", (sha,))
+        con.execute("DELETE FROM assets WHERE sha256=?", (sha,))
+        for _, sql in guards:
+            con.execute(sql)
+        con.commit()
+    except BaseException:
+        con.rollback()
+        raise
+    con.close()
+
+    f = blob_path(store, sha, ext)
+    if f.exists():
+        unlink_original(f)
+        print(f"removed {f}")
+    else:
+        print(f"warning: {f} was not in the store")
+    for cache in map(Path, a.cache or []):     # thumbnails, previews, video copies, face crops
+        for c in [*cache.glob(f"*/{sha}*"), *cache.glob(f"faces/{sha[:2]}/{sha}-*")]:
+            c.unlink()
+            print(f"removed {c}")
+    print(f"purged {sha}: its journal entry and tombstone stay, and no source can bring it back.")
+    print("It remains in the catalog backups until they rotate out, and in face-labels.jsonl's lines.")
+    if sources:
+        print("The sources still have their copies (nothing here touches a source):")
+        for src, path in sources:
+            print(f"  {src}: {path}")
+    print("Restart the app so it forgets the photo now: launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search")
+
+
+def unlink_original(f: Path) -> None:
+    """Remove a file of the store: its immutable flag first, where there are flags."""
+    if hasattr(os, "chflags"):
+        set_immutable(f, False)
+    f.unlink()
+
+
+def cmd_migrate(a) -> None:
+    """The one-off multiplayer migration (docs/notes/MULTIPLAYER-PLAN.md), run once by hand after a backup:
+    every photo that has no sharer yet gets the first sysadmin. Safe to run again: it then adds nothing."""
+    con = connect(a.db)
+    admin = members.sysadmin(con)
+    if admin is None:
+        sys.exit("no active sysadmin yet: start the app once (it makes the members from --upload-user)")
+    with con:
+        n = con.execute("INSERT OR IGNORE INTO sharers(sha256, member_id, shared_at)"
+                        " SELECT sha256, ?, coalesce(first_seen, ?) FROM assets"
+                        " WHERE sha256 NOT IN (SELECT sha256 FROM sharers)", (admin.id, now())).rowcount
+        if n:
+            journal.append(con, admin.id, "sharers.migrated", "sharers", {"member": admin.id, "photos": n})
+    total = con.execute("SELECT count(*) FROM assets").fetchone()[0]
+    print(f"sharers: {n} photos given {admin.name} (member {admin.id}) as their sharer; {total} photos in all")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--db", default="estate.db", help="SQLite catalog (keep it next to or inside the store)")
@@ -1226,6 +1404,26 @@ def main() -> None:
 
     s = sub.add_parser("stats")
     s.set_defaults(fn=cmd_stats)
+
+    s = sub.add_parser("purge", help="remove one photo for good (by hand, the sysadmin only); takes a backup first",
+                       description="Remove one photo for good. Takes a catalog backup first (checked with quick_check),"
+                       " journals photo.purged with the reason, adds a tombstone so no source brings it back, deletes"
+                       " its rows, clears the immutable flag and removes its file (and, with --cache, its cached copies)."
+                       " It stays in older catalog backups until they rotate out.")
+    s.add_argument("sha", help="the photo's sha256")
+    s.add_argument("--reason", required=True, help="why, in words: kept in the journal")
+    s.add_argument("--store", required=True)
+    s.add_argument("--cache", action="append", help="a thumbnail cache to remove its copies from (repeatable:"
+                   " the app's --cache and --fast-cache)")
+    s.add_argument("--backup-dir", help="where the backup goes (default: beside the catalog)")
+    s.set_defaults(fn=cmd_purge)
+
+    s = sub.add_parser("migrate", help="one-off multiplayer migration: every photo with no sharer gets the first sysadmin",
+                       description="The one-off migration of the multiplayer plan, run once by hand after a catalog"
+                       " backup: every photo with no sharer gets the first active sysadmin as its sharer. Safe to run"
+                       " again. (Making the existing hiding sets the first estate default is not done here yet: it"
+                       " comes with lenses, phase 3, which adds it to this command.)")
+    s.set_defaults(fn=cmd_migrate)
 
     a = p.parse_args()
     a.fn(a)

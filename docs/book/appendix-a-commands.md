@@ -11,7 +11,7 @@ uv run estate.py [--db estate.db] <command> [options]
 
 | Command | Arguments and options | Purpose | Chapter |
 |---|---|---|---|
-| `ingest` | `sources...` (zips or folders); `--store DIR` (**required**); `--force` re-scan sources already ingested; `--delete-after` delete each zip once ingested | Hash and store media; record occurrences, sidecars, XMP, Flickr JSON | [4](04-store-and-ingest.md) |
+| `ingest` | `sources...` (zips or folders); `--store DIR` (**required**); `--force` re-scan sources already ingested; `--delete-after` delete each zip once ingested | Hash and store media; record occurrences, sidecars, XMP, Flickr JSON. Refuses a purged photo; in a store whose root holds `.immutable`, sets `chflags uchg` on each file it writes | [4](04-store-and-ingest.md) |
 | `link` | `--source NAME` (repeatable): only the photos those sources brought in, and every other copy of them; the name is the folder or zip `ingest` read | Match sidecars to media; merge dates, GPS, people, favourites, albums; rebuild the text index (only the touched photos' rows with `--source`); prints `progress N of M: what` (progress events instead with `PHOTO_ESTATE_EVENTS=1`, [16](16-operations.md)) | [6](06-linking.md) |
 | `exif` | `--store DIR` (**required**); `--workers N` (default: half the CPUs); `--batch 200`; `--limit 0` (all); `--force` | Read all metadata with `exiftool`; promote camera, lens, exposure; then pair Live Photo clips with their stills, as `live` does | [7](07-places-events-trips.md) |
 | `live` | `--redo` forget every pair and work them all out again | Pair Live Photo clips with their stills (`live_pairs`); prints how many it paired, how many videos are clips and how many stand on their own. Safe to run again | [6](06-linking.md#step-2-live-photos-and-motion-photos) |
@@ -20,6 +20,8 @@ uv run estate.py [--db estate.db] <command> [options]
 | `tag` | `--store DIR` (**required**); `--model NAME` (**required**); `--endpoint http://127.0.0.1:8080/v1`; `--limit 0`; `--max-side 768`; `--timeout 300`; `--no-json-mode` | Caption and tag images with a local OpenAI-compatible vision model | [9](09-text-search-and-tags.md) |
 | `search` | `query` (FTS5 syntax); `--limit 20`; `--store DIR` (also print blob paths) | Full-text search | [9](09-text-search-and-tags.md) |
 | `stats` | none | Summary of the estate | |
+| `purge` | `sha` (the photo's sha256); `--reason "..."` (**required**, kept in the journal); `--store DIR` (**required**); `--cache DIR` (repeatable: the app's `--cache` and `--fast-cache`); `--backup-dir DIR` (default: beside the catalog) | Remove one photo for good, by hand (the sysadmin, on the Mac; never from a page, a phone or an agent): a catalog backup checked with `quick_check`, a `photo.purged` journal entry, a tombstone for everyone so no source brings it back, its rows, its file (the immutable flag cleared first) and cached copies. Lists the sources that still have it. Run again, it says it was purged already | [4](04-store-and-ingest.md#append-only-sources-only-add) |
+| `migrate` | none | The one-off multiplayer migration, run once by hand after a catalog backup: every photo with no sharer gets the first active sysadmin (`sharers`), with one journal entry. Safe to run again (it then adds nothing). Making the existing hiding sets the first estate default is not in it yet: lenses (phase 3 of the plan) add that | [4](04-store-and-ingest.md#append-only-sources-only-add) |
 
 Examples:
 

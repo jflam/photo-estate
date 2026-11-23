@@ -35,6 +35,7 @@ content type, Cache-Control[, headers])` or `None` when the path is not its own.
 | [estate_mcp.py](../../photo-estate/estate_mcp.py) | `Server` | `/mcp` |
 | [intake/api.py](../../photo-estate/intake/api.py) | `IntakeAPI` | `/setup`, `/api/intake*` |
 | [members.py](../../photo-estate/members.py) | (functions) | Who the estate knows: members, their logins, roles and upload policies, and the journal entries each change appends; `PhotoApp` answers `/request-access`, `/api/request-access`, `/api/me`, `/members` and `/api/members*` with it (below) |
+| [journal.py](../../photo-estate/journal.py) | (functions) | No routes: `append` one entry to the journal in the caller's transaction, `since` to read it ([below](#the-journal)) |
 | [compare.py](../../photo-estate/compare.py) | `Compare` | `/compare`, `/api/compare*`, only with `--compare-vectors`: a second model's ranking beside the app's own ([chapter 10](10-embeddings.md)) |
 
 What ties the modules together is `PhotoApp` (photo_app.py, about 500 lines): setting up the demo, the
@@ -70,9 +71,8 @@ in core/schema.py's `members` area): the provider proves who someone is, the est
 may do. A member has a **role** (`sysadmin` or `member`; more than one member may be a sysadmin), a
 **status** (`pending`, `active` or `revoked`: a member is never deleted), an **upload policy** that the
 iPhone app will read in a later phase (`everything`, `review`, `review_flagged`), and may be linked to a
-person in People. A member is not a `persons` row: those are the people *in* the photos. Every change
-to a member appends an entry to the **journal**, the estate's append-only log, in the same transaction
-(`member.added`, `member.requested`, `member.changed`, with who did it); nothing reads the journal yet.
+person in People. A member is not a `persons` row: those are the people *in* the photos. Triggers refuse
+deleting a member or a login ([chapter 5](05-catalog.md#protected-tables)).
 
 `PhotoApp.who(headers, local)` says which member a request is for, from a copy of the members kept in
 memory (they change only through the app, which reads them again after each change). A local request
@@ -116,6 +116,29 @@ Until 2026-11-22 the rule was different: reading was open to anyone who could re
 write took a `--upload-user` login (anyone, when none was named) or a local request. Before 2026-11-19
 the People page's writes took no permission at all, and intake, the ingest, restart and uploads took a
 `--upload-user` login but refused this Mac's own browser and agent.
+
+### The journal
+
+Every write the app makes appends one entry to the **journal**, the estate's append-only log, in the
+same transaction as the change it records ([journal.py](../../photo-estate/journal.py):
+`append(con, actor, kind, subject, data, acting_for)`, and `since(con, id)` for the listeners of a later
+phase; nothing reads it yet). An entry is who did it (`actor`, the member the request was for: `who()`
+above, so a request from the Mac itself is the sysadmin), its `kind`, what it is about (`subject`:
+`album:12`, `member:3`, `task:5`, a sha) and a little JSON. It is one entry per action, never one per
+photo: applying a set that hides ten thousand photos is one `album.applied` naming the set, with counts.
+A write that changes nothing appends nothing. The kinds, listed in journal.py's docstring: `member.*`;
+`album.created`, `.items`, `.decided`, `.applied`, `.reverted`, `.committed`, `.reopened`, `.hidden`,
+`.viewed`, `.renamed`, `.query`, `.discarded` (changes.py, for albums and change sets alike);
+`favorite.set`; `faces.labeled` and `person.changed` (People, beside its own `face-labels.jsonl`, which
+stays as it was); `task.submitted` and `task.finished`; `ingest.finished`, `photo.purged` and
+`sharers.migrated` (estate.py). The state tables stay the truth for what the app shows; the journal is
+the history beside them, and triggers refuse any `UPDATE` or `DELETE` of it.
+
+The actor reaches each write as a member id beside the login the code already passed: `PhotoApp`
+gives `m.id` to `Changes.handle`, `Tasks.handle`, `People.handle`, `set_favorites` and `/mcp` (whose
+tools that write pass it on). A task's agent calls from the Mac, so what it does is journaled as the
+sysadmin (its change sets still carry `created_by` `task:<id>`); a run's own end is `task.finished` with
+no actor, acting for whoever asked.
 
 ### Malformed requests
 

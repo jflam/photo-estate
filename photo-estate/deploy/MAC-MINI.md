@@ -344,3 +344,54 @@ RESTART=com.jflam.photo-search DB=~/estate/estate.db STORE=/Volumes/estate/store
 `RESTART` restarts the app at the end, because it reads the catalog at startup. A launchd timer
 (`StartInterval`, say 900 seconds) can run the same command; a second run while one is going exits at
 once. `SKIP_MODELS=1` catalogues without embedding.
+
+## Append-only: the one-off steps
+
+Since phase 2 of the multiplayer plan (`docs/notes/MULTIPLAYER-PLAN.md`, book chapter 4) the estate only
+grows: triggers in the catalog refuse deleting a photo, an occurrence, a member or the journal, and ingest
+sets the user-immutable flag (`chflags uchg`) on every file it writes to a store whose root holds a file
+named `.immutable`. It is deployed once, by hand, in this order: the backup comes first, because the
+app's first start on this code adds triggers to the catalog (on the journal and the members), and the
+first `estate.py` command adds `sharers`, `tombstones` and the rest of the triggers.
+
+```bash
+export PATH=/opt/homebrew/bin:$PATH
+DB=~/estate/estate.db STORE=/Volumes/estate/store
+cd ~/src/photo-estate
+
+# 1. A catalog backup, checked, before the code moves
+B=$HOME/photo-estate-lab/estate.db.before-append-only-$(date +%Y%m%d-%H%M)
+sqlite3 $DB ".backup $B" && sqlite3 $B "pragma quick_check"          # must print ok
+git fetch origin && git checkout <branch> && git pull --ff-only
+launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search             # then check /api/info and the log
+cd photo-estate
+
+# 2. Every existing photo gets the sysadmin as its sharer (safe to run again: it then adds nothing)
+uv run estate.py --db $DB migrate                                      # "N photos given john ...; N photos in all"
+sqlite3 $DB "select (select count(*) from assets), (select count(*) from sharers)"   # the two counts agree
+
+# 3. The immutable flag. First on one scratch file on the same volume: it must refuse to go
+f=$STORE/.tmp/uchg-test; touch $f && chflags uchg $f && ls -lO $f      # shows uchg
+rm -f $f; ls -lO $f                                                    # "Operation not permitted": still there
+chflags nouchg $f && rm $f                                             # and it goes once the flag is cleared
+#    Then mark the store (new files are flagged from here on), and flag the files already in it. Files only:
+#    a flagged directory could take no new photo.
+touch $STORE/.immutable
+find $STORE/?? -type f ! -flags +uchg -exec chflags uchg {} +          # minutes for 120k files on the USB disk
+find $STORE/?? -type f ! -flags +uchg | head                           # prints nothing
+```
+
+Cautions:
+
+- The disk ignores ownership, so any user of the mini can clear the flag (`chflags nouchg`), and `rm`
+  run as root clears a user flag by itself (BSD `rm` does). It guards against accidents (an `rm -rf` in
+  the wrong folder, as yourself), not against intent or `sudo`.
+- **Tell the backup plan.** A copy that keeps the flag (`cp -p`, Finder, `rsync --fileflags` where
+  rsync has one, Python's `copy2`) makes files that cannot be pruned or replaced until it is cleared.
+  Try the backup tool on one flagged file first.
+- To undo it: `rm $STORE/.immutable`, then `find $STORE/?? -type f -flags +uchg -exec chflags nouchg {} +`.
+- The one way a photo leaves the estate is `uv run estate.py --db $DB purge <sha> --reason "..." --store
+  $STORE --cache /Volumes/estate/review --cache ~/Library/Caches/photo-estate --backup-dir ~/photo-estate-lab`,
+  run here by the sysadmin: it backs the catalog up, journals it, leaves a tombstone so no source brings
+  it back, clears the flag and removes the file and its cached copies; then restart the app. The photo
+  stays in the catalog backups until they rotate out, and in the sources (it lists them).

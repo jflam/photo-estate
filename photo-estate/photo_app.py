@@ -11,7 +11,7 @@ wires the route modules together; make_handler() is the thin HTTP layer in front
   .make_server(host, port) -> Server   a ThreadingHTTPServer for it (port 0: any free port)
   .serve()                    make_server on 127.0.0.1:--port and serve until Ctrl-C
   .reload_catalog()           re-read the catalog and swap it in (after an ingest, or a change set)
-  .set_favorites(shas, on, who) -> int   record favourites, show them at once, tell the phones
+  .set_favorites(shas, on, who, actor=, subject=) -> int   record favourites (and journal it), show them, tell the phones
   .who(headers, local) -> Member | None  who a request is for (members.py)
   ROUTE_AUTH, policy(method, path) -> Auth   who may make each request (http_util.Auth)
 
@@ -71,6 +71,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import catalog
+import journal
 import members
 import pages   # the pages, with the shared stylesheet put in
 from admin import Admin, backups
@@ -306,15 +307,19 @@ class PhotoApp:
 
     # -- favourites, reloads, change sets ----------------------------------------------------------
 
-    def set_favorites(self, shas, on: bool, who: str) -> int:
+    def set_favorites(self, shas, on: bool, who: str, actor: int | None = None, subject: str | None = None) -> int:
         """Record them, show them, tell the phones. Returns how many photos it changed. Called outside the
-        gate (handle() lets the favourite routes through without it): showing them takes its write side."""
+        gate (handle() lets the favourite routes through without it): showing them takes its write side.
+        One favorite.set journal entry by `actor` (members.id) about `subject` (the photo, or album:<id>)."""
         with self.fav_write:   # one at a time, so the table and the catalog end up with the same last word
             shas = [s for s in dict.fromkeys(shas) if s in self.live.cat.index]
             con = connect(self.a.db)   # the table first, outside the gate: requests aren't held up by SQLite
             try:
                 t = now()
                 con.executemany("INSERT OR REPLACE INTO favorites VALUES (?,?,?,?)", ((s, int(on), t, who or None) for s in shas))
+                if shas:
+                    journal.append(con, actor, "favorite.set", subject or (shas[0] if len(shas) == 1 else "photos"),
+                                   {"fav": on, "photos": len(shas)})
                 con.commit()
             finally:
                 con.close()
@@ -521,7 +526,7 @@ class PhotoApp:
         if (mid := re.fullmatch(r"/api/members/(\d+)", path)) is not None:
             return self.change_member(int(mid[1]), body, m)
         if path == "/api/favorite":
-            return self.favorite(body, who)
+            return self.favorite(body, who, m.id if m else None)
         if self.compare and path.startswith("/api/compare"):
             got = self.compare.handle("POST", path, qs, body, who)   # a vote, or a run started or finished
             return Response.of(got) if got else NOT_FOUND
@@ -529,7 +534,7 @@ class PhotoApp:
             return Response.of(self.intake.handle("POST", path, qs, body, req.local))
         if (got := self.changes_route("POST", path, qs, body, who, m.id if m else None)) is not None:
             return got
-        if (got := self.people_page("POST", path, qs, body)) is not None:
+        if (got := self.people_page("POST", path, qs, body, m.id if m else None)) is not None:
             return got
         return NOT_FOUND
 
@@ -590,8 +595,9 @@ class PhotoApp:
             return _etagged(mod, pages.MODULE_TYPE)
         return NOT_FOUND
 
-    def people_page(self, method: str, path: str, qs: dict, body) -> Response | None:
-        """A People page request (faces.py), or None if the path isn't one. Writes were authorized in route()."""
+    def people_page(self, method: str, path: str, qs: dict, body, actor: int | None = None) -> Response | None:
+        """A People page request (faces.py), or None if the path isn't one. Writes were authorized in route();
+        `actor` is the member they are journaled as."""
         if not self.live.cat.has_faces or not path.startswith(("/people", "/face/", "/api/people")):
             return None
         s = self.people.snapshot()
@@ -609,17 +615,17 @@ class PhotoApp:
             return Response(503, b"Faces are still loading; try again in a moment.", "text/plain")
         if method == "POST" and not isinstance(body, dict):
             return json_response({"error": "expected a JSON object"}, 400)
-        return Response.of(s.value.handle(method, path, qs, body))
+        return Response.of(s.value.handle(method, path, qs, body, actor))
 
     def changes_route(self, method: str, path: str, qs: dict, body, who: str, acting_for: int | None = None) -> Response | None:
         """Change sets (changes.py) and tasks (tasks.py): the review page and their API. Proposing, deciding
-        and applying change what everyone sees: MEMBER, checked in route(). A task records the member who
-        submitted it (acting_for)."""
+        and applying change what everyone sees: MEMBER, checked in route(). `acting_for` is the member the
+        request is for (members.id): a task records it, and the journal names it as the actor of each write."""
         if not path.startswith(("/changes", "/api/changes", "/api/albums", "/api/tasks")):
             return None
         if path.startswith("/api/tasks"):
             return Response.of(self.tasks.handle(method, path, qs, body, who, acting_for))
-        return Response.of(self.changes.handle(method, path, qs, body, who))
+        return Response.of(self.changes.handle(method, path, qs, body, who, acting_for))
 
     def mcp_route(self, method: str, req: Request, body, m: Member | None) -> Response:
         """The library as tools for an agent (estate_mcp.py), on the same rule as every route: a login is
@@ -723,7 +729,7 @@ class PhotoApp:
         return Response(303, b"", "text/plain", "no-store",
                         {"Location": "/members" if m and m.is_sysadmin else "/", "Set-Cookie": cookie})
 
-    def favorite(self, body, who: str) -> Response:
+    def favorite(self, body, who: str, actor: int | None = None) -> Response:
         """POST /api/favorite {sha, fav}: a photo is, or is no longer, a favourite. It changes what everyone
         sees (a month's cover is a favourite if it has one): MEMBER, checked in route()."""
         sha, on = (body.get("sha"), body.get("fav")) if isinstance(body, dict) else (None, None)
@@ -731,7 +737,7 @@ class PhotoApp:
             known = isinstance(sha, str) and sha in self.live.cat.index
         if not known or not isinstance(on, bool):
             return json_response({"error": "say which photo (sha) and fav: true or false"}, 400)
-        self.set_favorites([sha], on, who)
+        self.set_favorites([sha], on, who, actor, sha)
         with self.live.gate:
             n = self.live.cat.info["fav"]
         return json_response({"sha": sha, "fav": on, "favourites": n})

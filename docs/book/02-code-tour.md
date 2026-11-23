@@ -8,24 +8,24 @@ leaving out the checked-in demo library and every Markdown file:
 
 | | Files | Code lines |
 |---|---:|---:|
-| **Server** (Python: `photo-estate/*.py`, `intake/` and `core/`) | 39 | 9,691 |
+| **Server** (Python: `photo-estate/*.py`, `intake/` and `core/`) | 41 | 10,672 |
 | **Web pages** (seven pages, the shared stylesheet, the service worker) | 9 | 4,664 |
 | **The pages' script modules** (`app/*.js`, without their tests) | 21 | 1,132 |
 | **iPhone app** (Swift, plus `deploy.sh`) | 30 | 5,751 |
 | Shell scripts the pipeline runs (`pull-drive.sh`, `pull-icloud.sh`, `ingest-iphone.sh`) | 3 | 130 |
-| Tests (`tests/`: 16 self-running scripts, 17 pytest files, `conftest.py`) | 34 | 6,847 |
+| Tests (`tests/`: 16 self-running scripts, 20 pytest files, `conftest.py`) | 37 | 7,741 |
 | The script modules' unit tests (`app/tests/`) | 22 | 2,619 |
 | Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts, square export and embedding, the video demo) | 27 | 3,506 |
 | The cloud preview on the Mac mini (`deploy/*.sh`) | 4 | 330 |
-| **Total** | **189** | **34,670** |
+| **Total** | **194** | **36,545** |
 
 The web pages' 4,664 lines are 3,085 of JavaScript, 950 of CSS and 629 of HTML markup (tokei counts
 the script of `setup.html`, a module it does not parse, as markup). What you run (the server, its pages
-and their modules, the iPhone app and the three pipeline scripts) is **21,368 lines of code**:
+and their modules, the iPhone app and the three pipeline scripts) is **22,349 lines of code**:
 
 ```mermaid
-pie showData title "What you run, by part (21,368 lines)"
-    "Server: Python (9,691)" : 9691
+pie showData title "What you run, by part (22,349 lines)"
+    "Server: Python (10,672)" : 10672
     "Web pages and their modules (5,796)" : 5796
     "iPhone app: Swift (5,734)" : 5734
     "Shell (147)" : 147
@@ -52,8 +52,8 @@ is 5,734. A few things stand out:
   Videos (2026-11-21) followed the rule: `video.py` is new, and the rest is a few dozen lines in each
   module that a video passes through.
 - **The tests are about a quarter of the code.** Sixteen scripts, each run with `uv run tests/<file>`,
-  seventeen ordinary pytest files, and a small harness that runs them all with one command and in CI;
-  6,847 lines, and 2,619 more of unit tests for the pages' script modules
+  twenty ordinary pytest files, and a small harness that runs them all with one command and in CI;
+  7,741 lines, and 2,619 more of unit tests for the pages' script modules
   ([chapter 17](17-testing-and-demo.md)).
 - **The documentation is a third as large as the code.** The Markdown in the repository is about
   11,200 lines, 8,900 of them this book.
@@ -65,12 +65,14 @@ Code lines, measured as above (a script module's JSDoc comments are not counted)
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
   embed.py             351  image and video embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
-  photo_app.py         807  the photo app as an object: PhotoApp (wiring, who a request is for and what it may do, the
+  photo_app.py         813  the photo app as an object: PhotoApp (wiring, who a request is for and what it may do, the
                             request-access page and /members' routes, favourites, reloads) and its HTTP
                             handler, which streams uploads, album downloads and videos (/video/, with Range)
   http_util.py         186  what the servers share: Response, bounded JSON bodies, int_param (400s), byte_range, the Auth rules
-  members.py           183  who the estate knows: members, their Tailscale logins, roles and upload policies; the first
+  members.py           180  who the estate knows: members, their Tailscale logins, roles and upload policies; the first
                             start from --upload-user, the demo's members; every change journaled (chapter 11)
+  journal.py            63  the estate's append-only log: append(con, actor, kind, subject, data) in the caller's
+                            transaction, since(con, id); the kinds, and where each is appended (chapter 11)
   catalog.py           749  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
                             clips), Live (chapter 11)
   browse.py            389  search, similar, facets, Years and Months, layout; an agent's searches; kind and is:video
@@ -81,13 +83,14 @@ photo-estate/                  the server and the web app (Python run with uv; n
   encoder.py           174  SigLIP's text (and image) side, for the photo app: loaded when asked for, let go when idle
   compare.py           340  an experiment: a fixed list of searches ranked by a second model beside the app's own, voted on, and a report, at /compare (chapter 10)
   compare-terms.txt     30  the searches a comparison asks, one a line
-  estate.py          1,046  ingest, link, exif, live (Live Photo pairs), dupes, review, tag, search, stats
-  faces.py             964  faces: run, serve, and the People class (who is who)
-  changes.py           439  albums and change sets: proposed, reviewed, applied, reverted (chapter 26)
+  estate.py          1,219  ingest, link, exif, live (Live Photo pairs), dupes, review, tag, search, stats; purge (one
+                            photo for good, by hand) and migrate (every photo's first sharer); the immutable flag (chapter 4)
+  faces.py             979  faces: run, serve, and the People class (who is who)
+  changes.py           473  albums and change sets: proposed, reviewed, applied, reverted, discarded as a mark (chapter 26)
   places.py            388  place names, local time, events, trips
-  estate_mcp.py        421  the library as MCP tools for an agent, at /mcp (chapter 26)
+  estate_mcp.py        423  the library as MCP tools for an agent, at /mcp (chapter 26)
   upload.py            340  receives phone uploads into an inbox (chapter 24)
-  tasks.py             301  a request in words, worked on by Claude Code on the library's computer (chapter 26)
+  tasks.py             317  a request in words, worked on by Claude Code on the library's computer (chapter 26)
   stats.py             181  the numbers behind the /stats page
   sync.py               98  the change feed a phone syncs from (chapter 20)
   scores.py             88  which photos are best: the two scorers (chapter 25)
@@ -98,7 +101,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
   core/                     what several parts must agree on, standard library only (issue #85):
     media.py                  file types: extension -> MIME, the image/video/RAW/upload sets, what each decoder skips,
                               what /video/ sends each video as (VIDEO_TYPES)
-    schema.py                 every SQLite table of every database, and the additive migrations: ensure(con, area)
+    schema.py                 every SQLite table of every database, and the additive migrations: ensure(con, area);
+                              the protected tables' triggers (chapter 5)
     config.py                 the default ports (8766 real, 8767 demo, 8768 preview, 8769 sandbox, 8765 review, 8764 faces)
     states.py                 the finite string domains as StrEnums (change set op/status/state, decisions, task,
                               ingest, intake job and stage, clustering), each value the string already stored (issue #90)
@@ -167,10 +171,13 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      49  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             6,847  16 self-running test scripts and 17 pytest files; conftest.py runs the scripts under pytest,
+  tests/             7,741  16 self-running test scripts and 20 pytest files; conftest.py runs the scripts under pytest,
                             test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_members.py checks members.py and its journal entries on a scratch catalog;
+                            test_journal.py checks journal.py and the one entry each write appends;
+                            test_append_only.py checks the protected tables, the sources only adding, the
+                            immutable flag, purge and migrate on scratch catalogs and stores;
                             test_core.py checks core/ against what the code before it did;
                             test_types.py checks the typed contracts (Catalog's fields, the enums) and runs pyright;
                             test_lifecycle.py makes the background loaders fail and race on purpose (issue #82);
