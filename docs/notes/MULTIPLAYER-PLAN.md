@@ -961,8 +961,11 @@ All eight phases are built, on the branch `multiplayer` (pull request 113), one 
 and the mini's app runs that branch. Each phase's "Built" note above says what was built and what was
 left out. What is still to do is the owner's, or waits on him:
 
-1. **The hold over the existing library has not been run** (open question 3 decided it must be, before
-   anyone else is let in). The dry run on the real library (`private.py library --member 1 --dry-run`)
+1. **The hold over the existing library was run on 2026-11-23 at 0.095, the owner's choice: 7,992 photos
+   are private to him** (one `photo.held` entry, one inbox item; the backup is
+   `~/photo-estate-lab/estate.db.before-hold-20261123-0638`). `HOLD_AT` is now 0.095 for new uploads too.
+   **He has not yet looked them over** (Inbox, or `is:held`), which open question 3 puts before anyone
+   else is let in. The dry run on the real library (`private.py library --member 1 --dry-run`)
    holds about a tenth of it at the built-in threshold, and the scores have no gap to put a threshold in:
 
    | `HOLD_AT` | photos held | of them with a named face | already hidden by the owner |
@@ -975,8 +978,8 @@ left out. What is still to do is the owner's, or waits on him:
 
    Above the threshold the share of photos with a face falls from 42% to about 12% and a third are PNGs,
    so it is mostly finding screenshots and documents; but a held photo leaves People for its sharer too
-   until released, and 12,000 is a lot to look over. The owner picks the threshold; the run takes seconds
-   (MAC-MINI.md has the steps). New phone uploads are already scored at 0.075 as they arrive.
+   until released, and 12,000 is a lot to look over. (The table is from the scores alone; the run also holds
+   what `catalog.is_screenshot` marks, 2,981 photos, whatever they score.)
 2. **Nobody but the owner is a member.** The test member's account is on the tailnet and is refused
    everything but the request-access page; it has not asked to be let in. It asks, and the owner approves
    it on `/members`, after item 1. Its red-team pass on the real library (open question 6) has therefore
