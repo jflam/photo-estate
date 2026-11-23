@@ -140,6 +140,8 @@ them its `fetch`es and is told what to draw.
 | What is known of the library (`LIB.known`) | library-flow.js | `unknown`, `asking`, `known`, `failed` | `known`: the months and years, the count in each month, every photo's shape, and the query they were asked with. `asking`: what was known before (it stays up meanwhile) and the `AbortController` of its two requests. `failed`: the error and what **Try again** does |
 | Where Albums is (`ALB.where`) | [albums-flow.js](../../photo-estate/app/albums-flow.js) | `list`, `album` | `album`: its id. (Its title, note and sections came with its photos: the album grid's `ready` state owns them) |
 | The list of albums (`ALB.listing`) | albums-flow.js | `idle`, `loading`, `ready`, `failed` | The server's answer, or the error |
+| The lenses under the albums (`LENS.page`) | [lens-flow.js](../../photo-estate/app/lens-flow.js) | `idle`, `loading`, `ready`, `saving`, `failed` | `ready`: the server's answer (`/api/lenses`); `saving`: that, and which row is being changed (one at a time); `failed`: the error |
+| Why the photo showing is hidden (`WHY.line`) | lens-flow.js (`WHY_STEPS`) | `idle` → `asking` → `known` → `saving` → `known`; `asking` → `failed`; any → `idle` | `asking`: the photo (asked after a short wait, so a photo swiped past is never asked about); `known`: its answer; `saving`: that, and whether it is being shown anyway or hidden again |
 | An album from a search (`MAKER.job`) | albums-flow.js | `idle` → `collecting` → `creating` → `idle`; `collecting` → `idle` | The question, the title and the note, as they were when it was asked for |
 | The search field (`FIELD`) | [query.js](../../photo-estate/app/query.js) (`FIELD_STEPS`) | `resting`, `typing` | — |
 | What plays in the viewer (`VIDEO`) | [video-flow.js](../../photo-estate/app/video-flow.js) (`VIDEO_STEPS`) | `still` → `video` → `failed` → `still`; `video` → `still`; `still` → `live` → `still` | `video`: the sha and the `<video>` playing it. `failed`: the sha. `live`: the clip's sha and the `<video>` playing it. `still`: nothing |
@@ -274,7 +276,8 @@ viewer's index and the server's `cursor`.
 
 The Library is every photo, newest first. Its bar floats over the photos (with a fade of the page colour
 behind it so it stays readable): a Back button, the **Years · Months · All** switch, then a View button and
-a ⋯ menu of the rest of your library (Name people, Add photos, Library info).
+a ⋯ menu of the rest of your library (Name people, Add photos, Changes, Library info; Members for a
+sysadmin), headed by who you are (*You are Ada*, `/api/me`).
 
 The heading says how many photos there are, rounded (`about()`), and what the view options hide, so it adds
 up to the whole library: *81K of 83K photos · 2.1K hidden*.
@@ -453,6 +456,8 @@ Over the photo:
   Photo, a fourth, **LIVE** (below).
 - On a desktop, ‹ › buttons at the sides (hidden on touch screens, where you swipe).
 - A note above the bar when something needs saying ("Tap share again", "The full-size image didn’t load").
+- Under the caption, for a photo your filters hide, **why** ("Hidden by your lens *Hidden photos* on Nov
+  23") and **Show it anyway** (or **Hide it again**): [chapter 26](26-albums-and-agents.md#lenses-on-the-pages).
 
 ### Three slides on a stage
 

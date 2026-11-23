@@ -166,9 +166,12 @@ photo-estate/                  the server and the web app (Python run with uv; n
     setup-flow.js       45    setup.html's two strict state machines (the page, the source panel) and their tables
     members-flow.js     51    members.html's strict machine (loading, ready, saving one change at a time, failed)
                               and what each member's row offers
+    lens-flow.js       165    lenses on the pages: search.html's Albums tab (the lenses, one change at a time;
+                              what each row says and offers), the viewer's "why" line (asked once a photo
+                              stays, "show it anyway"), and the words for a lens that changes.html shares
     video-flow.js       63    what plays in search.html's viewer: still, video, failed, live; every step out of
                               video or live lets the element's stream go (chapter 13)
-    tests/           2,619    their unit tests (video-flow.test.js among them), run by Node's own runner: `npm test` (chapter 17)
+    tests/           2,800    their unit tests (video-flow.test.js, lens-flow.test.js among them), run by Node's own runner: `npm test` (chapter 17)
     package.json              TypeScript, pinned, to check the modules' types (`npm run typecheck`); with
     package-lock.json         tsconfig.json and .npmrc (the lockfile names no registry). Nothing here is
                               shipped: the browser loads the modules as they are
@@ -201,7 +204,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             and that the servers send the modules as JavaScript (issue #89);
                             test_pages_browser.py (734 lines, slow tier) drives the secondary pages in a real
                             browser with Playwright and makes their requests fail or never end (issue #80);
-                            test_video_browser.py (slow tier) plays videos and Live Photos in search.html, in Chrome
+                            test_video_browser.py (slow tier) plays videos and Live Photos in search.html, in Chrome;
+                            test_lenses_browser.py (slow tier) uses the lenses on the pages as Ada, Ben and Cleo
   tests/fixtures/           schema_baseline.json (sqlite_master as older code made it, and the tables and columns
                             added since), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
@@ -325,7 +329,7 @@ import { toast } from "/app/toast.js";
 | [app/toast.js](../../photo-estate/app/toast.js) | `toast(message, { action })` |
 | [app/format.js](../../photo-estate/app/format.js) | `fmt`, `plural`, `dateParts`, `duration` |
 | [app/query.js](../../photo-estate/app/query.js), [app/layout.js](../../photo-estate/app/layout.js) | The parts of `search.html` that are pure functions: the question and its address, and the justified grid's rows |
-| [app/grid-flow.js](../../photo-estate/app/grid-flow.js), [app/library-flow.js](../../photo-estate/app/library-flow.js), [app/albums-flow.js](../../photo-estate/app/albums-flow.js), [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js), [app/video-flow.js](../../photo-estate/app/video-flow.js), [app/favourite.js](../../photo-estate/app/favourite.js) | `search.html`'s state over time: its machines, their tables, what each state owns, and the requests they make and cancel ([chapter 13](13-photo-app.md#the-machines), [issue #81](https://github.com/jflam/photo-estate/issues/81)). The page gives them its `fetch`es and is told what to draw |
+| [app/grid-flow.js](../../photo-estate/app/grid-flow.js), [app/library-flow.js](../../photo-estate/app/library-flow.js), [app/albums-flow.js](../../photo-estate/app/albums-flow.js), [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js), [app/video-flow.js](../../photo-estate/app/video-flow.js), [app/favourite.js](../../photo-estate/app/favourite.js), [app/lens-flow.js](../../photo-estate/app/lens-flow.js) | `search.html`'s state over time: its machines, their tables, what each state owns, and the requests they make and cancel ([chapter 13](13-photo-app.md#the-machines), [issue #81](https://github.com/jflam/photo-estate/issues/81)). The page gives them its `fetch`es and is told what to draw |
 | [app/loop.js](../../photo-estate/app/loop.js) | `loop(step)`: asking the server again and again for as long as a page is open. One step at a time (a timer and a click can never both start one), the step says how long to wait, a failing step does not end it, `pause()`/`resume()` for a hidden page, `stop()` aborts the step under way. `until(step, options)`: `poll()` that resolves to `{ state: "done" \| "timeout" \| "error" }` for a page that shows how the wait ended |
 | [app/work.js](../../photo-estate/app/work.js) | `single()`: work that must not overlap itself, not busy any more when it fails; `batch(items, step)`: several requests in a row, and which were done when one failed; `serial({ settle })`: requests one at a time in the order asked, and one call to put the page right after a failure |
 | [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js), [app/members-flow.js](../../photo-estate/app/members-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |

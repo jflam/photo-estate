@@ -138,7 +138,7 @@ def test_bens_filter_hides_for_ben_only(app):
     got = call(app, "GET", "/api/lenses", BEN)
     mine = next(lens for lens in got["lenses"] if lens["id"] == got["mine"])
     assert (mine["title"], mine["kind"], mine["published"], mine["on"], mine["photos"], mine["sets"]) == \
-        ("Ben's hidden photos", "filter", False, True, 1, [sid])
+        ("Hidden photos", "filter", False, True, 1, [sid])
     assert call(app, "GET", "/api/lenses", ADA)["lenses"] == []      # not published: Ada does not see it
     # reverting it shows the photo again, to Ben
     call(app, "POST", f"/api/changes/{sid}/revert", BEN)
@@ -153,7 +153,7 @@ def test_why_says_whose_lens(app):
     sid = hide(app, BEN, [x])
     why = call(app, "GET", f"/api/photos/{x}/why", BEN)
     assert why["hidden"] and not why["visible"] and why["reasons"][0]["set"]["id"] == sid
-    assert why["text"].startswith("Hidden by your Ben's hidden photos lens on 20")
+    assert why["text"].startswith("Hidden by your lens “Hidden photos” on "), why
     assert call(app, "GET", f"/api/photos/{x}/why", ADA)["reasons"] == []     # Ben's hides are not Ada's business
     call(app, "GET", f"/api/photos/{'0' * 64}/why", BEN, expect=404)
 
@@ -185,7 +185,7 @@ def test_an_estate_default_hides_for_all_until_one_opts_out(app):
     assert (dflt["title"], dflt["published"], dflt["on"], dflt["mine"], dflt["owner"]["name"]) == \
         ("Estate defaults", True, True, False, "Ada")
     why = call(app, "GET", f"/api/photos/{z}/why", CLEO)
-    assert why["text"].startswith("Hidden by Ada's Estate defaults lens on 20"), why
+    assert why["text"].startswith("Hidden by Ada's lens “Estate defaults” on "), why
     assert z in faces.default_hidden(sqlite3.connect(app.a.db)), "People is built without it"
     # Cleo opts out: she sees it, nobody else does
     assert call(app, "POST", f"/api/lenses/{dflt['id']}/unsubscribe", CLEO)["mode"] == "opted_out"

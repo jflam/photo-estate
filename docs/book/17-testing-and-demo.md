@@ -236,6 +236,17 @@ and are skipped when there is none. CI does not run them (they are slow, and it 
 uv run pytest tests/test_pages_browser.py     # about 45 s once the servers' environments exist
 ```
 
+**Lenses in a browser.** [`tests/test_lenses_browser.py`](../../photo-estate/tests/test_lenses_browser.py)
+(slow tier) uses them as the demo's three members, each a browser of its own (`X-Demo-Member`), on one
+demo app: Ben hides two photos on the review page (told they are hidden from him, and through which lens)
+and they leave his library only, while Ada is told his set is not there; Ben's **See them** lists them, the
+viewer says why one is hidden, **Show it anyway** shows it and **Hide it again** takes that back; Ben
+publishes his filter and Cleo subscribes, keeps a copy instead (a later hide of Ben's does not reach her),
+subscribes again and unsubscribes; Ada publishes an album and Ben opens the series (without the photo he
+hid) and subscribes; Ada hides a photo from everyone with the review page's choice; Ben proposes his
+filter, Ada makes it an estate default, Cleo opts out; and the Library's menu names the member and offers
+Members to a sysadmin only.
+
 **Videos in a browser.** [`tests/test_video_browser.py`](../../photo-estate/tests/test_video_browser.py)
 (slow tier) plays them on `search.html`, on `tools/video_demo.py`'s library: the scope control's Videos shows only
 the videos, each tile with its length and a Live Photo's with LIVE; a video opens playing, Space pauses

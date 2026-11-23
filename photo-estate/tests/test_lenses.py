@@ -112,7 +112,7 @@ def test_the_writes_and_what_they_refuse(db):
     con = db.con
     mine, made = lenses.mine(con, db.ben)
     con.commit()
-    assert made and lenses.mine(con, db.ben) == (mine, False) and lenses.get(con, mine).title == "Ben's hidden photos"
+    assert made and lenses.mine(con, db.ben) == (mine, False) and lenses.get(con, mine).title == "Hidden photos"
     hiding(con, db.ben, mine, SHAS[:2])
     with pytest.raises(lenses.LensError) as e:
         lenses.subscribe(con, db.cleo, mine, "live")
@@ -182,10 +182,21 @@ def test_why(db):
     st = lenses.read(con)
     got = lenses.why(con, st, db.ben, SHAS[0])
     assert got["hidden"] and [r["lens"]["title"] for r in got["reasons"]] == ["No screenshots", "Estate defaults"]
-    assert got["text"] == "Hidden by your No screenshots lens on 2026-11-03"
-    assert lenses.why(con, st, db.cleo, SHAS[0])["text"] == "Hidden by Ada's Estate defaults lens on 2026-11-03"
+    nov3 = lenses.day("2026-11-03T10:00:00Z")
+    assert got["text"] == f"Hidden by your lens “No screenshots” on {nov3}"
+    assert lenses.why(con, st, db.cleo, SHAS[0])["text"] == f"Hidden by Ada's lens “Estate defaults” on {nov3}"
+    lenses.show(con, db.cleo, SHAS[0], True)
+    assert lenses.why(con, lenses.read(con), db.cleo, SHAS[0])["text"] == f"Shown anyway; hidden by Ada's lens “Estate defaults” on {nov3}"
     assert lenses.why(con, st, db.cleo, SHAS[1]) == {"sha": SHAS[1], "hidden": False, "shown_anyway": False,
                                                        "reasons": [], "text": None}
     listing = lenses.listing(con, st, db.cleo)
     assert [x["title"] for x in listing["lenses"]] == ["Estate defaults"] and listing["mine"] is None
     assert [x["title"] for x in lenses.listing(con, st, db.ben)["lenses"]] == ["Estate defaults", "No screenshots"]
+
+
+def test_day():
+    from datetime import datetime
+    today = datetime(2026, 11, 22)
+    assert lenses.day("2026-11-03T10:00:00Z", today) == "Nov 3"
+    assert lenses.day("2025-01-30", today) == "Jan 30, 2025"
+    assert lenses.day(None, today) == "" and lenses.day("soon", today) == ""

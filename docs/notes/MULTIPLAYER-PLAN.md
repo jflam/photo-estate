@@ -469,6 +469,20 @@ built: no inbox item for a proposal or a lens that changed (phase 4); `maintaine
 nothing sets; the pixel routes ask `shared_for`, which is every photo until phase 5. The cost:
 docs/notes/PERFORMANCE.md (2026-11-22).*
 
+*The pages, the same day ([chapter 26](../book/26-albums-and-agents.md#lenses-on-the-pages)): no new
+endpoint. The Albums tab lists the member's albums and subscribed series as cards, then the filters (theirs,
+proposals for a sysadmin, estate defaults, those others publish) and others' series as rows with what each
+offers, and says what subscribing does in this note's words; **See them** is Search with `hidden=1`. The
+review page chooses You or Everyone before a set's first apply and names its lens after; the viewer asks
+`why` for each photo that stays and offers "show it anyway"; the Library's menu says who you are and links
+`/members` for a sysadmin. The machines and the words are one module, `app/lens-flow.js`, with its unit
+test, and `tests/test_lenses_browser.py` uses them as Ada, Ben and Cleo. The server's change: `why`'s text
+reads "Hidden by your lens “Hidden photos” on Nov 23", and a member's own filter is titled "Hidden photos"
+(whose it is is said beside it). Not built: making a new empty filter from the page (`POST /api/lenses`
+has no button: a filter is made by hiding, or by keeping a copy), and any list of the photos shown anyway
+(one is taken back from the viewer); a snapshot ends a live
+subscription, as the server keeps one mode per member and lens.*
+
 - `lenses.py` (unit-tested): a lens is a row of `lenses` over a change set (`changes.py` keeps doing
   the work of holding photos, sections, reasons and queries). A filter lens's photos are hidden from
   its subscribers: `hidden(sha256, set_id)` stays as it is, and what a member's filters hide is the rows

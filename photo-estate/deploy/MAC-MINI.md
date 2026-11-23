@@ -428,5 +428,5 @@ launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search
 
 The owner's phone keeps `sync-feed.db`; another member's phone gets `sync-feed-<member id>.db` beside the
 catalog the first time it asks. Nothing else changes for the owner: his new hides go to his own filter
-lens ("John's hidden photos") unless he applies a set to the Estate defaults, and only he uses the app
+lens ("Hidden photos") unless he applies a set to the Estate defaults, and only he uses the app
 until phase 5 (open question 3 of the plan).

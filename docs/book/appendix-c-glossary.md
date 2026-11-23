@@ -134,7 +134,9 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Shared (for a member).** What a member may ever be shown (`Live.shared_for`): every photo, until private photos (phase 5 of the multiplayer plan). The pixel routes, `why` and "show it anyway" go by it ([11](11-server.md#what-each-member-sees-lenses)).
 
-**Show it anyway.** A member's word that one photo their filters hide is shown to them all the same (`shown`) ([11](11-server.md#what-each-member-sees-lenses)).
+**Show hidden.** Search with `hidden=1`: only the photos a member's filters hide, under a *Hidden from you* chip; the Albums tab's **See them** ([26](26-albums-and-agents.md#lenses-on-the-pages)).
+
+**Show it anyway.** A member's word that one photo their filters hide is shown to them all the same (`shown`); said from the viewer's why line ([11](11-server.md#what-each-member-sees-lenses), [26](26-albums-and-agents.md#lenses-on-the-pages)).
 
 **Snapshot (subscription).** A copy of what a lens holds now into a lens or album of the member's own; it does not follow later changes, as a live subscription does ([11](11-server.md#what-each-member-sees-lenses)).
 

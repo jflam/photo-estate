@@ -55,6 +55,10 @@ h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032
 .why .ok { color: var(--yes); font-weight: 700; }
 .why .bad { color: var(--no); font-weight: 700; }
 .why .link { margin-left: 6px; }
+.for:empty { display: none; }
+.for .seg { margin: 0 6px; vertical-align: middle; }
+.for i { color: var(--ink-2); }
+.for b { color: var(--ink-2); font-weight: 600; }
 .fin { margin: 0 4px 12px; padding: 14px 18px; border-radius: var(--r); background: var(--well); font-size: 15px; color: var(--ink-2); max-width: 110ch; }
 .fin b { color: var(--ink); }
 .fin.done b:first-child { color: var(--yes); }
@@ -112,6 +116,7 @@ import { api, isAbort } from "/app/api.js";
 import { latest, STALE } from "/app/fsm.js";
 import { loop } from "/app/loop.js";
 import { settle, edits } from "/app/changes-flow.js";
+import { lensName } from "/app/lens-flow.js";
 import { toast } from "/app/toast.js";
 
 const store = {   // what this browser remembers: the size of the photos, and where you were in each set
@@ -139,14 +144,16 @@ function taskCard(t) {
     ${t.change_sets.map(c => `<a class="btn ask" href="${c.review}">Review ${plural(c.photos, "photo")}: ${esc(c.title)}</a>`).join(" ")}</div>`;
 }
 async function home(signal) {
-  const [d, k] = await Promise.all([api("/api/changes", undefined, { signal }), api("/api/tasks", undefined, { signal })]);
+  const [d, k, me] = await Promise.all([api("/api/changes", undefined, { signal }), api("/api/tasks", undefined, { signal }),
+    api("/api/me", undefined, { signal }).catch(() => null)]);
+  d.sysadmin = me?.role === "sysadmin";
   $("#crumb").innerHTML = "Changes";
-  $("#sum").textContent = d.hidden ? `${plural(d.hidden, "photo")} hidden` : "";
+  $("#sum").textContent = d.hidden ? `${plural(d.hidden, "photo")} hidden from you` : "";
   const counts = s => [s.applied && `${fmt(s.applied)} hidden`, s.n - s.reject - s.applied > 0 && `${fmt(s.n - s.reject - s.applied)} to hide`,
     s.reject && `${fmt(s.reject)} kept`].filter(Boolean).join(" · ");
   const draft = $("#ask")?.value ?? "", typing = document.activeElement?.id === "ask";
   $("#main").innerHTML = `<h1>Changes</h1>
-    <p class="sub">Say what should go, and an agent on this computer works out which photos you mean. It proposes them as a change set; nothing happens to the library until you have looked and applied it. An applied set is then committed, or reverted to show every photo again.</p>
+    <p class="sub">Say what should go, and an agent on this computer works out which photos you mean. It proposes them as a change set; nothing is hidden until you have looked and applied it, and then only from you${d.sysadmin ? ", unless you hide them from everyone" : ""}. An applied set is then committed, or reverted to show every photo again.</p>
     <form class="ask" id="askForm"><textarea id="ask" rows="2" placeholder="Hide the photos from the school: young children nobody has named, outdoors or in a classroom" ${k.available ? "" : "disabled"}></textarea>
       <button class="btn pri" ${k.available ? "" : "disabled"}>Ask</button></form>
     ${k.available ? "" : `<p class="sub">${esc(k.why)}.</p>`}
@@ -219,11 +226,12 @@ function paintBars() {
   fin.hidden = !(done || (ready && S.state !== "reverted") || (n.applied && !ready));
   fin.className = `fin${done ? " done" : ""}`;
   fin.innerHTML = done ? `<b>Done.</b> ${stands}. Committed ${day(S.done_at || "")}. To change or revert it, reopen it first.`
-    : ready ? `<b>Applied, not yet committed.</b> ${stands}. Look at the library; then <b>Commit</b> to finish, or <b>Revert</b> to show every photo again.`
+    : ready ? `<b>Applied, not yet committed.</b> ${stands}. Look at your library; then <b>Commit</b> to finish, or <b>Revert</b> to show every photo again.`
     : `<b>Partly applied.</b> ${stands} so far; ${todo.join(", ").toLowerCase()} still to apply.`;
   $("#main").classList.toggle("locked", done);
   $("#hint").textContent = done ? "This set is done. Nothing here can be changed until it is reopened."
-    : "Everything here will be hidden, except what you mark to keep.";
+    : `Everything here will be hidden from ${hidesFor() === "estate" ? "everyone" : "you"}, except what you mark to keep.`;
+  paintFor(n);
   const dock = $("#dock");
   dock.hidden = false;
   dock.innerHTML = `<span class="say num">${done ? `<b>Done</b> · ${fmt(n.applied)} hidden · ${fmt(n.keep)} kept`
@@ -323,7 +331,7 @@ function neighbour(dx, dy) {
 }
 
 async function openSet(id) {
-  S = await api(`/api/changes/${id}`);
+  [S, LENSES] = await Promise.all([api(`/api/changes/${id}`), api("/api/lenses").catch(() => null)]);
   changing = edits(S, () => api(`/api/changes/${S.id}`), reconciled);
   document.title = `${S.title} — Changes — Photo Estate`;
   $("#back").href = "/changes";
@@ -332,7 +340,7 @@ async function openSet(id) {
   $("#main").innerHTML = `<div class="tools">
       <div class="seg" id="seg"><button data-f="all">All<span></span></button><button data-f="keep">Kept<span></span></button></div>
       <span class="size"><button class="round" data-size="-1" aria-label="Smaller photos">−</button><button class="round" data-size="1" aria-label="Bigger photos">+</button></span>
-      <span id="hint"></span>
+      <span id="hint"></span><span class="for" id="for"></span>
       <span class="keys"><span><b>Click</b> or <kbd>K</kbd> keep</span><span><kbd>Space</kbd> zoom</span><span><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move</span><span><kbd>−</kbd><kbd>+</kbd> size</span><span><kbd>U</kbd> apply up to here</span></span></div>
     <div class="fin" id="fin" hidden></div>
     <div class="why" id="why">${esc(S.prompt || "")}</div>
@@ -360,6 +368,42 @@ async function openSet(id) {
   render();
   tile(cur)?.scrollIntoView({ block: "center" });
   if (S.busy) watchSettle(); else if (S.applied) check();
+}
+
+// ── whom a set hides from: the lens it is applied to ───────────────────────────────────────────
+// A set hides from the members who see through its lens: by default the owner's own filter (from them alone);
+// a sysadmin may hide from everyone (the estate defaults, which a member may opt out of). The choice is made
+// before the set hides anything, and sent with its first apply; after that the set keeps its lens, and the
+// page says which, until it hides nothing again (reverted).
+let LENSES = null, FOR = null;   // GET /api/lenses (null if it could not be read); the choice, once one is made
+const lensNow = () => S.lens != null ? LENSES?.lenses.find(x => x.id === S.lens) || null : null;
+function choices() {
+  if (!LENSES) return [];
+  const own = LENSES.lenses.filter(x => x.kind === "filter" && x.mine && !x.estate_default);
+  const out = own.length ? own.map(x => ({ v: x.id, label: x.id === LENSES.mine ? "You" : x.title })) : [{ v: "mine", label: "You" }];
+  if (LENSES.sysadmin) out.push({ v: "estate", label: "Everyone" });
+  return out;
+}
+const choosing = () => S.state !== "done" && tally().applied === 0 && choices().length > 1;
+function hidesFor() {                    // what the next first apply names: the choice made, else the set's own lens, else "mine"
+  const cs = choices(), now = lensNow();
+  const own = now?.estate_default ? "estate" : now?.id;
+  return [FOR, own].find(v => v != null && cs.some(c => c.v === v)) ?? cs[0]?.v ?? "mine";
+}
+function paintFor(n) {
+  const el = $("#for");
+  if (!el) return;
+  if (choosing()) {
+    const v = hidesFor();
+    el.innerHTML = `Hide from <span class="seg" id="forSeg">${choices().map(c => `<button data-for="${esc(c.v)}" class="${c.v === v ? "on" : ""}">${esc(c.label)}</button>`).join("")}</span>`
+      + `<span>${v === "estate" ? "Every member, unless they opt out of the estate defaults." : "You only: nobody else’s view changes."}</span>`;
+    $("#forSeg").onclick = e => { const b = e.target.closest("[data-for]"); if (!b) return; FOR = /^\d+$/.test(b.dataset.for) ? +b.dataset.for : b.dataset.for; paintBars(); };
+    return;
+  }
+  const lens = lensNow();
+  el.innerHTML = !n.applied && !lens ? ""
+    : lens ? `${n.applied ? "Hidden" : "Hides"} from <b>${lens.estate_default ? "everyone" : lens.mine ? "you" : "its subscribers"}</b> through ${lensName(lens)}${lens.estate_default ? " (a member may opt out)" : lens.published ? ", and from whoever subscribes to it" : ""}`
+    : S.lens == null ? "Hidden from <b>everyone</b>: a set from before lenses" : "";
 }
 
 // ── one photo, as big as the window ─────────────────────────────────────────────────────────
@@ -412,9 +456,11 @@ addEventListener("keydown", e => {
 // rest waits, so a long set can be looked over and applied a stretch at a time.
 async function apply(through) {
   for (const b of [$("#apply"), $("#upto")]) if (b) b.disabled = true;
-  const r = await changing.make(null, () => api(`/api/changes/${S.id}/apply`, through ? { through } : {}));
+  const lens = choosing() ? { lens: hidesFor() } : {};   // the first apply says whom the set hides from; after that it keeps its lens
+  const r = await changing.make(null, () => api(`/api/changes/${S.id}/apply`, { ...(through ? { through } : {}), ...lens }));
   if (!r.ok) return;                                 // reconciled() has redrawn the set and said why
-  S.state = r.value.state;
+  S.state = r.value.state; S.lens = r.value.lens;
+  if (S.lens != null && !lensNow()) api("/api/lenses").then(l => { LENSES = l; paintBars(); }).catch(() => {});   // made on first use: its name
   const end = through ? S.items.findIndex(it => it.sha === through) + 1 : S.items.length;
   S.items.slice(0, end).forEach(it => { it.applied = !kept(it); paintTile(it); });
   paintBars(); paintZoom();
@@ -469,15 +515,17 @@ function showCheck(r) {
   const c = r.state === "done" ? r.value : null;
   if (!c || c.busy) return again(`<span class="bad">Still updating.</span> The app has not finished taking this change in${r.state === "timeout" ? " after two minutes" : ""}. The change itself is saved.`);
   unsettled = false;
-  const parts = [c.hidden && `${plural(c.hidden, "hidden photo")} ${c.hidden === 1 ? "is" : "are"} in no view and not on phones`,
-    c.visible && `${plural(c.visible, "other photo")} of this set ${c.visible === 1 ? "is" : "are"} in the library`].filter(Boolean);
+  const parts = [c.hidden && `${plural(c.hidden, "hidden photo")} ${c.hidden === 1 ? "is" : "are"} in none of your views and not on your phones`,
+    c.visible && `${plural(c.visible, "other photo")} of this set ${c.visible === 1 ? "is" : "are"} in your library`].filter(Boolean);
   $("#why").innerHTML = c.wrong.length
     ? `<span class="bad">${plural(c.wrong.length, "photo")} not where ${c.wrong.length === 1 ? "it" : "they"} should be.</span> ${c.wrong.slice(0, 5).map(w => `${w.sha.slice(0, 10)} should be ${w.should_be}`).join("; ")}`
     : `<span class="ok">Checked.</span> ${parts.join("; ") || "This set has no photos"}.`;
 }
 
 function failed(e) {
-  $("#main").innerHTML = `<div class="blank">${MARK}<h3>Could not open this</h3><p>${esc(e.message)}</p><a class="btn" href="/changes">All changes</a></div>`;
+  $("#main").innerHTML = e?.status === 404    // someone else's, or put away: the server says there is none
+    ? `<div class="blank">${MARK}<h3>This change set is not here</h3><p>It may be someone else’s: each member sees only their own. Or it was put away.</p><a class="btn" href="/changes">Your changes</a></div>`
+    : `<div class="blank">${MARK}<h3>Could not open this</h3><p>${esc(e.message)}</p><a class="btn" href="/changes">All changes</a></div>`;
 }
 const id = location.pathname.match(/^\/changes\/(\d+)/)?.[1];
 if (id) openSet(id).catch(failed); else watching.start();

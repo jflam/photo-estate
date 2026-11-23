@@ -172,7 +172,7 @@ reading the `hidden` table, or a photo's facts for a favourite, outside the modu
   lens of M's with one applied set; a series: a new album of M's with the photos M sees of it); it does
   not follow later changes. A live subscription does, at once.
 - **Applying** a hiding set hides for a lens chosen at its first apply: the owner's own filter by default
-  ("Ben's hidden photos", made then), or the Estate defaults, for a sysadmin who asks (`{lens: "estate"}`).
+  (titled plainly "Hidden photos", made then), or the Estate defaults, for a sysadmin who asks (`{lens: "estate"}`).
   A set that hides something keeps its lens until it is reverted.
 - **Proposing** a filter as an estate default publishes it and marks it (`lenses.proposed_at`); a
   sysadmin accepts (it becomes one) or declines. The inbox item that tells the sysadmin comes in phase 4.
@@ -194,7 +194,9 @@ outside the gate, like a favourite: the change is in every view (`relook`, on th
 before the answer goes back, and the feeds and People follow in the background. An apply on the review
 page is taken in in the background as before (`busy` until it is). **Why** a member does not see a photo
 is `GET /api/photos/<sha>/why`, read from the state tables (the hidden rows, their sets, the sets' lenses
-and the lenses' owners), never the journal: "Hidden by Ada's Estate defaults lens on 2026-11-03".
+and the lenses' owners), never the journal: "Hidden by Ada's lens “Estate defaults” on Nov 3" (`text`; the
+year only when it is not this one), "Hidden by your lens “Hidden photos” on Nov 23"; `reasons` carries the
+same, structured, for a page to word itself. The pages that use all of this are [chapter 26](26-albums-and-agents.md#lenses-on-the-pages).
 
 **Albums** are their owner's (`change_sets.owner`): a member lists and opens their own and the series
 others publish, and only the owner changes one. Inside any album or series, whoever made it, the photos are

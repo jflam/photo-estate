@@ -34,7 +34,7 @@ of M's and one applied hiding set; a series: a new album of M's): later changes 
   State.on(member) / hidden_for(member) / default_hidden()   which filters are on; what they hide; what the
                                  estate defaults hide (People is built without those: faces.py)
   add(con, owner, title, ...)    a lens row (and its lens.created entry), in the caller's transaction
-  mine(con, member, name)        the member's own filter lens, made on first use ("Ben's hidden photos")
+  mine(con, member)              the member's own filter lens, made on first use ("Hidden photos": MINE_TITLE)
   estate_default(con)            the Estate defaults lens, made if there is none (both: in the caller's transaction)
   create(con, member, title)     a new filter lens of the member's
   subscribe(con, member, lens, mode, shas=None) / unsubscribe(con, member, lens)
@@ -43,6 +43,7 @@ of M's and one applied hiding set; a series: a new album of M's): later changes 
   show(con, member, sha, on)     "show it anyway", and taking that back
   set_favorites(con, member, shas, on)
   listing(con, state, member) -> {lenses: [...]}     why(con, state, member, sha) -> dict
+  day(at)                        a day as the pages say it: "Nov 3", or "Nov 3, 2025" in another year
   LensError                      what a member may not do, with the HTTP status to answer it with
 
 Every write appends one journal entry (journal.py) in the same transaction and commits: lens.created,
@@ -232,11 +233,6 @@ def owner_of(con, lens: Lens) -> int | None:
     return lens.owner if lens.owner is not None else sysadmin_id(con)
 
 
-def name_of(con, member: int | None) -> str:
-    row = con.execute("SELECT name FROM members WHERE id=?", (member,)).fetchone() if member is not None else None
-    return row[0] if row else "this computer"
-
-
 def hides(con, lid: int) -> list[str]:
     """What a filter lens hides now: the photos its sets hide."""
     return [r[0] for r in con.execute("SELECT DISTINCT h.sha256 FROM hidden h JOIN change_sets s ON s.id = h.set_id"
@@ -258,16 +254,19 @@ def add(con, owner, title, kind="filter", *, set_id=None, published=False, estat
     return lid
 
 
-def mine(con, member: int | None, name: str | None = None) -> tuple[int, bool]:
+MINE_TITLE = "Hidden photos"     # a member's own filter: "your lens Hidden photos", "Ben's lens Hidden photos"
+
+
+def mine(con, member: int | None) -> tuple[int, bool]:
     """(the member's own filter lens, whether it was made now): where their hides go by default, made on first
-    use and named plainly ("Ben's hidden photos"), in the caller's transaction. The caller's journal entry
-    says so (changes.py: album.applied {lens, lens_made})."""
+    use and named plainly (MINE_TITLE: whose it is is said beside it, never in it), in the caller's
+    transaction. The caller's journal entry says so (changes.py: album.applied {lens, lens_made})."""
     m = member if member is not None else sysadmin_id(con)
     row = con.execute("SELECT id FROM lenses WHERE kind='filter' AND estate_default=0 AND owner IS ? ORDER BY id LIMIT 1",
                       (m,)).fetchone()
     if row:
         return row[0], False
-    return add(con, m, f"{name or name_of(con, m)}'s hidden photos", entry=False), True
+    return add(con, m, MINE_TITLE, entry=False), True
 
 
 def estate_default(con) -> tuple[int, bool]:
@@ -524,6 +523,20 @@ def why(con, st: State, member: int | None, sha: str) -> dict:
     if reasons:
         r = reasons[0]
         whose = "your" if r["mine"] else f"{r['owner']['name'] or 'someone'}'s"
-        what = f"{whose} {r['lens']['title']} lens" if r["lens"] else f"{whose} change set {r['set']['title']}"
-        text = f"{'Shown anyway; hidden' if anyway else 'Hidden'} by {what} on {(r['hidden_at'] or '')[:10]}"
+        what = f"{whose} lens “{r['lens']['title']}”" if r["lens"] else f"{whose} change set “{r['set']['title']}”"
+        when = f" on {day(r['hidden_at'])}" if day(r["hidden_at"]) else ""
+        text = f"{'Shown anyway; hidden' if anyway else 'Hidden'} by {what}{when}"
     return {"sha": sha, "hidden": bool(reasons) and not anyway, "shown_anyway": anyway, "reasons": reasons, "text": text}
+
+
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def day(at: str | None, today: datetime | None = None) -> str:
+    """A day as the pages say it: "Nov 3", with the year when it is not this one ("Nov 3, 2025"); "" for none."""
+    try:
+        d = datetime.strptime((at or "")[:10], "%Y-%m-%d")
+    except ValueError:
+        return ""
+    year = (today or datetime.now(timezone.utc)).year
+    return f"{MONTHS[d.month - 1]} {d.day}" + ("" if d.year == year else f", {d.year}")

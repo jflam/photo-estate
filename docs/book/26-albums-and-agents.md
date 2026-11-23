@@ -95,12 +95,46 @@ The first (and so far only) operation is **hide**: the photo stays in the store 
 left out of every view (search, the Library, People's lists, and the copy a phone keeps) of the members
 who see through the set's **lens**. Files are never touched. The `hidden` table is keyed by photo *and*
 set, so a photo two sets hide stays hidden until both are undone. A set's lens is chosen when it is first
-applied (`change_sets.lens_id`): by default the owner's own filter ("Ben's hidden photos", made then),
+applied (`change_sets.lens_id`): by default the owner's own filter ("Hidden photos", made then),
 so one member's hides hide nothing for anyone else; a sysadmin may apply to the Estate defaults instead,
 which every member sees through unless they opt out ([chapter 11](11-server.md#what-each-member-sees-lenses),
 [issue 47](https://github.com/jflam/photo-estate/issues/47)).
 
 ![A change set to review: six photos an agent proposed hiding](../screenshots/changes-review.jpg)
+
+## Lenses on the pages
+
+Phase 3 of the multiplayer plan made hiding personal ([chapter 11](11-server.md#what-each-member-sees-lenses));
+these are the places a member meets it. The machines and the words are
+[app/lens-flow.js](../../photo-estate/app/lens-flow.js), unit-tested in `app/tests/lens-flow.test.js`.
+
+- **The Albums tab** shows, as cards, the member's own albums and the series they subscribe to (badged
+  with the owner's name; a published album of their own says *Published*). Under them, **Filters**, a row
+  each: theirs (*Yours: always on*, how many photos it hides, *What it hides* to its sets on `/changes`,
+  **Publish** or **Stop publishing**, **Propose as an estate default**); for a sysadmin, those *waiting to
+  decide* (**Make it an estate default**, **Decline**); the **estate defaults** (**Opt out**, **Opt back
+  in**, **Keep a copy instead**); and those **published by others** (**Subscribe**, **Keep a copy**,
+  **Unsubscribe**). A filter is not opened: its row says what it hides and whether it is on, and the line
+  over them says what a filter is and how many photos those on hide, with **See them**: Search with
+  `hidden=1`, under a *Hidden from you* chip. Last, the **series published by others**: opened like an
+  album, with **Subscribe** and **Keep a copy**. Beside each Subscribe the page says what it does, in the
+  plan's words: a filter's "changes what you see everywhere", a series' "adds it to your Albums". One change
+  at a time; the lenses are asked for again after each, and the Library and Search after a filter changed.
+  A snapshot ("keep a copy") ends a live subscription: the server keeps one mode per member and lens.
+- **An album's ⋯ menu**: an album of one's own can be **published as a series** (or no longer); someone
+  else's series offers subscribing, a copy, favourites and the download, and nothing that changes it.
+- **The review page** (`/changes/<id>`) says whom the set hides from. Before it hides anything, a sysadmin
+  chooses **Hide from You | Everyone** (the Estate defaults); a member has one choice and is told *hidden
+  from you*. The choice goes with the first apply (`{lens}`); after that the page names the lens, "Hidden
+  from you through your lens *Hidden photos*", until the set is reverted. A set or album that is not the
+  member's answers 404, and the page says so plainly: *This change set is not here*, *This album is not here*.
+- **The viewer's why line.** Each photo that stays on screen a quarter of a second is asked about
+  (`GET /api/photos/<sha>/why`); for one the member's filters hide (in a hiding set's review, in **See
+  them**, wherever else it is opened) a line under the caption says why, "Hidden by your lens *Hidden
+  photos* on Nov 23", with **Show it anyway**, and once shown, **Hide it again**. The lists behind the viewer
+  are asked for again when it closes.
+- **The Library's ⋯ menu** names the member (*You are Ada*, from `GET /api/me`) and offers **Members** to a
+  sysadmin; on the demo, **Be another member**.
 
 ## The library as tools: MCP
 

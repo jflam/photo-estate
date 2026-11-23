@@ -23,7 +23,7 @@ test("words alone: asked, not filtered", () => {
 
 test("every part of a question survives the address and back", () => {
   const s = blank();
-  Object.assign(s, { q: "kids at the lake & more", plain: true, event: "e12", stack: "abc", fav: true, from: "2015-06", to: "2016-08", sort: "best", video: true });
+  Object.assign(s, { q: "kids at the lake & more", plain: true, event: "e12", stack: "abc", fav: true, from: "2015-06", to: "2016-08", sort: "best", video: true, hidden: true });
   s.f.person = ["Ada O'Neil", "Ben"];
   s.f.city = ["Paris, Île-de-France, France"];
   s.f.trip = ["7"];
@@ -56,7 +56,7 @@ test("more like this photo: asked, by sha", () => {
 });
 
 test("anything but the words and the photo is a filter", () => {
-  for (const address of ["person=Ada", "country=France", "event=e1", "stack=abc", "fav=1", "from=2015-06", "to=2015-06", "lens=50mm"]) {
+  for (const address of ["person=Ada", "country=France", "event=e1", "stack=abc", "fav=1", "from=2015-06", "to=2015-06", "lens=50mm", "hidden=1"]) {
     const s = fromParams(new URLSearchParams(address));
     assert.equal(filtered(s), true, address);
     assert.equal(isEmpty(s), false, address);
