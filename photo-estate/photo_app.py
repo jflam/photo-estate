@@ -182,14 +182,19 @@ def tailscale_whois(addr: str) -> tuple[str, str] | None:
     ComputedName, else the first label of its MagicDNS Name), or None when it cannot be asked or does not say."""
     import shutil
     import subprocess
-    exe = shutil.which("tailscale") or next((x for x in TAILSCALE if os.path.exists(x)), None)
-    if not exe or not re.fullmatch(r"[0-9a-fA-F.:]+", addr):
+    if not re.fullmatch(r"[0-9a-fA-F.:]+", addr):
         return None
-    try:
-        got = subprocess.run([exe, "whois", "--json", addr], capture_output=True, text=True, timeout=4)
-        node = (json.loads(got.stdout) if got.returncode == 0 else {}).get("Node") or {}
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
+    node: dict = {}
+    # Each CLI in turn until one answers: the one on PATH may be a wrapper that cannot be run (the mini's is a
+    # script with no usable first line, which a shell runs and exec does not).
+    for exe in dict.fromkeys(x for x in (shutil.which("tailscale"), *TAILSCALE) if x and os.path.exists(x)):
+        try:
+            got = subprocess.run([exe, "whois", "--json", addr], capture_output=True, text=True, timeout=4)
+            node = (json.loads(got.stdout) if got.returncode == 0 else {}).get("Node") or {}
+        except (OSError, subprocess.SubprocessError, ValueError):
+            continue
+        if node.get("StableID"):
+            break
     name = node.get("ComputedName") or (node.get("Name") or "").split(".")[0]
     return (f"node:{node['StableID']}", name or addr) if node.get("StableID") else None
 
