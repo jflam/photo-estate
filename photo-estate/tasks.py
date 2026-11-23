@@ -10,7 +10,7 @@ a list of events, so the work can be watched while it runs and read afterwards. 
 
   GET  /api/tasks                 whether an agent can run here, and every task, newest first
   GET  /api/tasks/<id>?after=N    one task, with its events after event N, and the change set it made
-  POST /api/tasks      {prompt}   start one
+  POST /api/tasks      {prompt}   start one (it records the member who asked: acting_for)
   POST /api/tasks/<id>/cancel
 
 The same over MCP for a chat client: submit_task, get_task, cancel_task.
@@ -115,7 +115,8 @@ class Tasks:
 
     # -- reading ---------------------------------------------------------------------------------
 
-    COLS = ("id", "prompt", "status", "created_by", "created_at", "started_at", "finished_at", "result", "error", "turns", "cost")
+    COLS = ("id", "prompt", "status", "created_by", "created_at", "started_at", "finished_at", "result", "error", "turns", "cost",
+            "acting_for")
 
     def task(self, con, tid: int, after: int | None = None) -> dict | None:
         row = con.execute(f"SELECT {', '.join(self.COLS)} FROM agent_tasks WHERE id=?", (tid,)).fetchone()
@@ -185,7 +186,8 @@ class Tasks:
                               (to, *fields.values(), tid, *sorted(frms)))
             return cur.rowcount == 1
 
-    def submit(self, prompt, who: str = "") -> tuple[dict, int]:
+    def submit(self, prompt, who: str = "", acting_for: int | None = None) -> tuple[dict, int]:
+        """A task for the agent; `acting_for` is the member (members.id) who asked for it."""
         prompt = str(prompt or "").strip()
         if not prompt:
             return {"error": "say what you want done"}, 400
@@ -194,8 +196,8 @@ class Tasks:
             return {"error": why}, 409
         con = self.con()
         try:
-            tid = con.execute("INSERT INTO agent_tasks(prompt, created_by, created_at) VALUES (?,?,?)",
-                              (prompt[:8000], who or None, now())).lastrowid
+            tid = con.execute("INSERT INTO agent_tasks(prompt, created_by, created_at, acting_for) VALUES (?,?,?,?)",
+                              (prompt[:8000], who or None, now(), acting_for)).lastrowid
             con.commit()
             assert tid is not None
             out = self.task(con, tid)
@@ -319,7 +321,7 @@ class Tasks:
 
     # -- http ------------------------------------------------------------------------------------
 
-    def handle(self, method: str, path: str, qs: dict, body: dict | None, who: str = ""):
+    def handle(self, method: str, path: str, qs: dict, body: dict | None, who: str = "", acting_for: int | None = None):
         """One request -> (status, body bytes, content type, Cache-Control), or None if it isn't ours."""
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":")).encode(), "application/json", "no-store")
         m = ROUTE.match(path)
@@ -334,7 +336,7 @@ class Tasks:
             return js(got) if got else js({"error": "no such task"}, 404)
         if method == "POST" and isinstance(body, dict):
             if tid is None:
-                return js(*self.submit(body.get("prompt"), who))
+                return js(*self.submit(body.get("prompt"), who, acting_for))
             if what == "cancel":
                 return js(*self.cancel(tid))
         return js({"error": "not found"}, 404)

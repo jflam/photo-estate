@@ -138,7 +138,7 @@ def every_open_path(td: Path) -> dict:
     scores.save(con, "quality", "m", [1.0])          # scorers are made when a scorer is installed
     con.execute("DELETE FROM scorers")
     con.commit()
-    schema.ensure(con, "favorites")                   # what PhotoApp runs when it opens the catalog
+    schema.ensure(con, "favorites", "members")        # what PhotoApp runs when it opens the catalog
     con.close()
     sync.Feed(td / "sync-feed.db")
     Store(td / "intake.db")
@@ -147,7 +147,9 @@ def every_open_path(td: Path) -> dict:
 
 def test_fresh_databases_match_what_the_old_code_made(tmp_path):
     """schema_baseline.json is sqlite_master as the code before #85 left it, captured from that code's own
-    open paths (estate/embed/faces.connect, Changes, Tasks, scores.SCHEMA, set_favorites' CREATE, Feed, Store)."""
+    open paths (estate/embed/faces.connect, Changes, Tasks, scores.SCHEMA, set_favorites' CREATE, Feed, Store),
+    and what has been added to it since in the fixture itself: the members area (members, member_logins,
+    journal) and agent_tasks.acting_for, as ALTER TABLE ... ADD COLUMN writes it into the table's SQL."""
     baseline = json.loads((FIXTURES / "schema_baseline.json").read_text())
     # Tables newer than the baseline: only ever added (the video area: live_pairs and video_frames). They
     # must be there, and everything else must be as the old code made it.

@@ -19,6 +19,8 @@ the tools are made of:
 
 That agent uses this same endpoint. It is told apart by a header (X-Estate-Task, honoured only from
 this computer): the change sets it makes carry its task's name, and it is not offered the task tools.
+Who may call it is the app's rule for every route (an active member, or this computer: photo_app.py); a
+task submitted here records the member it was submitted by (`acting_for`, agent_tasks.acting_for).
 """
 from __future__ import annotations
 
@@ -235,8 +237,8 @@ class Tools:
             out["events"] = [{"kind": e["kind"], "text": e["text"]} for e in t["events"][-40:]]
         return {k: v for k, v in out.items() if v is not None}
 
-    def submit_task(self, args, who=""):
-        got, code = self.app.tasks.submit(args.get("request"), who)
+    def submit_task(self, args, who="", acting_for=None):
+        got, code = self.app.tasks.submit(args.get("request"), who, acting_for)
         if code >= 400:
             raise ValueError(got["error"])
         return {**self.task_brief(got), "next": "get_task shows how it is going; it usually takes a few minutes"}
@@ -413,7 +415,7 @@ class Server:
     def __init__(self, app: App, name="photo-estate", version="1"):
         self.tools, self.info = Tools(app), {"name": name, "title": "Photo Estate", "version": version}
 
-    def call(self, msg, can_write: bool, who: str, in_task: bool = False):
+    def call(self, msg, can_write: bool, who: str, in_task: bool = False, acting_for: int | None = None):
         if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method"), str):
             return {"jsonrpc": "2.0", "id": msg.get("id") if isinstance(msg, dict) else None,
                     "error": {"code": -32600, "message": "not a JSON-RPC 2.0 request"}}
@@ -441,7 +443,7 @@ class Server:
                     raise ValueError("arguments must be an object")
                 if writes and not can_write:
                     raise PermissionError("this caller may look but not propose changes")
-                out = fn(args, who) if writes else fn(args)
+                out = fn(args, who, acting_for) if name == "submit_task" else fn(args, who) if writes else fn(args)
                 return ok({"content": [{"type": "text", "text": json.dumps(out, separators=(",", ":"), default=str)}],
                            "structuredContent": out, "isError": False})
             except (ValueError, KeyError, TypeError, PermissionError, Unavailable) as e:   # the agent can read it and try again
@@ -450,8 +452,10 @@ class Server:
                 return ok({"content": [{"type": "text", "text": text}], "isError": True})
         return err(-32601, f"method not found: {method}")
 
-    def handle(self, method: str, headers, body, can_write: bool, who: str = "", local: bool = False):
-        """One HTTP request to /mcp -> (status, body bytes, content type, Cache-Control)."""
+    def handle(self, method: str, headers, body, can_write: bool, who: str = "", local: bool = False,
+               acting_for: int | None = None):
+        """One HTTP request to /mcp -> (status, body bytes, content type, Cache-Control). `acting_for`: the
+        member making it (members.id), recorded on a task it submits."""
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":"), default=str).encode(), "application/json", "no-store")
         # A page on another site must not be able to drive this from someone's browser.
         origin, host = headers.get("Origin"), headers.get("Host") or ""
@@ -466,7 +470,7 @@ class Server:
         if in_task:
             who = f"task:{task}"
         if isinstance(body, list):
-            got = [r for r in (self.call(m, can_write, who, in_task) for m in body) if r is not None]
+            got = [r for r in (self.call(m, can_write, who, in_task, acting_for) for m in body) if r is not None]
             return js(got) if got else (202, b"", "application/json", "no-store")
-        got = self.call(body, can_write, who, in_task)
+        got = self.call(body, can_write, who, in_task, acting_for)
         return js(got) if got is not None else (202, b"", "application/json", "no-store")

@@ -87,10 +87,13 @@ def test_bodies():
 
 
 def test_auth_policy():
-    assert Auth.PUBLIC.allows(writer=False, local=False)
-    assert not Auth.WRITER.allows(writer=False, local=True) and Auth.WRITER.allows(writer=True, local=False)
-    assert not Auth.LOCAL_OR_WRITER.allows(writer=False, local=False)
-    assert Auth.LOCAL_OR_WRITER.allows(writer=False, local=True) and Auth.LOCAL_OR_WRITER.allows(writer=True, local=False)
+    from members import Member
+    local, admin, member = Member(1, "here", role="sysadmin", local=True), Member(1, "Ada", role="sysadmin"), Member(2, "Ben")
+    pending = Member(3, "Dana", status="pending")
+    assert Auth.PUBLIC.allows(None) and Auth.PUBLIC.allows(pending)
+    assert [Auth.MEMBER.allows(x) for x in (local, admin, member, pending, None)] == [True, True, True, False, False]
+    assert [Auth.SYSADMIN.allows(x) for x in (local, admin, member, pending, None)] == [True, True, False, False, False]
+    assert [Auth.LOCAL.allows(x) for x in (local, admin, member, pending, None)] == [True, False, False, False, False]
 
 
 # -- catalog.month_index ----------------------------------------------------------------------------

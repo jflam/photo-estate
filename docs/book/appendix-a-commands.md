@@ -67,7 +67,8 @@ uv run embed.py serve --demo
 | `--ingest-script FILE` | `ingest-iphone.sh` | What the Library info page and automatic runs execute |
 | `--ingest-quiet SECONDS` | 60 | Quiet time after an upload before a run starts (0 turns automatic runs off) |
 | `--ingest-max-wait SECONDS` | 600 | The latest a run starts after the first upload of a burst |
-| `--upload-user LOGIN` (repeatable) | any | Only these Tailscale users (and requests from this computer) may change the library: upload, ingest, favourites, albums, People, intake ([chapter 11](11-server.md)) |
+| `--upload-user LOGIN` (repeatable) | none | On the first start of a catalog with no members, these Tailscale logins become active members, the first the sysadmin; not read once there are members, who are kept on `/members` ([chapter 11](11-server.md)). Requests from this computer are always the sysadmin |
+| `--sysadmin LOGIN` | the first `--upload-user` | The login that becomes the sysadmin on that first start |
 | `--backup-dir DIR` | off | Copy the catalog and `face-labels.jsonl` here ([16](16-operations.md)) |
 | `--backup-every HOURS` / `--backup-keep N` | 24 / 7 | How often, and how many copies to keep |
 

@@ -13,6 +13,7 @@ sends a page sends the same modules:
   module(path) -> bytes | None       the module at /app/<name>.js, or None when the path is not one
   MODULE_TYPE                        its Content-Type
   waiting(title, why) -> bytes       a page for a part of the app that is not ready yet
+  plain(title, why, more) -> bytes   a page of a few words and no script (asking to be let in)
 
 The icons a page names (/icon-192.png, /icon-180.png) are given an address that changes when the icon does
 (/icon-192.png?v=1a2b3c4d): browsers keep a site's icon by its address for a long time, whatever the server
@@ -74,3 +75,22 @@ body {{ min-height: 100dvh; display: grid; place-items: center; }}
 </style>
 <div class="blank"><svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>
 <h3>{title}</h3><p>{why}</p><a class="btn" href="/">Back to the library</a></div>""".encode()
+
+
+def plain(title: str, why: str, more: str = "") -> bytes:
+    """A page of a few words and no script: the request-access page (photo_app.py). `title` and `why` are
+    HTML, escaped by the caller, as is `more` (a form, a button) under them."""
+    css = (HERE / "app" / "estate.css").read_text()
+    return f"""<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="/icon-192.png"><link rel="apple-touch-icon" href="/icon-180.png"><title>Photo Estate</title>
+<style>{css}
+body {{ min-height: 100dvh; display: grid; place-items: center; padding: 0 var(--pad); }}
+.blank p {{ max-width: 46ch; }}
+form {{ display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }}
+form input {{ width: 220px; }}
+.blank form .btn {{ margin-top: 0; }}
+.blank p.demo {{ margin-top: 28px; font-size: 13.5px; }}
+</style>
+<div class="blank"><svg class="mark" viewBox="0 0 150 100" aria-hidden="true"><circle class="s" cx="102" cy="26" r="15"/><path fill="currentColor" d="M0 100 49.500 38 84 74 103.500 56 150 100Z"/></svg>
+<h3>{title}</h3><p>{why}</p>{more}</div>""".encode()

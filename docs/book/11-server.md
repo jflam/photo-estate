@@ -34,11 +34,12 @@ content type, Cache-Control[, headers])` or `None` when the path is not its own.
 | [changes.py](../../photo-estate/changes.py), [tasks.py](../../photo-estate/tasks.py) | `Changes`, `Tasks` | `/changes`, `/api/changes*`, `/api/albums*`, `/api/tasks*` |
 | [estate_mcp.py](../../photo-estate/estate_mcp.py) | `Server` | `/mcp` |
 | [intake/api.py](../../photo-estate/intake/api.py) | `IntakeAPI` | `/setup`, `/api/intake*` |
+| [members.py](../../photo-estate/members.py) | (functions) | Who the estate knows: members, their logins, roles and upload policies, and the journal entries each change appends; `PhotoApp` answers `/request-access`, `/api/request-access`, `/api/me`, `/members` and `/api/members*` with it (below) |
 | [compare.py](../../photo-estate/compare.py) | `Compare` | `/compare`, `/api/compare*`, only with `--compare-vectors`: a second model's ranking beside the app's own ([chapter 10](10-embeddings.md)) |
 
 What ties the modules together is `PhotoApp` (photo_app.py, about 500 lines): setting up the demo, the
-page and the home-screen app files, `/api/info`, `/api/sync`, favourites, album downloads, who may
-write, and re-reading the catalog after an ingest or a change set. `cmd_serve` in embed.py is now
+page and the home-screen app files, `/api/info`, `/api/sync`, favourites, album downloads, who a
+request is for and what it may do, the members' routes, and re-reading the catalog after an ingest or a change set. `cmd_serve` in embed.py is now
 four lines: find the library (or serve the setup page), build a `PhotoApp`, `start()` it, `serve()` it.
 
 **The app is an object you can call.** Building a `PhotoApp` reads the catalog and starts no thread;
@@ -53,28 +54,68 @@ zip written as it is read) and videos (`/video/`, read from the disk as they are
 headers`); the extra headers it carries (`Retry-After`, `Content-Disposition`, `ETag`) replaced the
 handler's old mutable `extra_headers`.
 
-### Who may write
+### Members, and who may do what
 
-`--upload-user` names the Tailscale logins that may change the library; with none named, everyone who
-can reach the app may (the demo, and a library only you use). The app listens on `127.0.0.1` only, so
-a request reaches it either through `tailscale serve`, which adds `Tailscale-User-Login`, or from a
-program on the Mac itself: the browser there, the headless agent that works on tasks (tasks.py) and
-an MCP client such as Claude Code. A request is **local** when it comes from `127.0.0.1` or `::1`
-with none of a proxy's headers (`Tailscale-User-Login`, `X-Forwarded-For`, `Forwarded`: `is_local` in
-intake/server.py).
+The family can use the estate, each person as a **member** ([members.py](../../photo-estate/members.py);
+the design is [notes/MULTIPLAYER-PLAN.md](../notes/MULTIPLAYER-PLAN.md), and this is its phase 1). Photo
+Estate never handles a password: identity comes from the tailnet. The app listens on `127.0.0.1` only, so
+a request reaches it either through `tailscale serve`, which adds `Tailscale-User-Login` (the login the
+person signed in to Tailscale with), or from a program on the Mac itself: the browser there, the
+headless agent that works on tasks (tasks.py), an MCP client such as Claude Code. A request is **local**
+when it comes from `127.0.0.1` or `::1` with none of a proxy's headers (`Tailscale-User-Login`,
+`X-Forwarded-For`, `Forwarded`: `is_local` in intake/server.py).
 
-Every request that changes the library takes one rule, `Auth.LOCAL_OR_WRITER`: a `--upload-user` login
-or a local request. That covers naming, merging and relabelling people (`POST /api/people/label`,
-`label-many`, `person`), favourites, albums and change sets, tasks, bringing photos in (`POST
-/api/intake/...`), the ingest, restarting, and uploads; and a vote on `/compare` (it writes only a
-file beside the second model's vectors, but it is a record kept of what you said). Reading is open to anyone who can reach the
-app (`Auth.PUBLIC`), and so is `/mcp`, whose write tools take the same rule. The rules are one table,
-`ROUTE_AUTH` in photo_app.py, checked before a request reaches its module; a refused request is `403
-{"error": "not allowed"}` (an upload's is admin.py's own `403 not allowed`). Until 2026-11-19 the People
-page's writes took no permission at all, and intake, the ingest, restart and uploads took a
-`--upload-user` login but refused this Mac's own browser and agent; the other writes already let
-local requests in. Local requests are let in because whoever runs a program on the Mac can already
-change the catalog's files.
+The catalog keeps its own table of members, and the logins that are them (`members`, `member_logins`,
+in core/schema.py's `members` area): the provider proves who someone is, the estate decides what they
+may do. A member has a **role** (`sysadmin` or `member`; more than one member may be a sysadmin), a
+**status** (`pending`, `active` or `revoked`: a member is never deleted), an **upload policy** that the
+iPhone app will read in a later phase (`everything`, `review`, `review_flagged`), and may be linked to a
+person in People. A member is not a `persons` row: those are the people *in* the photos. Every change
+to a member appends an entry to the **journal**, the estate's append-only log, in the same transaction
+(`member.added`, `member.requested`, `member.changed`, with who did it); nothing reads the journal yet.
+
+`PhotoApp.who(headers, local)` says which member a request is for, from a copy of the members kept in
+memory (they change only through the app, which reads them again after each change). A local request
+is the sysadmin. Each request then takes one of the rules in `ROUTE_AUTH` (photo_app.py), checked
+before it reaches its module (`http_util.Auth`):
+
+- **`MEMBER`**, the default: an active member, whatever their role, or a local request. Every page, every
+  read and every write that is not below: searching, images and videos, the sync feed, People,
+  favourites, albums and change sets, tasks, `/mcp`, the ingest, uploads.
+- **`SYSADMIN`**: an active sysadmin, or a local request. `/members` and its API (letting people in),
+  `/setup` and `/api/intake/...` (a job reads any folder on this computer), and restarting.
+- **`PUBLIC`**: only what a browser needs to ask to be let in: `/request-access` and `POST
+  /api/request-access`, the home-screen app's files (manifest, icons, the service worker), and
+  `/api/info`, which tells someone who is not a member only `{"member": false}` (that the app is up:
+  the setup page waits on it), and a member the library's numbers.
+- **`LOCAL`**: this computer only; no route needs it yet.
+
+A refused browser opening a page is shown the **request-access page** with a 403: for a login nobody has
+let in, "Ask John to let you in" (the first active sysadmin's name), a name field and a button, which
+makes a `pending` member; after that, that John will let them in; for a revoked member, that they are
+not let in. It is a page of a few words with no script, so it needs nothing that is not open. Anything
+else refused is `403 {"error": "not allowed"}`. The album download and `/video/` stream past `route()`
+in the HTTP handler, which asks `PhotoApp.refusal` first; an upload checks the same rule in admin.py.
+
+The sysadmin lets people in on **`/members`** (members.html, its state machine in
+`app/members-flow.js`): who has asked, who is in and who is turned off, each with their logins; let in,
+turn away, turn off, let in again; a role, an upload policy, a name, and the person in People they are.
+The estate always keeps an active sysadmin: a change that would leave none is refused. `GET /api/me`
+says who a request is for. A task records who asked for it (`agent_tasks.acting_for`), from the
+Changes page and from `/mcp`'s `submit_task`, so a later phase can make the agent see what that member
+sees; the agent itself still calls `/mcp` from this computer with `X-Estate-Task`, as the sysadmin.
+
+**The first start.** A catalog made before members has none. On the first start of the new code, the
+logins given by `--upload-user` become active members who may upload everything, the first of them the
+sysadmin (or the one `--sysadmin` names). After that the options are not read again: members are kept on
+`/members`. With no `--upload-user` and no members, only this computer can use the app until a sysadmin
+is let in from it. Existing `created_by` and `set_by` values are logins, so they already name these
+members; they are not rewritten.
+
+Until 2026-11-22 the rule was different: reading was open to anyone who could reach the app, and every
+write took a `--upload-user` login (anyone, when none was named) or a local request. Before 2026-11-19
+the People page's writes took no permission at all, and intake, the ingest, restart and uploads took a
+`--upload-user` login but refused this Mac's own browser and agent.
 
 ### Malformed requests
 
@@ -544,7 +585,7 @@ All from measurements in [PERFORMANCE.md](../notes/PERFORMANCE.md):
 | gzip for JSON and `text/*` over 1 KB, level 5 | JSON and the page shrink 4-6×; JPEGs do not |
 | `ETag` and `no-cache` for `/` and PWA files | Browsers revalidate each load, so editing `search.html` shows at once; an unchanged page costs a 304 |
 | `request_queue_size = 256`, `daemon_threads` | The default listen backlog is 5; behind an HTTP/2 proxy a screenful of thumbnails arrives as dozens of simultaneous connections and overflowed it (502s) |
-| Listen on `127.0.0.1` only | The app has no sign-in of its own; `tailscale serve` in front says who is asking, and `--upload-user` who may write (above) |
+| Listen on `127.0.0.1` only | The app has no sign-in of its own; `tailscale serve` in front says who is asking, and the members table what they may do (above) |
 | JSON bodies up to 8 MB, read only after `Content-Length` is checked | A body that is too large is refused (413) before it is read, and the connection closed so it is not taken for the next request |
 
 ### When a client goes away
@@ -645,6 +686,13 @@ from a result list, which is how "opened" events reach the log.
 2. Points `store` at `demo/store` (read-only use).
 3. Lets thumbnails be generated into the temp directory.
 4. Sends the query log to `/dev/null` and uses port 8767, so it can run beside a real library on 8766.
+5. Makes three members in its scratch catalog: Ada, the sysadmin, and Ben and Cleo, members. The
+   Tailscale header is not read: `X-Demo-Member: ben`, or a `demo_member` cookie, says who a request
+   is, so Playwright and the cloud preview can be each of them, and with neither a request is Ada. A
+   browser cannot add a header, so `/members` has a "Be Ben" button (`/members?be=ben` sets the cookie),
+   and a page Ben may not open links back to each of them. A name that is no member's is a login nobody
+   has let in, which is how the request-access page is tried. Neither the header nor the cookie is ever
+   honoured without `--demo`.
 
 ## Resource use
 

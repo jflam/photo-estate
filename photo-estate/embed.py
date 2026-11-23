@@ -387,8 +387,11 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--ingest-max-wait", type=float, default=600.0,
                    help="an ingest starts at least this long after the first upload of a burst, however many follow")
     s.add_argument("--upload-user", action="append", default=[],
-                   help="Tailscale login allowed to change the library: upload, ingest, favourites, albums, People"
-                        " (repeatable); requests from this computer always may. Default: anyone who can reach the app")
+                   help="a Tailscale login that becomes an active member on the first start of a catalog with no"
+                        " members, the first of them the sysadmin (repeatable); ignored once there are members,"
+                        " who are kept on /members. Requests from this computer are always the sysadmin")
+    s.add_argument("--sysadmin", help="the login that becomes the sysadmin on that first start (default: the first"
+                                      " --upload-user)")
     s.add_argument("--backup-dir", help="copy the catalog and face-labels.jsonl here every --backup-every hours"
                    " (e.g. a folder on another disk than the catalog)")
     s.add_argument("--backup-every", type=float, default=24.0, help="hours between catalog backups")

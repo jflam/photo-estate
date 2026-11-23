@@ -109,7 +109,7 @@ the catalog holds, and **a half-finished upload can never be mistaken for a phot
    new rule for dates or places.
 
 The status codes (appendix B): `201 stored`, `200 exists`, `409`, `400`, `411` without a length, `403`
-if `--upload-user` restricts who may upload, `413` if too large.
+if the caller is not an active member (chapter 11), `413` if too large.
 
 ### Uploads that are safe to repeat
 

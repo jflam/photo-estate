@@ -98,6 +98,12 @@
   ],
   [
    "index",
+   "sqlite_autoindex_member_logins_1",
+   "member_logins",
+   null
+  ],
+  [
+   "index",
    "sqlite_autoindex_occurrences_1",
    "occurrences",
    null
@@ -154,7 +160,7 @@
    "table",
    "agent_tasks",
    "agent_tasks",
-   "CREATE TABLE agent_tasks(\n  id INTEGER PRIMARY KEY, prompt TEXT,\n  status TEXT DEFAULT 'queued',      -- queued | running | done | failed | cancelled\n  created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT,\n  result TEXT, error TEXT, turns INT, cost REAL)"
+   "CREATE TABLE agent_tasks(\n  id INTEGER PRIMARY KEY, prompt TEXT,\n  status TEXT DEFAULT 'queued',      -- queued | running | done | failed | cancelled\n  created_by TEXT, created_at TEXT, started_at TEXT, finished_at TEXT,\n  result TEXT, error TEXT, turns INT, cost REAL, acting_for INT)"
   ],
   [
    "table",
@@ -239,6 +245,24 @@
    "hidden",
    "hidden",
    "CREATE TABLE hidden(   -- a photo is hidden while any row names it\n  sha256 TEXT, set_id INT, hidden_at TEXT, PRIMARY KEY(sha256, set_id))"
+  ],
+  [
+   "table",
+   "journal",
+   "journal",
+   "CREATE TABLE journal(      -- what happened, appended to and never changed\n  id INTEGER PRIMARY KEY, at TEXT,\n  actor INT,                             -- members.id of who did it; NULL: the app itself\n  acting_for INT,                        -- members.id when the actor is an agent\n  kind TEXT,                             -- member.added, member.requested, member.changed, ...\n  subject TEXT,                          -- what it is about: member:<id>, a sha, album:<id> ...\n  data TEXT)"
+  ],
+  [
+   "table",
+   "member_logins",
+   "member_logins",
+   "CREATE TABLE member_logins(   -- a Tailscale login, and the member it is (a member may have several)\n  login TEXT PRIMARY KEY, member_id INT NOT NULL, added_at TEXT)"
+  ],
+  [
+   "table",
+   "members",
+   "members",
+   "CREATE TABLE members(      -- who the estate knows: not persons (who is *in* photos, faces.py)\n  id INTEGER PRIMARY KEY, name TEXT,\n  kind TEXT DEFAULT 'person',            -- person | agent | device\n  role TEXT DEFAULT 'member',            -- sysadmin | member | viewer\n  person_id INT,                         -- persons.id: who this member is in photos, if known\n  upload_policy TEXT DEFAULT 'review',   -- everything | review | review_flagged\n  joined_at TEXT,                        -- when first let in\n  status TEXT DEFAULT 'pending')"
   ],
   [
    "table",

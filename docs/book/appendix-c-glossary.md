@@ -68,6 +68,8 @@ trip.
 
 **Inbox.** The folder (`iphone/` next to the catalog) where phone uploads land, in the same shape as the iCloud mirror; `ingest-iphone.sh` catalogues it ([24](24-uploading.md)).
 
+**Journal.** The estate's append-only log of what happened, one row of `journal` per change with who did it (`actor`), its `kind` (`member.added`, `member.requested`, `member.changed` so far) and what it is about (`subject`, such as `member:3`). Never changed or deleted; nothing reads it yet. Not the face journal below, nor the `events` tables ([11](11-server.md#members-and-who-may-do-what)).
+
 **Journal (face).** `face-labels.jsonl`: an append-only record of your face decisions, keyed by photo
 hash and box.
 
@@ -75,10 +77,16 @@ hash and box.
 
 **Live Photo.** A still and a clip taken together by an iPhone (or a Pixel's motion photo). Here the still is the photo and the clip is part of it: one item, searched, scored and counted by its still ([6](06-linking.md#step-2-live-photos-and-motion-photos)).
 
+**Local (request).** One from the computer the app runs on, not through `tailscale serve` (`is_local`). It is the sysadmin ([11](11-server.md#members-and-who-may-do-what)).
+
 **Locality.** The nearer suburb or neighbourhood when a big city was chosen as a photo's `city`.
+
+**Login.** A Tailscale login (`alice@icloud.com`), which `tailscale serve` sends as `Tailscale-User-Login`. Each is one member's; a member may have several ([11](11-server.md#members-and-who-may-do-what)).
 
 **Match floor / match window.** The two constants (0.085 and 0.04) that decide which photos count as
 matching a typed search: at least the floor, and within the window of the best match.
+
+**Member.** Someone the estate knows and lets in, a row of `members`: a name, a role, a status (`pending`, `active`, `revoked`; never deleted), an upload policy, and the person in People they are, if linked. Not a person, which is someone *in* the photos ([11](11-server.md#members-and-who-may-do-what)).
 
 **NMS (non-maximum suppression).** Discarding overlapping detector boxes except the best.
 
@@ -100,6 +108,10 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Quality (score).** A photo's score from the general aesthetic scorer, about 1 to 7; at least 5.0 counts as a good photo ([25](25-best-photos.md)).
 
+**Request access.** What someone whose login is no member's does on the page they are shown (`/request-access`): it makes a `pending` member, whom a sysadmin lets in on `/members` ([11](11-server.md#members-and-who-may-do-what)).
+
+**Role.** What a member may do: `sysadmin` (let people in, bring photos in from a folder, restart) or `member` (everything else). Several members may be sysadmins, and there is always at least one ([11](11-server.md#members-and-who-may-do-what)).
+
 **Scrubber.** The handle at the iPhone grid's right edge that shows the month you are in and lets you drag to any date ([23](23-native-interface.md)).
 
 **Sidecar.** A small metadata file next to a photo. Google's is JSON; iCloud's (via `icloudpd`) is XMP.
@@ -119,6 +131,8 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Stride.** The spacing, in pixels, of a detector's grid cells: 8, 16 and 32 here.
 
+**Sysadmin.** A member with the sysadmin role; the first is the first `--upload-user` (or `--sysadmin`) on the first start. A request from this computer is the sysadmin too.
+
 **Takeout.** Google's data-export service; the only complete export of a Google Photos library.
 
 **Tailscale.** A private network (a "tailnet") used here to reach the app from a phone, with
@@ -137,6 +151,8 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Trusted (face).** One whose name came from Google or from you. Only trusted faces build the reference
 faces everything else is compared with.
+
+**Upload policy.** What the iPhone app will ask a member before it shares their photos: `everything`, `review` (each batch) or `review_flagged` (only what may be private). Set on `/members`; nothing reads it yet ([11](11-server.md#members-and-who-may-do-what)).
 
 **uv.** The Python package and script runner used to run each script with its inline dependencies.
 

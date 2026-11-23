@@ -12,6 +12,7 @@ wires the route modules together; make_handler() is the thin HTTP layer in front
   .serve()                    make_server on 127.0.0.1:--port and serve until Ctrl-C
   .reload_catalog()           re-read the catalog and swap it in (after an ingest, or a change set)
   .set_favorites(shas, on, who) -> int   record favourites, show them at once, tell the phones
+  .who(headers, local) -> Member | None  who a request is for (members.py)
   ROUTE_AUTH, policy(method, path) -> Auth   who may make each request (http_util.Auth)
 
 Each route module has an object whose handle(method, path, qs, body, ...) answers its own routes (each
@@ -24,12 +25,24 @@ module's docstring lists them):
   intake/api.py (/setup), and with --compare-vectors compare.py (/compare: an experiment, a second model's
   ranking beside the app's own)
 What PhotoApp answers itself: the page and the home-screen app files, /api/info, /api/sync,
-favourites, album downloads (streamed by the handler), and re-reading the catalog after an ingest.
+favourites, album downloads (streamed by the handler), re-reading the catalog after an ingest, and the
+members (members.py):
 
-Who may write (http_util.py has the rule): every request that changes the library (people, favourites,
-albums and change sets, tasks, intake, ingest, restart, upload) is Auth.LOCAL_OR_WRITER: a
---upload-user login (anyone, when none is named), or a request from this computer itself. Everything
-else is PUBLIC; /mcp is too, and its write tools take the same rule (estate_mcp.py's can_write).
+  GET  /request-access, POST /api/request-access {name?}   a login nobody has let in asks to be
+  GET  /api/me                        the member a request is for: name, role, status, upload policy
+  GET  /members, /api/members         (sysadmin) every member with its logins; the people to link to
+  POST /api/members/<id> {name?, role?, status?, upload_policy?, person_id?}   (sysadmin) approve, revoke...
+  GET  /members?be=<login>            --demo only: be that demo member in this browser (a cookie)
+
+Who may do what (http_util.py has the rule; ROUTE_AUTH below): only active members may do anything at all
+(Auth.MEMBER), and a request from this computer itself is the sysadmin. Letting people in, bringing photos
+in from a folder (/setup, /api/intake) and restarting take a sysadmin (Auth.SYSADMIN). Open to anyone who
+can reach the app (Auth.PUBLIC): the request-access page, the home-screen app files, and /api/info, which
+tells a non-member only that the app is up. A browser refused a page is shown the request-access page; any
+other refused request is 403 {"error": "not allowed"}. With --demo the Tailscale header is not read: the
+X-Demo-Member header or the demo_member cookie says which demo member a request is, and with neither it is
+the demo's sysadmin. On the first start of a catalog with no members, the --upload-user logins become
+active members, the first (or --sysadmin) the sysadmin; after that members are kept on /members.
 
 Bad requests are answered, not raised: a query parameter that is not a number, a body that is not JSON
 or a Content-Length that is not a number is a 400, and a JSON body over http_util.MAX_BODY a 413, each
@@ -51,11 +64,14 @@ import sys
 import threading
 import time
 from collections import Counter
+from dataclasses import replace
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import catalog
+import members
 import pages   # the pages, with the shared stylesheet put in
 from admin import Admin, backups
 from browse import Browse
@@ -69,6 +85,7 @@ from http_util import (FORBIDDEN, MAX_BODY, NOT_FOUND, Auth, HTTPError, Request,
                        json_response, parse_json, read_body)
 from images import Images
 from intake.server import is_local
+from members import Member
 from sync import Feed
 from tasks import Tasks
 from upload import IngestJob
@@ -76,18 +93,19 @@ from upload import IngestJob
 HERE = Path(__file__).resolve().parent
 
 # Who may make each request: the first entry whose method and path prefix match. Anything not listed
-# is PUBLIC (a POST nobody answers is then a 404). Upload bodies stream and are checked in admin.py with
-# the same rule (PhotoApp.can_write).
+# takes Auth.MEMBER: an active member, or this computer. Upload bodies stream and are checked in admin.py
+# with that rule (Auth.MEMBER); the album download and /video/ stream too, and the handler asks
+# PhotoApp.refusal before it sends them.
 ROUTE_AUTH: tuple[tuple[str, tuple[str, ...], Auth], ...] = (
-    ("POST", ("/api/people",), Auth.LOCAL_OR_WRITER),                    # naming, merging, relabelling
-    ("POST", ("/changes", "/api/changes", "/api/albums", "/api/tasks"), Auth.LOCAL_OR_WRITER),
-    ("POST", ("/api/favorite",), Auth.LOCAL_OR_WRITER),
-    ("POST", ("/api/intake",), Auth.LOCAL_OR_WRITER),                    # a job reads any folder here
-    ("POST", ("/api/ingest", "/api/restart"), Auth.LOCAL_OR_WRITER),
-    ("POST", ("/api/upload/",), Auth.LOCAL_OR_WRITER),
-    ("PUT", ("/api/upload/",), Auth.LOCAL_OR_WRITER),
-    ("POST", ("/api/compare",), Auth.LOCAL_OR_WRITER),                   # a vote: a side file, not the library
+    ("GET", ("/request-access", "/manifest.webmanifest", "/sw.js", "/icon-"), Auth.PUBLIC),  # asking, and the home-screen app
+    ("POST", ("/api/request-access",), Auth.PUBLIC),
+    ("GET", ("/api/info",), Auth.PUBLIC),                   # a non-member is told only that the app is up
+    ("GET", ("/members", "/api/members"), Auth.SYSADMIN),   # letting people in
+    ("POST", ("/api/members",), Auth.SYSADMIN),
+    ("GET", ("/setup", "/api/intake"), Auth.SYSADMIN),      # bringing photos in: a job reads any folder here
+    ("POST", ("/api/intake", "/api/restart"), Auth.SYSADMIN),
 )
+DEMO_HEADER, DEMO_COOKIE = "X-Demo-Member", "demo_member"   # --demo only: which demo member a request is
 # Requests that don't hold the catalog gate: they read no catalog, or only briefly, and can be slow.
 UNGATED = ("/api/upload/", "/api/intake", "/setup")
 FAVORITE = re.compile(r"/api/favorite|/api/albums/\d+/favorite")   # (POST) the gate's write side, in set_favorites
@@ -99,7 +117,7 @@ def policy(method: str, path: str) -> Auth:
     for m, prefixes, rule in ROUTE_AUTH:
         if method == m and path.startswith(prefixes):
             return rule
-    return Auth.PUBLIC
+    return Auth.MEMBER
 
 
 def _etagged(body: bytes, ctype: str) -> Response:
@@ -135,8 +153,16 @@ class PhotoApp:
         self.cache = cache = Path(a.fast_cache) if a.fast_cache else seed
         self.t0 = time.time()
         con = connect(a.db)               # the tables this app writes itself (core/schema.py), made when it opens
-        schema.ensure(con, "favorites")
+        schema.ensure(con, "favorites", "members")
+        # Members (members.py). The demo makes its own in its scratch catalog; a catalog with none yet takes
+        # the --upload-user logins, as they could write before.
+        made = members.demo(con) if a.demo else members.first_start(con, a.upload_user, a.sysadmin)
         con.close()
+        if made:
+            print(f"members: {', '.join(f'{m.login} ({m.role})' for m in made)} let in", flush=True)
+        self.load_members()
+        if not self.roster and not a.demo:
+            print("members: none yet, so only this computer can use the app (name one with --sysadmin LOGIN)", flush=True)
         try:
             self.live = live = catalog.Live(self.load_catalog())
         except RuntimeError as e:
@@ -375,19 +401,55 @@ class PhotoApp:
         c = self.live.cat
         return {"library": sha in c.index and bool(c.visible[c.index[sha]]), "sync": sha in self.feed.rows}
 
+    # -- who a request is for -----------------------------------------------------------------------
+
+    def load_members(self) -> None:
+        """Members change only through this app, so they are kept in memory and read again after a change."""
+        con = connect(self.a.db)
+        try:
+            self.roster: dict[str, Member] = members.by_login(con)
+            self.sysadmin: Member | None = members.sysadmin(con)
+        finally:
+            con.close()
+
+    def login(self, headers) -> str:
+        """The login a request comes with: what `tailscale serve` adds (the app itself is bound to 127.0.0.1),
+        or with --demo, and only then, the demo's header or cookie instead."""
+        if not self.a.demo:
+            return members.norm(headers.get("Tailscale-User-Login"))
+        got = headers.get(DEMO_HEADER)
+        if not got:
+            jar = SimpleCookie()
+            try:
+                jar.load(headers.get("Cookie") or "")
+            except CookieError:
+                pass
+            got = unquote(jar[DEMO_COOKIE].value) if DEMO_COOKIE in jar else ""
+        return members.norm(got)
+
+    def who(self, headers, local: bool = False) -> Member | None:
+        """The member a request is for, or None (a login nobody has let in, or no login). With --demo, the
+        demo member its header or cookie names, and with neither the demo's sysadmin. Otherwise a request
+        from this computer is the sysadmin, and one through `tailscale serve` the member its login is."""
+        login = self.login(headers)
+        if self.a.demo and not login:
+            return self.sysadmin
+        if local and not self.a.demo:
+            if self.sysadmin:
+                return replace(self.sysadmin, login="", local=True)
+            return Member(None, "this computer", role="sysadmin", upload_policy="everything", local=True)
+        return self.roster.get(login)
+
+    def refusal(self, req: Request, m: Member | None = None) -> Response | None:
+        """None if ROUTE_AUTH lets `m` (by default, whoever the request is for) make the request. Otherwise
+        its answer: for a browser opening a page, a page that says why (the request-access page); for
+        anything else 403 {"error": "not allowed"}."""
+        m = m or self.who(req.headers, req.local)
+        if policy(req.method, urlparse(req.target).path).allows(m):
+            return None
+        return self.door(req, m, 403) if req.method == "GET" and "text/html" in (req.headers.get("Accept") or "") else FORBIDDEN
+
     # -- requests -----------------------------------------------------------------------------------
-
-    @staticmethod
-    def who(headers) -> str:
-        # `tailscale serve` adds the caller's identity; the app itself is bound to 127.0.0.1
-        return headers.get("Tailscale-User-Login", "") or ""
-
-    def writer(self, headers) -> bool:
-        """A --upload-user login, or anyone when none is named."""
-        return not self.a.upload_user or self.who(headers) in self.a.upload_user
-
-    def can_write(self, headers, local: bool) -> bool:
-        return Auth.LOCAL_OR_WRITER.allows(writer=self.writer(headers), local=local)
 
     def request(self, method: str, target: str, headers=None, body: bytes | str | dict | list = b"",
                 local: bool = False) -> Response:
@@ -424,47 +486,65 @@ class PhotoApp:
         u = urlparse(req.target)
         path, qs = u.path, parse_qs(u.query)
         if method in ("PUT", "POST") and path.startswith("/api/upload/"):
-            # Here from memory; the handler streams it. admin.py checks ROUTE_AUTH's rule itself (can_write),
+            # Here from memory; the handler streams it. admin.py checks ROUTE_AUTH's rule itself (MEMBER),
             # with its own 403, since the handler's streamed uploads never come through route().
+            m = self.who(headers, local)
             got, _ = self.admin.upload(method, path, {**headers, "Content-Length": str(len(req.body))},
-                                       io.BytesIO(req.body), self.who(headers), self.can_write(headers, local))
+                                       io.BytesIO(req.body), m.login if m else "", Auth.MEMBER.allows(m))
             return Response.of(got)
-        if not policy(method, path).allows(writer=self.writer(headers), local=local):
-            return FORBIDDEN
+        if self.a.demo and method == "GET" and path == "/members" and re.search(r"(?:^|&)be=", u.query):   # (be= alone: no cookie)
+            return self.be(qs)
+        m = self.who(headers, local)
+        if (no := self.refusal(req, m)) is not None:
+            return no
         if method == "OPTIONS":
             return Response.of(self.admin.handle("OPTIONS", path, {}, None))
         if method == "POST":
-            return self.post(path, qs, req)
+            return self.post(path, qs, req, m)
         if method == "GET":
-            return self.get(path, qs, req)
+            return self.get(path, qs, req, m)
         return NOT_FOUND
 
-    def post(self, path: str, qs: dict, req: Request) -> Response:
-        headers, local, who = req.headers, req.local, self.who(req.headers)
+    def post(self, path: str, qs: dict, req: Request, m: Member | None) -> Response:
+        who = m.login if m else ""
+        if path == "/api/request-access":   # a form's body, or JSON
+            return self.ask_in(req, m)
         if path in ("/api/ingest", "/api/restart"):   # (the body, if any, is not looked at)
-            return Response.of(self.admin.handle("POST", path, {}, None, who, self.can_write(headers, local)))
+            return Response.of(self.admin.handle("POST", path, {}, None, who, Auth.MEMBER.allows(m)))
         if path == "/mcp":     # a body that isn't JSON gets JSON-RPC's own parse error (estate_mcp.py)
             try:
                 body = parse_json(req.body)
             except HTTPError:
                 body = None
-            return self.mcp_route("POST", req, body)
+            return self.mcp_route("POST", req, body, m)
         body = parse_json(req.body)
+        if (mid := re.fullmatch(r"/api/members/(\d+)", path)) is not None:
+            return self.change_member(int(mid[1]), body, m)
         if path == "/api/favorite":
             return self.favorite(body, who)
         if self.compare and path.startswith("/api/compare"):
             got = self.compare.handle("POST", path, qs, body, who)   # a vote, or a run started or finished
             return Response.of(got) if got else NOT_FOUND
         if self.intake and path.startswith("/api/intake"):
-            return Response.of(self.intake.handle("POST", path, qs, body, local))
-        if (got := self.changes_route("POST", path, qs, body, who)) is not None:
+            return Response.of(self.intake.handle("POST", path, qs, body, req.local))
+        if (got := self.changes_route("POST", path, qs, body, who, m.id if m else None)) is not None:
             return got
         if (got := self.people_page("POST", path, qs, body)) is not None:
             return got
         return NOT_FOUND
 
-    def get(self, path: str, qs: dict, req: Request) -> Response:
+    def get(self, path: str, qs: dict, req: Request, m: Member | None) -> Response:
         one = lambda k, d="": (qs.get(k) or [d])[0]
+        if path == "/request-access":
+            return self.door(req, m)
+        if path == "/api/info" and not Auth.MEMBER.allows(m):   # open: the app is up, and nothing of the library
+            return json_response({"member": False})
+        if path == "/api/me":
+            return json_response(m.public() if m else None)
+        if path in ("/members", "/members.html"):
+            return _etagged(pages.page("members.html"), "text/html; charset=utf-8")
+        if path == "/api/members":
+            return self.members_listing(m)
         if re.fullmatch(r"/api/albums/(\d+)/download", path):
             return Response(501, b"the album download is streamed: ask the HTTP server", "text/plain")
         if path.startswith("/video/"):    # so a test, or a caller with no socket, can still ask whether it is there
@@ -472,12 +552,12 @@ class PhotoApp:
             return Response(501, b"a video is streamed: ask the HTTP server", got[1]) if got else NOT_FOUND
         if self.intake and path.startswith(("/setup", "/api/intake")):
             return Response.of(self.intake.handle("GET", path, qs, None, req.local))
-        who = self.who(req.headers)
+        who = m.login if m else ""
         for got in (self.people_page("GET", path, qs, None), self.changes_route("GET", path, qs, None, who)):
             if got is not None:
                 return got
         if path == "/mcp":
-            return self.mcp_route("GET", req, None)
+            return self.mcp_route("GET", req, None, m)
         if path in ("/", "/index.html"):  # revalidated each load, so edits show up at once
             return _etagged(pages.page("search.html"), "text/html; charset=utf-8")
         if self.compare and path in ("/compare", "/compare.html"):
@@ -486,7 +566,7 @@ class PhotoApp:
             got = self.compare.handle("GET", path, qs, None)
             return Response.of(got) if got else NOT_FOUND
         got = (self.browse.handle("GET", path, qs, None, req.headers)
-               or self.admin.handle("GET", path, qs, None, who, self.can_write(req.headers, req.local))
+               or self.admin.handle("GET", path, qs, None, who, Auth.MEMBER.allows(m))
                or self.images.handle("GET", path, qs, None))
         if got:
             return Response.of(got)
@@ -531,22 +611,121 @@ class PhotoApp:
             return json_response({"error": "expected a JSON object"}, 400)
         return Response.of(s.value.handle(method, path, qs, body))
 
-    def changes_route(self, method: str, path: str, qs: dict, body, who: str) -> Response | None:
+    def changes_route(self, method: str, path: str, qs: dict, body, who: str, acting_for: int | None = None) -> Response | None:
         """Change sets (changes.py) and tasks (tasks.py): the review page and their API. Proposing, deciding
-        and applying change what everyone sees: LOCAL_OR_WRITER, checked in route()."""
+        and applying change what everyone sees: MEMBER, checked in route(). A task records the member who
+        submitted it (acting_for)."""
         if not path.startswith(("/changes", "/api/changes", "/api/albums", "/api/tasks")):
             return None
-        return Response.of((self.tasks if path.startswith("/api/tasks") else self.changes).handle(method, path, qs, body, who))
+        if path.startswith("/api/tasks"):
+            return Response.of(self.tasks.handle(method, path, qs, body, who, acting_for))
+        return Response.of(self.changes.handle(method, path, qs, body, who))
 
-    def mcp_route(self, method: str, req: Request, body) -> Response:
-        """The library as tools for an agent (estate_mcp.py). Anyone who can open the app can search with
-        it; proposing a change set takes what the Changes page takes."""
-        return Response.of(self.mcp.handle(method, req.headers, body, self.can_write(req.headers, req.local),
-                                           self.who(req.headers), req.local))
+    def mcp_route(self, method: str, req: Request, body, m: Member | None) -> Response:
+        """The library as tools for an agent (estate_mcp.py), on the same rule as every route: a login is
+        that member, a call from this computer the sysadmin (and the estate's agent, with X-Estate-Task)."""
+        return Response.of(self.mcp.handle(method, req.headers, body, Auth.MEMBER.allows(m), m.login if m else "",
+                                           req.local, m.id if m else None))
+
+    # -- members (members.py) ---------------------------------------------------------------------
+
+    def door(self, req: Request, m: Member | None, status: int = 200) -> Response:
+        """GET /request-access, and the page a browser is shown when it may not open the one it asked for:
+        ask to be let in (a login that is no member's), wait (asked), or not let in (revoked). A member
+        refused a sysadmin's page is told so."""
+        login = m.login if m else self.login(req.headers)
+        ask = html.escape(self.sysadmin.name) if self.sysadmin else "whoever looks after this library"
+        you, more = f"<b>{html.escape(login)}</b>", ""
+        if m is not None and m.active and status == 403:
+            title, why = f"Only {ask} can open this", "This page is for whoever looks after the library."
+            more = '<a class="btn" href="/">Back to the library</a>'
+        elif m is not None and m.active:
+            title, why = "You are in", f"You are {html.escape(m.name)}, a member of this library."
+            more = '<a class="btn pri" href="/">Open the library</a>'
+        elif m is not None and m.status == "pending":
+            title, why = f"{ask} will let you in", f"You have asked, as {you}. Once {ask} has said yes, the library opens here."
+            more = '<a class="btn" href="/">Try again</a>'
+        elif m is not None:
+            title, why = "You are not let in", f"{ask} has turned off {you}&rsquo;s way in to this library."
+        elif not login:
+            title, why = "Who is asking?", ("This library is reached through Tailscale, which says who is asking. Nothing"
+                                            " came with this request to say who you are.")
+        else:
+            title = f"Ask {ask} to let you in"
+            why = (f"This is a family&rsquo;s photo library. You are signed in to the tailnet as {you}, who is not one"
+                   f" of its members yet. Asking tells {ask} your login and the name you give; nothing else.")
+            name = html.escape(req.headers.get("Tailscale-User-Name") or "", quote=True)
+            more = (f'<form method="post" action="/api/request-access"><input type="text" name="name" value="{name}"'
+                    ' placeholder="Your name" maxlength="80" aria-label="Your name" required>'
+                    '<button class="btn pri">Ask to be let in</button></form>')
+        if self.a.demo:   # so a person trying the demo can be each of its members, and come back
+            more += ('<p class="demo">The demo: be ' + ", ".join(f'<a class="link" href="/members?be={quote(x.login)}">'
+                     f'{html.escape(x.name)}</a>' for x in sorted(self.roster.values(), key=lambda x: x.id or 0) if x.active) + "</p>")
+        return Response(status, pages.plain(title, why, more), "text/html; charset=utf-8")
+
+    def ask_in(self, req: Request, m: Member | None) -> Response:
+        """POST /api/request-access {name?}: a login nobody has let in becomes a pending member. A form's post is
+        answered with the request-access page again (303); JSON with {status}."""
+        form = (req.headers.get("Content-Type") or "").startswith("application/x-www-form-urlencoded")
+        login = self.login(req.headers)
+        if m is None:
+            if not login:
+                return json_response({"error": "no login came with this request"}, 400)
+            if form:
+                name = (parse_qs(req.body.decode("utf-8", "replace")).get("name") or [""])[0]
+            else:
+                body = parse_json(req.body)
+                name = body.get("name") if isinstance(body, dict) else None
+            con = connect(self.a.db)
+            try:
+                m = members.request(con, login, str(name or req.headers.get("Tailscale-User-Name") or ""))
+            finally:
+                con.close()
+            self.load_members()
+            print(f"members: {login} asks to be let in, as {m.name}", flush=True)
+        if form:
+            return Response(303, b"", "text/plain", "no-store", {"Location": "/request-access"})
+        return json_response({"status": m.status})
+
+    def members_listing(self, m: Member | None) -> Response:
+        """GET /api/members (sysadmin): every member with its logins, the people a member can be linked to."""
+        con = connect(self.a.db)
+        try:
+            return json_response({"members": members.everyone(con), "persons": members.persons(con),
+                                  "me": m.id if m else None, "demo": bool(self.a.demo),
+                                  "roles": members.ROLES, "policies": members.POLICIES})
+        finally:
+            con.close()
+
+    def change_member(self, mid: int, body, m: Member | None) -> Response:
+        """POST /api/members/<id> (sysadmin): approve (status active), revoke (revoked), a role, an upload
+        policy, a person, a name. 400 for a value members.change refuses, 404 for no such member."""
+        if not isinstance(body, dict):
+            return json_response({"error": "expected a JSON object"}, 400)
+        con = connect(self.a.db)
+        try:
+            members.change(con, mid, m.id if m else None, **body)
+            row = next(x for x in members.everyone(con) if x["id"] == mid)
+        except ValueError as e:
+            return json_response({"error": str(e)}, 404 if str(e) == "no such member" else 400)
+        finally:
+            con.close()
+        self.load_members()
+        print(f"members: {row['name']} is now {row['status']}, {row['role']} (by {m.name if m else 'this computer'})", flush=True)
+        return json_response({"member": row})
+
+    def be(self, qs: dict) -> Response:
+        """--demo only: GET /members?be=<login> makes this browser that demo member (the demo_member cookie;
+        empty: the demo's sysadmin again), and goes where they may go."""
+        login = members.norm((qs.get("be") or [""])[0])
+        m = self.roster.get(login) if login else self.sysadmin
+        cookie = f"{DEMO_COOKIE}={quote(login, safe='@.')}; Path=/; SameSite=Lax" + ("" if login else "; Max-Age=0")
+        return Response(303, b"", "text/plain", "no-store",
+                        {"Location": "/members" if m and m.is_sysadmin else "/", "Set-Cookie": cookie})
 
     def favorite(self, body, who: str) -> Response:
         """POST /api/favorite {sha, fav}: a photo is, or is no longer, a favourite. It changes what everyone
-        sees (a month's cover is a favourite if it has one): LOCAL_OR_WRITER, checked in route()."""
+        sees (a month's cover is a favourite if it has one): MEMBER, checked in route()."""
         sha, on = (body.get("sha"), body.get("fav")) if isinstance(body, dict) else (None, None)
         with self.live.gate:              # (here without it: handle() leaves it to set_favorites)
             known = isinstance(sha, str) and sha in self.live.cat.index
@@ -642,6 +821,9 @@ def make_handler(app: PhotoApp):
             path = urlparse(self.path).path
             if method in ("PUT", "POST") and path.startswith("/api/upload/"):   # the system uploader
                 return self.upload()
+            streamed = method == "GET" and (re.fullmatch(r"/api/albums/\d+/download", path) or path.startswith("/video/"))
+            if streamed and (no := app.refusal(Request(method, self.path, self.headers, b"", is_local(self)))) is not None:
+                return self.send(no)
             if method == "GET" and (m := re.fullmatch(r"/api/albums/(\d+)/download", path)):
                 return self.download(int(m[1]))
             if method == "GET" and path.startswith("/video/"):
@@ -673,8 +855,9 @@ def make_handler(app: PhotoApp):
             early answer leaves the body on the wire, where it would be read as the next request."""
             client_closes = self.close_connection   # parse_request set it from `Connection: close` or HTTP/1.0
             self.close_connection = True            # until admin says the body was read
+            m = app.who(self.headers, is_local(self))
             got, unread = app.admin.upload(self.command, urlparse(self.path).path, self.headers, self.rfile,
-                                           app.who(self.headers), app.can_write(self.headers, is_local(self)))
+                                           m.login if m else "", Auth.MEMBER.allows(m))
             self.close_connection = client_closes or unread
             self.send(Response.of(got))
 

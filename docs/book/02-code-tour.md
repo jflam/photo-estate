@@ -65,9 +65,12 @@ Code lines, measured as above (a script module's JSDoc comments are not counted)
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
   embed.py             351  image and video embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
-  photo_app.py         631  the photo app as an object: PhotoApp (wiring, who may write, favourites, reloads) and its HTTP
+  photo_app.py         807  the photo app as an object: PhotoApp (wiring, who a request is for and what it may do, the
+                            request-access page and /members' routes, favourites, reloads) and its HTTP
                             handler, which streams uploads, album downloads and videos (/video/, with Range)
-  http_util.py         177  what the servers share: Response, bounded JSON bodies, int_param (400s), byte_range, the Auth rules
+  http_util.py         186  what the servers share: Response, bounded JSON bodies, int_param (400s), byte_range, the Auth rules
+  members.py           183  who the estate knows: members, their Tailscale logins, roles and upload policies; the first
+                            start from --upload-user, the demo's members; every change journaled (chapter 11)
   catalog.py           749  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
                             clips), Live (chapter 11)
   browse.py            389  search, similar, facets, Years and Months, layout; an agent's searches; kind and is:video
@@ -82,15 +85,15 @@ photo-estate/                  the server and the web app (Python run with uv; n
   faces.py             964  faces: run, serve, and the People class (who is who)
   changes.py           439  albums and change sets: proposed, reviewed, applied, reverted (chapter 26)
   places.py            388  place names, local time, events, trips
-  estate_mcp.py        417  the library as MCP tools for an agent, at /mcp (chapter 26)
+  estate_mcp.py        421  the library as MCP tools for an agent, at /mcp (chapter 26)
   upload.py            340  receives phone uploads into an inbox (chapter 24)
-  tasks.py             299  a request in words, worked on by Claude Code on the library's computer (chapter 26)
+  tasks.py             301  a request in words, worked on by Claude Code on the library's computer (chapter 26)
   stats.py             181  the numbers behind the /stats page
   sync.py               98  the change feed a phone syncs from (chapter 20)
   scores.py             88  which photos are best: the two scorers (chapter 25)
   stacks.py             74  near-identical shots as one stack (chapter 25)
-  pages.py              64  puts the shared stylesheet into each page as it is sent, and says which
-                            script modules (app/*.js) a server sends at /app/<name>.js
+  pages.py              82  puts the shared stylesheet into each page as it is sent, and says which
+                            script modules (app/*.js) a server sends at /app/<name>.js; the request-access page
   intake/            1,235  the setup page's engine: sources, jobs, the pipeline every source feeds (chapter 16)
   core/                     what several parts must agree on, standard library only (issue #85):
     media.py                  file types: extension -> MIME, the image/video/RAW/upload sets, what each decoder skips,
@@ -113,6 +116,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   changes.html         449  reviewing an album or change set, at /changes
   setup.html           429  bringing photos in, at /setup
   stats.html           282  library info, at /stats
+  members.html         128  the sysadmin's members: let in, turn off, role, upload policy, person, at /members
   review.html          255  the near-duplicate review page
   compare.html         226  a run of the model comparison: two unlabelled columns a search, a vote, and the report, at /compare
   app/estate.css        97  the stylesheet every page shares
@@ -151,6 +155,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
     people-flow.js      21    people.html: unknownFaces(), the bounded wait for the groups of unnamed faces
     stats-watch.js      50    stats.html's one loop for the figures and the uploads
     setup-flow.js       45    setup.html's two strict state machines (the page, the source panel) and their tables
+    members-flow.js     51    members.html's strict machine (loading, ready, saving one change at a time, failed)
+                              and what each member's row offers
     video-flow.js       63    what plays in search.html's viewer: still, video, failed, live; every step out of
                               video or live lets the element's stream go (chapter 13)
     tests/           2,619    their unit tests (video-flow.test.js among them), run by Node's own runner: `npm test` (chapter 17)
@@ -164,6 +170,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   tests/             6,847  16 self-running test scripts and 17 pytest files; conftest.py runs the scripts under pytest,
                             test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
+                            test_members.py checks members.py and its journal entries on a scratch catalog;
                             test_core.py checks core/ against what the code before it did;
                             test_types.py checks the typed contracts (Catalog's fields, the enums) and runs pyright;
                             test_lifecycle.py makes the background loaders fail and race on purpose (issue #82);
@@ -180,7 +187,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_pages_browser.py (734 lines, slow tier) drives the secondary pages in a real
                             browser with Playwright and makes their requests fail or never end (issue #80);
                             test_video_browser.py (slow tier) plays videos and Live Photos in search.html, in Chrome
-  tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
+  tests/fixtures/           schema_baseline.json (sqlite_master as older code made it, and the tables and columns
+                            added since), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)
   uv.lock                   every dependency of those groups, pinned; CI installs from it (chapter 17)
@@ -279,7 +287,7 @@ everything on each run, in seconds.
 
 ### The web pages
 
-Each page (`search.html`, `people.html`, `changes.html`, `setup.html`, `stats.html`, `review.html`, `compare.html`) is one HTML file with its CSS and its own JavaScript inline: no build step, no
+Each page (`search.html`, `people.html`, `changes.html`, `setup.html`, `stats.html`, `review.html`, `compare.html`, `members.html`) is one HTML file with its CSS and its own JavaScript inline: no build step, no
 framework, no dependencies, no bundler. The server reads the file from disk on every request for `/`
 (with an ETag), so editing a page and reloading shows the change at once.
 
@@ -304,7 +312,7 @@ import { toast } from "/app/toast.js";
 | [app/grid-flow.js](../../photo-estate/app/grid-flow.js), [app/library-flow.js](../../photo-estate/app/library-flow.js), [app/albums-flow.js](../../photo-estate/app/albums-flow.js), [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js), [app/video-flow.js](../../photo-estate/app/video-flow.js), [app/favourite.js](../../photo-estate/app/favourite.js) | `search.html`'s state over time: its machines, their tables, what each state owns, and the requests they make and cancel ([chapter 13](13-photo-app.md#the-machines), [issue #81](https://github.com/jflam/photo-estate/issues/81)). The page gives them its `fetch`es and is told what to draw |
 | [app/loop.js](../../photo-estate/app/loop.js) | `loop(step)`: asking the server again and again for as long as a page is open. One step at a time (a timer and a click can never both start one), the step says how long to wait, a failing step does not end it, `pause()`/`resume()` for a hidden page, `stop()` aborts the step under way. `until(step, options)`: `poll()` that resolves to `{ state: "done" \| "timeout" \| "error" }` for a page that shows how the wait ended |
 | [app/work.js](../../photo-estate/app/work.js) | `single()`: work that must not overlap itself, not busy any more when it fails; `batch(items, step)`: several requests in a row, and which were done when one failed; `serial({ settle })`: requests one at a time in the order asked, and one call to put the page right after a failure |
-| [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |
+| [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js), [app/members-flow.js](../../photo-estate/app/members-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |
 
 The browser fetches each module as it is, from `/app/<name>.js`: [pages.py](../../photo-estate/pages.py)'s
 `module()` says which files those are (the modules, not their tests or `package.json`), and every server
@@ -332,6 +340,7 @@ that behaviour in the modules above, where each rule is a unit test, and ask the
 | `people.html` | Saving a page of faces is one request under `single()`: when it fails the toast says why, the choices stay and Save works again. Taking faces off a person is several requests under `batch()`: the ones that were done leave the page, the rest keep their marks, and the button sends only what is left. Every other change (naming a group, renaming, the photo's buttons) says so in a toast when it fails. A view that can not be loaded says so, with **Try again** | the wait for the groups of unnamed faces (`unknownFaces`): asked after 1.5 s, then half as long again each time up to 10 s, for at most 10 minutes; ends on `ready` or `failed`; cancelled when the view changes |
 | `changes.html` | Marks, apply, revert, commit and reopen go one at a time in the order made (`edits`, over `serial()`). If one fails, the set is read again from the server once nothing more is on its way and the page shows that; if it can not be read either, the page says it may be wrong, with **Read it again**. After apply or revert, `settle` asks the set's check until the app has taken the change in | `settle`: every 700 ms for at most 2 minutes, then "Still updating" with **Check again**; cancelled by a newer change, by leaving, and while the page is hidden |
 | `stats.html` | `statsWatch`: one `loop()` asks for the uploads and the figures in turn, so two requests are never in flight. A failed `/api/stats` is "Couldn't take stock" or "Can't reach the library" with **Try again**; a catalogue run or a restart that can not be started says why in the uploads panel | figures every 1.5 s while the server is measuring; uploads every 2 s during a run, else every 15 s; after a restart `/api/info` every 4 s for at most 5 minutes; paused while the page is hidden |
+| `members.html` | One strict machine from `members-flow.js`: `idle`, `loading`, `ready` (owning the server's answer), `saving` (that, and the member being changed: the page takes no other change until the server answers), `failed`. A change the server refuses (the last sysadmin turned off) goes back to `ready` with the members as they were, and the toast says why | none: it asks once, and again only when told to |
 | `setup.html` | Two strict machines from `setup-flow.js`, each state owning its data. The page: `loading`, `place`, `idle`, `watching`, `answering` (the states in which `/api/intake` is asked), `opening` (waiting for the photo app), `stuck`, `app`. The source panel: `closed`, `open`, `checking`, `checked`, `starting`, with `{ id, config, preview }` handed from state to state, so a preview never outlives the text it was made for and an answer for a panel that has moved on is dropped | asked every 1.2 s while a job is live, else every 8 s; `opening` asks `/api/info` every 1.5 s for at most 10 minutes, then "Still not open" with **Try again** |
 
 `compare.html` is a run of the model comparison, held by one strict machine from

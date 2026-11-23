@@ -1,6 +1,6 @@
 """
 http_util.py — what the photo app's HTTP servers share (standard library only): a response as a value,
-bounded JSON bodies, query parameters that answer 400 instead of failing, and who may write.
+bounded JSON bodies, query parameters that answer 400 instead of failing, and who may do what.
 
   Response(status, body, content_type, cache, headers)   frozen; Response.of(module tuple | None) -> Response
   RouteAnswer                                            the type of what Response.of takes (a route module's answer)
@@ -15,14 +15,17 @@ bounded JSON bodies, query parameters that answer 400 instead of failing, and wh
   read_json(rfile, headers, limit=MAX_BODY) -> object    read_body, then parse_json
   int_param(qs, name, default, min=, max=) -> int        a whole number, clamped to [min, max]; 400 on garbage
   byte_range(header, size) -> (first, last) | None       a Range header's one range, for a file of `size` bytes
-  Auth.PUBLIC | Auth.WRITER | Auth.LOCAL_OR_WRITER       who may make a request; Auth.allows(writer=, local=)
+  Auth.PUBLIC | MEMBER | SYSADMIN | LOCAL                 who may make a request; Auth.allows(member)
 
-Who may write. `--upload-user` names the Tailscale logins that may change the library (`writer`: every
-caller, when it names none). A request `local` comes from this computer itself, not through
-`tailscale serve` (intake/server.py's is_local): that is where the headless agent (tasks.py) and an MCP
-client on the same machine run, and whoever is there can already change the catalog's files. Every
-request that changes the library is LOCAL_OR_WRITER; reading is PUBLIC. WRITER (a listed login only) is
-here for a route that must not be open to this computer's own callers; none needs it today.
+Who may do what. Every request is for a member (members.py) or for nobody: PhotoApp.who() finds it from
+the `Tailscale-User-Login` header that `tailscale serve` adds (the demo's own header or cookie instead,
+with --demo). A request `local` comes from this computer itself, not through `tailscale serve`
+(intake/server.py's is_local): that is where the headless agent (tasks.py), an MCP client and the CLI's
+tools run, and whoever is there can already change the catalog's files, so it is the sysadmin. MEMBER (an
+active member, whatever its role) is what every request takes unless photo_app.ROUTE_AUTH says otherwise;
+SYSADMIN is for the pages that let people in and that reach the computer itself; PUBLIC is only what a
+browser needs to ask to be let in. LOCAL (this computer only) is for a route that must not be open to any
+member; none needs it today.
 
 Phone uploads stream to disk and are not JSON: they never go through read_body (admin.py has its own
 limits). MAX_BODY is for the JSON bodies every other POST takes: a change set or album of a few
@@ -206,13 +209,19 @@ def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
 
 
 class Auth(enum.Enum):
-    PUBLIC = "public"                      # anyone who can reach the app
-    WRITER = "writer"                      # a --upload-user login (everyone, when none is named)
-    LOCAL_OR_WRITER = "local_or_writer"    # that, or a request from this computer itself
+    PUBLIC = "public"         # anyone who can reach the app, member or not
+    MEMBER = "member"         # an active member, or this computer
+    SYSADMIN = "sysadmin"     # an active sysadmin, or this computer
+    LOCAL = "local"           # this computer only
 
-    def allows(self, *, writer: bool, local: bool) -> bool:
+    def allows(self, member) -> bool:
+        """`member`: who the request is for (members.Member: .active, .is_sysadmin, .local), or None."""
         if self is Auth.PUBLIC:
             return True
-        if self is Auth.WRITER:
-            return writer
-        return writer or local
+        if member is None:
+            return False
+        if self is Auth.LOCAL:
+            return member.local
+        if self is Auth.SYSADMIN:
+            return member.local or member.is_sysadmin
+        return member.local or member.active

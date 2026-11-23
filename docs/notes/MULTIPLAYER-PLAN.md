@@ -367,6 +367,12 @@ family. While this is being proved out the tokens are few; leave `tasks.py` as i
 
 ### Phase 1: members and identity
 
+*Built 2026-11-22 (branch `multiplayer`); [chapter 11](../book/11-server.md#members-and-who-may-do-what)
+describes it. Built smaller than this list: the roles are `sysadmin` and `member` (no `viewer` until
+something uses it); no inbox item for a request (phase 4); old `created_by`/`set_by` values are logins
+and are left as they are, since a login already names its member; `/api/info` has no version to show, so
+a non-member is told only `{"member": false}`.*
+
 - The tables `members`, `member_logins` and `journal`, and the module `members.py` (with its unit test):
   look a login up, add a member, change a role or status. The journal table lands here so member
   changes are journaled from the first day; phase 2 journals everything else and adds the protections.

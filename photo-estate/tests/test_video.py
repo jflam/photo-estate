@@ -9,6 +9,7 @@ socket. tests/test_video_app.py does the same end to end with the model.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import shutil
@@ -809,6 +810,8 @@ def app(tmp_path_factory, clips):
     lib.pair(clip, still)
     a = PhotoApp(embed.parser().parse_args(["--db", str(lib.db), "serve", "--store", str(store), "--no-pregenerate"]))
     a.feed_update()
+    # Asked as this computer: a catalog with no members lets nothing else in (photo_app.py, members.py).
+    a.request = functools.partial(a.request, local=True)
     return SimpleNamespace(app=a, vid=vid, clip=clip, still=still, photo=lib.photos[0], size=len(vid_bytes),
                            bytes=vid_bytes, n=len(lib.photos) + 1)
 

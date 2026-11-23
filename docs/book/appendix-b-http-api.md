@@ -1,7 +1,7 @@
 # Appendix B: HTTP API reference
 
 Three servers share the same style (plain `BaseHTTPRequestHandler`, JSON, loopback only, no sign-in of
-their own; the photo app decides who may write from `tailscale serve`'s `Tailscale-User-Login`, below):
+their own; the photo app decides who each request is for from `tailscale serve`'s `Tailscale-User-Login`, below):
 
 | Server | Started by | Default port | Purpose |
 |---|---|---|---|
@@ -20,7 +20,7 @@ each request to the module that answers it ([chapter 11](11-server.md)):
 
 | Routes | Answered by |
 |---|---|
-| `/`, the app files, `/api/info`, `/api/sync`, `/api/favorite`, `/api/albums/<id>/download` | `PhotoApp` in [photo_app.py](../../photo-estate/photo_app.py) |
+| `/`, the app files, `/api/info`, `/api/sync`, `/api/favorite`, `/api/albums/<id>/download`, `/request-access`, `/api/request-access`, `/api/me`, `/members`, `/api/members*` | `PhotoApp` in [photo_app.py](../../photo-estate/photo_app.py), with [members.py](../../photo-estate/members.py) |
 | `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log` | `Browse` in [browse.py](../../photo-estate/browse.py) |
 | `/thumb/`, `/preview/`, `/large/`, `/original/` | `Images` in [images.py](../../photo-estate/images.py) |
 | `/video/` | The HTTP handler in photo_app.py (`Handler.video`), which streams the file `Images.video_file` names |
@@ -33,27 +33,42 @@ each request to the module that answers it ([chapter 11](11-server.md)):
 
 All of them answer from the same in-memory catalog (`catalog.Live`, in [catalog.py](../../photo-estate/catalog.py)).
 
-### Who may write
+### Who may do what
 
-Reading is open to anyone who can reach the app. Every request that changes the library takes one rule
-(`Auth.LOCAL_OR_WRITER`, `ROUTE_AUTH` in photo_app.py, [chapter 11](11-server.md)): the caller is a
-`--upload-user` login (the `Tailscale-User-Login` header `tailscale serve` adds), or the request comes
-from this computer itself (`127.0.0.1` or `::1`, with no `Tailscale-User-Login`, `X-Forwarded-For` or
-`Forwarded` header): the browser there, the task agent, a local MCP client. With no `--upload-user`,
-everyone may write. Otherwise the answer is `403 {"error": "not allowed"}` (uploads: `403 not allowed`,
-text).
+Every request is for a member of the estate or for nobody ([members.py](../../photo-estate/members.py),
+[chapter 11](11-server.md)). Through `tailscale serve`, the member is the one whose login is in the
+`Tailscale-User-Login` header; a request from this computer itself (`127.0.0.1` or `::1`, with no
+`Tailscale-User-Login`, `X-Forwarded-For` or `Forwarded` header: the browser there, the task agent, a
+local MCP client) is the sysadmin. With `--demo`, and only then, the header is not read: `X-Demo-Member:
+<name>` or a `demo_member` cookie names a demo member (`ada`, the sysadmin; `ben`, `cleo`), a name that is
+none of theirs is a login nobody has let in, and with neither a request is Ada.
 
-| Writes (the rule above) | Open to anyone |
+The rules are one table, `ROUTE_AUTH` in photo_app.py (`http_util.Auth`). A refused browser opening a page
+(`Accept: text/html`) gets the request-access page with status 403; anything else refused is `403
+{"error": "not allowed"}` (uploads: `403 not allowed`, text).
+
+| Rule | Who | Routes |
+|---|---|---|
+| `PUBLIC` | anyone who can reach the app | `GET /request-access`, `POST /api/request-access`, `GET /api/info` (a non-member gets only `{"member": false}`), `GET /manifest.webmanifest`, `/sw.js`, `/icon-*.png` |
+| `SYSADMIN` | an active sysadmin, or this computer | `GET /members`, `GET /api/members`, `POST /api/members/<id>`, `GET /setup`, `GET` and `POST /api/intake/...`, `POST /api/restart` |
+| `MEMBER` | an active member of any role, or this computer | everything else: every other page, `GET` and write, `/app/*.js`, images and `/video/`, album downloads, `/api/sync`, `/mcp`, uploads, `OPTIONS /api/upload/...` |
+| `LOCAL` | this computer only | nothing yet |
+
+Until 2026-11-22 reading was open to anyone who could reach the app, and writes took a `--upload-user`
+login (everyone, with none named) or this computer. Before 2026-11-19 the three People writes took no
+permission, and intake, the ingest, restart and uploads took a `--upload-user` login only.
+
+### Members
+
+| Endpoint | Behavior |
 |---|---|
-| `POST /api/people/label`, `/api/people/label-many`, `/api/people/person` | every `GET` |
-| `POST /api/favorite` | `POST /mcp` (its write tools take the rule: a caller who may not write gets an `isError` result) |
-| `POST /changes...`, `/api/changes...`, `/api/albums...`, `/api/tasks...` | `OPTIONS /api/upload/...` |
-| `POST /api/intake/...` | |
-| `POST /api/ingest`, `/api/restart` | |
-| `PUT` and `POST /api/upload/...` | |
-
-Before 2026-11-19 the three People writes took no permission, and intake, the ingest, restart and
-uploads took a `--upload-user` login only (this computer's own requests were refused there).
+| `GET /request-access` | A page of a few words, no script: for a login nobody has let in, "Ask <sysadmin> to let you in" with a name field (filled from `Tailscale-User-Name`) and a button; after asking, that the sysadmin will let you in; for a revoked member, that they are not let in; with no login at all, that nothing said who is asking; for a member, that they are in. The same page is what a refused browser is shown, and a member refused a sysadmin's page is told "Only <sysadmin> can open this". With `--demo` it ends with links to be each active demo member |
+| `POST /api/request-access {name?}` | A login with no member becomes a `pending` member (`member.requested` in the journal); a member's login, in any status, changes nothing. A form's post (`application/x-www-form-urlencoded`) is answered `303` to `/request-access`; JSON with `{"status"}`. `400` with no login |
+| `GET /api/me` | The member the request is for: `{id, name, role, status, upload_policy, person_id, kind, joined_at, login, local}`. From this computer `local` is true and `login` empty (`id` is null if the catalog has no sysadmin yet) |
+| `GET /members` | `members.html`, the sysadmin's page (with an `ETag`, `no-cache`) |
+| `GET /api/members` | `{members: [{id, name, kind, role, status, upload_policy, person_id, person, joined_at, logins: [{login, added_at}]}], persons: [{id, name}], me, demo, roles, policies}`: waiting members first, then active, then revoked; `persons` are the people named in People that a member can be linked to |
+| `POST /api/members/<id> {name?, role?, status?, upload_policy?, person_id?}` | Change a member: approve (`status: "active"`, which sets `joined_at` the first time), revoke (`"revoked"`), a role (`sysadmin`, `member`), an upload policy (`everything`, `review`, `review_flagged`; nothing reads it yet), a person (or `null`), a name. `{member}` as listed above; one `member.changed` journal entry naming what changed. `400` for any other field or value, a person that does not exist, or a change that would leave no active sysadmin; `404` for no such member |
+| `GET /members?be=<login>` | `--demo` only: sets (or, with `be=` alone, clears) the `demo_member` cookie and answers `303` to `/members` for a sysadmin, `/` for anyone else |
 
 ### Malformed requests
 
@@ -73,14 +88,14 @@ The setup server (`intake/server.py`) and `faces.py serve` read bodies the same 
 |---|---|
 | `GET /` , `/index.html` | `search.html`, with an `ETag` and `Cache-Control: no-cache` |
 | `GET /manifest.webmanifest`, `/icon-180.png`, `/icon-192.png`, `/icon-512.png`, `/icon-maskable-512.png`, `/sw.js` | The files in `app/`, served from the site root |
-| `GET /app/<name>.js` (`/app/dom.js`, `/app/api.js`, `/app/fsm.js`, `/app/toast.js`, `/app/format.js`, `/app/query.js`, `/app/layout.js`, `/app/grid-flow.js`, `/app/library-flow.js`, `/app/albums-flow.js`, `/app/viewer-flow.js`, `/app/favourite.js`, `/app/loop.js`, `/app/work.js`, `/app/save-queue.js`, `/app/changes-flow.js`, `/app/people-flow.js`, `/app/stats-watch.js`, `/app/setup-flow.js`) | A script module the pages import (`pages.module`), as `text/javascript; charset=utf-8`, with an `ETag` and `Cache-Control: no-cache` like the page. Only the modules in `app/`: anything else under `/app/` (their tests, `package.json`, `/app/sw.js`) is a 404. The setup server, `faces.py serve` and `estate.py review` serve the same paths for their pages, without the `ETag` |
+| `GET /app/<name>.js` (`/app/members-flow.js`, `/app/dom.js`, `/app/api.js`, `/app/fsm.js`, `/app/toast.js`, `/app/format.js`, `/app/query.js`, `/app/layout.js`, `/app/grid-flow.js`, `/app/library-flow.js`, `/app/albums-flow.js`, `/app/viewer-flow.js`, `/app/favourite.js`, `/app/loop.js`, `/app/work.js`, `/app/save-queue.js`, `/app/changes-flow.js`, `/app/people-flow.js`, `/app/stats-watch.js`, `/app/setup-flow.js`) | A script module the pages import (`pages.module`), as `text/javascript; charset=utf-8`, with an `ETag` and `Cache-Control: no-cache` like the page. Only the modules in `app/`: anything else under `/app/` (their tests, `package.json`, `/app/sw.js`) is a 404. The setup server, `faces.py serve` and `estate.py review` serve the same paths for their pages, without the `ETag` |
 | `GET /people`, `/people/` | `people.html`, once faces exist and `People` has loaded (else 503; 500 with the error if loading them failed) |
 
 ### Uploads from the phone
 
 | Request | Returns |
 |---|---|
-| `PUT /api/upload/<YYYY/MM/DD/name.ext>` | Saves the body to the inbox (`--inbox`, default `<db dir>/iphone`; none with `--demo`). `Content-Length` is required; an optional `X-Content-SHA256` is checked against the bytes received. `201 {"status":"stored"}`; `200 "exists"` if the same path and size is already there (so retries are safe); `409` if the path exists with a different size; `400` for a bad path, short body or wrong checksum; `403` if `--upload-user` is set, `Tailscale-User-Login` is not one of them and the request is not from this computer; `411` without a length |
+| `PUT /api/upload/<YYYY/MM/DD/name.ext>` | Saves the body to the inbox (`--inbox`, default `<db dir>/iphone`; none with `--demo`). `Content-Length` is required; an optional `X-Content-SHA256` is checked against the bytes received. `201 {"status":"stored"}`; `200 "exists"` if the same path and size is already there (so retries are safe); `409` if the path exists with a different size; `400` for a bad path, short body or wrong checksum; `403` if the caller is not an active member and the request is not from this computer; `411` without a length |
 
 The extension must be a photo or video type, or `X.<media ext>.xmp` for a sidecar. The server never
 writes the catalog: `ingest-iphone.sh` ingests the inbox ([upload.py](../../photo-estate/upload.py)).
@@ -157,7 +172,7 @@ none of these. A video's score in a ranking is its best frame's or its mean's, w
 | `GET /api/facets?...` (same filter parameters) | `{"facets": {country, region, city, camera, lens, trip, album, person: [[label, count], ...]}, "months": [counts], "fav": N, "matching": N}` (each facet's counts ignore its own selection; `person` counts include it) |
 | `GET /api/periods?...` (same filter parameters, plus `dedupe`, `shots`, `sort`) | The Library's Years and Months: `{"years": [...], "months": [...], "matching": N, "total": N}`, each card `{"key": "2019" or "2019-07", "n", "at", "cover", "ar", "places": [...]}`; `at` is where the card's photos start in `/api/search` with the same parameters (a `cursor`) |
 | `GET /api/layout?...` (same filter parameters, plus `sort`) | One byte per photo, in `/api/search`'s order with the same parameters: its aspect ratio between 0.5 and 2.6 in 255 steps, so the page can lay a month out before fetching it. `application/octet-stream` with an `ETag` |
-| `GET /api/info` | `{"total", "videos", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `videos` is how many of `total` are videos. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
+| `GET /api/info` | For a member: `{"total", "videos", "model", "m0", "trips": [{id, title, start, end, n, cover}], "demo", "faces", "facets", "months", "fav", "matching"}`: the unfiltered facet payload merged in. `videos` is how many of `total` are videos. `months` is the list of per-month counts, so the number of months is its length and `m0` is the first month as `year*12 + month - 1` |
 | `GET /stats` | The library info page ([stats.html](../../photo-estate/stats.html)) |
 | `GET /api/stats[?refresh=1]` | `{state: working\|ready\|error, library, disk, app}`: library figures from memory, disk figures (catalog tables, cache folders, free space) measured once in a background thread and saved to `stats-cache.json` next to the catalog; `refresh=1` recomputes (the page's Recompute button); `catalog_assets_now` lets the page flag a stale measurement. Code in [stats.py](../../photo-estate/stats.py), which also runs standalone |
 | `GET /api/sync?epoch=E&since=V[&after=SHA][&limit=N]` | The catalog as a change feed, for a device that keeps its own copy (the iPhone app; [sync.py](../../photo-estate/sync.py)): `{epoch, photos: [rows as in /api/search, plus dup], deleted: [shas], since, after, more, total, trips}`. Rows come in (version, sha) order; send `since` and `after` back to continue, until `more` is false. `deleted` holds the deletions between the cursor sent and the one returned (each is sent once; none to a device that is up to date; apply them from every page). `limit` counts rows. An unknown `epoch` starts from the beginning. `503` with `Retry-After` while the feed is being built after a start |
@@ -196,7 +211,7 @@ also answers under `/api/albums`; `/api/changes` lists only the albums that are 
 | `POST /mcp` | The [MCP](https://modelcontextprotocol.io/) endpoint ([estate_mcp.py](../../photo-estate/estate_mcp.py)): streamable HTTP in its simplest form, one JSON-RPC message (or a batch) per POST, answered with JSON, no stream and no session. Tools: `library_overview`, `search_photos`, `similar_photos`, `get_photos`, `list_albums`, `get_album`, `create_album`, `amend_album`, `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set`, `submit_task`, `get_task`, `cancel_task`. `search_photos` takes `kind` (`photo` or `video`), and its rows carry `kind`, `seconds` and `live_photo` |
 | `GET /api/tasks` | Whether an agent can run on this computer, and every task, newest first ([tasks.py](../../photo-estate/tasks.py)) |
 | `GET /api/tasks/<id>?after=N` | One task, its events after event N, and the change set it made |
-| `POST /api/tasks {prompt}` | Start one: Claude Code, run headless with only the library's MCP tools |
+| `POST /api/tasks {prompt}` | Start one: Claude Code, run headless with only the library's MCP tools. The task records who asked (`acting_for`, the member's id; the sysadmin's from this computer), which every task in these answers carries |
 | `POST /api/tasks/<id>/cancel` | Stop a task that is queued or running: a queued one never starts, a running one's agent gets SIGTERM, then SIGKILL after ten seconds, and the task stays `cancelled` however the agent ends. Answers the task (`404` if there is none); one already finished is returned unchanged |
 
 ### Bringing photos in (the setup page)
@@ -248,7 +263,7 @@ search is a 503. `GET /api/info` says `compare: true` when these routes exist.
 | `POST /api/compare/run/finish {run, early?}` | Ends the run: its report `{id, started, finished, a, b, k, photos, terms, count: {a, b, same, skip}, unanswered, p, verdict, overlap, a_ms, b_ms, rows: [{term, winner, left, overlap, a_ms, b_ms}]}`, also written to `runs/<id>.md`; the second model is let go. 409 with `left` if searches are unanswered and `early` is not true; 404 if that run is not under way |
 | `GET /api/compare/report?run=ID` | A finished run's report (404 if there is none, 409 if it is not finished) |
 | `GET /api/compare?q=&k=48` | `{q, text, applied, candidates, a, b, overlap}`. `q` is read as `/api/search` reads it: names, places and `key:value` filters choose the photos, the words left over (`text`) are ranked. Both sides rank the same photos (those with a vector from both models), and each of `a` and `b` is `{model, text_ms, rank_ms, results: [{id, score}]}`, the top `k` (at most 200) with no match floor. 400 when there are no words to rank by; 503 while the second model loads |
-| `POST /api/compare/vote {q, winner: a\|b\|same, left, k, run?, overlap?, a_ms?, b_ms?}` | With `run`, that run's answer to one of its searches (`winner` may also be `skip`; answered again, it replaces the answer; 404 for a run not under way, 400 for a search not in it). Appends a line to the votes file (`--compare-votes`, default `DIR/votes.jsonl`) and returns `{ok, votes}`. Takes the write rule (a `--upload-user` login or this computer, else 403), though it writes only that file |
+| `POST /api/compare/vote {q, winner: a\|b\|same, left, k, run?, overlap?, a_ms?, b_ms?}` | With `run`, that run's answer to one of its searches (`winner` may also be `skip`; answered again, it replaces the answer; 404 for a run not under way, 400 for a search not in it). Appends a line to the votes file (`--compare-votes`, default `DIR/votes.jsonl`) and returns `{ok, votes}`. Takes a member (or this computer, else 403), though it writes only that file |
 
 ### The People API (also on `faces.py serve`)
 

@@ -19,6 +19,8 @@ Areas, and who opens them (each owner calls ensure when it opens the database, n
     tasks        tasks.Tasks: agent_tasks, agent_events
     scores       scores.save: scorers ("Best first")
     favorites    photo_app.PhotoApp, when it opens the catalog: favourites set in the app
+    members      photo_app.PhotoApp, when it opens the catalog (members.py): members, member_logins, and
+                 the journal (members.py writes its first entries; journal.py is phase 2 of the multiplayer plan)
   sync-feed.db   sync         sync.Feed: kv, rows (the phones' change feed, beside the catalog)
   intake.db      intake       intake.engine.Store: jobs, events (the setup page's jobs)
 
@@ -152,6 +154,25 @@ CREATE TABLE IF NOT EXISTS scorers(
 FAVORITES = """
 CREATE TABLE IF NOT EXISTS favorites(sha256 TEXT PRIMARY KEY, fav INT NOT NULL, set_at TEXT, set_by TEXT);
 """
+MEMBERS = """
+CREATE TABLE IF NOT EXISTS members(      -- who the estate knows: not persons (who is *in* photos, faces.py)
+  id INTEGER PRIMARY KEY, name TEXT,
+  kind TEXT DEFAULT 'person',            -- person | agent | device
+  role TEXT DEFAULT 'member',            -- sysadmin | member | viewer
+  person_id INT,                         -- persons.id: who this member is in photos, if known
+  upload_policy TEXT DEFAULT 'review',   -- everything | review | review_flagged
+  joined_at TEXT,                        -- when first let in
+  status TEXT DEFAULT 'pending');        -- pending | active | revoked (never deleted)
+CREATE TABLE IF NOT EXISTS member_logins(   -- a Tailscale login, and the member it is (a member may have several)
+  login TEXT PRIMARY KEY, member_id INT NOT NULL, added_at TEXT);
+CREATE TABLE IF NOT EXISTS journal(      -- what happened, appended to and never changed
+  id INTEGER PRIMARY KEY, at TEXT,
+  actor INT,                             -- members.id of who did it; NULL: the app itself
+  acting_for INT,                        -- members.id when the actor is an agent
+  kind TEXT,                             -- member.added, member.requested, member.changed, ...
+  subject TEXT,                          -- what it is about: member:<id>, a sha, album:<id> ...
+  data TEXT);                            -- JSON: whatever else the kind needs
+"""
 SYNC = """
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS rows (sha TEXT PRIMARY KEY, digest BLOB, ver INTEGER, gone INTEGER DEFAULT 0);
@@ -176,11 +197,12 @@ CREATE INDEX IF NOT EXISTS events_job ON events(job_id, id);
 EXIF_APP_INDEX = "CREATE INDEX IF NOT EXISTS exif_app ON exif(sha256, camera, lens, focal, focal35, fnumber, exposure, iso)"
 
 AREAS = {"catalog": CATALOG, "embeddings": EMBEDDINGS, "video": VIDEO, "faces": FACES, "changes": CHANGES, "tasks": TASKS,
-         "scores": SCORES, "favorites": FAVORITES, "sync": SYNC, "intake": INTAKE}
-CATALOG_AREAS = ("catalog", "embeddings", "video", "faces", "changes", "tasks", "scores", "favorites")
+         "scores": SCORES, "favorites": FAVORITES, "members": MEMBERS, "sync": SYNC, "intake": INTAKE}
+CATALOG_AREAS = ("catalog", "embeddings", "video", "faces", "changes", "tasks", "scores", "favorites", "members")
 ADDED = {
     "changes": {"change_sets": (("done_at", "TEXT"), ("kind", "TEXT DEFAULT 'list'"), ("query", "TEXT")),
                 "change_items": (("section", "TEXT"), ("position", "INTEGER"))},
+    "tasks": {"agent_tasks": (("acting_for", "INT"),)},    # members.id of whoever submitted the task
 }
 
 
