@@ -31,6 +31,8 @@ exactly on at least one piece; used to find near-duplicates without comparing al
 
 **Best frame.** Of a video's kept frames, the one closest to a search. A video's score in a search is its best frame's, or its mean's when that is higher (`Catalog.sims`), and `at` on its row says where that frame is, in seconds ([10](10-embeddings.md#videos)).
 
+**Binding (agent).** A member's own agent on one device (`agent_bindings`, members.py): made `pending` by its first call to `/mcp` with the member's login, then `approved` or `revoked` by the member on Connect your agent (`/agents`), never by anything the agent sends, and allowed only from another device than the agent's own. Pending it may only look; revoked it is refused ([11](11-server.md#a-members-own-agent)).
+
 **Bradley–Terry model.** A model of pairwise choices: each item has a score, and the chance A is picked over B is `sigmoid(score A − score B)`. The taste scorer is one ([25](25-best-photos.md)).
 
 **Catalog.** The SQLite file `estate.db`.
@@ -38,6 +40,8 @@ exactly on at least one piece; used to find near-duplicates without comparing al
 **Centroid.** The mean (normalised sum) of a person's trusted face vectors for one year.
 
 **Clip (Live Photo).** The short video, a few seconds long, taken with a Live Photo's still and stored as a file of its own. Told by Apple's content identifier, or a Google `MVIMG` name, plus a still of its name in the same folder (of its own source first, then of any other); recorded in `live_pairs`. A paired clip is never an item of its own: its still carries it (`live`) ([6](06-linking.md#step-2-live-photos-and-motion-photos)).
+
+**Connect your agent.** The page `/agents` (agents.html), in the Library's menu: the command that adds the estate to Claude Code with this app's address, a configuration for other harnesses, where an agent can run (only on the tailnet), and the member's own agents with their state ([11](11-server.md#a-members-own-agent)).
 
 **Content-addressed.** Stored under a name derived from the content (its SHA-256), so identical bytes
 share one file.
@@ -47,6 +51,8 @@ unrelated. Used for image-text matching, "more like this", and face matching.
 
 **dHash (difference hash).** A 64-bit perceptual fingerprint: whether each pixel of a 9×8 grey
 thumbnail is brighter than its right-hand neighbour. Similar images have hashes a few bits apart.
+
+**Cursor (journal).** The `next_cursor` journal_since gives a member's own agent: the last journal entry it looked at, kept for its next call ([11](11-server.md#a-members-own-agent)).
 
 **Cursor (sync).** The pair `(since, after)` a device sends to say "I have every row up to this version and hash" ([20](20-sync.md)).
 
@@ -92,7 +98,7 @@ trip.
 
 **Kept back.** A photo a member marked in a batch on their phone: never sent from that phone, and its hashes are tombstones, so the server refuses it from any phone of theirs. **Share after all** takes it back ([24](24-uploading.md#the-phone-gate-looking-before-sharing)).
 
-**Journal.** The estate's append-only log of what happened (journal.py), one row of `journal` per action with who did it (`actor`), its `kind` (`album.applied`, `favorite.set`, `faces.labeled`, `task.finished`, `ingest.finished`, `photo.purged`, `member.changed`, ...) and what it is about (`subject`, such as `album:12` or a sha); one entry per action, never one per photo. Appended in the same transaction as the change; triggers refuse changing or deleting it; nothing reads it yet. Not the face journal below, nor the `events` tables ([11](11-server.md#the-journal)).
+**Journal.** The estate's append-only log of what happened (journal.py), one row of `journal` per action with who did it (`actor`), its `kind` (`album.applied`, `favorite.set`, `faces.labeled`, `task.finished`, `ingest.finished`, `photo.purged`, `member.changed`, ...) and what it is about (`subject`, such as `album:12` or a sha); one entry per action, never one per photo. Appended in the same transaction as the change; triggers refuse changing or deleting it. The listeners read it, and a member's own agent reads what its member may know of it (`journal_since`). Not the face journal below, nor the `events` tables ([11](11-server.md#the-journal)).
 
 **Journal (face).** `face-labels.jsonl`: an append-only record of your face decisions, keyed by photo
 hash and box.
@@ -124,6 +130,8 @@ matching a typed search: at least the floor, and within the window of the best m
 
 **Occurrence.** One place a file was found: a source (zip or folder), a path, and the album that implies.
 One asset can have many.
+
+**Own agent (a member's).** An agent a member brings, in their own harness, on their own account, calling `/mcp` through `tailscale serve` with their login: that member's agent on one device (a binding), with the estate's agent's tools acting for them, no task tools, and `journal_since`. Its writes are the member's, each journal entry carrying the binding ([11](11-server.md#a-members-own-agent)).
 
 **Pending (face).** A face whose best-matching person scores at least 0.30 but who is not yet named: it
 is waiting for your yes or no.

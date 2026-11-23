@@ -2,6 +2,11 @@
 
   append(con, actor, kind, subject, data=None, acting_for=None) -> id   one entry, in the caller's transaction
   since(con, id=0, limit=1000) -> [dict]                                the entries after `id`, oldest first
+  by_agent(binding)                     a context: every entry appended in it (in this thread) is a member's own
+                                        agent's, and carries {"binding": <id>} in its data (estate_mcp.py)
+  for_member(con, member, cursor, limit, refused=, readable=, loaded=) -> {entries, next_cursor, more}
+                                        what a member may know of the journal after `cursor`: the MCP tool
+                                        journal_since (the last column of the kinds below)
 
 The table is the members area's `journal` (core/schema.py); triggers refuse any UPDATE or DELETE of it, so
 undoing something is a new entry, never a changed one. The state tables (change_sets, hidden, favorites,
@@ -15,8 +20,47 @@ this computer itself is the first sysadmin; NULL when there is no member to name
 app itself, as when a task's run ends or a listener writes). `acting_for` is the member an agent's run works
 for: every write a run of the estate's agent makes through /mcp names the agent (members.agent) as the actor,
 acting for the member the task is for (agent_tasks.acting_for; NULL for the family archivist; estate_mcp.py).
-Entries written before phase 7 by a task's agent have a NULL actor. `data` is
+Entries written before phase 7 by a task's agent have a NULL actor. A member's own agent (multiplayer phase 8,
+members.py: an approved binding) writes as its member: the actor is the member, and the entry's data carries
+{"binding": <agent_bindings.id>}, which says "by Alice's agent on alice-macbook" (by_agent). `data` is
 JSON, whatever else the kind needs, small: counts and titles, never a list of every photo.
+
+**Who may read what** (for_member, the MCP tool journal_since; multiplayer phase 8). The journal is the whole
+estate's history, so a member's agent is given only entries about what that member may know of: their own doings
+and things, published lenses and series, stories they may read, and new photos they may be shown. A kind not
+listed as returned is never returned; one whose subject is a photo is returned only while the member may be shown
+it (refused). "Theirs" below: the entry's actor or acting_for is the member. The last column of the list says who
+gets each kind:
+
+  member.*                     no one (who is let in is the sysadmin's business; the member's own role is in /api/me)
+  album.* (all of them)        the album's owner, with its data; and, for an album that is a published series now,
+                               everyone, the kinds album.created, .items, .renamed, .query, .grows, .published only,
+                               with no data (counts could include photos private to its owner)
+  favorite.set                 the member whose favourites they are (data.member, else the actor); a photo subject
+                               only while they may be shown it
+  lens.created, .published, .unpublished, .proposed, .accepted, .declined   the lens's owner, and everyone while
+                               the lens is published (titles only)
+  lens.subscribed, .unsubscribed  theirs only (another member's subscriptions are theirs)
+  photo.shown, .unshown        theirs, while they may be shown the photo
+  lenses.migrated, sharers.migrated   no one
+  faces.labeled, person.changed  no one (face ids, of photos private to someone among them; names reach an agent
+                               through get_photos)
+  task.submitted, task.finished  no one (a run is the estate's agent's; a personal agent submits none)
+  ingest.finished              everyone, its data replaced by the new photos the member may be shown
+                               ({photos: at most 200, new, more?}); left out when there are none. Not returned
+                               until the catalog being served was read after it (loaded): a new photo is
+                               searchable only then, so the page stops before it (waiting)
+  photo.purged                 no one
+  photo.held                   theirs (acting for the sharer)
+  photo.withdrawn, .release_set, .released   theirs
+  tombstones.changed           no one (the phone's opt-outs)
+  series.update_requested      theirs (acting for the series' owner), its photos those they may be shown, and
+                               `waiting`: whether their series_update item is still open
+  question.asked               theirs (they asked, or the estate's agent asked acting for them)
+  question.dismissed           theirs
+  story.told, story.transcribed  whoever may read the story (stories.story), with its photos
+  inbox.dismissed              theirs
+  binding.requested, .approved, .revoked   theirs
 
 Kinds, with their subject and where each is appended:
 
@@ -75,12 +119,21 @@ Kinds, with their subject and where each is appended:
   inbox.dismissed                  inbox:<id>   member_inbox.dismiss {kind, ref}: an item put away by its member (an
                                                 item made or done is not journaled: the entry of what made or decided
                                                 it says so)
+  tombstones.changed               tombstones   private.py: POST /api/tombstones {added, lifted}: the member's opt-outs
+  binding.requested                binding:<id>  members.bind: a member's own agent called from a new device {device}:
+                                                no actor, acting for the member
+  binding.approved, binding.revoked  binding:<id>  members.decide_binding {device, was}: by the member
 """
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
+
+_agent = threading.local()      # by_agent: the binding of the member's own agent this thread is writing for
 
 
 def now() -> str:
@@ -90,6 +143,9 @@ def now() -> str:
 def append(con: sqlite3.Connection, actor: int | None, kind: str, subject: str, data=None,
            acting_for: int | None = None) -> int:
     """One entry, in the caller's open transaction (it does not commit). Returns its id."""
+    binding = getattr(_agent, "binding", None)
+    if binding is not None and (data is None or isinstance(data, dict)):
+        data = {**(data or {}), "binding": binding}
     cur = con.execute("INSERT INTO journal(at, actor, acting_for, kind, subject, data) VALUES (?,?,?,?,?,?)",
                       (now(), actor, acting_for, kind, subject,
                        None if data is None else json.dumps(data, separators=(",", ":"), ensure_ascii=False, default=str)))
@@ -104,3 +160,104 @@ def since(con: sqlite3.Connection, id: int = 0, limit: int = 1000) -> list[dict]
             for i, at, actor, af, kind, subject, data in con.execute(
                 "SELECT id, at, actor, acting_for, kind, subject, data FROM journal WHERE id > ? ORDER BY id LIMIT ?",
                 (id, limit))]
+
+
+@contextmanager
+def by_agent(binding: int | None):
+    """Every entry appended inside, in this thread, is by the member's own agent of this binding (None: no one's)."""
+    was, _agent.binding = getattr(_agent, "binding", None), binding
+    try:
+        yield
+    finally:
+        _agent.binding = was
+
+
+# -- what a member may know of it (journal_since) ------------------------------------------------------------
+
+SCAN = 5000            # entries looked at by one call at most; the rest is the next call's (more)
+NAMED = 200            # photo ids one returned entry names at most
+SERIES_KINDS = ("album.created", "album.items", "album.renamed", "album.query", "album.grows", "album.published")
+THEIRS = ("favorite.set", "lens.subscribed", "lens.unsubscribed", "photo.shown", "photo.unshown", "photo.held",
+          "photo.withdrawn", "photo.release_set", "photo.released", "question.asked", "question.dismissed",
+          "inbox.dismissed", "binding.requested", "binding.approved", "binding.revoked", "series.update_requested")
+LENS_KINDS = ("lens.created", "lens.published", "lens.unpublished", "lens.proposed", "lens.accepted", "lens.declined")
+SHA = re.compile(r"[0-9a-f]{64}")
+
+
+def _first_admin(con) -> int | None:
+    row = con.execute("SELECT id FROM members WHERE role='sysadmin' AND status='active' ORDER BY id LIMIT 1").fetchone()
+    return row[0] if row else None
+
+
+def _visible_entry(con, e: dict, member: int, admin: int | None, refused, readable) -> dict | None:
+    """The entry as `member` may be told it (its data possibly cut down), or None: the rules in the docstring."""
+    kind, subject, data = e["kind"], str(e["subject"] or ""), e["data"]
+    theirs = member in (e["actor"], e["acting_for"])
+    num = subject.partition(":")[2]
+    if SHA.fullmatch(subject) and refused(subject, member):
+        return None
+    if kind == "favorite.set":
+        whose = (data or {}).get("member", e["actor"])
+        return e if whose == member else None
+    if kind == "series.update_requested":
+        if e["acting_for"] != member:
+            return None
+        sid = int(num)
+        open_ = con.execute("SELECT 1 FROM inbox_items WHERE member_id=? AND kind='series_update' AND ref=? AND state='open'",
+                            (member, f"album:{sid}")).fetchone() is not None
+        return {**e, "data": {**(data or {}), "photos": [x for x in (data or {}).get("photos") or [] if not refused(x, member)],
+                              "waiting": open_}}
+    if kind in THEIRS:
+        return e if theirs else None
+    if kind.startswith("album."):
+        row = con.execute("SELECT owner FROM change_sets WHERE id=?", (int(num),)).fetchone() if num.isdigit() else None
+        if row is None:
+            return None
+        if (row[0] if row[0] is not None else admin) == member:
+            return e
+        published = con.execute("SELECT 1 FROM lenses WHERE kind='series' AND set_id=? AND published=1", (int(num),)).fetchone()
+        return {**e, "data": None} if published and kind in SERIES_KINDS else None
+    if kind in LENS_KINDS:
+        row = con.execute("SELECT owner, published FROM lenses WHERE id=?", (int(num),)).fetchone() if num.isdigit() else None
+        return e if row and ((row[0] if row[0] is not None else admin) == member or row[1]) else None
+    if kind == "ingest.finished":
+        span = (data or {}).get("assets")
+        if not span:
+            return None
+        new = [s for s, in con.execute("SELECT sha256 FROM assets WHERE rowid > ? AND rowid <= ? ORDER BY rowid", span)
+               if not refused(s, member)]
+        if not new:
+            return None
+        return {**e, "data": {"photos": new[:NAMED], "new": len(new), **({"more": len(new) - NAMED} if len(new) > NAMED else {})}}
+    if kind in ("story.told", "story.transcribed"):
+        story = readable(int(num)) if num.isdigit() else None
+        return {**e, "data": {**(data or {}), "photos": story["photos"]}} if story else None
+    return None
+
+
+def for_member(con: sqlite3.Connection, member: int | None, cursor: int = 0, limit: int = 100, *,
+               refused, readable, loaded: int | None = None) -> dict:
+    """The entries after `cursor` that `member` may know of (the docstring's rules), oldest first, at most `limit`,
+    looking at no more than SCAN entries: {entries, next_cursor, more, waiting?}. `refused(sha, member)`: they may
+    not be shown that photo now; `readable(story id)`: the story as they may read it, or None; `loaded`: the newest
+    entry the catalog being served was read after (an ingest.finished after it stops the page: waiting). Each
+    entry: {id, at, kind, subject, by, for, data}, by and for being members' names."""
+    if member is None:
+        return {"entries": [], "next_cursor": cursor, "more": False}
+    admin = _first_admin(con)
+    names = dict(con.execute("SELECT id, name FROM members"))
+    out, at, waiting = [], cursor, False
+    for e in since(con, cursor, SCAN):
+        if e["kind"] == "ingest.finished" and loaded is not None and e["id"] > loaded:
+            waiting = True
+            break
+        at = e["id"]
+        got = _visible_entry(con, e, member, admin, refused, readable)
+        if got is not None:
+            out.append({"id": got["id"], "at": got["at"], "kind": got["kind"], "subject": got["subject"],
+                        "by": names.get(got["actor"]), "for": names.get(got["acting_for"]), "data": got["data"]})
+            if len(out) >= limit:
+                break
+    more = waiting or con.execute("SELECT 1 FROM journal WHERE id > ? LIMIT 1", (at,)).fetchone() is not None
+    return {"entries": out, "next_cursor": at, "more": more,
+            **({"waiting": "new photos are being made searchable: ask again in a minute"} if waiting else {})}

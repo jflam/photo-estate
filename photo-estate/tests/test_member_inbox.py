@@ -75,8 +75,9 @@ def test_what_each_kind_opens():
     assert o["review"]("album:12") == "/changes/12"
     assert o["lens_proposed"]("lens:3") == "/?albums"
     assert o["lens_changed"]("lens:3") == "/?albums" and o["lens_changed"]("album:9") == "/?album=9"
+    assert o["binding"]("binding:2") == "/agents"
     with pytest.raises(AssertionError):
-        member_inbox.put(sqlite3.connect(":memory:"), [1], "binding", "binding:1", "not a kind yet (phase 8)")
+        member_inbox.put(sqlite3.connect(":memory:"), [1], "photo_frame", "device:1", "not a kind yet")
 
 
 def test_a_member_dismisses_only_their_own_and_it_is_journaled(db):

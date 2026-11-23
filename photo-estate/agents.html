@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Connect your agent — Photo Estate</title>
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="theme-color" content="#f8f6f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)">
+<style>
+/*@estate.css*/
+main { padding: 12px calc(var(--pad) + env(safe-area-inset-right)) 120px calc(var(--pad) + env(safe-area-inset-left)); max-width: 980px; margin: 0 auto; }
+.sub { margin: 8px 0 0; max-width: 72ch; }
+h2 { margin-top: 34px; font-size: 20px; font-weight: 700; letter-spacing: -.018em; }
+.code { margin-top: 12px; display: flex; gap: 10px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r); background: var(--well); }
+.code pre { flex: 1; min-width: 0; margin: 0; font: 13.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.code .btn { flex: none; height: 30px; padding: 0 12px; font-size: 13px; }
+details { margin-top: 14px; }
+summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
+.where { margin-top: 10px; display: grid; gap: 8px; max-width: 72ch; }
+.where li { margin-left: 18px; }
+.where .unv { color: var(--muted); font-size: 13.5px; }
+.pill { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: var(--well-2); color: var(--ink-2); letter-spacing: 0; white-space: nowrap; }
+.pill.pending { background: var(--sun-wash); color: var(--sun); }
+.pill.revoked { color: var(--muted); }
+.list { display: grid; gap: 10px; margin-top: 14px; }
+.agent { display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap; padding: 18px 20px; border-radius: var(--r); background: var(--well); transition: opacity .15s; }
+.agent.revoked { opacity: .72; }
+.agent.busy { opacity: .5; pointer-events: none; }
+.agent .what { flex: 1; min-width: 0; }
+.agent h3 { margin-top: 6px; font-size: 18px; font-weight: 600; letter-spacing: -.012em; overflow-wrap: anywhere; }
+.agent .line { margin-top: 2px; color: var(--muted); font-size: 13.5px; }
+.agent .same { margin-top: 4px; color: var(--ink-2); font-size: 13.5px; }
+.agent .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.agent .acts .btn { height: 32px; padding: 0 14px; font-size: 13.5px; }
+.live { margin-top: 12px; color: var(--muted); font-size: 13px; }
+@media (max-width: 760px) { .agent .acts { width: 100%; } }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="round" href="/" aria-label="Back"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></a>
+  <div class="crumb">Connect your agent</div>
+  <div class="end num" id="sum"></div>
+</header>
+<main id="main"></main>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { $, esc, MARK } from "/app/dom.js";
+import { api } from "/app/api.js";
+import { agentsFlow, says, command, config, REFRESH } from "/app/agents-flow.js";
+import { toast } from "/app/toast.js";
+
+const STATE = { pending: "Waiting for you", approved: "Allowed", revoked: "Turned off" };
+const DOC = "https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp";
+
+const agents = agentsFlow({
+  list: signal => api("/api/agents", undefined, { signal }),
+  decide: (id, allow) => api(`/api/agents/${id}`, { allow }),
+  onChange: () => draw(),
+});
+
+function card(b, d) {
+  const p = agents.page, s = says(b, d.here), busy = p.is("deciding") && p.data.id === b.id;
+  return `<div class="agent ${esc(b.status)}${busy ? " busy" : ""}" data-id="${b.id}">
+    <div class="what"><span class="pill ${esc(b.status)}">${esc(STATE[b.status] || b.status)}</span>
+      <h3>${esc(b.device)}${s.same ? " · this device" : ""}</h3><p class="line">${esc(s.line)}</p>
+      ${s.same && s.offers.some(o => o.disabled) ? `<p class="same">Allow it from another device (your phone, say): anything on this one could be the agent itself.</p>` : ""}</div>
+    <div class="acts">${s.offers.map(o => `<button class="btn${o.primary ? " pri" : ""}" data-allow="${o.allow ? 1 : 0}"${o.disabled ? " disabled" : ""}>${esc(o.label)}</button>`).join("")}</div></div>`;
+}
+
+let drawn = "";
+function draw() {
+  const p = agents.page;
+  if (p.is("idle") || p.is("loading") && !p.data.url) {
+    if (!$("#main").childElementCount) $("#main").innerHTML = `<div class="blank">${MARK}<h3>Looking</h3></div>`;
+    return;
+  }
+  if (p.is("failed")) {
+    drawn = "";
+    $("#main").innerHTML = `<div class="blank">${MARK}<h3>This page could not be read</h3><p>${esc(p.data.error?.message || "")}</p>
+      <button class="btn" id="again">Try again</button></div>`;
+    return;
+  }
+  const d = p.data, waiting = d.bindings.filter(b => b.status === "pending").length;
+  const key = JSON.stringify([p.is("deciding") ? d.id : null, d.bindings, d.url, d.here]);
+  if (key === drawn) return;                         // a refresh that changed nothing: the page stays as it is
+  drawn = key;
+  $("#sum").innerHTML = waiting ? `<b>${waiting} waiting for you</b>` : "";
+  const open = $("#other")?.open ? " open" : "";
+  $("#main").innerHTML = `<h1 class="display">Connect your agent</h1>
+    <p class="sub">Your own agent can use the library as you${d.me ? `, ${esc(d.me)}` : ""}: find photos, make albums, keep your series up to date, ask the family about photos. It runs on your computer, on your own account; it sees only what you see, and never a photo itself (only ids, dates, places and names).</p>
+    <h2>Add it</h2>
+    <p class="sub">In Claude Code, on a computer on the tailnet:</p>
+    <div class="code"><pre id="cmd">${esc(command(d))}</pre><button class="btn" data-copy="cmd">Copy</button></div>
+    <details id="other"${open}><summary>Another harness</summary>
+      <p class="sub">Its MCP configuration, as Claude Code’s .mcp.json has it: an HTTP server at this address. A harness that only starts local commands needs a bridge to an HTTP server (not tried here).</p>
+      <div class="code"><pre id="conf">${esc(config(d))}</pre><button class="btn" data-copy="conf">Copy</button></div></details>
+    <p class="sub">The first time it connects, it shows below and in your inbox. Allow it from another device (your phone, say): until you do, it can look but not change anything.</p>
+    <h2>Where it can run</h2>
+    <ul class="where">
+      <li>On a device on the tailnet: Claude Code, or a desktop app whose MCP configuration runs on that computer. The library is reached only through the tailnet: it is not on the internet.</li>
+      <li>Not as a connector added in claude.ai, Claude Desktop’s connectors or the Claude phone app: those are called from Anthropic’s servers, which are not on the tailnet. <a class="link" href="${DOC}" rel="noopener" target="_blank">Anthropic’s help</a> says so: a custom connector connects “from Anthropic’s cloud infrastructure”, and a server on a private network or behind a VPN won’t connect. <span class="unv">(From that documentation; not tried here.)</span></li>
+    </ul>
+    <h2>Your agents</h2>
+    ${d.bindings.length ? `<div class="list" id="list">${d.bindings.map(b => card(b, d)).join("")}</div>`
+      : `<div class="blank">${MARK}<h3>None yet</h3><p>When an agent connects as you, it shows here, with the device it connected from.</p></div>`}
+    <p class="live">This page looks again every few seconds while it is open.</p>`;
+}
+
+$("#main").addEventListener("click", async e => {
+  if (e.target.closest("#again")) return agents.load();
+  const copy = e.target.closest("[data-copy]");
+  if (copy) {
+    const text = $(`#${copy.dataset.copy}`).textContent;
+    try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { toast("Select it and copy it by hand"); }
+    return;
+  }
+  const btn = e.target.closest("[data-allow]"), el = e.target.closest("[data-id]");
+  if (!btn || !el) return;
+  const allow = btn.dataset.allow === "1";
+  const got = await agents.decide(+el.dataset.id, allow);
+  toast(got.ok ? (allow ? "Allowed: it works as you now" : "Turned off: it is refused from now on") : got.error.message);
+});
+
+// A gentle refresh: asked again every few seconds while the page is looked at, less often after a while.
+const start = Date.now();
+let timer = 0;
+function again() {
+  clearTimeout(timer);
+  if (document.visibilityState !== "visible") return;
+  timer = setTimeout(async () => { await agents.load(); again(); }, Date.now() - start < REFRESH.firstFor ? REFRESH.first : REFRESH.then);
+}
+addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") agents.load(); again(); });
+
+draw();
+agents.load().then(again);
+</script>
+</body>
+</html>

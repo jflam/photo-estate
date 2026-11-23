@@ -1,6 +1,6 @@
 # Multiplayer: members, lenses, the phone gate, the journal, the inbox and agents as players
 
-Written 2026-11-22, from a design conversation with the owner. Nothing here is built yet. This note is
+Written 2026-11-22, from a design conversation with the owner. Phases 1 to 8 are built (each has its Built note). This note is
 the brief for building it: what multiplayer means for Photo Estate, the decisions already made (and
 why), the data model, and the work in phases, each phase a pull request that can be deployed on its own.
 When a phase lands, the book describes the result and this note keeps the reasoning.
@@ -826,6 +826,46 @@ describes it, [chapter 26](../book/26-albums-and-agents.md#questions-and-stories
 - The viewer shows a photo's stories, with who told each and when, and plays a recording.
 
 ### Phase 8: personal agents (bring your own)
+
+*Built 2026-11-23 (branch `multiplayer`); [chapter 11](../book/11-server.md#a-members-own-agent) describes it,
+[chapter 26](../book/26-albums-and-agents.md#your-own-agent) the page, appendix B the tool, the endpoints and the page,
+MAC-MINI.md the by-hand steps. No new module: the bindings are members.py's, the filter journal.py's. The choices:*
+
+- *A device is the tailnet node. Tailscale's serve documentation (kb/1312/serve) lists the identity headers it adds,
+  `Tailscale-User-Login`, `Tailscale-User-Name` and `Tailscale-User-Profile-Pic`, user fields only, none for tagged
+  nodes; its source (ipn/ipnlocal/serve.go) also sets `X-Forwarded-For` to the source address, replacing the client's,
+  and `Tailscale-Headers-Info`. So the app asks `tailscale whois --json` for that address's `Node.StableID` and name
+  (cached ten minutes); without whois, the address is the device. With `--demo`, `X-Demo-Device`, else "this
+  computer". Not tried on the mini: whois from the app's user, and what serve forwards for a second user's node.*
+- *One `agent_bindings` row per member and node (columns beyond the plan's: `node`, the key, and `seen_at`). States:
+  pending (looks only; every writing tool says to allow it, where), approved (writes as the member), revoked (every
+  call refused, 403: turned off means it no longer acts as them at all). Only the member decides, on the web
+  (`POST /api/agents/<id>`), and **allowing must come from another device than the agent's own**: an agent with a
+  shell holds the member's login on its device and could post anything a browser there could. The owner approves
+  his laptop's agent from his phone. Turning off works from anywhere.*
+- *Journaled as the member (actor), with `{"binding": <id>}` in each entry's data, set around a tool call
+  (`journal.by_agent`): no member row per personal agent, no `acting_for` (that means the estate's agent).*
+- *Tools: the estate's agent's for its member, less the three task tools (refused in words if called) and
+  `ask_member`'s `follow_up`; plus `journal_since(cursor, limit)`, offered to own agents only, and `amend_album`'s
+  `request_done`, which is the existing candidates write with nothing more to add. Own agents get their own
+  instructions text (no "Handing it over").*
+- *`journal_since`: a kind not listed is never returned; journal.py's docstring has the table, and the test appends
+  every listed kind as Ada and as Ben and checks each against it. Included with a reason: the member's own doings
+  (their privacy is theirs), published series (counts dropped: they could include the owner's private photos) and
+  lenses, an ingest's photos the member may be shown (not before the served catalog has them), stories they may
+  read, their series' requests (with `waiting`). Left out: members, faces and people, tasks, migrations, purges,
+  opt-outs, and anything about another member's private photos, albums, hides, favourites, questions or runs.*
+- *Connect your agent (`/agents`, `agents.html`, `app/agents-flow.js`): the command from the request's own address
+  (`X-Forwarded-Host`), with the demo's two headers on the demo; a configuration for other harnesses; where it can
+  run (Anthropic's help page says custom connectors in claude.ai, Desktop and the phone app connect "from Anthropic's
+  cloud infrastructure", so not over the tailnet: from the documentation, not tried); the member's agents, and a
+  refresh every 4 s (20 s after two minutes) while visible. The inbox's `binding` item opens it.*
+- *With it, two fixes from review: the viewer's "Shared by you" card puts "Withdraw from the family" under its words;
+  a story's recording keeps the length the teller's page measured (`stories.seconds`, `?seconds=` on the upload),
+  shown beside its player, since a browser's fragmented MP4 says nothing of its length until played (the route
+  already answered `Content-Length` and `Range`; the player still says 0:00 until played; the phone sends none).*
+- *Not built: a list of an agent's writes on the page; a sysadmin's view of everyone's bindings; push to the agent
+  (it polls `journal_since`); `stories.seconds` is not under the stories trigger (it is set once, at insert).*
 
 - A member's own agent, in their own harness, calls `https://<mini>.ts.net:8766/mcp` over the tailnet:
   `tailscale serve` adds the member's login, so the estate knows who it is with no key to copy. A call

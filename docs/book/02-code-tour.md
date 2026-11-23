@@ -70,9 +70,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             handler, which streams uploads, album downloads and videos (/video/, with Range)
   http_util.py         186  what the servers share: Response, bounded JSON bodies, int_param (400s), byte_range, the Auth rules
   members.py           180  who the estate knows: members, their Tailscale logins, roles and upload policies; the first
-                            start from --upload-user, the demo's members; every change journaled (chapter 11)
+                            start from --upload-user, the demo's members; every change journaled; a member's own
+                            agents, one per device (agent_bindings: pending, approved, revoked) (chapter 11)
   journal.py            63  the estate's append-only log: append(con, actor, kind, subject, data) in the caller's
-                            transaction, since(con, id); the kinds, and where each is appended (chapter 11)
+                            transaction, since(con, id); the kinds, where each is appended and who may read it;
+                            by_agent (a member's own agent's writes) and for_member (journal_since) (chapter 11)
   lenses.py            360  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
                             out of an estate default), "show it anyway", each member's favourites, why a photo is
                             hidden; State, the looks every member view is worked out from (chapter 11)
@@ -146,6 +148,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
   stats.html           282  library info, at /stats
   members.html         128  the sysadmin's members: let in, turn off, role, upload policy, person, at /members
   inbox.html           102  a member's inbox: what waits for them, each opening the page that decides it, at /inbox
+  agents.html          143  Connect your agent, at /agents: the command and a configuration with this app's address,
+                            where an agent can run, and the member's own agents, allowed or turned off (chapter 11)
   review.html          255  the near-duplicate review page
   compare.html         226  a run of the model comparison: two unlabelled columns a search, a vote, and the report, at /compare
   app/estate.css        97  the stylesheet every page shares
@@ -191,6 +195,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                               stays, "show it anyway"), and the words for a lens that changes.html shares
     inbox-flow.js       60    inbox.html's strict machine (loading, ready, dismissing one item at a time, failed),
                               what each kind's button says, and the count the Library's menu shows
+    agents-flow.js     173    agents.html's strict machine (loading, ready, deciding one agent at a time, failed; a
+                              refresh that fails keeps the page), how each agent is said, the command and configuration
     private-flow.js    125    private photos on search.html: the viewer's private line (withdraw, release, a release
                               day) and the held view (`is:held`: release all, or those chosen)
     story-flow.js      266    telling a story, typed or spoken (the teller: its strict machine, the browser's
@@ -218,6 +224,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_member_inbox.py checks member_inbox.py and each kind's making and closing there;
                             test_agent.py checks the estate's agent: a run's token (from this computer only, while
                             the run lasts, for its member; X-Estate-Task refused) and each kind of MCP caller;
+                            test_personal_agents.py checks a member's own agent: every kind of /mcp caller, binding
+                            (never from the agent's own device), no task tools, journal_since kind by kind and its
+                            cursors, privacy, a series kept up to date end to end;
                             test_listeners.py checks listeners.py with a stand-in app, then end to end with a
                             stand-in agent: a family series and a member's own kept up to date, an answer waking a run;
                             test_stories.py checks questions and stories: nothing private through a question, a story
@@ -251,6 +260,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_video_browser.py (slow tier) plays videos and Live Photos in search.html, in Chrome;
                             test_lenses_browser.py (slow tier) uses the lenses on the pages as Ada, Ben and Cleo;
                             test_inbox_browser.py (slow tier) uses the inbox as them, and a stranger asking in;
+                            test_agents_browser.py (slow tier) connects Ben's and Cleo's agents and allows and turns
+                            them off from the inbox and /agents;
                             test_private_browser.py (slow tier) withdraws, releases and reviews held photos as Ben and Cleo;
                             test_stories_browser.py (slow tier) answers questions typed and spoken, tells stories,
                             grows a series and asks the agent for the family, as them
@@ -363,7 +374,7 @@ everything on each run, in seconds.
 
 ### The web pages
 
-Each page (`search.html`, `people.html`, `changes.html`, `setup.html`, `stats.html`, `review.html`, `compare.html`, `members.html`, `inbox.html`) is one HTML file with its CSS and its own JavaScript inline: no build step, no
+Each page (`search.html`, `people.html`, `changes.html`, `setup.html`, `stats.html`, `review.html`, `compare.html`, `members.html`, `inbox.html`, `agents.html`) is one HTML file with its CSS and its own JavaScript inline: no build step, no
 framework, no dependencies, no bundler. The server reads the file from disk on every request for `/`
 (with an ETag), so editing a page and reloading shows the change at once.
 
@@ -418,6 +429,7 @@ that behaviour in the modules above, where each rule is a unit test, and ask the
 | `stats.html` | `statsWatch`: one `loop()` asks for the uploads and the figures in turn, so two requests are never in flight. A failed `/api/stats` is "Couldn't take stock" or "Can't reach the library" with **Try again**; a catalogue run or a restart that can not be started says why in the uploads panel | figures every 1.5 s while the server is measuring; uploads every 2 s during a run, else every 15 s; after a restart `/api/info` every 4 s for at most 5 minutes; paused while the page is hidden |
 | `members.html` | One strict machine from `members-flow.js`: `idle`, `loading`, `ready` (owning the server's answer), `saving` (that, and the member being changed: the page takes no other change until the server answers), `failed`. A change the server refuses (the last sysadmin turned off) goes back to `ready` with the members as they were, and the toast says why | none: it asks once, and again only when told to |
 | `inbox.html` | One strict machine from `inbox-flow.js`: `idle`, `loading`, `ready` (owning the server's answer), `dismissing` (that, and the item being put away: one at a time), `failed`. A dismissal the server refuses goes back to `ready` with the items as they were, and the toast says why. Opening a lens that changed puts it away first, then goes there | none: it asks once, and again only when told to |
+| `agents.html` | One strict machine from `agents-flow.js`: `idle`, `loading` (keeping what was shown), `ready` (owning the server's answer), `deciding` (that, and the agent being allowed or turned off: one at a time), `failed` (only when nothing was shown yet). A refusal (allowing it from its own device) goes back to `ready` and the toast says why | a gentle refresh: every 4 s for two minutes, then every 20 s, only while the page is visible; drawn again only when something changed |
 | `inbox.html?ask=<group>` | `ask-flow.js`'s strict machine: `idle`, `loading`, `ready` (owning the item's questions still waiting and those answered here, each with its story; a step `ready` to `ready` for an answer, or a transcript written down), `dismissing` ("I don't know", one at a time), `failed`. Each question has a teller (`story-flow.js`): `idle`, `asking` (the microphone, only when Record is pressed), `refused`, `recording` (owning the recorder and when it started), `recorded` (owning the clip: listened to, redone, or sent), `sending`, `sent`, `failed` (owning what to send again) | a spoken answer's transcript: `follow()`, every 3 s growing to 20 s, at most ten minutes, cancelled on leaving; asked again when the page is shown again |
 | `setup.html` | Two strict machines from `setup-flow.js`, each state owning its data. The page: `loading`, `place`, `idle`, `watching`, `answering` (the states in which `/api/intake` is asked), `opening` (waiting for the photo app), `stuck`, `app`. The source panel: `closed`, `open`, `checking`, `checked`, `starting`, with `{ id, config, preview }` handed from state to state, so a preview never outlives the text it was made for and an answer for a panel that has moved on is dropped | asked every 1.2 s while a job is live, else every 8 s; `opening` asks `/api/info` every 1.5 s for at most 10 minutes, then "Still not open" with **Try again** |
 

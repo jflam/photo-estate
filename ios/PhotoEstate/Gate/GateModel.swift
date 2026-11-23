@@ -43,6 +43,7 @@ final class GateModel: ObservableObject {
             case "held": "Kept private to you"
             case "question": "A question for you"
             case "series_update": "New for a series"
+            case "binding": "Your agent"
             default: kind
             }
         }

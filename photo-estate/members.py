@@ -19,7 +19,11 @@ appends its journal entry in the same transaction, and commits.
   demo(con) -> [Member]                     the demo's three members (in its scratch catalog)
   agent(con) -> Member                      the estate's agent (kind agent), made the first time it is needed
   family(con) -> [Member]                   the active members who are people (whom a question to the family is for)
-  ROLES, STATUSES, POLICIES, AGENT_NAME
+  bind(con, member, node, device) -> dict   a member's own agent calling from a device: its binding, made pending
+                                            (and a `binding` inbox item) the first time
+  bindings(con, member) -> [dict]           the member's own agents, one per device
+  decide_binding(con, member, id, allow, node) -> dict   the member allows one (from another device) or turns it off
+  ROLES, STATUSES, POLICIES, AGENT_NAME, BindingError
 
 Words (docs/notes/MULTIPLAYER-PLAN.md). A member is not a `persons` row, which is someone *in* photos
 (faces.py); a member may be linked to one. A member is never deleted: revoked is a status (and triggers
@@ -33,6 +37,16 @@ never comes through `tailscale serve`; a run of it is known by the token tasks.p
 the first time something needs it (a run, a question) and it is never deleted. Acting for no member it is the
 family archivist; acting for a member it sees what they see (estate_mcp.py). first_start and demo count only
 people: a catalog with nothing but the agent has no members yet.
+
+A member's **own agent** (multiplayer phase 8) runs in their own harness and calls /mcp through `tailscale serve`
+with their login, so it is not a member row of its own: it is that member's agent on one device, an
+`agent_bindings` row. The first call from a device makes it `pending`; the member then allows it (`approved`) or
+turns it off (`revoked`), and may turn an approved one off, or allow a revoked one again. Only the member decides,
+on the web (POST /api/agents/<id>), never through /mcp, and allowing must come from another device than the
+agent's own (decide_binding). What a device is comes from photo_app.PhotoApp.device: the tailnet node the request
+came from (tailscale whois on the address `tailscale serve` forwards it from).
+Journal: binding.requested {device} (no actor, acting for the member), binding.approved and binding.revoked
+{device, was} (by the member), subject binding:<id>.
 """
 from __future__ import annotations
 
@@ -256,6 +270,73 @@ def agent(con: sqlite3.Connection) -> Member:
     got = get(con, mid) if mid is not None else None
     assert got is not None
     return got
+
+
+# -- a member's own agent (multiplayer phase 8) -------------------------------------------------------------
+
+BINDING_COLS = "id, member_id, node, device, status, requested_at, decided_at, seen_at"
+
+
+class BindingError(Exception):
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def _binding(row) -> dict:
+    return dict(zip(("id", "member", "node", "device", "status", "requested_at", "decided_at", "seen_at"), row))
+
+
+def bind(con: sqlite3.Connection, member: int, node: str, device: str) -> dict:
+    """The binding of `member`'s own agent on this device (`node`): made pending the first time a call comes from
+    it, with a binding.requested entry (no actor, acting for the member) and a `binding` inbox item for them; after
+    that its last call (seen_at, to the minute) and the device's name as it is now. Commits."""
+    t, q = now(), f"SELECT {BINDING_COLS} FROM agent_bindings WHERE member_id=? AND node=?"
+    row = con.execute(q, (member, node)).fetchone()
+    if row is not None and (row[7] or "")[:16] == t[:16] and row[3] == device[:80]:
+        return _binding(row)                 # (seen this minute: nothing to write)
+    with con:
+        made = row is None and con.execute("INSERT OR IGNORE INTO agent_bindings(member_id, node, device, status, requested_at,"
+                                           " seen_at) VALUES (?,?,?,'pending',?,?)", (member, node, device[:80], t, t)).rowcount
+        b = _binding(con.execute(q, (member, node)).fetchone())
+        if made:
+            journal.append(con, None, "binding.requested", f"binding:{b['id']}", {"device": b["device"]}, member)
+            member_inbox.put(con, [member], "binding", f"binding:{b['id']}",
+                             f"An agent connected as you from {b['device']}. Allow it?")
+        elif (b["seen_at"] or "")[:16] != t[:16] or b["device"] != device[:80]:
+            con.execute("UPDATE agent_bindings SET seen_at=?, device=? WHERE id=?", (t, device[:80], b["id"]))
+            b.update(seen_at=t, device=device[:80])
+    return b
+
+
+def bindings(con: sqlite3.Connection, member: int | None) -> list[dict]:
+    """The member's own agents, one per device, the most recently seen first."""
+    return [_binding(r) for r in con.execute(f"SELECT {BINDING_COLS} FROM agent_bindings WHERE member_id IS ?"
+                                             " ORDER BY seen_at DESC, id DESC", (member,))]
+
+
+def decide_binding(con: sqlite3.Connection, member: int | None, bid: int, allow: bool, node: str) -> dict:
+    """The member allows their agent on a device (approved) or turns it off (revoked), from a request that came from
+    `node`. Allowing must come from another device than the agent's own: whatever the agent could send from there
+    (it holds the member's login on that device) is no proof that the member said yes. Turning off is allowed from
+    anywhere. One binding.approved or binding.revoked entry by the member, and the binding's inbox item is done.
+    BindingError: 404 for a binding that is not theirs, 403 to allow it from its own device."""
+    with con:
+        row = con.execute(f"SELECT {BINDING_COLS} FROM agent_bindings WHERE id=? AND member_id IS ?", (bid, member)).fetchone()
+        if row is None or member is None:
+            raise BindingError(404, "no such agent")
+        b = _binding(row)
+        if allow and b["node"] == node:
+            raise BindingError(403, f"allow it from another device than {b['device']}, the one the agent connected from"
+                                    " (your phone, say): anything there could be the agent itself")
+        status = "approved" if allow else "revoked"
+        if b["status"] != status:
+            t = now()
+            con.execute("UPDATE agent_bindings SET status=?, decided_at=? WHERE id=?", (status, t, bid))
+            journal.append(con, member, f"binding.{status}", f"binding:{bid}", {"device": b["device"], "was": b["status"]})
+            b.update(status=status, decided_at=t)
+        member_inbox.close(con, "binding", f"binding:{bid}")
+    return b
 
 
 def family(con: sqlite3.Connection) -> list[Member]:

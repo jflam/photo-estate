@@ -59,7 +59,7 @@ def imports(src: str) -> list[tuple[str, list[str]]]:
 
 
 def test_the_pages_are_the_ones_we_know():
-    assert PAGES == ["changes.html", "compare.html", "inbox.html", "members.html", "people.html", "review.html", "search.html",
+    assert PAGES == ["agents.html", "changes.html", "compare.html", "inbox.html", "members.html", "people.html", "review.html", "search.html",
                      "setup.html", "stats.html"]
 
 

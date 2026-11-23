@@ -22,6 +22,7 @@
 //   refusedSays(error)                            why recording is not possible, in words
 //   tellHtml(page, { seconds, dismiss, placeholder })   the component's inside, in its state (a string of HTML)
 //   storyHtml(story), toldBy(story), transcriptSays(story), waiting(stories)    one story, and its words
+//   spoken(path, clip)                            where a recording is posted, with its measured length (?seconds=)
 //   follow(read, options)                         ask a story again until its transcript is no longer waiting
 //   mountTeller(el, options)                      a teller drawn in an element and kept drawn (the pages use this)
 //   photoStories({ read })                        the viewer's: the stories of the photo showing, and telling one
@@ -48,7 +49,7 @@ import { duration } from "./format.js";
  * @property {string | null} text
  * @property {{ id: number, text: string } | null} question
  * @property {string[]} photos
- * @property {{ url: string, type: string } | null} recording
+ * @property {{ url: string, type: string, seconds?: number | null } | null} recording   seconds: its length, as the teller's page measured it
  * @property {string | null} transcript
  * @property {"waiting" | "done" | "failed" | null} transcript_state
  * @property {string | null} [transcript_error]
@@ -289,6 +290,15 @@ export function transcriptSays(s) {
 export const waiting = stories => stories.some(s => !!s.recording && s.transcript_state === "waiting");
 
 /**
+ * Where a recording is posted: `path` with the length the page measured (?seconds=, or &seconds= after a query),
+ * which the server keeps beside it, since a browser's MP4 does not say until it is played.
+ * @param {string} path
+ * @param {{ seconds: number }} clip
+ * @returns {string}
+ */
+export const spoken = (path, clip) => `${path}${path.includes("?") ? "&" : "?"}seconds=${Math.max(0, clip.seconds || 0).toFixed(1)}`;
+
+/**
  * One story, as both pages show it: who and when, the question it answers, the words (typed, or the transcript
  * of the recording, or where that is), and the recording to play.
  * @param {Story} s
@@ -301,7 +311,9 @@ export function storyHtml(s, { question = true } = {}) {
     + (question && s.question ? `<p class="asked">Answering “${esc(s.question.text)}”</p>` : "")
     + (s.text ? `<p class="said">${esc(s.text)}</p>` : "")
     + (tr ? `<p class="said${tr.final ? "" : " pending"}"${s.transcript_error ? ` title="${esc(s.transcript_error)}"` : ""}>${esc(tr.text)}</p>` : "")
-    + (s.recording ? `<audio controls preload="none" src="${esc(s.recording.url)}" aria-label="The recording"></audio>` : "")
+    + (s.recording ? `<div class="clip"><audio controls preload="none" src="${esc(s.recording.url)}" aria-label="The recording"></audio>`
+      // a browser's MP4 says nothing of its length until it is played: the length the teller's page measured, beside it
+      + (s.recording.seconds ? `<span class="clock num">${duration(s.recording.seconds)}</span>` : "") + `</div>` : "")
     + `</div>`;
 }
 

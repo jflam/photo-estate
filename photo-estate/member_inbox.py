@@ -44,6 +44,9 @@ The kinds, who each is for, what makes and closes it (all in the caller's transa
                   album:<id>              grows from a search): its candidates are in series.update_requested; done
                                           when the owner adds them, or none (POST /api/albums/<id>/candidates).
                                           Opens the album with its candidates (/?album=<id>&candidates=1)
+  binding         the member                members.bind, the first time their own agent calls /mcp from a device;
+                  binding:<id>            done when they allow it or turn it off (members.decide_binding). Opens
+                                          /agents ("Connect your agent")
 
 Adding a kind (a later phase): a row in OPENS, and a put() and a close() in the code that makes and
 decides it. Nothing else.
@@ -75,6 +78,7 @@ OPENS = {
     "held": lambda ref: "/?q=is:held",
     "question": lambda ref: f"/inbox?ask={quote(ref.partition(':')[2])}",
     "series_update": lambda ref: f"/?album={_num(ref)}&candidates=1",
+    "binding": lambda ref: "/agents",
 }
 STATES = ("open", "done", "dismissed")
 

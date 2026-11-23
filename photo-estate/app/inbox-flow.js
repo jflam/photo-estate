@@ -23,7 +23,7 @@ import { flow, latest, STALE } from "./fsm.js";
 /**
  * @typedef {object} Item   an item as GET /api/inbox lists it
  * @property {number} id
- * @property {string} kind              member_request | review | lens_proposed | lens_changed | held | question | series_update
+ * @property {string} kind              member_request | review | lens_proposed | lens_changed | held | question | series_update | binding
  * @property {string} ref               what it is about: member:<id>, album:<id>, lens:<id>, held:<batch>, ask:<group>
  * @property {string} title
  * @property {string} created_at
@@ -49,6 +49,7 @@ export const KIND = /** @type {Record<string, string>} */ ({
   held: "Kept private to you",
   question: "A question for you",
   series_update: "New for a series",
+  binding: "Your agent",
 });
 
 /**
@@ -65,6 +66,7 @@ export function act(item) {
   if (item.kind === "held") return { label: "Look them over", notice: false };   // done once nothing it held is still held
   if (item.kind === "question") return { label: "Answer", notice: false };       // done once each is answered or put away
   if (item.kind === "series_update") return { label: "Look at them", notice: false };   // done once they are added, or none
+  if (item.kind === "binding") return { label: "Allow or turn off", notice: false };   // done once the member decides (/agents)
   return { label: "Open", notice: false };
 }
 

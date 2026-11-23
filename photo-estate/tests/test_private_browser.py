@@ -126,6 +126,10 @@ def test_ben_withdraws_a_photo_from_the_viewer_sets_its_day_and_releases_it(app,
     row = p.locator("#vPrivRow [data-withdraw]")
     row.wait_for()
     assert "Shared by you" in row.inner_text() and "Withdraw from the family" in row.inner_text()
+    words, act = row.locator("span").bounding_box(), row.locator(".vact").bounding_box()
+    assert words and act and act["y"] >= words["y"] + 20 and words["width"] > 250, "the words take the width, the action under them"
+    row.scroll_into_view_if_needed()
+    both_schemes(p, shots / "viewer-withdraw-row")
     row.click()
     line = p.locator("#vPriv")
     line.wait_for()

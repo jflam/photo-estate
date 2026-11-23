@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import embed  # noqa: E402
 import members  # noqa: E402
 from photo_app import PhotoApp  # noqa: E402
-from test_multiplayer import ADA, BEN, CLEO, call, mid, seen, settle  # noqa: E402
+from test_multiplayer import ADA, BEN, CLEO, bind, call, mid, seen, settle  # noqa: E402
 
 
 @pytest.fixture
@@ -173,6 +173,7 @@ def test_the_archivist_acting_for_no_one_sees_what_all_may_and_makes_family_seri
 
 def test_a_members_own_login_asks_as_themselves(app):
     x = app.live.cat.shas[75]
+    bind(app, BEN)                 # (a member's login on /mcp is their own agent, allowed before it writes: phase 8)
     got = tool(app, BEN, "ask_member", {"photos": [x], "text": "Is this the lake house?", "to": "Cleo"}, local=False)
     assert got["to"] == "Cleo"
     con = sqlite3.connect(app.a.db)

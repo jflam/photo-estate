@@ -23,6 +23,9 @@ from core import schema  # noqa: E402
 from core.states import TaskStatus  # noqa: E402
 from photo_app import PhotoApp  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_multiplayer import bind  # noqa: E402
+
 AS_BEN = {"X-Demo-Member": "ben"}
 
 
@@ -150,13 +153,17 @@ def test_discarding_marks_the_set_and_keeps_its_rows(app):
 
 
 def test_the_mcp_tools_write_as_the_member_that_called(app):
+    """A member's login on /mcp is their own agent (phase 8): once allowed it writes as the member, and the entry
+    carries its binding."""
     db, ben = app.a.db, app.roster["ben"].id
+    binding = bind(app, AS_BEN)["id"]
     start = last_id(db)
     msg = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
            "params": {"name": "create_album", "arguments": {"title": "By an agent"}}}
     r = app.request("POST", "/mcp", {**AS_BEN, "Content-Type": "application/json"}, body=msg)
     assert r.status == 200 and not r.json()["result"]["isError"], r.body
     assert [(e[0], e[2]) for e in entries(db, start)] == [(ben, "album.created")]
+    assert entries(db, start)[0][4]["binding"] == binding
 
 
 # -- tasks ----------------------------------------------------------------------------------------------

@@ -444,7 +444,7 @@ button.vcard:hover { background: var(--vwell-2); }
 .vrow > svg:last-child { width: 14px; color: #6b6964; flex: none; }
 button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
 .vcard > .vrow { position: relative; }
-.vrow .vact { flex: none; font-style: normal; color: #ffb061; font-size: 13.5px; font-weight: 600; }   /* what the row does (withdraw) */
+.vrow .vact { display: block; margin-top: 8px; font-style: normal; color: #ffb061; font-size: 13.5px; font-weight: 600; }   /* what the row does (withdraw), under its words */
 .vrow[disabled] { opacity: .5; pointer-events: none; }
 .vcard > .vrow + .vrow::before { content: ""; position: absolute; top: 0; right: 0; left: 50px; height: 1px; background: rgba(255,255,255,.08); }
 .v-info h4 { margin: 22px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--vmuted); }
@@ -463,7 +463,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
 .v-info .file { margin: 22px 2px 0; font-size: 12px; line-height: 1.5; color: #6f6c66; overflow-wrap: anywhere; }
 /* the photo's stories, and telling one (app/story-flow.js; estate.css has their look, here in the dark room) */
 .v-info .story { background: var(--vwell); color: #f4f2ee; }
-.v-info .story .told, .v-info .story .asked, .v-info .story .said.pending, .v-info .tell .clock { color: var(--vmuted); }
+.v-info .story .told, .v-info .story .asked, .v-info .story .said.pending, .v-info .tell .clock, .v-info .story .clock { color: var(--vmuted); }
 .v-info audio { color-scheme: dark; }
 .v-info .tell { margin-top: 22px; padding: 14px; border-radius: 18px; background: var(--vwell); }
 .v-info .tell textarea { background: rgba(255,255,255,.08); color: #f4f2ee; }
@@ -617,7 +617,7 @@ import { videoFlow } from "/app/video-flow.js";
 import { lensesFlow, whyFlow, offers, says, said } from "/app/lens-flow.js";
 import { badge as inboxBadge } from "/app/inbox-flow.js";
 import { privateLine, heldView, barSays } from "/app/private-flow.js";
-import { photoStories, mountTeller, storyHtml, follow } from "/app/story-flow.js";
+import { photoStories, mountTeller, storyHtml, follow, spoken } from "/app/story-flow.js";
 import { growsFrom } from "/app/query.js";
 
 const EASE = "cubic-bezier(.2,.7,.2,1)";
@@ -652,6 +652,7 @@ const I = {
   lock: svg('<rect x="3.500" y="7" width="9" height="6.500" rx="1.600"/><path d="M5.500 7V5.200a2.500 2.500 0 0 1 5 0V7"/>', 13, 'stroke-width="1.8"'),
   lockBig: svg('<rect x="3.500" y="7" width="9" height="6.500" rx="1.600"/><path d="M5.500 7V5.200a2.500 2.500 0 0 1 5 0V7"/>', 20),
   story: svg('<path d="M3 3.500h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.200L5 14v-2.500H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z"/><path d="M5 6.500h6M5 8.800h4"/>', 20),
+  agent: svg('<path d="M6 2v3M10 2v3"/><path d="M4 5h8v2.500a4 4 0 0 1-8 0Z"/><path d="M8 11.500V14"/>', 18),   // a plug: Connect your agent
   inbox: svg('<path d="M2.500 9.500 4.300 3.800a1 1 0 0 1 1-.7h5.400a1 1 0 0 1 1 .7l1.800 5.700v3a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z"/><path d="M2.500 9.500h3.200l.8 1.600h3l.8-1.600h3.200"/>', 18),
 };
 // Photos private to this member (app/private-flow.js; private.py): the viewer's private line, beside the why line,
@@ -1581,7 +1582,8 @@ $("#libMore").onclick = e => openMenu(e.currentTarget, el => {
   el.innerHTML = (ME?.name ? `<h5>You are ${esc(ME.name)}</h5>` : "")          // who this page is for (/api/me)
     + `<a class="mi ln" href="/inbox">${I.inbox}<span>Inbox</span>${INBOX ? `<i class="cnt">${inboxBadge(INBOX)}</i>` : ""}</a>`   // what waits for this member to decide
     + (INFO?.faces ? ln("/people", I.people, "Name people") : "") + (INFO && !INFO.demo ? ln("/setup", I.plus, "Add photos") : "")
-    + ln("/changes", I.changes, "Changes") + (ME?.role === "sysadmin" ? ln("/stats", I.stats, "Library info") : "")   // the machine's figures: whoever looks after it
+    + ln("/changes", I.changes, "Changes") + ln("/agents", I.agent, "Connect your agent")   // a member's own agent, and the devices it is allowed on
+    + (ME?.role === "sysadmin" ? ln("/stats", I.stats, "Library info") : "")   // the machine's figures: whoever looks after it
     + (INFO?.compare ? ln("/compare", I.compare, "Compare models") : "")   // the experiment, when the app has a second model's vectors
     + (ME?.role === "sysadmin" ? ln("/members", I.members, "Members") : "")    // letting people in: whoever looks after the library
     + (INFO?.demo ? ln("/request-access", I.members, "Be another member") : "");   // the demo's members, each a link
@@ -2143,7 +2145,7 @@ function privDraw() {                                // the private line, and th
   const slot = $("#vPrivRow");
   if (slot) {
     slot.hidden = !row;
-    slot.innerHTML = row ? `<button class="vrow" data-withdraw${row.busy ? " disabled" : ""}>${I.lockBig}<span><b>${esc(row.title)}</b><small>${esc(row.detail)}</small></span><i class="vact">${esc(row.label)}</i></button>` : "";
+    slot.innerHTML = row ? `<button class="vrow" data-withdraw${row.busy ? " disabled" : ""}>${I.lockBig}<span><b>${esc(row.title)}</b><small>${esc(row.detail)}</small><i class="vact">${esc(row.label)}</i></span></button>` : "";
   }
 }
 let privChanged = false;
@@ -2443,7 +2445,7 @@ function storiesDraw() {
   const sha = d.sha;
   telling = { el, mount: mountTeller(el, {
     dismiss: "Cancel", placeholder: "What do you remember about it? Type it, or record it", sendLabel: "Tell it",
-    send: what => "text" in what ? api("/api/stories", { photos: [sha], text: what.text }) : api(`/api/stories?photos=${sha}`, what.blob),
+    send: what => "text" in what ? api("/api/stories", { photos: [sha], text: what.text }) : api(spoken(`/api/stories?photos=${sha}`, what), what.blob),
     onSent: story => { STORIES.told(story); storyFollow(story); toast("Told: it is kept with this photo"); },
     onDismiss: () => STORIES.tell(false),
   }) };

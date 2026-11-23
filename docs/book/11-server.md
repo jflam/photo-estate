@@ -425,6 +425,54 @@ transcribe.py decodes with PyAV (16 kHz mono) and hands the samples to the model
 it, each waiting story says how to fetch it (`transcript_error`), and a job that cannot run at all (no MLX: not a
 Mac) says so on each; both are tried again on the next run. It need not be real time.
 
+### A member's own agent
+
+*(Multiplayer phase 8: members.py's bindings, estate_mcp.py, journal.py's `for_member`, agents.html.)*
+
+A member brings their own agent: Claude Code (or another harness) on their own computer, on their own account,
+calling `/mcp` through `tailscale serve`. **A call on `/mcp` with a member's login is that member's agent**, never
+the member themselves; a call from this computer with no login, and a run of the estate's agent with its token,
+are as before. It is not a member row of its own: it is that member's agent *on one device*, an `agent_bindings`
+row (`members.bind`), and the device is the tailnet node the call came from.
+
+**What a device is.** `tailscale serve` adds the user's identity (`Tailscale-User-Login`, `Tailscale-User-Name`,
+`Tailscale-User-Profile-Pic`), and nothing that names the node; it also sets `X-Forwarded-For` to the tailnet
+address of the node that sent the request, replacing whatever the client sent. `PhotoApp.device` asks
+`tailscale whois --json <address>` (on PATH, or the macOS app's own CLI) for the node's `StableID` and name, kept
+ten minutes per address; when whois cannot say, the address is the device. With `--demo`, `X-Demo-Device` names
+it (the demo's stand-in, like `X-Demo-Member`), and a call with no forwarded address is "this computer".
+
+**The binding's states.** The first call from a device makes it `pending`, with a `binding.requested` entry and a
+`binding` item in the member's inbox ("An agent connected as you from alice-macbook. Allow it?"), once, not once a
+call. Pending, it may call every tool that only looks; every tool that writes answers that the member must allow
+it first, in their inbox, from another device. `approved`, it writes as the member: the journal names the member as
+the actor, and every entry it makes carries `{"binding": <id>}` in its data (`journal.by_agent`, around each tool
+call), which says "by Alice's agent on alice-macbook". `revoked`, every call is refused (403), reads too: turning it
+off means it no longer acts as the member at all. Only the member moves it, on the web (`POST /api/agents/<id>`),
+never through `/mcp`: pending → approved or revoked, approved → revoked, revoked → approved. **Allowing must come
+from another device than the agent's own** (403 otherwise): the agent holds the member's login on its device and
+could send any request a browser there could, so nothing that comes from that device is proof that the member said
+yes. Turning one off is allowed from anywhere. Another member's binding is a 404.
+
+**What it may call.** The estate's agent's tools acting for its member, less `submit_task`, `get_task` and
+`cancel_task` (its work runs in the member's harness, never on the owner's subscription; called anyway they answer
+so), and `ask_member`'s `follow_up` (which starts a run of the estate's agent). Only it is offered
+**`journal_since(cursor, limit)`**: what changed in what its member may know of, oldest first, at most `limit`
+(100, up to 500), looking at no more than 5,000 entries a call, with `next_cursor` and `more`. The journal is the
+whole estate's history, so `journal.for_member` returns only, by kind: entries about the member's own albums,
+lenses, favourites, "show it anyway", private photos, questions, inbox and agents; another member's album only while
+it is a published series (created, items, renamed, query, grows, published, with no data); a lens while it is the
+member's or published; an ingest with its photos replaced by those the member may be shown (and not before the
+served catalog was read after it); a story they may read, with its photos; `series.update_requested` for their own
+series, with its photos and whether their item is still open (`waiting`). Never: members, migrations, faces, tasks,
+purges, opt-outs. journal.py's docstring is the table, kind by kind. `amend_album`'s `request_done` closes the
+member's `series_update` item once their agent has looked at a series' new photos and added what belongs (it is
+the `candidates` write with nothing more to add: what was left out stays out).
+
+**Connect your agent** (`/agents`, in the Library's menu) shows the command with the address the page was reached
+at (`X-Forwarded-Host` through serve), a configuration for other harnesses, where an agent can run, and the
+member's agents with their state, asking again every few seconds while it is open.
+
 ### Malformed requests
 
 A request the app can't read is answered, not raised (`http_util.py`): a query parameter that should

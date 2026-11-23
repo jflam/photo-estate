@@ -19,6 +19,7 @@ the tools are made of:
   app.ask(...)        -> a question filed (stories.ask)
   app.stories(ids, member) -> {id: [stories]} that member may read (stories.about)
   app.family()        -> the family's members: [{id, name, person}]
+  app.journal(member, cursor, limit) -> what that member may know of the journal after cursor (journal.for_member)
 
 That agent uses this same endpoint. A run of it carries a token (X-Estate-Agent: tasks.Tasks.mint), honoured only
 from this computer and only while the run lasts: it says *this agent, acting for this member (or no one), for this
@@ -26,6 +27,18 @@ task*, and nothing about it can be chosen by the caller. A call with a token tha
 anywhere but this computer, is refused (403), as is one that still carries X-Estate-Task, the task number a run
 carried before phase 7: never answered as this computer's sysadmin. A run is not offered the task tools.
 Who may call it is the app's rule for every route (an active member, or this computer: photo_app.py).
+
+A call with a member's login (through `tailscale serve`; with --demo, the demo's header or cookie) is that member's
+**own agent** (multiplayer phase 8), on the device it came from: photo_app.py gives `handle` its binding
+(members.bind: one per member and device, made pending by its first call). Pending, it may call every tool that only
+looks; every tool that writes answers that the member must allow it first, in their inbox. Approved, it writes as
+the member, and every journal entry it makes carries the binding (journal.by_agent). Revoked, every call is refused
+(403). It is never offered submit_task, get_task or cancel_task (its work runs in the member's own harness, on their
+own account, never on the owner's subscription; called anyway they are refused), and only it is offered
+journal_since: what changed in what its member may know of (journal.for_member). amend_album's `request_done` closes
+the member's series_update item once their agent has looked at a series' new photos. Nothing it can send binds it:
+the member allows it on the web, from another device (members.decide_binding). A call from this computer with no
+login, and a run of the estate's agent with its token, are as before.
 
 The tools answer for a member (`member` above): every search, photo and album is as that member sees the
 library (catalog.Live.visible_for), and what a tool makes is theirs. For a login that is its member; from this
@@ -49,6 +62,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
+import journal
 from core.lifecycle import Unavailable
 
 if TYPE_CHECKING:     # for the types only: the tools reach these through `app`
@@ -81,6 +95,8 @@ class App(Protocol):
     def stories(self) -> Callable[[list[str], int | None], dict[str, list[dict]]]: ...
     @property
     def family(self) -> Callable[[], list[dict[str, Any]]]: ...
+    @property
+    def journal(self) -> Callable[[int | None, int, int], dict[str, Any]]: ...
 
 
 @dataclass(frozen=True)
@@ -93,6 +109,7 @@ class Caller:
     acting_for: int | None = None
     viewer: int | None = None
     task: int | None = None
+    binding: int | None = None    # a member's own agent: its agent_bindings.id (the member is the actor)
 
 
 @dataclass(frozen=True)
@@ -107,10 +124,11 @@ class AppFacade:
     ask: Callable[..., dict[str, Any]]                             # stories.ask, with the app's refused
     stories: Callable[[list[str], int | None], dict[str, list[dict]]]   # stories.about
     family: Callable[[], list[dict[str, Any]]]                     # the family's members, for ask_member's `to`
+    journal: Callable[[int | None, int, int], dict[str, Any]]      # journal.for_member, for journal_since
 
 
 VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
-INSTRUCTIONS = """Photo Estate: one family's photo library, with tools to find photos, make albums, propose what to hide, and ask the family what only they know.
+BASE = """Photo Estate: one family's photo library, with tools to find photos, make albums, propose what to hide, and ask the family what only they know.
 
 Whose eyes. Every tool answers as one member sees the library, and what you make is theirs: the person you are
 signed in as, or, for a run of the estate's agent, the member it acts for. Acting for no one, the estate's agent
@@ -154,13 +172,27 @@ are asked together. Say in `why` what the answer is for.
 
 Stories. A story is what a member said about photos, attributed to them and dated: typed, or spoken and
 transcribed. It is theirs: quote it, use it, never edit or correct it. Two people's stories of one moment are
-both kept, side by side.
-
-Handing it over. For a request that covers many photos or needs judgement ("hide the photos from the
+both kept, side by side."""
+HANDING = """Handing it over. For a request that covers many photos or needs judgement ("hide the photos from the
 school"), submit_task gives it, in the person's own words, to the estate's agent, which runs on the computer the
 library is on, acts for the person and works through it with these same tools. It takes minutes and keeps going
 if this conversation ends. Check on it with get_task; when it is done, give the person its report and the
 review link of the change set it made."""
+OWN = """You are this member's own agent. You run in their harness, on their account, and connect with their login,
+from one device. The first time you connect from a device the member is asked, in their inbox, to allow you: until
+they do (on the web, from another device than yours), every tool that only looks works, and every tool that changes
+something answers that they must allow you first. Once allowed, what you make is theirs and the journal names them,
+by their agent. There is no submit_task for you: do the work here, with these tools.
+
+Keeping up. journal_since(cursor) tells what has changed in what your member may know of, oldest first: their
+albums and lenses, published series, new photos they may see, stories they may read, their questions and inbox. Keep
+the `next_cursor` it gives and start there next time (0 the first time: everything); while `more` is true there is
+more to read. A series.update_requested entry means new photos may belong in one of your member's series (an album
+that grows from a search): look at them (get_photos; get_album and similar_photos to compare with what it holds), add
+those that belong with amend_album, and then call amend_album with `request_done` true, which closes the member's inbox
+item about them (the photos you left out stay out). Its `waiting` says whether that item is still open."""
+INSTRUCTIONS = BASE + "\n\n" + HANDING
+OWN_INSTRUCTIONS = BASE + "\n\n" + OWN
 
 FILTERS = {
     "people": {"type": "array", "items": {"type": "string"},
@@ -268,7 +300,10 @@ class Tools:
                      "section": {"type": "string", "description": "A heading within the album for the photos this call adds, e.g. a year."},
                      "reason": {"type": "string", "description": "Why these photos, in a few words a person can read."},
                      "title": {"type": "string", "description": "Rename the album."},
-                     "prompt": {"type": "string"}},
+                     "prompt": {"type": "string"},
+                     "request_done": {"type": "boolean", "description": "true: the new photos waiting for this series"
+                                      " (its series.update_requested entries) have been looked at, and those that belong"
+                                      " added; closes the member's inbox item about them. The rest stay out."}},
                     ["album"]), self.amend_album),
             ("propose_hiding", True,
              "Put an album up for hiding: it becomes a change set the person reviews and applies. Nothing is hidden until they do.",
@@ -293,15 +328,32 @@ class Tools:
                     ["task"]), self.get_task),
             ("cancel_task", True, "Stop a task that is queued or running. A change set it already made stays, unapplied.",
              schema({"task": {"type": "integer"}}, ["task"]), self.cancel_task),
+            ("journal_since", False,
+             "What has changed in what your member may know of since `cursor`, oldest first: their albums, lenses and"
+             " favourites, published series and lenses, new photos they may see, stories they may read, their questions,"
+             " inbox and agents, and series.update_requested for their series. Returns `entries`, `next_cursor` (keep it"
+             " for next time) and `more`.",
+             schema({"cursor": {"type": "integer", "description": "The next_cursor of your last call; 0 the first time."},
+                     "limit": {"type": "integer", "description": "How many entries at most (default 100, at most 500)."}}),
+             self.journal_since),
         ]
         self.by_name = {t[0]: t for t in self.tools}
 
-    TASK_TOOLS = ("submit_task", "get_task", "cancel_task")   # not for the agent a task runs
+    TASK_TOOLS = ("submit_task", "get_task", "cancel_task")   # not for the agent a task runs, nor a member's own
+    OWN_TOOLS = ("journal_since",)                             # only for a member's own agent
 
-    def listing(self, in_task: bool = False) -> list[dict]:
+    @classmethod
+    def offered(cls, name: str, in_task: bool = False, own: bool = False) -> bool:
+        return not ((in_task or own) and name in cls.TASK_TOOLS or not own and name in cls.OWN_TOOLS)
+
+    def listing(self, in_task: bool = False, own: bool = False) -> list[dict]:
         return [{"name": n, "description": d, "inputSchema": s,
                  "annotations": {"readOnlyHint": not w, "destructiveHint": False, "openWorldHint": False}}
-                for n, w, d, s, _ in self.tools if not (in_task and n in self.TASK_TOOLS)]
+                for n, w, d, s, _ in self.tools if self.offered(n, in_task, own)]
+
+    def journal_since(self, args, cx: Caller):
+        cursor = max(0, int(args.get("cursor") or 0))
+        return self.app.journal(cx.viewer, cursor, max(1, min(int(args.get("limit") or 100), 500)))
 
     # -- tasks -----------------------------------------------------------------------------------
 
@@ -390,6 +442,9 @@ class Tools:
         return {"photos": rows}
 
     def ask_member(self, args, cx: Caller):
+        if args.get("follow_up") and cx.binding is not None:
+            raise ValueError("follow_up starts a run of the estate's agent, on the owner's subscription: you are your"
+                             " member's own agent, so read the answer yourself (a story.told entry in journal_since)")
         return self.app.ask(cx.actor, cx.acting_for, args.get("photos"), args.get("text"), args.get("why"), args.get("to"),
                             args.get("group_key"), args.get("priority"), bool(args.get("follow_up")), cx.task)
 
@@ -429,17 +484,24 @@ class Tools:
                 if got["kind"] != "live" else "it holds what the search finds; give the person the view link"}
 
     def amend_album(self, args, cx: Caller):
-        sid = int(args["album"])
+        sid, out = int(args["album"]), None
+        changes = any(args.get(k) for k in ("add_ids", "add_search", "remove_ids", "remove_search"))
         if args.get("title") or "prompt" in args:
             got, code = self.app.changes.write(sid, "rename", {k: args[k] for k in ("title", "prompt") if k in args},
                                                cx.who, cx.actor, cx.acting_for)
             if code >= 400:
                 raise ValueError(got["error"].replace("change set", "album"))
-            if not any(args.get(k) for k in ("add_ids", "add_search", "remove_ids", "remove_search")):
-                return self.album_brief(got)
-        out = self.amend_set({**args, "change_set": sid}, cx)
-        return {**{k: v for k, v in out.items() if k not in ("change_set", "state", "hidden_now", "kept_by_person", "review")},
-                "album": sid, "view": f"/?album={sid}"}
+            out = self.album_brief(got)
+        if changes or out is None and not args.get("request_done"):
+            got = self.amend_set({**args, "change_set": sid}, cx)
+            out = {**{k: v for k, v in got.items() if k not in ("change_set", "state", "hidden_now", "kept_by_person", "review")},
+                   "album": sid, "view": f"/?album={sid}"}
+        if args.get("request_done"):     # the series' waiting photos have been looked at: its owner's item is done
+            got, code = self.app.changes.write(sid, "candidates", {"add": []}, cx.who, cx.actor, cx.acting_for)
+            if code >= 400:
+                raise ValueError(got["error"].replace("change set", "album"))
+            out = {**(out or self.album_brief(got)), "request_done": True}
+        return out
 
     def hide_album(self, args, cx: Caller):
         got, code = self.app.changes.write(int(args["album"]), "hide", {}, cx.who, cx.actor, cx.acting_for)
@@ -510,7 +572,10 @@ class Server:
     def __init__(self, app: App, name="photo-estate", version="1"):
         self.tools, self.info = Tools(app), {"name": name, "title": "Photo Estate", "version": version}
 
-    def call(self, msg, can_write: bool, cx: Caller, in_task: bool = False):
+    def call(self, msg, can_write: bool, cx: Caller, in_task: bool = False, why_not: str | None = None):
+        """One JSON-RPC message. `why_not`: what a writing tool answers when `can_write` is false (a member's own agent
+        that is not allowed yet); a member's own agent is the Caller with a binding."""
+        own = cx.binding is not None
         if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method"), str):
             return {"jsonrpc": "2.0", "id": msg.get("id") if isinstance(msg, dict) else None,
                     "error": {"code": -32600, "message": "not a JSON-RPC 2.0 request"}}
@@ -522,14 +587,18 @@ class Server:
         if method == "initialize":
             want = params.get("protocolVersion")
             return ok({"protocolVersion": want if want in VERSIONS else VERSIONS[0], "capabilities": {"tools": {"listChanged": False}},
-                       "serverInfo": self.info, "instructions": INSTRUCTIONS})
+                       "serverInfo": self.info, "instructions": OWN_INSTRUCTIONS if own else INSTRUCTIONS})
         if method == "ping":
             return ok({})
         if method == "tools/list":
-            return ok({"tools": self.tools.listing(in_task)})
+            return ok({"tools": self.tools.listing(in_task, own)})
         if method == "tools/call":
             tool = self.tools.by_name.get(params.get("name"))
-            if not tool or in_task and tool[0] in Tools.TASK_TOOLS:
+            if tool and own and tool[0] in Tools.TASK_TOOLS:      # (refused in words: it may well have been told of it)
+                return ok({"content": [{"type": "text", "text": f"{tool[0]} is not for a member's own agent: the estate's"
+                                        " agent runs on the owner's subscription, and your work runs here, in your"
+                                        " member's harness, with these tools."}], "isError": True})
+            if not tool or not Tools.offered(tool[0], in_task, own):
                 return err(-32602, f"unknown tool: {params.get('name')}")
             name, writes, _, _, fn = tool
             args = params.get("arguments") or {}
@@ -537,8 +606,9 @@ class Server:
                 if not isinstance(args, dict):
                     raise ValueError("arguments must be an object")
                 if writes and not can_write:
-                    raise PermissionError("this caller may look but not propose changes")
-                out = fn(args, cx)
+                    raise PermissionError(why_not or "this caller may look but not propose changes")
+                with journal.by_agent(cx.binding):
+                    out = fn(args, cx)
                 return ok({"content": [{"type": "text", "text": json.dumps(out, separators=(",", ":"), default=str)}],
                            "structuredContent": out, "isError": False})
             except (ValueError, KeyError, TypeError, PermissionError, Unavailable) as e:   # the agent can read it and try again
@@ -548,10 +618,11 @@ class Server:
         return err(-32601, f"method not found: {method}")
 
     def handle(self, method: str, headers, body, can_write: bool, who: str = "", local: bool = False,
-               member: int | None = None):
+               member: int | None = None, agent: dict | None = None):
         """One HTTP request to /mcp -> (status, body bytes, content type, Cache-Control). `member`: the member
         making it (members.id). A run of the estate's agent carries its token (X-Estate-Agent, from this computer,
-        while the run lasts): then it is the agent, acting for the run's member (tasks.Run)."""
+        while the run lasts): then it is the agent, acting for the run's member (tasks.Run). `agent`: a call with a
+        member's login is their own agent, and this is its binding (members.bind, with the member's `name`)."""
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":"), default=str).encode(), "application/json", "no-store")
         refuse = lambda why: js({"jsonrpc": "2.0", "id": None, "error": {"code": -32001, "message": why}}, 403)   # noqa: E731
         # A page on another site must not be able to drive this from someone's browser.
@@ -563,7 +634,18 @@ class Server:
         if headers.get("X-Estate-Task") is not None:     # a run from before tokens: never answered as this computer
             return refuse("X-Estate-Task is no longer honoured: a run of the estate's agent carries its own token")
         token = headers.get(TOKEN_HEADER)
-        cx, in_task = Caller(who, member, None, member), False
+        cx, in_task, why_not = Caller(who, member, None, member), False, None
+        if token is None and agent is not None:      # a member's own agent, on one device: what its binding allows
+            name, device = agent.get("name") or "your member", agent.get("device") or "this device"
+            if agent["status"] == "revoked":
+                return refuse(f"{name} has turned off their agent on {device}. They can allow it again on Connect your"
+                              " agent (/agents, in the Library's menu), from another device.")
+            cx = Caller(who, member, None, member, binding=agent["id"])
+            if agent["status"] != "approved":
+                can_write = False
+                why_not = (f"Not yet: {name} has not allowed this agent (on {device}) to change anything. It is in their"
+                           " inbox (the Library's menu, Inbox, or /agents): they allow it there, from another device than"
+                           " this one. Until then every tool that only looks works.")
         if token is not None:
             run = self.tools.app.tasks.run_of(token) if local else None
             if run is None:
@@ -576,7 +658,7 @@ class Server:
         if body is None:
             return js({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "the body is not JSON"}}, 400)
         if isinstance(body, list):
-            got = [r for r in (self.call(m, can_write or in_task, cx, in_task) for m in body) if r is not None]
+            got = [r for r in (self.call(m, can_write or in_task, cx, in_task, why_not) for m in body) if r is not None]
             return js(got) if got else (202, b"", "application/json", "no-store")
-        got = self.call(body, can_write or in_task, cx, in_task)
+        got = self.call(body, can_write or in_task, cx, in_task, why_not)
         return js(got) if got is not None else (202, b"", "application/json", "no-store")

@@ -2,6 +2,12 @@
  "catalog": [
   [
    "index",
+   "agent_binding_node",
+   "agent_bindings",
+   "CREATE UNIQUE INDEX agent_binding_node ON agent_bindings(member_id, node)"
+  ],
+  [
+   "index",
    "agent_events_task",
    "agent_events",
    "CREATE INDEX agent_events_task ON agent_events(task_id, id)"
@@ -215,6 +221,12 @@
    "story_photos_sha",
    "story_photos",
    "CREATE INDEX story_photos_sha ON story_photos(sha256)"
+  ],
+  [
+   "table",
+   "agent_bindings",
+   "agent_bindings",
+   "CREATE TABLE agent_bindings(   -- a member's own agent, from one device (members.py; multiplayer phase 8)\n  id INTEGER PRIMARY KEY, member_id INT,\n  node TEXT,                             -- what tells the device apart: its tailnet node (tailscale whois), else its address\n  device TEXT,                           -- the device as the member is shown it: the node's name, or its address\n  status TEXT DEFAULT 'pending',         -- pending | approved | revoked\n  requested_at TEXT, decided_at TEXT,\n  seen_at TEXT)"
   ],
   [
    "table",
@@ -460,7 +472,7 @@
    "table",
    "stories",
    "stories",
-   "CREATE TABLE stories(      -- what a member said about photos, attributed and dated, never edited\n  id INTEGER PRIMARY KEY,\n  member_id INT,                         -- who told it\n  question_id INT,                       -- the question it answers, or NULL\n  text TEXT,                             -- what they typed (NULL for a recording alone)\n  recording TEXT, recording_ext TEXT,    -- the sha256 of the audio: a file in the store with no assets row\n  told_at TEXT,\n  transcript TEXT,                       -- the recording, written out (transcribe.py): set once\n  transcribed_at TEXT, transcript_error TEXT)"
+   "CREATE TABLE stories(      -- what a member said about photos, attributed and dated, never edited\n  id INTEGER PRIMARY KEY,\n  member_id INT,                         -- who told it\n  question_id INT,                       -- the question it answers, or NULL\n  text TEXT,                             -- what they typed (NULL for a recording alone)\n  recording TEXT, recording_ext TEXT,    -- the sha256 of the audio: a file in the store with no assets row\n  told_at TEXT,\n  transcript TEXT,                       -- the recording, written out (transcribe.py): set once\n  transcribed_at TEXT, transcript_error TEXT, seconds REAL)"
   ],
   [
    "table",

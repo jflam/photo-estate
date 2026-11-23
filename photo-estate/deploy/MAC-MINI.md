@@ -517,3 +517,37 @@ uploaded, or the next start of the app, tries every waiting one again. A transcr
 model is loaded (about 5-20 seconds for a short recording on the laptop, most of it loading). The weekly allowance
 of questions is `ALLOWANCE` in stories.py (3); one member's own is a column:
 `sqlite3 $DB "update members set questions_per_week=5 where id=<member id>"` (NULL: the estate's).
+
+## A member's own agent: the by-hand steps (multiplayer phase 8)
+
+Since phase 8 a call on `/mcp` with a member's login is that member's **own agent** on the device it came from (an
+`agent_bindings` row: book chapter 11, "A member's own agent"), allowed by the member before it may write, and never
+offered the task tools. The deploy adds a table (`agent_bindings`) and a column (`stories.seconds`): take the catalog
+backup CLAUDE.md gives first. The app makes both on its first start. By hand:
+
+- **Which device a call came from** is `tailscale whois --json <address>` on the address `tailscale serve` forwards
+  (`X-Forwarded-For`). The app looks for `tailscale` on its PATH (the plist's `/opt/homebrew/bin:/usr/bin:/bin`),
+  then for the macOS app's own CLI (`/Applications/Tailscale.app/Contents/MacOS/Tailscale`). Check, as the user the
+  app runs as, that one of them answers; without either, the device is shown as its tailnet address, which works
+  but reads worse. The first line below prints the laptop's node; after the restart, the second shows what the
+  app made of it once the laptop's Claude Code has called `/mcp`.
+- **The owner's laptop.** Claude Code on the laptop is registered against this `/mcp` (user scope, `photo-estate`)
+  and used `submit_task`. From this deploy it is the owner's own agent like any other: its first call after the
+  restart puts "An agent connected as you from <the laptop>. Allow it?" in the owner's inbox. Until he allows it,
+  from **another device** (his phone: the iPhone app's Inbox, or Safari on `/agents`; the laptop's own browser is
+  refused, as anything on the laptop could be the agent), it can search and read but not make albums or change
+  sets or ask questions. It no longer has `submit_task`, `get_task` or `cancel_task` at all: a request for the
+  estate's agent is made on the Changes page's Ask box (`POST /api/tasks`), and personal work is done by Claude Code
+  itself with the other tools. Nothing to change in its MCP configuration.
+
+```bash
+export PATH=/opt/homebrew/bin:$PATH
+DB=~/estate/estate.db
+B=$HOME/photo-estate-lab/estate.db.before-phase8-$(date +%Y%m%d-%H%M)
+sqlite3 $DB ".backup $B" && sqlite3 $B "pragma quick_check"            # must print ok
+(command -v tailscale || ls /Applications/Tailscale.app/Contents/MacOS/Tailscale) && \
+  "$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)" whois --json <laptop's 100.x address> | head -20
+
+# after the deploy and restart, and one call from the laptop's Claude Code
+sqlite3 $DB "select id, member_id, node, device, status, seen_at from agent_bindings"
+```

@@ -180,7 +180,7 @@ request-access page tells someone who has asked that the sysadmin has been told,
 ## The library as tools: MCP
 
 The running app is also an [MCP](https://modelcontextprotocol.io/) server at `/mcp`, so any MCP client
-(Claude Code, Claude Desktop, or anything else) can search the library with the same models you do.
+(Claude Code, or another harness on a computer on the tailnet: [your own agent](#your-own-agent)) can search the library with the same models you do.
 The transport is the simplest form of MCP's streamable HTTP: one JSON-RPC message per POST, answered with
 JSON, no stream and no session. The tools:
 
@@ -190,7 +190,8 @@ JSON, no stream and no session. The tools:
 | Keep them | `list_albums`, `get_album`, `create_album` (with `search` and `grow`, a series), `amend_album` |
 | Propose a change | `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set` |
 | Ask the family | `ask_member` |
-| Hand over a big job | `submit_task`, `get_task`, `cancel_task` |
+| Hand over a big job | `submit_task`, `get_task`, `cancel_task` (not for a member's own agent) |
+| Catch up (a member's own agent) | `journal_since`; `amend_album`'s `request_done` |
 
 Two rules are built into the tools, not left to the agent's good behaviour:
 
@@ -220,6 +221,34 @@ Live Photo's still. The agent still sees no frame.
 
 And because a person reviews a change set, `get_change_set` reports which photos they kept: those are
 the agent's mistakes, and the best guide it has to doing better next time.
+
+## Your own agent
+
+A member can bring their own agent: Claude Code on their laptop, on their own account, added with one command
+that **Connect your agent** (`/agents`, in the Library's menu) shows with this app's own address:
+
+    claude mcp add --transport http photo-estate https://<the mini>.ts.net:8766/mcp
+
+It calls `/mcp` through `tailscale serve`, which says whose login it is, so there is no key to copy. The estate
+takes it for *that member's agent on that device* (a binding, [chapter 11](11-server.md#a-members-own-agent)), and
+the member is asked, in their inbox, "An agent connected as you from alice-macbook. Allow it?". Until they allow it,
+**from another device** (their phone: anything on the agent's own device could be the agent), it can look but not
+change anything; every tool that would says so. Allowed, it works as the member, and the journal says it was their
+agent. Turned off, it is refused. The page lists the member's agents with each state and offers what can be done,
+and asks again every few seconds while it is open, so an agent that has just connected shows up as it happens.
+
+It gets the estate's agent's tools acting for its member, except the task tools: its work runs in the member's own
+harness, never on the owner's subscription. And it gets `journal_since`: what changed in what its member may know
+of, since the cursor it kept. When new photos may belong in one of the member's series, the series listener asks
+*their* agent rather than the estate's (it may know things the estate's agent does not): the entry
+`series.update_requested` comes through `journal_since`; the agent looks at the photos, adds those that belong
+with `amend_album`, and says it is done with `request_done`, which closes the member's inbox item.
+
+**Where it can run.** Only on a device on the tailnet: Claude Code, or a desktop app whose MCP configuration runs
+on that computer. A connector added in claude.ai, Claude Desktop's connectors or the Claude phone app is called
+from Anthropic's servers ([Anthropic's help](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp):
+"Claude connects to your remote MCP server from Anthropic's cloud infrastructure"), which are not on the tailnet,
+and the tailnet stays closed (no Funnel, no public `/mcp`). That is from the documentation, not tried here.
 
 ## An agent on the library's computer: tasks
 
@@ -343,11 +372,12 @@ show the photo's stories and **Tell a story**.
 | The review page | [changes.html](../../photo-estate/changes.html) |
 | The MCP tools and their descriptions | [estate_mcp.py](../../photo-estate/estate_mcp.py) `Tools` |
 | Running the agent, its briefs, its token, its events | [tasks.py](../../photo-estate/tasks.py) `Tasks`, `BRIEF`, `WORK_BRIEF`, `mint` |
+| A member's own agent: bindings, what it may read of the journal, Connect your agent | [members.py](../../photo-estate/members.py) `bind`, `decide_binding`; [journal.py](../../photo-estate/journal.py) `for_member`; [agents.html](../../photo-estate/agents.html), [app/agents-flow.js](../../photo-estate/app/agents-flow.js) |
 | Listeners: series kept up to date, an answer that wakes the agent | [listeners.py](../../photo-estate/listeners.py) |
 | Questions, the inbox's allowance, stories, recordings | [stories.py](../../photo-estate/stories.py) |
 | Transcribing a recording (Parakeet on MLX) | [transcribe.py](../../photo-estate/transcribe.py) |
 | Answering and telling on the pages | [inbox.html](../../photo-estate/inbox.html), [app/ask-flow.js](../../photo-estate/app/ask-flow.js), [app/story-flow.js](../../photo-estate/app/story-flow.js); the viewer and series in [search.html](../../photo-estate/search.html), [app/albums-flow.js](../../photo-estate/app/albums-flow.js) `candidatesFlow` |
 | Answering and telling on the phone | [QuestionsView.swift](../../ios/PhotoEstate/Gate/QuestionsView.swift), [Teller.swift](../../ios/PhotoEstate/Gate/Teller.swift), [StoryModel.swift](../../ios/PhotoEstate/Gate/StoryModel.swift) |
 | Albums on the phone | [Albums.swift](../../ios/PhotoEstate/Library/Albums.swift), [API.swift](../../ios/PhotoEstate/Catalog/API.swift) |
-| Tests | [test_albums.py](../../photo-estate/tests/test_albums.py), [test_changes.py](../../photo-estate/tests/test_changes.py), [test_mcp.py](../../photo-estate/tests/test_mcp.py), [test_tasks.py](../../photo-estate/tests/test_tasks.py), [test_agent.py](../../photo-estate/tests/test_agent.py), [test_listeners.py](../../photo-estate/tests/test_listeners.py), [test_stories.py](../../photo-estate/tests/test_stories.py), [test_stories_browser.py](../../photo-estate/tests/test_stories_browser.py) |
+| Tests | [test_albums.py](../../photo-estate/tests/test_albums.py), [test_changes.py](../../photo-estate/tests/test_changes.py), [test_mcp.py](../../photo-estate/tests/test_mcp.py), [test_tasks.py](../../photo-estate/tests/test_tasks.py), [test_agent.py](../../photo-estate/tests/test_agent.py), [test_personal_agents.py](../../photo-estate/tests/test_personal_agents.py), [test_agents_browser.py](../../photo-estate/tests/test_agents_browser.py), [test_listeners.py](../../photo-estate/tests/test_listeners.py), [test_stories.py](../../photo-estate/tests/test_stories.py), [test_stories_browser.py](../../photo-estate/tests/test_stories_browser.py) |
 | The HTTP API | [Appendix B](appendix-b-http-api.md#albums-and-change-sets) |

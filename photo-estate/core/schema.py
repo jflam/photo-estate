@@ -25,7 +25,8 @@ Areas, and who opens them (each owner calls ensure when it opens the database, n
     favorites    photo_app.PhotoApp, when it opens the catalog: favourites set in the app
     members      members, member_logins and the journal (journal.py), with the triggers that keep them
                  append-only, and inbox_items (member_inbox.py: each member's inbox, which the code that makes
-                 or decides an item writes in its own transaction): photo_app.PhotoApp when it opens the
+                 or decides an item writes in its own transaction), and agent_bindings (members.py: a member's
+                 own agent, from one device, pending until they allow it): photo_app.PhotoApp when it opens the
                  catalog, and everything that appends to the journal (estate.connect, faces.connect,
                  changes.Changes, tasks.Tasks)
     lenses       lenses.py: lenses, subscriptions, shown ("show it anyway") and member_favorites (each member's
@@ -307,6 +308,14 @@ CREATE TABLE IF NOT EXISTS inbox_items(  -- what a member has to decide (member_
   state TEXT DEFAULT 'open',             -- open | done | dismissed
   done_at TEXT);
 CREATE INDEX IF NOT EXISTS inbox_member ON inbox_items(member_id, state);
+CREATE TABLE IF NOT EXISTS agent_bindings(   -- a member's own agent, from one device (members.py; multiplayer phase 8)
+  id INTEGER PRIMARY KEY, member_id INT,
+  node TEXT,                             -- what tells the device apart: its tailnet node (tailscale whois), else its address
+  device TEXT,                           -- the device as the member is shown it: the node's name, or its address
+  status TEXT DEFAULT 'pending',         -- pending | approved | revoked
+  requested_at TEXT, decided_at TEXT,
+  seen_at TEXT);                         -- its last call, to the minute
+CREATE UNIQUE INDEX IF NOT EXISTS agent_binding_node ON agent_bindings(member_id, node);
 """
 # Questions and stories (stories.py; multiplayer phase 7), and where each listener has read the journal to
 # (listeners.py). A story is what a member said: append-only like the journal, but for its transcript, written
@@ -405,6 +414,9 @@ ADDED = {
     "tasks": {"agent_tasks": (("acting_for", "INT"), ("started_by", "TEXT"))},
     # questions_per_week: this member's own allowance of questions (stories.py: NULL, the estate's ALLOWANCE)
     "members": {"members": (("questions_per_week", "INT"),)},
+    # seconds: how long a recording is, as the teller's page measured it (a browser's MP4 says nothing of its length
+    # until played); NULL when it was not sent (the phone, a text story)
+    "stories": {"stories": (("seconds", "REAL"),)},
 }
 
 

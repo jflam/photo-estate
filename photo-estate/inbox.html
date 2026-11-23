@@ -63,7 +63,7 @@ import { inboxFlow, act, KIND } from "/app/inbox-flow.js";
 import { day } from "/app/lens-flow.js";
 import { toast } from "/app/toast.js";
 import { askFlow, askedBy, heading } from "/app/ask-flow.js";
-import { mountTeller, storyHtml, follow } from "/app/story-flow.js";
+import { mountTeller, storyHtml, follow, spoken } from "/app/story-flow.js";
 
 // /inbox?ask=<group> is a question item opened: its questions, answered here (below). Anything else is the list.
 const ASKED = new URLSearchParams(location.search).get("ask");
@@ -100,7 +100,7 @@ function draw() {
   $("#main").innerHTML = `<h1 class="display">Inbox</h1>
     <p class="sub">What waits for you. Each opens the page where it is decided, and deciding it there takes it out of here.</p>`
     + (d.items.length ? `<div class="list" id="list">${d.items.map(card).join("")}</div>`
-      : `<div class="blank">${MARK}<h3>Nothing to decide</h3><p>Someone asking to be let in, a filter proposed as an estate default, a lens you follow that changes, photos an agent proposes for you to look over, photos of yours kept private when they came in, a question about some photos: each comes here.</p></div>`);
+      : `<div class="blank">${MARK}<h3>Nothing to decide</h3><p>Someone asking to be let in, a filter proposed as an estate default, a lens you follow that changes, photos an agent proposes for you to look over, photos of yours kept private when they came in, a question about some photos, an agent connecting as you: each comes here.</p></div>`);
 }
 
 /* ── a question item, opened: its questions (app/ask-flow.js), each with a teller (app/story-flow.js) that answers it
@@ -121,7 +121,7 @@ function qcard(q) {
     <div class="photos">${q.photos.map(shot).join("")}</div><div class="yours"></div><div></div>`;
   const tell = mountTeller(el.lastElementChild, {
     dismiss: "I don’t know", placeholder: "Your answer: type it, or record it", sendLabel: "Send answer",
-    send: what => api(`/api/questions/${q.id}/answer`, "text" in what ? { text: what.text } : what.blob),
+    send: what => "text" in what ? api(`/api/questions/${q.id}/answer`, { text: what.text }) : api(spoken(`/api/questions/${q.id}/answer`, what), what.blob),
     onSent: story => { ask.answered(q.id, story); watch(story); toast("Thank you: it is kept as your story about these photos"); },
     onDismiss: async () => {
       const got = await ask.dismiss(q.id);

@@ -201,7 +201,7 @@ def test_cleo_answers_a_family_question_spoken_and_the_transcript_comes(app, be)
     c.wait_for_timeout(2200)
     q.get_by_role("button", name="Stop").click()
     q.locator(".clip audio").wait_for()
-    with c.expect_request(lambda r: r.url.endswith(f"/api/questions/{qid}/answer")) as sent:
+    with c.expect_request(lambda r: f"/api/questions/{qid}/answer?seconds=" in r.url) as sent:   # (its length, as measured)
         q.get_by_role("button", name="Send answer").click()
     kind = sent.value.headers["content-type"]
     assert kind.split(";")[0] in ("audio/mp4", "audio/webm"), kind     # Chromium: AAC in MP4 when it can
@@ -209,6 +209,8 @@ def test_cleo_answers_a_family_question_spoken_and_the_transcript_comes(app, be)
     assert "spoken" in q.locator(".yours .story .told").inner_text()
     story = call(app, "GET", f"/api/photos/{y}/stories", CLEO)["stories"][0]
     assert story["recording"]["type"] == "audio/mp4" if kind.startswith("audio/mp4") else "audio/webm"
+    assert 1.5 < story["recording"]["seconds"] < 4, "the length the page measured, kept beside the recording"
+    assert q.locator(".yours .story .clip .clock").inner_text() in ("0:02", "0:03")
     r = app.request("GET", story["recording"]["url"], headers=ADA, body=b"")
     assert r.status == 200 and len(r.body) > 1000, "the family may play it"
     con = sqlite3.connect(app.a.db)                                   # written out, as transcribe.py would on the mini
@@ -226,6 +228,7 @@ def test_the_story_is_in_the_viewer_for_those_who_may_see_the_photo(app, be):
     assert a.locator("#vStories h4").inner_text().lower() == "stories"
     assert a.locator("#vStories .story .told").inner_text().startswith("Cleo · ")
     assert a.locator("#vStories audio").count() == 1
+    assert a.locator("#vStories .clip .clock").inner_text() in ("0:02", "0:03"), "its length, before it is played"
     # Ada withdraws it (she shared it): Ben may not be shown it, nor read its story
     con = sqlite3.connect(app.a.db)
     con.execute("INSERT OR IGNORE INTO sharers VALUES (?, ?, '2026-01-01')", (y, app.roster["ada"].id))

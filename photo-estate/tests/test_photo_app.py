@@ -248,7 +248,8 @@ def test_favorite_albums_tasks_and_mcp_take_a_member(app, monkeypatch):
     assert app.request("POST", f"/api/albums/{sid}/discard", AS_STRANGER, body={}).status == 403
     assert app.request("POST", f"/api/albums/{sid}/discard", {}, body={}, local=True).status == 404   # Ben's: not the sysadmin's
     assert app.request("POST", f"/api/albums/{sid}/discard", AS_BEN, body={}).status == 200
-    # a task records the member who asked for it (agent_tasks.acting_for), from the page and from /mcp
+    # a task records the member who asked for it (agent_tasks.acting_for), from the page; from /mcp a member's login
+    # is their own agent (phase 8), which has no task tools: its work runs in its own harness
     asked = []
     monkeypatch.setattr(app.tasks, "submit", lambda prompt, who="", acting_for=None, **kw: (asked.append((prompt, who, acting_for)),
                                                                                        ({"error": "not here"}, 409))[1])
@@ -256,11 +257,14 @@ def test_favorite_albums_tasks_and_mcp_take_a_member(app, monkeypatch):
     assert app.request("POST", "/api/tasks", AS_STRANGER, body={"prompt": "x"}).status == 403
     assert app.request("POST", "/api/tasks", AS_BEN, body={"prompt": "x"}).status == 409
     call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "submit_task", "arguments": {"request": "y"}}}
-    assert app.request("POST", "/mcp", AS_BEN, body=call).json()["result"]["isError"]
-    assert asked == [("x", "ben", ben), ("y", "ben", ben)]
+    got = app.request("POST", "/mcp", AS_BEN, body=call).json()["result"]
+    assert got["isError"] and "not for a member's own agent" in got["content"][0]["text"]
+    assert asked == [("x", "ben", ben)]
     assert app.request("POST", "/mcp", AS_STRANGER, body=call).status == 403          # /mcp takes a member, as every route
     listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-    assert len(app.request("POST", "/mcp", AS_BEN, body=listing).json()["result"]["tools"]) == 17   # (ask_member: phase 7)
+    names = [t["name"] for t in app.request("POST", "/mcp", AS_BEN, body=listing).json()["result"]["tools"]]
+    assert len(names) == 15 and "journal_since" in names and "submit_task" not in names   # (17 less the 3 task tools, and journal_since)
+    assert len(app.request("POST", "/mcp", {}, body=listing, local=True).json()["result"]["tools"]) == 17   # this computer: as before
 
 
 def test_a_task_keeps_who_it_acts_for(tmp_path):

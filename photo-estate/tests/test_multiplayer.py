@@ -77,7 +77,23 @@ def hide(app, who, shas, lens=None, title="hide these") -> int:
     return sid
 
 
+def bind(app, who, device=None) -> dict:
+    """The member's own agent, allowed (multiplayer phase 8): its first call (from `device`, or this computer) makes its
+    binding, pending, and the member allows it from another device (their phone), as on /agents."""
+    h = {**who, **({"X-Demo-Device": device} if device else {})}
+    call(app, "POST", "/mcp", h, {"jsonrpc": "2.0", "id": 0, "method": "ping"})
+    node = f"demo:{device.lower()}" if device else "local"
+    b = next(x for x in call(app, "GET", "/api/agents", who)["bindings"] if x["node"] == node)
+    if b["status"] != "approved":
+        b = call(app, "POST", f"/api/agents/{b['id']}", {**who, "X-Demo-Device": "phone"}, {"allow": True})["binding"]
+    return b
+
+
 def tool(app, who, name, args=None, headers=None, local=False):
+    """A tool called with a member's login: as their own agent, allowed (bind). With a token in `headers`, or from
+    this computer, as before."""
+    if not local and who.get("X-Demo-Member") and "X-Estate-Agent" not in (headers or {}):
+        bind(app, who)
     got = call(app, "POST", "/mcp", {**who, **(headers or {})}, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                                                  "params": {"name": name, "arguments": args or {}}},
                local=local)

@@ -45,12 +45,19 @@ them is refused (admin.py)
   GET  /api/tombstones                the hashes they opted out of, not taken back
   POST /api/tombstones {add?: [sha256], lift?: [sha256]}   opt out, or take an opt-out back
 
+a member's own agents (members.py: agent_bindings; multiplayer phase 8): /mcp with a member's login is their agent on
+the device it calls from (PhotoApp.device: the tailnet node `tailscale serve` forwarded it from, named by `tailscale
+whois`), pending until they allow it here, from another device
+
+  GET  /agents, /api/agents           Connect your agent: how to (the address of /mcp), and their agents with each state
+  POST /api/agents/<id> {allow}       allow one (from another device than its own: 403 otherwise), or turn it off
+
 questions and stories (stories.py; multiplayer phase 7): the member's questions, dealt by their inbox within a
 weekly allowance, answered typed or spoken; stories told about photos; a recording as its own body (an audio
 Content-Type, up to 8 MiB), kept in the store with no assets row and written out later by transcribe.py's job
 
   GET  /api/questions                 the member's open questions, as their inbox items, each photo a search row
-  POST /api/questions/<id>/answer     {text}, or the recording as the body: a story (201)
+  POST /api/questions/<id>/answer     {text}, or the recording as the body (?seconds=: its length, as measured): a story (201)
   POST /api/questions/<id>/dismiss    "I don't know": put away for good
   POST /api/stories {photos, text}    a story with no question (a recording: the body, ?photos=<sha>,<sha>)
   GET  /api/photos/<sha>/stories      a photo's stories the member may read; /api/albums/<id>/stories a series'
@@ -126,7 +133,7 @@ from core import config, schema
 from core.lifecycle import Lifecycle, Phase, Unavailable
 from embed import connect, now
 from encoder import Encoder
-from estate_mcp import AppFacade, Server as MCPServer
+from estate_mcp import TOKEN_HEADER, AppFacade, Server as MCPServer
 from http_util import (FORBIDDEN, MAX_BODY, NOT_FOUND, Auth, HTTPError, Request, Response, byte_range, int_param,
                        json_response, parse_json, read_body)
 from images import Images
@@ -156,6 +163,9 @@ ROUTE_AUTH: tuple[tuple[str, tuple[str, ...], Auth], ...] = (
     ("GET", ("/stats", "/api/stats", "/api/ingest"), Auth.SYSADMIN),
 )
 DEMO_HEADER, DEMO_COOKIE = "X-Demo-Member", "demo_member"   # --demo only: which demo member a request is
+DEMO_DEVICE = "X-Demo-Device"     # --demo only: the device a request says it comes from (what whois would name)
+WHOIS_FOR = 600.0                 # seconds a device's name (tailscale whois) is kept; a failure, a tenth of that
+TAILSCALE = ("/Applications/Tailscale.app/Contents/MacOS/Tailscale",)   # the macOS app's CLI, when none is on PATH
 # Requests that don't hold the catalog gate: they read no catalog, or only briefly, and can be slow.
 UNGATED = ("/api/upload/", "/api/intake", "/setup")
 FAVORITE = re.compile(r"/api/favorite|/api/albums/\d+/favorite")   # (POST) the gate's write side, in set_favorites
@@ -165,6 +175,23 @@ LENS_WRITE = re.compile(r"/api/lenses(?:/(\d+)/(subscribe|unsubscribe|publish|pr
 PRIVATE_WRITE = "/api/private"   # (POST) photos made private or released (private.py): the gate's write side, in relook
 APP_TYPES = {".webmanifest": "application/manifest+json", ".js": "text/javascript; charset=utf-8",
              ".png": "image/png"}
+
+
+def tailscale_whois(addr: str) -> tuple[str, str] | None:
+    """(node, name) of the tailnet node at this address, from `tailscale whois --json` (its Node.StableID, and its
+    ComputedName, else the first label of its MagicDNS Name), or None when it cannot be asked or does not say."""
+    import shutil
+    import subprocess
+    exe = shutil.which("tailscale") or next((x for x in TAILSCALE if os.path.exists(x)), None)
+    if not exe or not re.fullmatch(r"[0-9a-fA-F.:]+", addr):
+        return None
+    try:
+        got = subprocess.run([exe, "whois", "--json", addr], capture_output=True, text=True, timeout=4)
+        node = (json.loads(got.stdout) if got.returncode == 0 else {}).get("Node") or {}
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    name = node.get("ComputedName") or (node.get("Name") or "").split(".")[0]
+    return (f"node:{node['StableID']}", name or addr) if node.get("StableID") else None
 
 
 def policy(method: str, path: str) -> Auth:
@@ -317,7 +344,11 @@ class PhotoApp:
             atexit.register(self.tasks.stop)
         self.mcp = MCPServer(AppFacade(find=browse.find, row=browse.row, faces=browse.faces,
                                        overview=browse.overview, changes=self.changes, tasks=self.tasks,
-                                       ask=self.ask, stories=self.told, family=self.family))
+                                       ask=self.ask, stories=self.told, family=self.family, journal=self.journal_for))
+        # A member's own agent (/mcp with their login) is bound to the device it calls from (device): its tailnet
+        # node, as `tailscale whois` names the address `tailscale serve` forwarded the call from. whois is asked once
+        # in a while per address (WHOIS_FOR); a test gives its own.
+        self.whois, self.whois_seen = tailscale_whois, {}
         # A story's recording is written out on this computer by a queued job (transcribe.py, a uv script with its
         # own environment: Parakeet on MLX), when one is uploaded and at start; then the listeners hear of it.
         self.transcribe = TranscribeJob(["uv", "run", "--quiet", "--script", str(HERE / "transcribe.py"), "--db", a.db,
@@ -836,6 +867,8 @@ class PhotoApp:
             return self.inbox_route(m, int(ii[1]))
         if path == "/api/tombstones":
             return self.tombstones_route(m, body, write=True)
+        if (ag := re.fullmatch(r"/api/agents/(\d+)", path)) is not None:
+            return self.agents_route(req, m, int(ag[1]), body)
         if self.compare and path.startswith("/api/compare"):
             got = self.compare.handle("POST", path, qs, body, who)   # a vote, or a run started or finished
             return Response.of(got) if got else NOT_FOUND
@@ -865,6 +898,10 @@ class PhotoApp:
             return self.inbox_route(m)
         if path == "/api/tombstones":
             return self.tombstones_route(m)
+        if path in ("/agents", "/agents.html"):
+            return _etagged(pages.page("agents.html"), "text/html; charset=utf-8")
+        if path == "/api/agents":
+            return self.agents_route(req, m)
         if re.fullmatch(r"/api/albums/(\d+)/download", path):
             return Response(501, b"the album download is streamed: ask the HTTP server", "text/plain")
         if path.startswith("/video/"):    # so a test, or a caller with no socket, can still ask whether it is there
@@ -962,10 +999,75 @@ class PhotoApp:
         return Response.of(self.changes.handle(method, path, qs, body, who, acting_for))
 
     def mcp_route(self, method: str, req: Request, body, m: Member | None) -> Response:
-        """The library as tools for an agent (estate_mcp.py), on the same rule as every route: a login is
-        that member, a call from this computer the sysadmin (and the estate's agent, with X-Estate-Task)."""
+        """The library as tools for an agent (estate_mcp.py), on the same rule as every route. A call from this
+        computer with no login is the sysadmin, and a run of the estate's agent carries its token. A call with a
+        member's login is that member's own agent (multiplayer phase 8), bound to the device it came from
+        (members.bind: pending the first time, and an inbox item for them)."""
+        agent = None
+        if m is not None and m.login and not m.local and m.kind == "person" and m.active and m.id is not None \
+                and req.headers.get(TOKEN_HEADER) is None and method == "POST":
+            node, device = self.device(req.headers)
+            con = connect(self.a.db)
+            try:
+                agent = {**members.bind(con, m.id, node, device), "name": m.name}
+            finally:
+                con.close()
         return Response.of(self.mcp.handle(method, req.headers, body, Auth.MEMBER.allows(m), m.login if m else "",
-                                           req.local, m.id if m else None))
+                                           req.local, m.id if m else None, agent))
+
+    def device(self, headers) -> tuple[str, str]:
+        """(node, name): the device a request comes from, as far as it can be known. Through `tailscale serve` the
+        request carries X-Forwarded-For, which serve sets to the tailnet address of the node that sent it (it replaces
+        whatever the client sent); `tailscale whois` names that node (its StableID, and its name). Without whois, the
+        address is the node. With --demo, X-Demo-Device says it first (the demo's stand-in, like X-Demo-Member), and
+        a request with no forwarded address is from this computer. Otherwise, "unknown"."""
+        if self.a.demo and (named := " ".join((headers.get(DEMO_DEVICE) or "").split())[:60]):
+            return f"demo:{named.lower()}", named
+        addr = (headers.get("X-Forwarded-For") or "").split(",")[-1].strip()
+        if not addr:
+            return ("local", "this computer") if self.a.demo else ("unknown", "unknown")
+        t = time.time()
+        seen = self.whois_seen.get(addr)
+        if seen is None or t - seen[0] > (WHOIS_FOR if seen[1] else WHOIS_FOR / 10):
+            seen = self.whois_seen[addr] = (t, self.whois(addr))
+        return seen[1] or (f"addr:{addr}", addr)
+
+    def journal_for(self, member: int | None, cursor: int, limit: int) -> dict:
+        """The MCP tool journal_since (journal.for_member): inside the gate, like every tool."""
+        con = connect(self.a.db)
+        try:
+            return journal.for_member(con, member, cursor, limit, refused=self.unseen, loaded=self.loaded_through,
+                                      readable=lambda sid: stories.story(con, sid, member, self.unseen))
+        finally:
+            con.close()
+
+    # -- a member's own agents: Connect your agent (/agents) -------------------------------------------------
+
+    def agents_route(self, req: Request, m: Member | None, bid: int | None = None, body=None) -> Response:
+        """GET /api/agents: the member's own agents, one per device, and how to connect one (the address of /mcp as
+        this request reached the app); POST /api/agents/<id> {allow: true | false}: allow one (from another device
+        than its own) or turn it off. A member's own only (404 for anyone else's)."""
+        viewer = m.id if m and not m.local else None
+        node, device = self.device(req.headers)
+        con = connect(self.a.db)
+        try:
+            if bid is not None:
+                if not isinstance(body, dict) or not isinstance(body.get("allow"), bool):
+                    return json_response({"error": "say allow: true or false"}, 400)
+                got = members.decide_binding(con, viewer, bid, body["allow"], node)
+                print(f"agents: {m.name if m else '?'}'s agent on {got['device']} is now {got['status']}", flush=True)
+                return json_response({"binding": got})
+            h = req.headers
+            host = (h.get("X-Forwarded-Host") or h.get("Host") or f"127.0.0.1:{self.port}").split(",")[0].strip()
+            scheme = "https" if (h.get("X-Forwarded-Proto") or "").lower() == "https" else "http"
+            return json_response({"bindings": members.bindings(con, viewer) if viewer is not None else [],
+                                  "url": f"{scheme}://{host}/mcp", "here": {"node": node, "device": device},
+                                  "me": m.name if m else None, "demo": bool(self.a.demo),
+                                  "login": m.login if self.a.demo and m else None})
+        except members.BindingError as e:
+            return json_response({"error": str(e)}, e.status)
+        finally:
+            con.close()
 
     # -- questions and stories (stories.py) ----------------------------------------------------------------
 
@@ -1011,12 +1113,16 @@ class PhotoApp:
             body = {} if spoken else parse_json(req.body)
             if not isinstance(body, dict):
                 return json_response({"error": "expected a JSON object, or a recording"}, 400)
+            try:      # (spoken: how long, as the teller's page measured it, ?seconds=)
+                seconds = float((qs.get("seconds") or [""])[0]) if spoken and qs.get("seconds") else None
+            except ValueError:
+                return json_response({"error": "seconds is a number"}, 400)
             recording = stories.save_recording(con, self.recordings, req.body, ctype) if spoken else None
             if qid is not None:
-                got = stories.answer(con, viewer, qid, self.unseen, text=body.get("text"), recording=recording)
+                got = stories.answer(con, viewer, qid, self.unseen, text=body.get("text"), recording=recording, seconds=seconds)
             else:
                 photos = body.get("photos") if not spoken else [x for x in (qs.get("photos") or [""])[0].split(",") if x]
-                got = stories.tell(con, viewer, photos, self.unseen, text=body.get("text"), recording=recording)
+                got = stories.tell(con, viewer, photos, self.unseen, text=body.get("text"), recording=recording, seconds=seconds)
         except stories.StoryError as e:
             return json_response({"error": str(e)}, e.status)
         finally:

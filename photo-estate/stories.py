@@ -304,7 +304,7 @@ def dismiss(con, member: int | None, qid: int) -> dict:
     return {"question": qid, "dismissed": bool(n)}
 
 
-def answer(con, member: int | None, qid: int, refused: Refused, text=None, recording=None) -> dict:
+def answer(con, member: int | None, qid: int, refused: Refused, text=None, recording=None, seconds=None) -> dict:
     """POST /api/questions/<id>/answer: the member's answer, a story about the question's photos. Only a question
     dealt to them (404 otherwise, or for one naming a photo they may not be shown now). A second answer, theirs or
     anyone's, is another story."""
@@ -314,13 +314,15 @@ def answer(con, member: int | None, qid: int, refused: Refused, text=None, recor
     photos = json.loads(shas)
     if any(refused(s, member) for s in photos):
         raise StoryError(404, "no such question")
-    story = tell(con, member, photos, refused, text=text, recording=recording, question=qid, _asked=iid)
+    story = tell(con, member, photos, refused, text=text, recording=recording, question=qid, _asked=iid, seconds=seconds)
     return story
 
 
-def tell(con, member: int | None, photos, refused: Refused, text=None, recording=None, question=None, _asked=None) -> dict:
+def tell(con, member: int | None, photos, refused: Refused, text=None, recording=None, question=None, _asked=None,
+         seconds=None) -> dict:
     """A story the member tells about photos they may be shown (404 for any other): `text`, or `recording` (sha, ext)
-    from save_recording, or both. One story.told entry; answering closes their part of the question."""
+    from save_recording, or both; `seconds`, how long the recording is as the teller's page measured it (kept beside
+    it: a browser's MP4 does not say until played). One story.told entry; answering closes their part of the question."""
     if member is None:
         raise StoryError(403, "only a member tells a story")
     shas = _photos(photos)
@@ -332,9 +334,10 @@ def tell(con, member: int | None, photos, refused: Refused, text=None, recording
         raise StoryError(400, "a story is text, or a recording")
     t = stamp()
     with con:
-        sid = con.execute("INSERT INTO stories(member_id, question_id, text, recording, recording_ext, told_at)"
-                          " VALUES (?,?,?,?,?,?)", (member, question, text, recording[0] if recording else None,
-                                                    recording[1] if recording else None, t)).lastrowid
+        secs = float(seconds) if recording and isinstance(seconds, (int, float)) and 0 < seconds <= 3600 else None
+        sid = con.execute("INSERT INTO stories(member_id, question_id, text, recording, recording_ext, told_at, seconds)"
+                          " VALUES (?,?,?,?,?,?,?)", (member, question, text, recording[0] if recording else None,
+                                                      recording[1] if recording else None, t, secs)).lastrowid
         con.executemany("INSERT INTO story_photos(story_id, sha256) VALUES (?,?)", ((sid, s) for s in shas))
         if question is not None:
             con.execute("UPDATE asked SET answered_at=? WHERE question_id=? AND member_id=? AND answered_at IS NULL",
@@ -352,7 +355,7 @@ def tell(con, member: int | None, photos, refused: Refused, text=None, recording
 # -- reading -------------------------------------------------------------------------------------------------
 
 COLS = "s.id, s.member_id, s.question_id, s.text, s.recording, s.recording_ext, s.told_at, s.transcript, s.transcribed_at," \
-       " s.transcript_error"
+       " s.transcript_error, s.seconds"
 
 
 def _shas(con, sid: int) -> list[str]:
@@ -365,12 +368,13 @@ def may_read(teller: int, shas: list[str], member: int | None, refused: Refused)
 
 
 def _brief(con, row, shas, member, names, refused) -> dict:
-    sid, teller, qid, text, rec, ext, at, transcript, tat, err = row
+    sid, teller, qid, text, rec, ext, at, transcript, tat, err, seconds = row
     q = con.execute("SELECT text FROM questions WHERE id=?", (qid,)).fetchone() if qid is not None else None
     return {"id": sid, "told_by": {"id": teller, "name": names.get(teller, ("Someone",))[0]}, "told_at": at, "text": text,
             "question": {"id": qid, "text": q[0]} if q else None,
             "photos": [s for s in shas if not refused(s, member)],
-            "recording": {"url": f"/api/stories/{sid}/recording", "type": TYPES.get(ext or "", "audio/mp4")} if rec else None,
+            "recording": {"url": f"/api/stories/{sid}/recording", "type": TYPES.get(ext or "", "audio/mp4"),
+                          "seconds": seconds} if rec else None,
             "transcript": transcript, "transcribed_at": tat,
             "transcript_state": None if not rec else "done" if transcript is not None else "failed" if err else "waiting",
             "transcript_error": err if rec and transcript is None else None}
