@@ -10,7 +10,9 @@ searches (browse.py), and with `images` its image side too, for photos arriving 
   .text(q)                             a query's unit vector (waits for the model, up to .patience seconds)
   .image(im)                           a PIL image's float16 vector, as `embed.py run` makes it
   features(torch, out)                 the vector in what a model call returns (embed.py uses it too)
-  pick_device(torch, choice)           "auto" -> "mps" on a Mac with a GPU, else "cpu" (embed.py uses it too)
+  pick_device(torch, choice)           "auto" -> "cuda" with an NVIDIA GPU, "mps" on a Mac with a GPU, else "cpu"
+                                       (embed.py uses it too)
+  empty_cache(torch, dev)              hand a GPU's unused memory back
 
 Importing PyTorch and loading the model is most of the app's startup time, and only typed queries need
 it, so it loads while the page, filters and thumbnails are already being served. A search that comes
@@ -18,9 +20,11 @@ first waits for it, but only WAIT seconds (it holds the catalog gate): then Mode
 answers 503. A load that raises ends the wait too: every later call raises ModelFailed with the error,
 which the app answers 500 (photo_app.PhotoApp.handle; estate_mcp.py makes either one a tool error).
 
-The model runs on the GPU (MPS) when there is one: on the M1 Mac mini a query's text pass takes 18 ms
-there against 47 ms on the CPU (2.6x; docs/book/10-embeddings.md). Only the model moves: the photos'
-vectors stay in NumPy, and a query vector comes back to the CPU before browse.py compares it with them.
+The model runs on the GPU when there is one (CUDA on a PC with an NVIDIA card, MPS on a Mac): on the M1
+Mac mini a query's text pass takes 18 ms there against 47 ms on the CPU (2.6x; docs/book/10-embeddings.md).
+Only the model moves: the photos' vectors stay in NumPy, and a query vector comes back to the CPU before
+browse.py compares it with them. The model is float32 on every device, so a photo's vector does not depend
+on which computer made it beyond the last bits.
 
 What it costs in memory. On a Mac the GPU's memory is the machine's own, and it is not in a process's
 RSS: on the Mac mini (16 GB) the app's two models, whole and in float32, were 5.6 GB of "IOAccelerator"
@@ -54,7 +58,7 @@ def features(torch, out):
     return out if torch.is_tensor(out) else out.pooler_output
 
 
-DEVICES = ("auto", "mps", "cpu")
+DEVICES = ("auto", "cuda", "mps", "cpu")
 
 
 def drop_image_side(model) -> bool:
@@ -67,12 +71,23 @@ def drop_image_side(model) -> bool:
 
 
 def pick_device(torch, choice: str = "auto") -> str:
-    """The PyTorch device for --device: "auto" is the Mac's GPU (MPS) when PyTorch can use it, else the CPU."""
+    """The PyTorch device for --device: "auto" is an NVIDIA GPU (CUDA) when PyTorch can use one, else the
+    Mac's (MPS), else the CPU."""
     if choice not in DEVICES:
         raise ValueError(f"--device must be one of {', '.join(DEVICES)}, not {choice!r}")
     if choice == "auto":
+        if torch.cuda.is_available():
+            return "cuda"
         return "mps" if torch.backends.mps.is_available() else "cpu"
     return choice
+
+
+def empty_cache(torch, dev: str | None) -> None:
+    """Hand the GPU memory PyTorch holds for its next tensor back (a model let go frees nothing otherwise)."""
+    if dev == "mps":
+        torch.mps.empty_cache()
+    elif dev == "cuda":
+        torch.cuda.empty_cache()
 
 
 class Encoder:
@@ -115,8 +130,8 @@ class Encoder:
         torch, dev = parts.get("torch"), parts.get("dev")
         parts.clear()
         gc.collect()
-        if torch is not None and dev == "mps":
-            torch.mps.empty_cache()          # hand the GPU's memory back, not keep it for the next tensor
+        if torch is not None:
+            empty_cache(torch, dev)          # hand the GPU's memory back, not keep it for the next tensor
         print(f"text encoder {self.model_id} let go: not used for {unused_for / 60:.0f} min", flush=True)
         return True
 

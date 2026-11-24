@@ -61,7 +61,7 @@ The system uses **SigLIP 2** (Google), specifically `google/siglip2-base-patch16
 | Training signal | A sigmoid loss: each image-text pair is scored independently as "match or not", rather than CLIP's softmax over a batch |
 | Text length | Padded to 64 tokens |
 | Licence | Apache-2.0 |
-| Run on | The Mac's GPU (MPS) when there is one, else the CPU; PyTorch float32 either way (`--device`) |
+| Run on | A GPU when there is one (CUDA on an NVIDIA card, MPS on a Mac), else the CPU; PyTorch float32 on each (`--device`) |
 
 Because the two encoders are separate, an image's vector can be **computed once and stored**, and
 any later text query needs only the (small) text tower. That is the property that makes a
@@ -84,8 +84,11 @@ the roadmap and would mean re-embedding the whole library, which is why vectors 
 
 ### CPU or GPU: `--device`
 
-`--device auto` (the default) runs the model on the Mac's GPU through PyTorch's MPS backend when there
-is one, and on the CPU otherwise; `--device cpu` or `--device mps` picks one. Only the model moves: the
+`--device auto` (the default) runs the model on an NVIDIA GPU through CUDA when PyTorch can use one, else
+on the Mac's GPU through PyTorch's MPS backend when there is one, and on the CPU otherwise; `--device cuda`,
+`--device mps` or `--device cpu` picks one. On the Linux PC (a Threadripper 1950X with an RTX 2080,
+[HOME-COMPUTE.md](../../photo-estate/deploy/HOME-COMPUTE.md)) a typed query's text pass takes 6 ms on the
+card and 85 ms on the CPU, and the two vectors agree to a cosine of 1.0. Only the model moves: the
 photos' vectors stay in NumPy in ordinary memory (on a Mac the GPU shares it anyway), and each query
 vector is copied back, 3 KB, before it is compared with them. Measured on 2026-11-20, model work only
 (decoding excluded), PyTorch float32:

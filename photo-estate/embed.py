@@ -22,8 +22,8 @@ catalog tools don't pull in PyTorch).
 
 Vectors are L2-normalised float16, one row per (sha256, model), so a better model can be added
 later without touching the first. Queries must use the same model as the vectors they search.
-The model runs on the Mac's GPU (MPS) when there is one (--device auto), else on the CPU; the vectors
-it makes agree with the CPU's to a cosine of 0.9997 or better (queries: identical rankings), so vectors
+The model runs on the GPU when there is one (--device auto: CUDA on an NVIDIA card, MPS on a Mac), else on
+the CPU; the vectors a GPU makes agree with the CPU's to a cosine of 0.9997 or better (queries: identical rankings), so vectors
 made on either can be searched from the other.
 """
 from __future__ import annotations
@@ -369,7 +369,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--threads", type=int, default=8, help="PyTorch threads (8 measured fastest)")
     p.add_argument("--device", choices=DEVICES, default="auto",
-                   help="where the model runs: auto (the Mac's GPU when there is one), mps or cpu")
+                   help="where the model runs: auto (an NVIDIA GPU, else the Mac's, else the CPU), cuda, mps or cpu")
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("run", help="embed images that have no embedding for --model yet")
     s.add_argument("--store", required=True)

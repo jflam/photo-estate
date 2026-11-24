@@ -1,0 +1,32 @@
+# The photo app on a Linux PC (home-compute), as a systemd user service: the Linux twin of
+# com.jflam.photo-search.plist. HOME-COMPUTE.md says how to install it.
+#
+#   mkdir -p ~/.config/systemd/user && cp photo-estate/deploy/photo-search.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now photo-search
+#   sudo loginctl enable-linger $USER        # once: it then starts at boot, with nobody logged in
+#
+# %h is the user's home. Change the paths to yours.
+[Unit]
+Description=Photo Estate: the photo app (embed.py serve)
+# The store is on its own disk: do not start, and so never write a thumbnail or an upload, until it is mounted.
+RequiresMountsFor=/mnt/estate
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/src/photo-estate/photo-estate
+# uv (installed by mise here), and /usr/bin for tailscale, git and the estate's agent (claude)
+Environment=PATH=%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin
+Environment=HF_HUB_OFFLINE=1
+ExecStart=/usr/bin/env uv run --quiet embed.py --db %h/estate/estate.db serve \
+    --store /mnt/estate/store \
+    --inbox /mnt/estate/iphone \
+    --cache /mnt/estate/review \
+    --fast-cache %h/.cache/photo-estate/thumbs \
+    --backup-dir /mnt/estate/catalog-backups
+Restart=always
+RestartSec=30
+StandardOutput=append:%h/.local/state/photo-search.log
+StandardError=append:%h/.local/state/photo-search.log
+
+[Install]
+WantedBy=default.target

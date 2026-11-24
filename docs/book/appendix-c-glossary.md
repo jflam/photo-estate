@@ -219,7 +219,7 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Tombstone.** A photo the estate refuses, by its sha (`tombstones`): one the sysadmin purged (member 0: refused from every source, for good), or one a member opted out of (kept back) on their phone, which refuses that member's upload of those bytes and nobody else's (`GET`/`POST /api/tombstones`). Never deleted; an opt-out is taken back with `lifted_at`, by its member ([4](04-store-and-ingest.md#append-only-sources-only-add), [11](11-server.md#private-photos)).
 
-**Transcript.** A recording written out on the mini by transcribe.py (Parakeet TDT 0.6B v2 on MLX): the one change a story ever takes, written once ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+**Transcript.** A recording written out on the estate's computer by transcribe.py (Parakeet TDT 0.6B v2: MLX on a Mac, ONNX elsewhere): the one change a story ever takes, written once ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
 
 **Trip.** A run of events more than 100 km (configurable) from home, spanning at least two dates.
 

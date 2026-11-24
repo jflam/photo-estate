@@ -59,7 +59,7 @@ def main() -> None:
     import numpy as np
     import torch
     from transformers import AutoModel, AutoProcessor
-    dev = "mps" if torch.backends.mps.is_available() else "cpu"
+    dev = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     model = AutoModel.from_pretrained(a.model, dtype=torch.float32).eval().to(dev)
     proc = AutoProcessor.from_pretrained(a.model)
     side = proc.image_processor.size["height"]

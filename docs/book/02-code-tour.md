@@ -93,8 +93,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             telling a story, who may read one, a recording into the store with no assets row
   listeners.py         211  what the estate does by itself: listeners reading the journal from their cursors, at
                             least once; series kept up to date as photos arrive, an answer that wakes the agent
-  transcribe.py        210  a story's recording written out on the mini (Parakeet TDT 0.6B v2 on MLX; PyAV reads
-                            the audio, no ffmpeg); `fetch` the model by hand; the app's queued job (chapter 11)
+  transcribe.py        210  a story's recording written out on this computer (Parakeet TDT 0.6B v2: MLX on a Mac, ONNX
+                            on an NVIDIA GPU or the CPU elsewhere; PyAV reads the audio, no ffmpeg); `fetch` the model by hand; the app's queued job (chapter 11)
   catalog.py           840  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
                             clips, the same for every member), View (what one member sees: mask, stacks, trip
                             cards, counts, favourites), Live and visible_for, the one way to ask (chapter 11)
@@ -283,7 +283,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             export_squares.py (the Library as square JPEGs in tar shards, for embedding experiments),
                             embed_squares.py (a second model's vectors for those shards, for /compare),
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
-  deploy/              330  launchd plists, the cloud preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
+  deploy/              330  launchd plists, photo-search.service (systemd) and HOME-COMPUTE.md for the Linux PC, the cloud
+                            preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
   demo/                     104 CC0 photos, their catalog, and credits
 
 ios/                 6,705  the iPhone app (chapters 19-24, 26)
@@ -562,6 +563,7 @@ and embedded still works in the app; each later stage adds capability.
 | [INTAKE-PLAN.md](../notes/INTAKE-PLAN.md) | The plan for bringing photos in from the app, by phases |
 | [VIDEO-PLAN.md](../notes/VIDEO-PLAN.md) | Videos and Live Photos: the plan, what was measured, what is left |
 | [deploy/MAC-MINI.md](../../photo-estate/deploy/MAC-MINI.md) | Running as an always-on service |
+| [deploy/HOME-COMPUTE.md](../../photo-estate/deploy/HOME-COMPUTE.md) | The same on a Linux PC with an NVIDIA GPU |
 | [deploy/CLOUD-SESSIONS.md](../../photo-estate/deploy/CLOUD-SESSIONS.md) | Working on the app from a phone: cloud sessions and the preview |
 | [demo/CREDITS.md](../../photo-estate/demo/CREDITS.md) | Author and source of every demo photo |
 | [.github/workflows/ci.yml](../../.github/workflows/ci.yml) | CI on every pull request and push to main: the lockfile, ruff, pyright, the fast tests ([chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci)) |

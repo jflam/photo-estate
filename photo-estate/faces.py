@@ -1,7 +1,11 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11,<3.14"
-# dependencies = ["onnxruntime>=1.17", "numpy", "pillow>=10.0", "pillow-heif>=0.18"]
+# dependencies = [
+#   "onnxruntime>=1.17; sys_platform != 'linux' or platform_machine != 'x86_64'",
+#   "onnxruntime-gpu[cuda,cudnn]>=1.21; sys_platform == 'linux' and platform_machine == 'x86_64'",
+#   "numpy", "pillow>=10.0", "pillow-heif>=0.18",
+# ]
 # ///
 """
 faces.py — Tier 4: find every face, and work out who it is with your help.
@@ -32,7 +36,9 @@ estate's journal (journal.py: faces.labeled, person.changed), in the same transa
 what, in counts and names, beside the per-face lines of face-labels.jsonl rather than instead of them.
 
 Models: InsightFace buffalo_l (SCRFD-10G detector, ArcFace R50 embeddings), run with onnxruntime.
-The weights are for non-commercial use only.
+The weights are for non-commercial use only. They run on an NVIDIA GPU when this computer has one that
+onnxruntime can use (`run --device auto`; on Linux the script's environment is onnxruntime-gpu with its own
+CUDA libraries, which also runs on a computer with no GPU), else on the CPU.
 """
 from __future__ import annotations
 
@@ -142,16 +148,37 @@ def model_dir() -> Path:
     return d
 
 
+DEVICES = ("auto", "cuda", "cpu")
+CPU, CUDA = "CPUExecutionProvider", "CUDAExecutionProvider"
+
+
+def providers(available: list[str], device: str = "auto") -> list[str]:
+    """The onnxruntime providers to ask for, in order, for --device: "auto" is an NVIDIA GPU when this
+    onnxruntime was built for one, with the CPU behind it (onnxruntime falls back by itself when the GPU or
+    its libraries are not there); "cuda" is the GPU or an error."""
+    if device not in DEVICES:
+        raise ValueError(f"--device must be one of {', '.join(DEVICES)}, not {device!r}")
+    if device == "cuda" and CUDA not in available:
+        raise RuntimeError("this onnxruntime has no CUDA provider (onnxruntime-gpu is the one that does)")
+    return [CUDA, CPU] if device != "cpu" and CUDA in available else [CPU]
+
+
 class Models:
-    def __init__(self, threads: int, det_size: int = 640):
+    def __init__(self, threads: int, det_size: int = 640, device: str = "auto"):
         import numpy as np
         import onnxruntime as ort   # pyright: ignore[reportMissingImports]  (the faces group: not in the dev environment)
         ort.set_default_logger_severity(3)   # w600k_r50 declares batch 1 but takes any; it warns on every call
         self.np, d = np, model_dir()
         so = ort.SessionOptions()
         so.intra_op_num_threads = threads
-        self.det = ort.InferenceSession(str(d / "det_10g.onnx"), so, providers=["CPUExecutionProvider"])
-        self.rec = ort.InferenceSession(str(d / "w600k_r50.onnx"), so, providers=["CPUExecutionProvider"])
+        want = providers(ort.get_available_providers(), device)
+        if CUDA in want and hasattr(ort, "preload_dlls"):
+            ort.preload_dlls()               # CUDA and cuDNN from the environment's own nvidia packages, not the system's
+        self.det = ort.InferenceSession(str(d / "det_10g.onnx"), so, providers=want)
+        self.rec = ort.InferenceSession(str(d / "w600k_r50.onnx"), so, providers=want)
+        self.device = "cuda" if CUDA in self.det.get_providers() and CUDA in self.rec.get_providers() else "cpu"
+        if device == "cuda" and self.device != "cuda":
+            raise RuntimeError("onnxruntime could not use the GPU (its CUDA libraries, or the driver, are not there)")
         self.det_in, self.rec_in = self.det.get_inputs()[0].name, self.rec.get_inputs()[0].name
         self.rec_batch = not isinstance(self.rec.get_inputs()[0].shape[0], int)
         self.size = det_size
@@ -256,7 +283,8 @@ def cmd_run(a) -> None:
     events.emit_progress("faces", 0, len(todo))
     if not todo:
         return
-    models = Models(a.threads)
+    models = Models(a.threads, device=a.device)
+    print(f"face models on {models.device}", flush=True)
     jobs = [(s, str(store / s[:2] / s[2:4] / f"{s}{e}")) for s, e in todo]
     t0 = last = time.time()
     n = nfaces = errors = 0
@@ -1120,6 +1148,8 @@ def main() -> None:
     s.add_argument("--workers", type=int, default=3, help="decoder processes, in parallel with the models")
     s.add_argument("--after-rowid", type=int, help="only assets added after this rowid (incremental runs: a few index lookups, not a scan)")
     s.add_argument("--threads", type=int, default=6, help="onnxruntime threads")
+    s.add_argument("--device", choices=DEVICES, default="auto",
+                   help="where the models run: auto (an NVIDIA GPU when there is one, else the CPU), cuda or cpu")
     s.add_argument("--limit", type=int, default=0)
     s.set_defaults(fn=cmd_run)
     sub.add_parser("stats").set_defaults(fn=cmd_stats)

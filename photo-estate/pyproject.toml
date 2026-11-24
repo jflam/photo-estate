@@ -9,7 +9,7 @@
 # The groups follow the scripts' headers:
 #   core    estate.py, scores.py, upload/stacks tests: pillow, HEIC support, numpy
 #   ml      embed.py and the search model (torch, transformers); includes core
-#   faces   faces.py (onnxruntime); includes core
+#   faces   faces.py (onnxruntime; onnxruntime-gpu on a Linux PC); includes core
 #   places  places.py (offline reverse geocoding and time zones); includes core
 #   tools   tools/: the book, the benchmarks, screenshots, the aesthetics experiments
 #   dev     pytest, ruff and pyright, plus core so the fast tests run in this environment (the default group),
@@ -44,7 +44,9 @@ ml = [
 ]
 faces = [
     { include-group = "core" },
-    "onnxruntime>=1.17",
+    # as faces.py's own header: on a Linux PC the build that can use an NVIDIA GPU, with its CUDA libraries
+    "onnxruntime>=1.17; sys_platform != 'linux' or platform_machine != 'x86_64'",
+    "onnxruntime-gpu[cuda,cudnn]>=1.21; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 places = [
     { include-group = "core" },
