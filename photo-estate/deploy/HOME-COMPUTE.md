@@ -5,8 +5,31 @@ RTX 2080 (8 GB), two 1 TB NVMe disks, Omarchy (Arch Linux). It replaces the Mac 
 which keeps running the real app until the last step below. This page is what was found and set up on
 2026-11-24, what the GPU does for the app, and the steps of the move that are still to do.
 
-**Where it stands (2026-11-24):** the code runs there, on the demo library only. The real library has not moved:
-its disk is still on the mini.
+**Where it stands (2026-11-24, evening):** the real app runs here. The library was copied from the mini over the
+LAN, not moved: the 8 TB disk stays on the mini, untouched, and is the backup.
+
+- **Photos and what sits beside them:** `/mnt/estate` (the second NVMe, btrfs, label `estate`): `store` (598 GiB,
+  136,076 files, every one hashed against its name after the copy: 0 bad), `review`, `catalog-backups`, `iphone`.
+- **Catalog:** `~/estate/` (`estate.db`, `intake.db`, `sync-feed.db` and the small files), taken with `.backup`
+  from the stopped app; the same SHA-256 and row counts as the mini's copy, `integrity_check` ok.
+- **Thumbnails, previews, streams:** `~/.cache/photo-estate/thumbs` (78 GB).
+- **The service** is installed and enabled (`systemctl --user status photo-search`), and `tailscale serve`
+  publishes it at `https://home-compute.<tailnet>.ts.net:8766`.
+- **The mini's app is stopped and disabled** (`launchctl disable gui/$(id -u)/com.jflam.photo-search`), so a
+  restart of the mini does not bring up a second app on the old catalog. Its catalog and disk are as they were
+  at 17:56; the copies taken then are in `~/photo-estate-lab/move-to-home-compute-20261124-1756` there. To go
+  back: `launchctl enable ...`, then `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jflam.photo-search.plist`
+  (anything added here since is not on the mini).
+- **Still to do, by the owner:** `sudo loginctl enable-linger $USER` (until then the app runs only while
+  that user is logged in); `sudo pacman -S perl-image-exiftool`; the tailnet's grants for port 8766 on this
+  computer (without them only this computer reaches the app); the phone's server address; the agent's
+  sign-in (section 3).
+- **The plan for the disks:** an internal hard disk is on order to be the store's home (btrfs); the NVMe copy
+  then stays as the second copy, and the 8 TB external disk becomes the off-site backup (exFAT, so any
+  computer reads it), with a second one later to rotate.
+
+The sections below are as written before the copy; section 1 describes the route that was not taken as written
+(the copy went to the NVMe, and the disk is not being reformatted in place).
 
 ## The computer, as found
 
@@ -20,8 +43,11 @@ its disk is still on the mini.
 | Not there | `exiftool` (`sudo pacman -S perl-image-exiftool`: `estate.py exif` and the intake need it); no CUDA or cuDNN system packages, and none are needed (below) |
 | Code | `~/src/photo-estate`, cloned from GitHub over HTTPS (the repository is public). It has no GitHub key: it can pull, not push |
 
-The mini and home-compute cannot open SSH to each other: the tailnet's policy allows neither direction. Both
-are on the same wired network (`192.168.20.x`).
+The mini and home-compute cannot open SSH to each other over Tailscale: the tailnet's policy allows neither
+direction. Since 2026-11-24 both are on the same switch (`192.168.20.x`; the mini's Ethernet is
+`192.168.20.76`), and home-compute can open SSH to the mini there (115 MB/s measured); its own firewall (`ufw`)
+refuses the other direction. Before that the mini's Ethernet was on the gateway's `192.168.1.x` network, which
+home-compute could not reach, and its Wi-Fi address (`192.168.20.32`) is not reachable from the wired side.
 
 ## What runs on the GPU
 

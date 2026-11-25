@@ -33,7 +33,14 @@ dependencies, a plain HTTP server and SQLite), and an iPhone app in `ios/` (need
 
 ## Deploying to the Mac mini (from the laptop)
 
-The real app runs on the owner's Mac mini from the checkout `~/src/photo-estate`; the runbook is
+**Since 2026-11-24 the real app runs on `home-compute` (a Linux PC), not the mini:** `ssh home-compute`, checkout
+`~/src/photo-estate` (it pulls over HTTPS), catalog `~/estate/estate.db`, store `/mnt/estate/store`, restart with
+`systemctl --user restart photo-search`, log `~/.local/state/photo-search.log`; the runbook is
+`photo-estate/deploy/HOME-COMPUTE.md`. Deploy there, with the same care as below (look first, back up before a
+schema change, check `/api/info` and the log). The mini's app is stopped and disabled; its demo (8767) and cloud
+preview (8768) still run there. The rest of this section describes the mini and is kept for those two and for going back.
+
+The real app ran on the owner's Mac mini from the checkout `~/src/photo-estate`; the runbook is
 `photo-estate/deploy/MAC-MINI.md`. Merging a pull request does not deploy. **When work is finished and
 its pull request is open, deploy its branch to the mini without being asked** (and say so), unless the
 owner said not to; when the pull request merges, put the mini back on `main`.
