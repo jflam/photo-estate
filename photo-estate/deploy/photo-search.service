@@ -14,8 +14,8 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=%h/src/photo-estate/photo-estate
-# uv (installed by mise here), and /usr/bin for tailscale, git and the estate's agent (claude)
-Environment=PATH=%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin
+# uv and claude (installed by mise here), /usr/bin for tailscale and git, and /usr/bin/vendor_perl: where Arch puts exiftool
+Environment=PATH=%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/usr/bin/vendor_perl
 Environment=HF_HUB_OFFLINE=1
 ExecStart=/usr/bin/env uv run --quiet embed.py --db %h/estate/estate.db serve \
     --store /mnt/estate/store \

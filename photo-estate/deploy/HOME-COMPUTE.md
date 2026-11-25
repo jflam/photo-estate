@@ -32,7 +32,7 @@ LAN, not moved: the 8 TB disk stays on the mini, untouched, and is the backup.
   2026-11-26 14:40 UTC). Do not turn its serve on, or connect to it, before the cause is known: each try spends
   one certificate. Find the cause with a throwaway node name first.
 - **Still to do, by the owner:** `sudo loginctl enable-linger $USER` (until then the app runs only while
-  that user is logged in); `sudo pacman -S perl-image-exiftool`; the tailnet's grants for port 8766 on this
+  that user is logged in); the tailnet's grants for port 8766 on this
   computer (without them only this computer reaches the app); the phone's server address; the agent's
   sign-in (section 3).
 - **The plan for the disks:** an internal hard disk is on order to be the store's home (btrfs); the NVMe copy
@@ -51,7 +51,7 @@ The sections below are as written before the copy; section 1 describes the route
 | GPU | RTX 2080, driver 615.78, CUDA 13.4; the desktop (Hyprland) holds about 1.8 GB of its 8 GB |
 | Disks | `nvme0n1`: the system, btrfs under LUKS, 858 GB free. `nvme1n1`: 931 GB, one partition, no filesystem |
 | Tools there | `git`, `uv` (through mise), `node`, `sqlite3`, `rsync`, `tailscale`, `claude` (through mise) |
-| Not there | `exiftool` (`sudo pacman -S perl-image-exiftool`: `estate.py exif` and the intake need it); no CUDA or cuDNN system packages, and none are needed (below) |
+| Not there | `exiftool` until the owner installed it (`sudo pacman -S perl-image-exiftool`; Arch puts it in `/usr/bin/vendor_perl`, which the service file has on its PATH and an SSH shell does not); no CUDA or cuDNN system packages, and none are needed (below) |
 | Code | `~/src/photo-estate`, cloned from GitHub over HTTPS (the repository is public). It has no GitHub key: it can pull, not push |
 
 The mini and home-compute cannot open SSH to each other over Tailscale: the tailnet's policy allows neither
