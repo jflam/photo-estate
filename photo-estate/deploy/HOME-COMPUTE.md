@@ -20,6 +20,17 @@ LAN, not moved: the 8 TB disk stays on the mini, untouched, and is the backup.
   at 17:56; the copies taken then are in `~/photo-estate-lab/move-to-home-compute-20261124-1756` there. To go
   back: `launchctl enable ...`, then `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jflam.photo-search.plist`
   (anything added here since is not on the mini).
+- **The phone** (build 21) and the tailnet's grants point at `https://home-compute.<tailnet>.ts.net:8766` for now.
+- **A stable name, not yet working:** the estate has its own Tailscale node, `photo-estate` (`100.100.55.3`), a
+  second, userspace `tailscaled` here ([photo-estate-node.service](photo-estate-node.service), state in
+  `~/.local/state/photo-estate-node`; its CLI is `tailscale --socket=$HOME/.local/state/photo-estate-node/tailscaled.sock`).
+  The plan is that the app is published on that node and every phone points at
+  `https://photo-estate.<tailnet>.ts.net:8766`: moving the estate is then copying that folder, with no new build
+  and no policy change. It is signed in, with key expiry off, and the policy grants it port 8766, but its
+  `tailscale serve` is **off**: every request for its certificate ended in `CreateOrder: 404 ... Certificate not
+  found` after Let's Encrypt had issued one, and after 5 the name is rate-limited (one more try after
+  2026-11-26 14:40 UTC). Do not turn its serve on, or connect to it, before the cause is known: each try spends
+  one certificate. Find the cause with a throwaway node name first.
 - **Still to do, by the owner:** `sudo loginctl enable-linger $USER` (until then the app runs only while
   that user is logged in); `sudo pacman -S perl-image-exiftool`; the tailnet's grants for port 8766 on this
   computer (without them only this computer reaches the app); the phone's server address; the agent's

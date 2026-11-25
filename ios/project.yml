@@ -13,7 +13,7 @@ settings:
     CURRENT_PROJECT_VERSION: 0
     # The photo app, as `tailscale serve` publishes it. Override for the Simulator against a local server:
     #   xcodebuild ... SERVER_BASE=http://127.0.0.1:8791
-    SERVER_BASE: https://johns-mac-mini.taila5abb.ts.net:8766
+    SERVER_BASE: https://home-compute.taila5abb.ts.net:8766
 targets:
   PhotoEstate:
     type: application
