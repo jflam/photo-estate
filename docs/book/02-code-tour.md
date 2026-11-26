@@ -65,12 +65,14 @@ Code lines, measured as above (a script module's JSDoc comments are not counted)
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
   embed.py             351  image and video embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
-  photo_app.py         813  the photo app as an object: PhotoApp (wiring, who a request is for and what it may do, the
+  photo_app.py         817  the photo app as an object: PhotoApp (wiring, who a request is for and what it may do, from
+                            the members it keeps in memory and reads again one load at a time, the
                             request-access page and /members' routes, favourites, reloads) and its HTTP
                             handler, which streams uploads, album downloads and videos (/video/, with Range)
   http_util.py         186  what the servers share: Response, bounded JSON bodies, int_param (400s), byte_range, the Auth rules
-  members.py           187  who the estate knows: members, their Tailscale logins, roles and upload policies; the first
-                            start from --upload-user, the demo's members; every change journaled; one who stops being
+  members.py           217  who the estate knows: members, their Tailscale logins, roles and upload policies; the first
+                            start from --upload-user, the demo's members; every change journaled, and made with the
+                            write lock held from its read (_begin); one who stops being
                             an active sysadmin has nothing left to decide in their inbox; a member's own agents, one
                             per device (agent_bindings: pending, approved, revoked) (chapter 11)
   journal.py            63  the estate's append-only log: append(con, actor, kind, subject, data) in the caller's
@@ -228,7 +230,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      49  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             8,394  16 self-running test scripts and 26 pytest files; conftest.py runs the scripts under pytest,
+  tests/             8,734  16 self-running test scripts and 27 pytest files; conftest.py runs the scripts under pytest,
                             test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_members.py checks members.py and its journal entries on a scratch catalog;
@@ -272,6 +274,15 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             inbox, its questions shown nowhere, never dealt again and never closed; and, as controls,
                             a question's normal life, an answer told while another tab puts it away, one follow-up
                             run per story, and QUESTION_MOVES against the model's moves;
+                            test_member_states.py replays the ways the model of a member and their agent's binding
+                            (specs/Member.tla) found one let through, or left, other than as last said: two changes
+                            of one member at once (a revoke undone by a rename, a member let in waiting again), the
+                            roster read again by two requests at once (a member revoked, or a sysadmin made a
+                            member, let through as before), two requests to be let in from one login (no answer),
+                            an allow and a turn-off at once, an agent allowing itself from its own device when whois
+                            named it for one request only (or for neither, from its two addresses); and shows, as
+                            they are, what is the owner's to decide (a revoked member's agent back with them, a run
+                            going on for them, any status after any other);
                             test_specs.py runs TLC on every model in specs/ (skipped without Java and tla2tools.jar);
                             test_machines.py holds specs/machines.toml to the code: unregistered state, a new
                             writer of a registered table, or a change to a modelled function fails;
@@ -320,7 +331,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
   deploy/              330  launchd plists, photo-search.service (systemd) and HOME-COMPUTE.md for the Linux PC, the cloud
                             preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
-  specs/             1,658  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
+  specs/             2,047  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
                             says when a change needs one, how to read one and how to run them; chapter 17):
                             PrivatePhoto.tla, one `private` row and everything that writes it; Lens.tla, a filter
                             lens, a subscription to it and an album's series rows (lenses.py); ChangeSet.tla, an
@@ -329,7 +340,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             (member_inbox.py and its callers: members.py, lenses.py, stories.py, private.py);
                             Question.tla, a question, the asked rows dealing it, the members' items within their
                             allowance and the run an answer starts (stories.py, member_inbox.dismiss, the stories
-                            listener); <Name>.cfg is the
+                            listener); Member.tla, a member, a newcomer's login, a member's own agent's binding and
+                            what a request is let through as (members.py, PhotoApp's roster and gate, a run's
+                            token, whois's name for a device); <Name>.cfg is the
                             code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail;
                             machines.toml, the register of every state machine, its writers and how it is checked
   demo/                     104 CC0 photos, their catalog, and credits

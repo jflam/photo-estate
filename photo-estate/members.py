@@ -26,6 +26,7 @@ appends its journal entry in the same transaction, and commits.
                                             (and a `binding` inbox item) the first time
   bindings(con, member) -> [dict]           the member's own agents, one per device
   decide_binding(con, member, id, allow, node) -> dict   the member allows one (from another device) or turns it off
+  node_kind(node) -> str                    what named a device: node (whois), addr, demo, or unknown
   ROLES, STATUSES, POLICIES, AGENT_NAME, BindingError
 
 Words (docs/notes/MULTIPLAYER-PLAN.md). A member is not a `persons` row, which is someone *in* photos
@@ -166,6 +167,15 @@ def _add(con, name: str, login: str | None, role: str, status: str, upload_polic
     return replace(got, login=login or "")
 
 
+def _begin(con) -> None:
+    """Take the write lock now, at the head of a `with con:` block, so what the block reads next is what it writes
+    over: no other request changes the member, the login or the binding in between. Python's own BEGIN waits for the
+    first write, and a read before it sees a row that may have moved on by then (specs/Member.tla is the model of
+    what that let happen: a revoke undone by a rename, a second request from one login answered with an error)."""
+    if not con.in_transaction:
+        con.execute("BEGIN IMMEDIATE")
+
+
 def _check(role: str, status: str, upload_policy: str) -> None:
     if role not in ROLES:
         raise ValueError(f"role must be one of {', '.join(ROLES)}")
@@ -188,11 +198,13 @@ def add(con: sqlite3.Connection, name: str, login: str | None = None, *, role: s
 
 def request(con: sqlite3.Connection, login: str, name: str | None = None) -> Member:
     """A login nobody has let in asks to be: a pending member, journaled as member.requested (its own
-    actor). A login that is already a member's, in any status, is answered with that member."""
+    actor). A login that is already a member's, in any status, is answered with that member (two requests from one
+    login at once too: the lookup is made with the write lock held)."""
     login = norm(login)
     if not login:
         raise ValueError("no login: a request comes through `tailscale serve`, which says who it is")
     with con:
+        _begin(con)
         if got := lookup(con, login):
             return got
         name = " ".join(str(name or "").split())[:80] or login.split("@")[0]
@@ -208,10 +220,12 @@ def change(con: sqlite3.Connection, mid: int, actor: int | None, **fields) -> Me
     """Change some of a member's FIELDS. Approving is status active (joined_at is set the first time),
     revoking is status revoked. One member.changed entry for what changed (none when nothing did).
     ValueError for an unknown member, field or value, a person_id that is no person, or a change that
-    would leave the estate with no active sysadmin."""
+    would leave the estate with no active sysadmin. The member is read with the write lock held, so the fields
+    not given are written as they are, never as another change at the same moment found them."""
     if bad := set(fields) - set(FIELDS):
         raise ValueError(f"not a member field: {', '.join(sorted(bad))}")
     with con:
+        _begin(con)          # (the member as it is when this writes: specs/Member.tla)
         m = get(con, mid)
         if m is None:
             raise ValueError("no such member")
@@ -322,13 +336,30 @@ def bindings(con: sqlite3.Connection, member: int | None) -> list[dict]:
                                              " ORDER BY seen_at DESC, id DESC", (member,))]
 
 
+NAMED = ("node", "demo")   # the kinds of node that name a device for certain (node_kind)
+
+
+def node_kind(node: str) -> str:
+    """What named a device, from the node PhotoApp.device gave: "node" (tailscale whois: node:<StableID>), "addr"
+    (whois did not answer: addr:<address>, and one device may come from two, its IPv4 and its IPv6), "demo" (--demo:
+    demo:<name>, or `local`, this computer), else "unknown" (nothing said which device it was)."""
+    kind = node.split(":", 1)[0] if ":" in node else node
+    return "demo" if kind in ("demo", "local") else kind if kind in ("node", "addr") else "unknown"
+
+
 def decide_binding(con: sqlite3.Connection, member: int | None, bid: int, allow: bool, node: str) -> dict:
     """The member allows their agent on a device (approved) or turns it off (revoked), from a request that came from
     `node`. Allowing must come from another device than the agent's own: whatever the agent could send from there
-    (it holds the member's login on that device) is no proof that the member said yes. Turning off is allowed from
-    anywhere. One binding.approved or binding.revoked entry by the member, and the binding's inbox item is done.
-    BindingError: 404 for a binding that is not theirs, 403 to allow it from its own device."""
+    (it holds the member's login on that device) is no proof that the member said yes. So it is allowed only when
+    both the request's device and the agent's were named for certain, the same way (node_kind: by whois, or by the
+    demo), and are not the same: a device whois could not name is an address, and one laptop is one node but may be
+    an address, another address, or a node, so nothing unnamed can be told apart from the agent's own device.
+    Turning off is allowed from anywhere. One binding.approved or binding.revoked entry by the member, and the
+    binding's inbox item is done. The binding is read with the write lock held, so two decisions at once end as the
+    later one answered. BindingError: 404 for a binding that is not theirs, 403 to allow it from its own device or
+    from one that could not be told apart from it."""
     with con:
+        _begin(con)          # (the binding as it is when this writes: specs/Member.tla)
         row = con.execute(f"SELECT {BINDING_COLS} FROM agent_bindings WHERE id=? AND member_id IS ?", (bid, member)).fetchone()
         if row is None or member is None:
             raise BindingError(404, "no such agent")
@@ -336,6 +367,11 @@ def decide_binding(con: sqlite3.Connection, member: int | None, bid: int, allow:
         if allow and b["node"] == node:
             raise BindingError(403, f"allow it from another device than {b['device']}, the one the agent connected from"
                                     " (your phone, say): anything there could be the agent itself")
+        if allow and not (node_kind(node) == node_kind(b["node"]) and node_kind(node) in NAMED):
+            raise BindingError(403, "this device, or the one the agent connected from, could not be named (tailscale whois"
+                                    " did not answer), so this cannot be told apart from the agent's own device. Try"
+                                    " again in a minute. If the agent connected while its device could not be named, let"
+                                    " it connect again and allow the new entry")
         status = "approved" if allow else "revoked"
         if b["status"] != status:
             t = now()

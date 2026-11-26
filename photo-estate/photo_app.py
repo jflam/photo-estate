@@ -268,6 +268,7 @@ class PhotoApp:
         con.close()
         if made:
             print(f"members: {', '.join(f'{m.login} ({m.role})' for m in made)} let in", flush=True)
+        self.members_lock = threading.Lock()   # (load_members: one at a time; taken inside the gate, as module locks are)
         self.load_members()
         if not self.roster and not a.demo:
             print("members: none yet, so only this computer can use the app (name one with --sysadmin LOGIN)", flush=True)
@@ -746,13 +747,16 @@ class PhotoApp:
     # -- who a request is for -----------------------------------------------------------------------
 
     def load_members(self) -> None:
-        """Members change only through this app, so they are kept in memory and read again after a change."""
-        con = connect(self.a.db)
-        try:
-            self.roster: dict[str, Member] = members.by_login(con)
-            self.sysadmin: Member | None = members.sysadmin(con)
-        finally:
-            con.close()
+        """Members change only through this app, so they are kept in memory and read again after a change. One load at
+        a time, from its read to its assignment (members_lock): two at once could otherwise put the older copy in
+        last, and keep it until the next change (specs/Member.tla)."""
+        with self.members_lock:
+            con = connect(self.a.db)
+            try:
+                self.roster: dict[str, Member] = members.by_login(con)
+                self.sysadmin: Member | None = members.sysadmin(con)
+            finally:
+                con.close()
 
     def login(self, headers) -> str:
         """The login a request comes with: what `tailscale serve` adds (the app itself is bound to 127.0.0.1),

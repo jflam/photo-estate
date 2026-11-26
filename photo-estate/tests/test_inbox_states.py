@@ -158,9 +158,9 @@ def test_items_open_and_close_as_their_things_do(db, con):
     answer(con, q2)
     assert opened(con, "question") == [] and items(con, "question")[0][3] == "done"
 
-    b = members.bind(con, CLEO, "node-laptop", "laptop")
+    b = members.bind(con, CLEO, "node:laptop", "laptop")
     (bid, *_), = opened(con, "binding", CLEO)
-    members.decide_binding(con, CLEO, b["id"], True, "node-phone")
+    members.decide_binding(con, CLEO, b["id"], True, "node:phone")
     assert opened(con, "binding") == [] and items(con, "binding")[0][3] == "done"
 
     lenses.subscribe(con, CLEO, LID, "live")
