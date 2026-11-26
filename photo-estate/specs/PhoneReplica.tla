@@ -239,7 +239,8 @@ FavTouch(s) ==
   /\ IF f.phone
        THEN /\ pf' = "none"
             /\ rep' = [rep EXCEPT ![Y] = IF rep[Y] = -1 THEN -1 ELSE rep[Y] - (rep[Y] % 2) + (IF said THEN 1 ELSE 0)]
-            /\ kept' = kept \cup {Y} /\ keptAt' = f.at
+            /\ kept' = (IF ph = "idle" THEN {} ELSE kept \cup {Y})      \* (no page in flight: nothing to tell)
+            /\ keptAt' = (IF ph = "idle" THEN -1 ELSE f.at)
        ELSE UNCHANGED <<pf, rep, kept, keptAt>>
   /\ UNCHANGED <<view, fex, ep, fu, rl, ph, ask, resp, repe, repv, ce, cv, ca, chg, n, told, sentHidden, undone>>
 
@@ -330,12 +331,14 @@ PhoneAsk ==
   /\ UNCHANGED <<view, feed, fu, rl, fs, resp, rep, repe, repv, ce, cv, ca, pf, keptAt, chg, n, told, sentHidden,
                  undone>>
 
+\* (what the model keeps of a page in flight, let go once the phone is idle: nothing reads it then)
+Done == ask' = [e |-> 0, v |-> 0, a |-> 0] /\ resp' = NoPage /\ kept' = {} /\ keptAt' = -1
+
 \* the request fails, or the app is stopped, before the page is applied: nothing is written
 PhoneFail ==
   /\ ph \in {"asked", "answered"}
-  /\ ph' = "idle"
-  /\ UNCHANGED <<view, feed, fu, rl, fs, ask, resp, rep, repe, repv, ce, cv, ca, pf, kept, keptAt, chg, n, told,
-                 sentHidden, undone>>
+  /\ ph' = "idle" /\ Done
+  /\ UNCHANGED <<view, feed, fu, rl, fs, rep, repe, repv, ce, cv, ca, pf, chg, n, told, sentHidden, undone>>
 
 \* Catalog.applyPage, one transaction: Catalog.apply (deleted, then the rows, each with the page's epoch), the cursor,
 \* and when there is no more, Catalog.dropOtherEpochs. Guarded: not if Favourites.keep wrote since the page was asked
@@ -345,7 +348,7 @@ PhoneApply ==
       rep1 == [p \in Ph |-> IF r.rows[p] # -1 THEN r.rows[p] ELSE IF p \in r.del THEN -1 ELSE rep[p]]
       repe1 == [p \in Ph |-> IF r.rows[p] # -1 THEN r.ep ELSE repe[p]] IN
   /\ ph = "answered"
-  /\ ph' = "idle"
+  /\ ph' = "idle" /\ Done
   /\ IF Guarded /\ kept # {}
        THEN UNCHANGED <<rep, repe, repv, ce, cv, ca, told, undone>>
        ELSE /\ rep' = [p \in Ph |-> IF ~r.more /\ rep1[p] # -1 /\ repe1[p] # r.ep THEN -1 ELSE rep1[p]]
@@ -355,7 +358,7 @@ PhoneApply ==
             /\ told' = (~r.more /\ r.q /\ r.at = chg)
             /\ undone' = (undone \/ \E p \in kept : rep[p] # -1 /\ r.rows[p] # -1 /\ r.at < keptAt
                                                      /\ r.rows[p] % 2 # rep[p] % 2)
-  /\ UNCHANGED <<view, feed, fu, rl, fs, ask, resp, pf, kept, keptAt, chg, n, sentHidden>>
+  /\ UNCHANGED <<view, feed, fu, rl, fs, pf, chg, n, sentHidden>>
 
 Next ==
   \/ \E s \in FU : Relook(s) \/ HcRead(s) \/ HcWrite(s)
