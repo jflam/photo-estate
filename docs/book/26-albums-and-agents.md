@@ -219,7 +219,8 @@ you*), what it is about and the day, a button that opens the screen that decides
 it over**, **Decide in Albums**, **See it in Albums**, **Open the series** or **Look them over**: the review
 of held photos, `/held`) and **Dismiss**. Deciding where it opens takes the
 item out of the inbox; nothing is decided on the inbox itself. A lens that changed asks for no decision,
-so opening it puts it away. The Library's ⋯ button carries a small count when anything is open, and its
+so opening it puts it away. Dismissing a question's card is "I don't know" to every question
+in it. The Library's ⋯ button carries a small count when anything is open, and its
 menu's **Inbox** row the same; the count is asked for when the page loads, when it is come back to, and
 after a lens is decided in Albums. No push notifications: the inbox is read when the app is opened. The
 request-access page tells someone who has asked that the sysadmin has been told, in their inbox.
