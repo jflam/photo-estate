@@ -261,11 +261,10 @@ that already decides it.
 
 | Kind | For | Made by | Closed by | Opens |
 |---|---|---|---|---|
-| `member_request` | every active sysadmin | `members.request`: someone asked to be let in | letting them in or turning them away (`members.change`, from `/members`) | `/members` |
+| `member_request` | every active sysadmin | `members.request`: someone asked to be let in | letting them in or turning them away (`members.change`, from `/members`); for one sysadmin, their being made a member or revoked | `/members` |
 | `review` | whom the task acted for | `Tasks.move`, when a task ends (done, failed or cancelled, and a run the app restarted under): each hiding set its agent made that has photos and hides none yet | applying the set in full, taking it down to an album, or discarding it (changes.py) | `/changes/<id>` |
-| `lens_proposed` | every other active sysadmin | `lenses.propose` | `lenses.decide` (accept or decline), or the owner taking the filter back (unpublishing) | the Albums tab, where "Waiting for you to decide" lists it |
-| `lens_changed` | each member subscribed to a published lens live (not its owner, nor whoever changed it) | changes.py, when a filter's hides change (an apply, a revert, a hidden photo taken out of a set) or a series' photos or search do | nothing waits on it: leaving the lens (unsubscribing, or keeping a copy instead) closes it; otherwise it is put away | the Albums tab (a filter), or the series |
-
+| `lens_proposed` | every other active sysadmin | `lenses.propose` | `lenses.decide` (accept or decline), or the owner taking the filter back (unpublishing); for one sysadmin, their being made a member or revoked | the Albums tab, where "Waiting for you to decide" lists it |
+| `lens_changed` | each member subscribed to a published lens live (not its owner, nor whoever changed it) | changes.py, when a filter's hides change (an apply, a revert, a hidden photo taken out of a set) or a series' photos or search do | nothing waits on it: leaving the lens (unsubscribing, or keeping a copy instead), or its owner taking it back (`lenses.publish`, `publish_album`), closes it; otherwise it is put away | the Albums tab (a filter), or the series |
 | `held` | the photos' sharer | private.py, when the hold at ingestion (or the one-off run over the library) keeps photos private to them: one open item per member, which a later hold brings up to date (its ref stays `held:<batch>` of the batch that opened it), saying how many wait to be looked over | none of their held photos waits to be looked over (each looked over on `/held`, or released any way), not when none is held | the review of held photos, `/held` |
 
 `lens_changed` is one open item per member and lens, brought up to date ("Ben's lens “Hidden photos”
@@ -281,6 +280,25 @@ that is not open), journaled as `inbox.dismissed`, the one thing about an item t
 The page is **`/inbox`** ([chapter 26](26-albums-and-agents.md#the-inbox)); the Library's menu shows how many
 items are open. A later phase adds a kind with a row in `member_inbox.OPENS` (what its item opens) and a
 `put` and a `close` in the code that makes and decides it.
+
+**Many writers, one rule each.** Every kind's item is made and closed by other code, on its own request's
+connection, beside requests and background threads doing the same. `put` reads the open item, then inserts one,
+so its caller must already hold the write lock (it has written, or begun with `BEGIN IMMEDIATE`); every caller
+does, and `stories.deal`, which read before it wrote, now takes the lock first and reads again inside it what it
+deals, so two reads of one inbox at once (two tabs, the phone) deal a question once, into one item, and never into
+an item answered and done meanwhile. `dismiss` takes the lock before it reads the item: one decided as it was put
+away is answered 409 and stays done. A sysadmin made a member or revoked has their `member_request` and
+`lens_proposed` items done (nothing of those is theirs to decide; one made a sysadmin later is given none for what
+already waits, which `/members` and the Albums tab show them), and a lens taken back closes its subscribers'
+`lens_changed` items. `specs/InboxItem.tla` is a TLA+ model of the items about one thing, of five shapes (a
+request to be let in, a filter proposed and followed, two questions in one group, held photos, an agent's
+binding), with every writer of them, checked by TLC against ten rules: one open item per member, kind and ref; an
+open question item has a question waiting in it, and a done one has none; a `member_request` or `lens_proposed`
+item is open only for an active sysadmin, and only while the request or proposal waits; a `lens_changed` item is
+about a lens its member follows; a `binding` item is about a pending binding; one open `held` item, and only while
+a held photo waits; a dismiss puts away only an item that is open. The model's `Guarded = FALSE` is the code
+before these fixes, which broke six of them (two with no bad timing, four races);
+`tests/test_inbox_states.py` replays each on the real code.
 
 ### Private photos
 
