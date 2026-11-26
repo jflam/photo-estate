@@ -135,9 +135,9 @@ def test_a_favourite_set_while_a_reload_reads_reaches_the_new_catalog(app, monke
     assert new.info["fav"] == old.info["fav"] - 1
 
 
-def test_a_favourite_recorded_after_the_swap_goes_to_the_new_catalog(app, monkeypatch):
-    """The favourite began before the reload but reaches the table after the reload, and the catalog after
-    the swap: it must be shown in the view now served, not in the one it began with."""
+def test_a_favourite_half_set_when_a_reload_swaps_goes_to_the_new_catalog(app, monkeypatch):
+    """The favourite began before the reload's swap and has not reached the table when the reload has its new catalog:
+    the swap waits for it (fav_write, as a relook does: specs/Reload.tla), and it is shown in the view now served."""
     old, sha = seen(app), plain_photo(app)
     at_table, go = threading.Event(), threading.Event()
     now = lenses.now
@@ -150,14 +150,15 @@ def test_a_favourite_recorded_after_the_swap_goes_to_the_new_catalog(app, monkey
     monkeypatch.setattr(lenses, "now", paused_now)
     t, box = in_thread(app.set_favorites, [sha], True, "", app.sysadmin.id)
     assert at_table.wait(GUARD)
-    done, rbox = in_thread(app.reload_catalog)   # swaps the new catalog in
-    finish(done, rbox)
-    new = seen(app)
-    assert new.cat is not old.cat and not is_fav(new, sha)
+    done, rbox = in_thread(app.reload_catalog)   # has its new catalog, and waits to swap it in
+    done.join(0.2)
+    assert done.is_alive() and seen(app).cat is old.cat, "a new catalog was swapped in while a favourite was half set"
     go.set()
     assert finish(t, box) == 1
-    assert is_fav(seen(app), sha), "the favourite went to the catalog it began with, not the one served"
-    assert not is_fav(old, sha), "the replaced catalog's view was changed after the swap"
+    finish(done, rbox)
+    new = seen(app)
+    assert new.cat is not old.cat and is_fav(new, sha), "the favourite is shown in the catalog served"
+    assert is_fav(old, sha) and old.info["fav"] == new.info["fav"]
 
 
 def test_a_favourite_is_not_lost_by_reading_the_looks_again(app, monkeypatch):

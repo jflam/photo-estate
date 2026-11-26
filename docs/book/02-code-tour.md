@@ -65,9 +65,10 @@ Code lines, measured as above (a script module's JSDoc comments are not counted)
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
   embed.py             351  image and video embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
-  photo_app.py         817  the photo app as an object: PhotoApp (wiring, who a request is for and what it may do, from
+  photo_app.py         823  the photo app as an object: PhotoApp (wiring, who a request is for and what it may do, from
                             the members it keeps in memory and reads again one load at a time, the
-                            request-access page and /members' routes, favourites, reloads) and its HTTP
+                            request-access page and /members' routes, favourites, reloads and relooks, one install
+                            at a time under fav_write) and its HTTP
                             handler, which streams uploads, album downloads and videos (/video/, with Range)
   http_util.py         186  what the servers share: Response, bounded JSON bodies, int_param (400s), byte_range, the Auth rules
   members.py           217  who the estate knows: members, their Tailscale logins, roles and upload policies; the first
@@ -102,7 +103,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             least once; series kept up to date as photos arrive, an answer that wakes the agent
   transcribe.py        210  a story's recording written out on this computer (Parakeet TDT 0.6B v2: MLX on a Mac, ONNX
                             on an NVIDIA GPU or the CPU elsewhere; PyAV reads the audio, no ffmpeg); `fetch` the model by hand; the app's queued job (chapter 11)
-  catalog.py           840  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
+  catalog.py           842  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
                             clips, the same for every member), View (what one member sees: mask, stacks, trip
                             cards, counts, favourites), Live and visible_for, the one way to ask (chapter 11)
   browse.py            389  search, similar, facets, Years and Months, layout; an agent's searches; kind and is:video
@@ -230,7 +231,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      49  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             8,734  16 self-running test scripts and 27 pytest files; conftest.py runs the scripts under pytest,
+  tests/             9,023  16 self-running test scripts and 28 pytest files; conftest.py runs the scripts under pytest,
                             test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_members.py checks members.py and its journal entries on a scratch catalog;
@@ -283,6 +284,13 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             named it for one request only (or for neither, from its two addresses); and shows, as
                             they are, what is the owner's to decide (a revoked member's agent back with them, a run
                             going on for them, any status after any other);
+                            test_reload_states.py replays the ways the model of what the app holds in memory
+                            (specs/Reload.tla) found it other than as the catalog says: a relook that read the looks
+                            before an ingest's commit installed after its reload (a held phone upload shown to
+                            everyone, one let go shown to its sharer alone), /stats numbers let go only after a
+                            relook's swap, a failed reload after another leaving fresh false, settling left at one
+                            when no thread could start; and shows, as they are, a relook or a reload that raises
+                            not tried again, and the whole app waiting on the ingest's write lock (ReloadLocks.tla);
                             test_specs.py runs TLC on every model in specs/ (skipped without Java and tla2tools.jar);
                             test_machines.py holds specs/machines.toml to the code: unregistered state, a new
                             writer of a registered table, or a change to a modelled function fails;
@@ -331,7 +339,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
   deploy/              330  launchd plists, photo-search.service (systemd) and HOME-COMPUTE.md for the Linux PC, the cloud
                             preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
-  specs/             2,047  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
+  specs/             2,570  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
                             says when a change needs one, how to read one and how to run them; chapter 17):
                             PrivatePhoto.tla, one `private` row and everything that writes it; Lens.tla, a filter
                             lens, a subscription to it and an album's series rows (lenses.py); ChangeSet.tla, an
@@ -342,7 +350,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             allowance and the run an answer starts (stories.py, member_inbox.dismiss, the stories
                             listener); Member.tla, a member, a newcomer's login, a member's own agent's binding and
                             what a request is let through as (members.py, PhotoApp's roster and gate, a run's
-                            token, whois's name for a device); <Name>.cfg is the
+                            token, whois's name for a device); Reload.tla, what the app holds in memory from the
+                            catalog and every thread that replaces it (PhotoApp.reload_catalog, relook,
+                            set_favorites, on_hidden_change; catalog.Live; an ingest in its own process), and
+                            ReloadLocks.tla, who waits for whom among them (the gate, fav_write, SQLite's write
+                            lock); <Name>.cfg is the
                             code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail;
                             machines.toml, the register of every state machine, its writers and how it is checked
   demo/                     104 CC0 photos, their catalog, and credits

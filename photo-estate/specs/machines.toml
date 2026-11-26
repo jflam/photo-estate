@@ -134,8 +134,21 @@ stamp = "7ac0c7163812f817"
 
 [[machine]]
 name = "the catalog reload"
-checked = "unmodelled"
-note = "PhotoApp.reload_state: idle | running | rerun, a string in a dict under reload_lock; and which looks a relook installs"
+checked = "model"
+model = "Reload.tla"
+# (everything the app holds in memory from the catalog, and how it is replaced while requests are served: the catalog,
+# the looks, favourites shown in place, the generation and what is kept from one, reload_state and the ingest's fresh,
+# settling. Who waits for whom among the same threads is the next entry's)
+code = { "photo_app.py" = ["PhotoApp.reload_catalog", "PhotoApp.relook", "PhotoApp.read_looks", "PhotoApp.with_private", "PhotoApp.caught_up", "PhotoApp.set_favorites", "PhotoApp.on_hidden_change", "PhotoApp.hidden_changed", "PhotoApp.private_write"], "catalog.py" = ["Live.install", "Live.relook", "Live.update", "Live.forget_views"], "admin.py" = ["Admin.forget_library", "Admin.stats_payload"], "upload.py" = ["IngestJob._follow"] }
+stamp = "383f63e13f429019"
+
+[[machine]]
+name = "who waits for whom in the app's memory"
+checked = "model"
+model = "ReloadLocks.tla"
+# (the catalog gate, fav_write and SQLite's write lock, among the threads of Reload.tla)
+code = { "catalog.py" = ["Gate.__enter__", "Gate.__exit__", "Gate.swap"], "photo_app.py" = ["PhotoApp.handle", "PhotoApp.gated", "PhotoApp.reload_catalog", "PhotoApp.relook", "PhotoApp.set_favorites"] }
+stamp = "6f69d8e8780da158"
 
 [[machine]]
 name = "the clustering of unnamed faces"

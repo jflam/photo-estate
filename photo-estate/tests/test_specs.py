@@ -7,6 +7,9 @@
   specs/Question.tla       a question, whom it was dealt to, and the run an answer starts (stories.py, listeners.py)
   specs/Member.tla         a member, their own agent's binding, and what a request is let through as (members.py,
                            photo_app.PhotoApp's roster)
+  specs/Reload.tla         what the app holds in memory from the catalog, and how it is replaced while requests are
+                           served (catalog.Live; PhotoApp.reload_catalog, relook, set_favorites, on_hidden_change)
+  specs/ReloadLocks.tla    who waits for whom among those threads: the catalog gate, fav_write, SQLite's write lock
 
 For each model, <Name>.cfg is the code as it is and must pass; each <Name>.before.<invariant>.cfg is the code
 before a fix, and must still find its violation (an invariant that can no longer fail checks nothing).

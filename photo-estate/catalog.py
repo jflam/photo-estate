@@ -995,14 +995,17 @@ class Live:
                 then(cat)
         self.gate.swap(swap_in)
 
-    def relook(self, looks: Looks | None = None) -> None:
-        """What members hide has changed (lenses.py): every View is worked out again, from `looks` if given."""
+    def relook(self, looks: Looks | None = None, then=None) -> None:
+        """What members hide has changed (lenses.py): every View is worked out again, from `looks` if given; then(cat)
+        runs in the same swap, before any request sees them (PhotoApp.caught_up: what was worked out before is let go)."""
         def swap_in():
             if looks is not None:
                 with self.views_lock:
                     self.looks = looks
             self.forget_views()
             self.generation += 1
+            if then:
+                then(self.cat)
         self.gate.swap(swap_in)
 
     def update(self, fn):
