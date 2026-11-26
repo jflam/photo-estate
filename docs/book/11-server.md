@@ -204,6 +204,24 @@ and the lenses' owners), never the journal: "Hidden by Ada's lens “Estate defa
 year only when it is not this one), "Hidden by your lens “Hidden photos” on Nov 23"; `reasons` carries the
 same, structured, for a page to word itself. The pages that use all of this are [chapter 26](26-albums-and-agents.md#lenses-on-the-pages).
 
+**One lens, several writers.** A lens's owner, every sysadmin and every member subscribed to it write the
+same rows, from requests the app answers side by side. `publish`, `publish_album`, `propose`, `decide`,
+`subscribe` and `unsubscribe` each take the write lock first (`BEGIN IMMEDIATE`, `lenses._begin`) and read the
+lens, the album's series row and the member's subscription inside that transaction, so what each goes by is
+what it writes over: a proposal its owner takes back as a sysadmin accepts it is not accepted (the sysadmin is
+answered 409), an estate default stays published when its owner's "Stop publishing" crosses the acceptance (409
+for him), two sysadmins deciding at once decide once, an album published twice at once has one series row, and
+a request that finds nothing to do appends no entry. `specs/Lens.tla` is a TLA+ model of a filter, a
+subscription to it and an album's series rows, with every writer, checked by TLC against twelve rules: an
+estate default stays published, and is one its owner proposed and did not take back; a proposal is published,
+an estate default is not proposed, and a sysadmin's `lens_proposed` item is open exactly while there is
+something to decide; a write that changes nothing appends nothing; `opted_out` is only ever of an estate
+default; a member subscribed live sees through a published filter, one who left a filter that is not an
+estate default does not, and one who left a lens is no longer told it changed; an album has one series row, as
+its owner last said. The model's `Guarded = FALSE` is the
+code before that lock, which broke eight of them, each with two requests at once and none without;
+`tests/test_lens_states.py` replays each of those on the real code.
+
 **Albums** are their owner's (`change_sets.owner`): a member lists and opens their own and the series
 others publish, and only the owner changes one. Inside any album or series, whoever made it, the photos are
 listed through the viewer's own view: a series never shows a member what their filters hide. A set up for

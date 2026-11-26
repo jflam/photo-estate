@@ -13,6 +13,7 @@ small and close enough to the code that what it finds can be tried on the real t
 | Model | What it is | Rules | Where the code is |
 |---|---|---|---|
 | `PrivatePhoto.tla` | One row of the `private` table: a photo private to one of its sharers, and everything that writes it | A released photo stays released; a photo its sharer said is private stays private until their day; the day is the one they last set | `private.py` |
+| `Lens.tla` | One filter lens (published, proposed, an estate default), a member's subscription to it, and an album's series rows, written by its owner, two sysadmins and the member at once | An estate default stays published, and is one its owner proposed and did not take back; a proposal is published and an estate default is not proposed; a sysadmin's item is open exactly while there is something to decide; a write that changes nothing appends nothing; a subscription is as its member last said; one series row per album, as its owner last said | `lenses.py` (and the inbox items it writes) |
 
 ## When a change needs one
 
@@ -67,7 +68,8 @@ the first; a person decides the second.
 7. **Model the fix, and keep the old behaviour too.** The model has a switch (`Guarded`): TRUE is the code
    now, FALSE the code before. `<Name>.cfg` checks the code now and must pass. Each
    `<Name>.before.<invariant>.cfg` checks the code before and must still fail: a rule that can no longer be
-   broken by the bug it was written for is checking nothing.
+   broken by the bug it was written for is checking nothing. One may narrow the search with a `CONSTRAINT`
+   so the violation is found in seconds (`Lens.before.LeftNotTold.cfg` does), never so it is found at all.
 8. **Say what the model leaves out.** Each model ends with that list. It is where the next bug is.
 
 ## Reading a model
@@ -149,4 +151,5 @@ needs no bad timing) and `CONSTRAINT OnlyTimer` (the check and the library run n
 
 The entries of `machines.toml` that say `checked = "unmodelled"`, each with what the survey of November 2026
 noticed about it: change sets and their photos, lenses, subscriptions, members, agent bindings, inbox items,
-questions, the catalog reload, and the clustering of faces.
+questions, the catalog reload, and the clustering of faces. (Lenses and subscriptions were modelled in
+November 2026: `Lens.tla`.)

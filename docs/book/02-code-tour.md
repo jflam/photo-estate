@@ -75,7 +75,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   journal.py            63  the estate's append-only log: append(con, actor, kind, subject, data) in the caller's
                             transaction, since(con, id); the kinds, where each is appended and who may read it;
                             by_agent (a member's own agent's writes) and for_member (journal_since) (chapter 11)
-  lenses.py            360  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
+  lenses.py            599  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
                             out of an estate default), "show it anyway", each member's favourites, why a photo is
                             hidden; State, the looks every member view is worked out from (chapter 11)
   private.py           745  photos private to their sharer (chapter 11): who may be shown a photo, the sharer ingest
@@ -245,6 +245,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             row (specs/PrivatePhoto.tla) found it could go against its sharer's word: a day set on
                             a photo not checked yet, and a release or withdrawal landing while check, the library
                             run or the timer is between its read and its write;
+                            test_lens_states.py replays the same way each way the model of a lens, a subscription
+                            and an album's series rows (specs/Lens.tla) found them going where nobody asked: a
+                            proposal taken back or decided by another sysadmin as it is accepted, an estate default
+                            unpublished as it is accepted, an album published twice at once, a member leaving a
+                            filter as it becomes an estate default, and an entry for a write that changed nothing;
                             test_specs.py runs TLC on every model in specs/ (skipped without Java and tla2tools.jar);
                             test_machines.py holds specs/machines.toml to the code: unregistered state, a new
                             writer of a registered table, or a change to a modelled function fails;
@@ -293,9 +298,10 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
   deploy/              330  launchd plists, photo-search.service (systemd) and HOME-COMPUTE.md for the Linux PC, the cloud
                             preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
-  specs/               193  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
+  specs/               521  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
                             says when a change needs one, how to read one and how to run them; chapter 17):
-                            PrivatePhoto.tla, one `private` row and everything that writes it; <Name>.cfg is the
+                            PrivatePhoto.tla, one `private` row and everything that writes it; Lens.tla, a filter
+                            lens, a subscription to it and an album's series rows (lenses.py); <Name>.cfg is the
                             code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail;
                             machines.toml, the register of every state machine, its writers and how it is checked
   demo/                     104 CC0 photos, their catalog, and credits
