@@ -291,7 +291,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
   deploy/              330  launchd plists, photo-search.service (systemd) and HOME-COMPUTE.md for the Linux PC, the cloud
                             preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
-  specs/               193  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py):
+  specs/               193  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
+                            says when a change needs one, how to read one and how to run them; chapter 17):
                             PrivatePhoto.tla, one `private` row and everything that writes it; <Name>.cfg is the
                             code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail
   demo/                     104 CC0 photos, their catalog, and credits

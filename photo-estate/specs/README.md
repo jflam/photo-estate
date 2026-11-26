@@ -1,0 +1,130 @@
+# Models checked by a machine
+
+Most of this code is written by an agent, faster than a person can read it. The tests say that the cases
+someone thought of work. This folder is for the other question: is there any order of events, thought of or
+not, that leaves the data in a state it must never be in?
+
+A file here is a small model of one piece of state the app keeps, written in TLA+, and a list of rules that
+must always hold for it. A program called TLC then visits every state the model can reach, in every order its
+steps can happen, and either says no rule is ever broken or prints the shortest sequence of steps that breaks
+one. It is not a proof about the Python. It is a search that is complete over the model, and the model is kept
+small and close enough to the code that what it finds can be tried on the real thing in minutes.
+
+| Model | What it is | Rules | Where the code is |
+|---|---|---|---|
+| `PrivatePhoto.tla` | One row of the `private` table: a photo private to one of its sharers, and everything that writes it | A released photo stays released; a photo its sharer said is private stays private until their day; the day is the one they last set | `private.py` |
+
+## When a change needs one
+
+Not every change. A model earns its keep where three things are true together:
+
+- **The state is in one of a few named conditions** (a status column, a flag that only makes sense with
+  another, a row that exists or does not).
+- **More than one thing writes it**: two requests, a request and a background thread, the app and a script in
+  another process, or a step that can stop half way.
+- **Being wrong matters**: who is shown a photo, what is hidden, what a member is allowed to do.
+
+A change that adds a writer to such a state, or a new state to it, changes its model in the same pull request.
+A machine with one writer and a table of legal moves (`core/states.py`'s `TASK_MOVES`, `JOB_MOVES`; `flow()` in
+`app/fsm.js`) is already checked where it runs, and needs no model for that alone.
+
+## The loop
+
+1. **Find the machine.** Write down its states, what moves it from one to another, who makes each move, and
+   which states the code assumes cannot happen. Report that before changing anything.
+2. **Model it as the code is.** One action per function that writes the state, named in a comment. Anything
+   that reads, then works, then writes is two actions (the read and the write), so that TLC can put other
+   steps between them. Add variables the code does not have for what a person *meant* (in `PrivatePhoto.tla`,
+   `wish`: the sharer's last word), because the rules are about that.
+3. **Write the rules as invariants,** in the words the module's own docstring uses where it makes a promise.
+4. **Run TLC.** Never call a model checked that was not run.
+5. **For each trace TLC prints, try it on the real code.** A trace is a recipe: do these steps in this order.
+   If the real code ends up where the trace says, it is a bug; if not, the model is wrong, and is corrected.
+6. **Write that as a test, see it fail, then fix the code.**
+7. **Model the fix, and keep the old behaviour too.** The model has a switch (`Guarded`): TRUE is the code
+   now, FALSE the code before. `<Name>.cfg` checks the code now and must pass. Each
+   `<Name>.before.<invariant>.cfg` checks the code before and must still fail: a rule that can no longer be
+   broken by the bug it was written for is checking nothing.
+8. **Say what the model leaves out.** Each model ends with that list. It is where the next bug is.
+
+## Reading a model
+
+`PrivatePhoto.tla` is under 200 lines. The pieces, in the order they appear:
+
+- **`VARIABLES`**: the columns of the row (`exists`, `why`, `released`, `reviewed`, `until`), where each of the
+  app's own jobs has got to (`chk`, `lib`, `tmr`), the day it is, and the two that are not in the code
+  (`wish`, `wantDay`).
+- **`Init`**: how it starts. No row; the member may or may not have shared the photo yet.
+- **Actions**, one per function. `/\` is "and", `\/` is "or", and a name with a `'` is the value *after* the
+  step. Lines without a `'` say when the step may happen. For example, the sharer releasing a photo:
+
+  ```
+  \* private.change(private=False): an open row is released
+  Release ==
+    /\ Open                                    \* only a photo private to them now
+    /\ released' = TRUE                        \* it is released
+    /\ wish' = "released" /\ wantDay' = 0      \* and that is their last word on it
+    /\ UNCHANGED <<sharer, exists, why, ...>>  \* nothing else moves
+  ```
+
+- **`Next`**: any one action may happen next. TLC tries them all, from every state it finds.
+- **Invariants**: the rules. `ReleasedStays == wish = "released" => exists /\ released` reads: if the
+  sharer's last word was to release it, the row is there and says released.
+
+What TLC printed for that rule before the fix (cut to the columns that move):
+
+```
+Error: Invariant ReleasedStays is violated.
+State 2: <Ingest>      why = "new"   released = FALSE   chk = "idle"   wish = "none"
+State 3: <CheckRead>   why = "new"   released = FALSE   chk = "hold"   wish = "none"
+State 4: <Release>     why = "new"   released = TRUE    chk = "hold"   wish = "released"
+State 5: <CheckWrite>  why = "held"  released = FALSE   chk = "idle"   wish = "released"
+```
+
+Read down: a phone upload arrives; the ingest check reads it and decides to hold it; while it is still
+scoring, the sharer releases the photo; the check then writes what it decided, over the release. The test
+`test_a_photo_released_while_check_scores_it_is_not_held` in `tests/test_private_states.py` is these four
+steps on the real `private.py`.
+
+## Running them
+
+TLC is one jar and needs Java.
+
+```
+mkdir -p ~/.local/share/tlaplus
+gh release download v1.7.4 --repo tlaplus/tlaplus --pattern tla2tools.jar --dir ~/.local/share/tlaplus
+```
+
+```
+uv run pytest tests/test_specs.py
+```
+
+That runs every `.cfg` here: those that must pass, and those that must fail. It is skipped where there is no
+Java or no jar; CI has both and runs it on every pull request. One model by hand, from this folder (on a Mac
+with Homebrew's Java, which is not on the PATH, `java` is `/opt/homebrew/opt/openjdk/bin/java`):
+
+```
+java -cp ~/.local/share/tlaplus/tla2tools.jar tlc2.TLC -config PrivatePhoto.cfg PrivatePhoto.tla
+```
+
+To ask a narrower question, write a `.cfg` of your own. `PrivatePhoto.tla` defines two constraints for that:
+`ACTION_CONSTRAINT NoRace` (nothing happens between one of the app's reads and its write: what still breaks
+needs no bad timing) and `CONSTRAINT OnlyTimer` (the check and the library run never start).
+
+## What a model does not tell you
+
+- **That the code matches it.** The comments naming each function are the only link, and they are checked by
+  a person. A change to a modelled function that does not touch its model is the thing to look for in review.
+- **Anything about what it leaves out.** `PrivatePhoto.tla` has one sharer; a photo two members sent is not
+  in it.
+- **That things eventually happen.** These models check that nothing bad is ever reached, not that something
+  good always is (a question that is never closed would not show).
+- **Sizes beyond the ones given.** Three days, one photo, one member. That is enough for every bug found so
+  far, each of which needs two or three steps; it is a choice, not a guarantee.
+
+## Machines with no model yet
+
+From the survey of November 2026 (states that have no table of legal moves, and more than one writer):
+change sets and their items (`changes.py`), lenses and subscriptions (`lenses.py`), members and agent bindings
+(`members.py`), inbox items (`member_inbox.py`, written from seven modules), questions (`stories.py`), and the
+catalog reload (`photo_app.py`).
