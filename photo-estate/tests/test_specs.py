@@ -4,6 +4,7 @@
   specs/Lens.tla           a filter lens, a subscription to it and an album's series rows (lenses.py)
   specs/ChangeSet.tla      an album or change set, its photos, its series row and its inbox items (changes.py)
   specs/InboxItem.tla      the inbox items about one thing, and their writers (member_inbox.py and its callers)
+  specs/Question.tla       a question, whom it was dealt to, and the run an answer starts (stories.py, listeners.py)
 
 For each model, <Name>.cfg is the code as it is and must pass; each <Name>.before.<invariant>.cfg is the code
 before a fix, and must still find its violation (an invariant that can no longer fail checks nothing).

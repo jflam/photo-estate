@@ -12,6 +12,7 @@ else) turns it into a member where the code needs one.
   SetState       what a set has come to (derived): empty | album | review | applied | reverted | done
   Decision       change_items.decision pending | accept | reject
   TaskStatus     agent_tasks.status    queued | running | done | failed | cancelled   (tasks.py)
+  QuestionStatus questions.status      queued | asked | answered | closed   (stories.py; specs/Question.tla)
   IngestState    upload.IngestJob      idle | quiet | starting | running | backoff
   JobState       intake jobs.state     queued | running | waiting | done | failed | cancelled
   StageState     an intake stage, as the page shows it: done | pending | running | waiting | failed
@@ -22,8 +23,8 @@ cancelled), JOB_ACTIVE and JOB_RETRYABLE (intake jobs).
 
 The moves each lifecycle may make are tables, {state: the states it may go to}, and every write of a
 state goes through check_move(table, from, to, what), which raises IllegalMove for any other step
-(issue #86): TASK_MOVES (tasks.Tasks.move), JOB_MOVES (intake.engine.Store.move), and
-upload.IngestJob.MOVES (IngestJob._to). core.lifecycle's MOVES is checked the same way.
+(issue #86): TASK_MOVES (tasks.Tasks.move), JOB_MOVES (intake.engine.Store.move), QUESTION_MOVES
+(stories._move), and upload.IngestJob.MOVES (IngestJob._to). core.lifecycle's MOVES is checked the same way.
 """
 from __future__ import annotations
 
@@ -73,6 +74,21 @@ TASK_MOVES: dict[TaskStatus, frozenset[TaskStatus]] = {
     TaskStatus.QUEUED: frozenset({TaskStatus.RUNNING, TaskStatus.CANCELLED}),     # the worker claims it, or it is withdrawn
     TaskStatus.RUNNING: frozenset({TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED}),   # failed: also an app restart
     TaskStatus.DONE: frozenset(), TaskStatus.FAILED: frozenset(), TaskStatus.CANCELLED: frozenset(),
+}
+
+
+class QuestionStatus(StrEnum):
+    QUEUED = "queued"         # filed (stories.ask), dealt to nobody yet
+    ASKED = "asked"           # dealt to a member's inbox (stories._deal)
+    ANSWERED = "answered"     # someone told a story answering it (stories.tell)
+    CLOSED = "closed"         # a question to one member, put away by them ("I don't know")
+
+
+QUESTION_MOVES: dict[QuestionStatus, frozenset[QuestionStatus]] = {
+    QuestionStatus.QUEUED: frozenset({QuestionStatus.ASKED}),
+    QuestionStatus.ASKED: frozenset({QuestionStatus.ANSWERED, QuestionStatus.CLOSED}),
+    QuestionStatus.CLOSED: frozenset({QuestionStatus.ANSWERED}),     # answered after all (another tab still showed it)
+    QuestionStatus.ANSWERED: frozenset(),                            # a second answer is another story, and moves nothing
 }
 
 

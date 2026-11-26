@@ -37,7 +37,8 @@
    it reads, and reads the questions it deals again inside it; member_inbox.dismiss takes the write lock before it
    reads the item; members.change closes the member_request and lens_proposed items of a member who is not an
    active sysadmin after it; lenses.publish and lenses.publish_album taking a lens back close its lens_changed
-   items. Here a write going by what is there when it writes is Now.
+   items; and (found by specs/Question.tla) member_inbox.dismiss of a question item puts its questions away. Here a
+   write going by what is there when it writes is Now.
 
    InboxItem.cfg checks the code; InboxItem.before.<invariant>.cfg each find the violation there was.
    tests/test_specs.py runs them all with TLC, and tests/test_inbox_states.py replays each on the real code. *)
@@ -289,15 +290,18 @@ DismissRead(t, k) ==
   /\ UNCHANGED <<part, it, admin, xs, pub, prop, dflt, sub, qs, at, dl, waits, bnd, wrong>>
 
 \* its UPDATE ... SET state='dismissed' WHERE id=? and inbox.dismissed in the journal: of the row it read, whatever
-\* that row is now. Guarded: read with the write lock held, an item closed since is answered 409.
+\* that row is now. Guarded: read with the write lock held, an item closed since is answered 409; and a question item
+\* takes its questions with it (stories.put_away: each that waits in it is put away, settled; specs/Question.tla)
 DismissWrite(t) ==
   /\ dq[t].k # "-"
   /\ IF dq[t].gone
-       THEN /\ wrong' = (wrong \/ ~Guarded) /\ UNCHANGED it   \* (a row closed already: a new open one is untouched)
+       THEN /\ wrong' = (wrong \/ ~Guarded) /\ UNCHANGED <<it, qs>>   \* (a row closed already: a new open one is untouched)
        ELSE /\ it' = [it EXCEPT ![dq[t].k] = "dismissed"] /\ UNCHANGED wrong
+            /\ qs' = IF Guarded /\ dq[t].k \in Slots THEN [q \in Q |-> IF q \in Waiting(dq[t].k) THEN "settled" ELSE qs[q]]
+                     ELSE qs
   /\ dq' = [u \in Tabs |-> IF u = t THEN NoDq
                            ELSE IF dq[u].k = dq[t].k /\ ~dq[t].gone THEN [dq[u] EXCEPT !.gone = TRUE] ELSE dq[u]]
-  /\ UNCHANGED <<part, admin, xs, pub, prop, dflt, sub, qs, at, dl, waits, bnd>>
+  /\ UNCHANGED <<part, admin, xs, pub, prop, dflt, sub, at, dl, waits, bnd>>
 
 Next ==
   \/ \E a \in Admins, v \in BOOLEAN : SetAdmin(a, v)
@@ -376,7 +380,7 @@ NoRace == /\ \A d \in {"d1", "d2"} : dl[d].op # "idle" => dl'[d].op = "idle"
      from another kind's thing, and close() never crosses kinds or refs;
    - the item's title, updated_at and the order mine() lists them in; retitle, here part of close_held's keep;
    - a question's own life (the questions and asked tables, deal's weekly allowance and room, the order groups are
-     dealt in, the photos one may not be shown, which keep_item hides): the next machine; here deal's room is enough;
+     dealt in, the photos one may not be shown, which keep_item hides): specs/Question.tla; here deal's room is enough;
    - the member and the binding themselves (members.py): members.change writing every field from a copy read
      earlier, and the newcomer's login (a second request from one login is refused by the member_logins trigger);
      a member revoked (their items stay as they are: see InboxItem's report); the owner of a lens being a sysadmin;

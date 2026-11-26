@@ -22,6 +22,9 @@ read (GET /api/inbox, GET /api/questions), with the clock it is given:
     inbox, item and all, until they may again).
 Saying "I don't know" (dismissing a question, or its whole inbox item) puts it away for good for that member. It
 counts against the week it was dealt in, like any item, and against nothing after: the window is the last 7 days.
+A question's status moves only as core.states.QUESTION_MOVES allows: queued -> asked (dealt) -> answered, or closed
+(a question to one member, put away by them), and closed -> answered (they answered it after all); a question to the
+family is asked until someone answers it, and is dealt to each member, however many have answered or put it away.
 
 A **story** is what a member said about photos, attributed and dated: typed text, or a recording (a file in the
 store, content-addressed, with no assets row, so it is in no photo view) and its transcript, written later by
@@ -36,6 +39,7 @@ alone; one whose photos were all purged is its teller's). A recording is served 
   deal(con, member, now, refused) -> int      the inbox's half: questions dealt to the member's inbox now
   waiting(con, member, refused) -> [dict]     the member's open questions, grouped as their inbox items
   answer(con, member, qid, refused, text=, recording=) / dismiss(con, member, qid)
+  put_away(con, member, item) -> [qid]       member_inbox.dismiss's half: "I don't know" to every question in an item
   tell(con, member, photos, refused, text=, recording=, question=) -> dict     a story (story.told)
   readable(con, sid, member, refused) / about(con, shas, member, refused) -> {sha: [story]}   reading
   save_recording(con, store, body, content_type) -> (sha, ext)    the upload's bytes into the store
@@ -47,8 +51,9 @@ the catalog, or private to someone else); the estate's agent acting for no one i
 only what is private to nobody (private.Private.agents), and a question to the family checks private.NOBODY.
 
 Journal (journal.py): question.asked {to, photos, group_key} by the asker, acting for whom its run acted for;
-question.dismissed {question} by the member; story.told {question, photos, recording} by the teller (subject
-story:<id>); story.transcribed {chars} by no one (the app), acting for the teller. Inbox items (member_inbox.py):
+question.dismissed {question} by the member (one for each question in an item they dismissed); story.told
+{question, photos, recording} by the teller (subject story:<id>); story.transcribed {chars} by no one (the app),
+acting for the teller. Inbox items (member_inbox.py):
 `question`, ref ask:<group>, for the member, done once each question in it is answered or put away.
 """
 from __future__ import annotations
@@ -62,6 +67,7 @@ from typing import Callable
 import journal
 import member_inbox
 import members
+from core.states import QUESTION_MOVES, check_move
 
 ALLOWANCE = 3                 # question items a member is dealt a week (open question 2: default low; members.questions_per_week)
 WEEK = timedelta(days=7)
@@ -229,10 +235,19 @@ def _having(con, q: str, shas) -> set[str]:
     return out
 
 
+def _move(con, qids, to: str, frm: tuple[str, ...]) -> None:
+    """questions.status of each of `qids` that is one of `frm` becomes `to`, in one conditional UPDATE each (the
+    caller's transaction). IllegalMove if core.states.QUESTION_MOVES does not allow every step it names."""
+    for f in frm:
+        check_move(QUESTION_MOVES, f, to, "question")
+    con.executemany(f"UPDATE questions SET status=? WHERE id=? AND status IN ({','.join('?' * len(frm))})",
+                    ((to, q, *frm) for q in qids))
+
+
 def _deal(con, member: int, iid: int, qs, t: str) -> None:
     con.executemany("INSERT OR IGNORE INTO asked(question_id, member_id, item_id, at) VALUES (?,?,?,?)",
                     ((r[0], member, iid, t) for r in qs))
-    con.executemany("UPDATE questions SET status='asked' WHERE id=? AND status='queued'", ((r[0],) for r in qs))
+    _move(con, [r[0] for r in qs], "asked", ("queued",))
     n = con.execute("SELECT count(*) FROM asked WHERE item_id=?", (iid,)).fetchone()[0]
     if n > len(qs):        # joined an item: its title counts them all
         first = con.execute("SELECT q.group_key, q.text FROM asked a JOIN questions q ON q.id=a.question_id WHERE a.item_id=?"
@@ -303,10 +318,28 @@ def dismiss(con, member: int | None, qid: int) -> dict:
                         " AND answered_at IS NULL", (stamp(), qid, member)).rowcount
         if n:
             if to == member:
-                con.execute("UPDATE questions SET status='closed' WHERE id=? AND status != 'answered'", (qid,))
+                _move(con, [qid], "closed", ("asked",))
             journal.append(con, member, "question.dismissed", f"question:{qid}", {"question": qid})
             _settle(con, iid)
     return {"question": qid, "dismissed": bool(n)}
+
+
+def put_away(con, member: int | None, iid: int) -> list[int]:
+    """member_inbox.dismiss of a question item (POST /api/inbox/<id>/dismiss): "I don't know" to each question in it
+    that waits on the member, as dismiss says it to one (put away for good; a question to them alone closed;
+    question.dismissed), those they may not be shown now too. In the caller's transaction, which holds the write lock;
+    the item itself is the caller's to dismiss. Without it a question in an item put away waits in it, shown nowhere
+    and never dealt again (specs/Question.tla). Returns the questions put away."""
+    t, out = stamp(), []
+    for qid, to in con.execute("SELECT a.question_id, q.to_member FROM asked a JOIN questions q ON q.id=a.question_id"
+                               " WHERE a.item_id=? AND a.member_id IS ? AND a.answered_at IS NULL AND a.dismissed_at IS NULL"
+                               " ORDER BY a.question_id", (iid, member)).fetchall():
+        con.execute("UPDATE asked SET dismissed_at=? WHERE question_id=? AND member_id=?", (t, qid, member))
+        if to == member:
+            _move(con, [qid], "closed", ("asked",))
+        journal.append(con, member, "question.dismissed", f"question:{qid}", {"question": qid})
+        out.append(qid)
+    return out
 
 
 def answer(con, member: int | None, qid: int, refused: Refused, text=None, recording=None, seconds=None) -> dict:
@@ -347,7 +380,7 @@ def tell(con, member: int | None, photos, refused: Refused, text=None, recording
         if question is not None:
             con.execute("UPDATE asked SET answered_at=? WHERE question_id=? AND member_id=? AND answered_at IS NULL",
                         (t, question, member))
-            con.execute("UPDATE questions SET status='answered' WHERE id=?", (question,))
+            _move(con, [question], "answered", ("asked", "closed"))   # (closed: they had put it away, in another tab)
             if _asked is not None:
                 _settle(con, _asked)
         journal.append(con, member, "story.told", f"story:{sid}",
