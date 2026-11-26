@@ -26,6 +26,7 @@ from catalog import Live  # noqa: E402
 from core.lifecycle import MOVES, IllegalMove, Lifecycle, LoadFailed, Phase, StillLoading  # noqa: E402
 from core.states import ClusterState  # noqa: E402
 from encoder import Encoder, ModelFailed, ModelLoading, drop_image_side  # noqa: E402
+import photo_app  # noqa: E402
 from photo_app import PhotoApp  # noqa: E402
 
 GUARD = 10   # seconds: only so that a hang fails the test instead of the run
@@ -415,3 +416,28 @@ def test_cluster_failure_is_reported():
     assert p.clusters_state == ClusterState.FAILED and p.clusters_error.startswith("TypeError")
     got = p.unknown(14)
     assert got["state"] == "failed" and got["groups"] == [] and got["error"] == p.clusters_error
+
+
+# -- a route that raises (issue #136) ----------------------------------------------------------------
+
+def test_a_route_that_raises_is_answered_500_not_dropped(app, monkeypatch):
+    """Over HTTP, as a browser asks: an exception out of a route was no answer at all (the connection dropped, and
+    the page showed a network error). It is a 500 that says so, and the next request on the server is answered."""
+    import json
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), photo_app.make_handler(app))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{srv.server_address[1]}/api/info"
+        route = app.route
+        monkeypatch.setattr(app, "route", lambda req: (_ for _ in ()).throw(RuntimeError("a bug")))
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(url, timeout=10)
+        assert e.value.code == 500 and "RuntimeError" in json.loads(e.value.read())["error"]
+        monkeypatch.setattr(app, "route", route)
+        assert urllib.request.urlopen(url, timeout=10).status == 200
+    finally:
+        srv.shutdown()
+        srv.server_close()

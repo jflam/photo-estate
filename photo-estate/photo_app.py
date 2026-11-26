@@ -1760,7 +1760,14 @@ def make_handler(app: PhotoApp):
                 except HTTPError as e:   # nothing was read: the body must not be taken for the next request
                     self.close_connection = True
                     return self.send(e.response)
-            self.send(app.handle(Request(method, self.path, self.headers, body, is_local(self))))
+            try:
+                got = app.handle(Request(method, self.path, self.headers, body, is_local(self)))
+            except Exception as e:      # a bug, or a catalog locked too long: the log has it, and the page is told
+                import traceback        # (it was no answer at all: the connection dropped, issue #136)
+                traceback.print_exc()
+                print(f"{method} {path}: {type(e).__name__}: {e}", flush=True)
+                got = json_response({"error": f"the app could not answer that ({type(e).__name__}); it is in its log"}, 500)
+            self.send(got)
 
         def do_GET(self):
             self.answer("GET")

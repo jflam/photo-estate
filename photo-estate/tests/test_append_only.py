@@ -405,3 +405,83 @@ def test_migrate_gives_every_photo_without_a_sharer_the_sysadmin_once(tmp_path):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# -- ingest copies first and writes after (issue #141) ------------------------------------------------------------
+
+def ingest_args(db: Path, store: Path, src: Path) -> "argparse.Namespace":
+    import argparse
+    return argparse.Namespace(db=str(db), store=str(store), sources=[str(src)], force=True, facts=None, delete_after=False,
+                              progress=False, uploads=False)
+
+
+def test_the_write_lock_is_free_while_ingest_copies_a_file(tmp_path, monkeypatch):
+    """The whole app waited on the ingest: it held the catalog's write lock from its first photo's rows to its
+    commit, up to 200 files copied and decoded in between. Now each file is copied and decoded with no transaction
+    open: another connection (a request of the app's) takes the write lock at once, during every copy after the
+    first and every decode."""
+    db, store, src = tmp_path / "estate.db", tmp_path / "store", tmp_path / "phone"
+    scratch_catalog(db).close()
+    src.mkdir()
+    for k in range(4):
+        (src / f"IMG_{k}.JPG").write_bytes(jpeg(k))
+    (src / "IMG_1.JPG.json").write_text(json.dumps({"photoTakenTime": {"timestamp": "1"}, "title": "IMG_1.JPG"}))
+    free: list[bool] = []
+
+    def writes() -> bool:
+        other = sqlite3.connect(db, timeout=0)
+        try:
+            other.execute("BEGIN IMMEDIATE")
+            other.rollback()
+            return True
+        except sqlite3.OperationalError:
+            return False
+        finally:
+            other.close()
+    copy, decode = estate.store_blob, estate.image_facts
+    monkeypatch.setattr(estate, "store_blob", lambda *a, **k: (free.append(writes()), copy(*a, **k))[1])
+    monkeypatch.setattr(estate, "image_facts", lambda *a, **k: (free.append(writes()), decode(*a, **k))[1])
+    estate.cmd_ingest(ingest_args(db, store, src))
+    assert len(free) == 8 and all(free)
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT count(*) FROM assets").fetchone() == (4,)
+    assert con.execute("SELECT count(*) FROM occurrences").fetchone() == (4,) and con.execute("SELECT count(*) FROM sidecars").fetchone() == (1,)
+    con.close()
+
+
+def test_the_same_photo_twice_in_one_batch_is_one_photo(tmp_path):
+    """Two files with the same bytes copied before either is recorded: the second finds no row yet. Recorded under the
+    lock, it is a duplicate found in two places, not a second photo (nor an error that loses the batch)."""
+    db, store, src = tmp_path / "estate.db", tmp_path / "store", tmp_path / "phone"
+    scratch_catalog(db).close()
+    (src / "a").mkdir(parents=True)
+    (src / "b").mkdir()
+    (src / "a" / "IMG_1.JPG").write_bytes(jpeg(1))
+    (src / "b" / "IMG_1 copy.JPG").write_bytes(jpeg(1))
+    estate.cmd_ingest(ingest_args(db, store, src))
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT count(*) FROM assets").fetchone() == (1,)
+    assert con.execute("SELECT count(*) FROM occurrences").fetchone() == (2,)
+    con.close()
+
+
+def test_an_ingest_stopped_between_a_copy_and_its_record_is_finished_by_the_next(tmp_path, monkeypatch):
+    """A run that dies after copying files and before recording them leaves them in the store with no rows. The next
+    run finds each at its place, keeps it, and records it: nothing is copied twice and nothing is lost."""
+    db, store, src = tmp_path / "estate.db", tmp_path / "store", tmp_path / "phone"
+    scratch_catalog(db).close()
+    src.mkdir()
+    for k in range(3):
+        (src / f"IMG_{k}.JPG").write_bytes(jpeg(k))
+    monkeypatch.setattr(estate, "record", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()))
+    with pytest.raises(KeyboardInterrupt):
+        estate.cmd_ingest(ingest_args(db, store, src))
+    monkeypatch.undo()
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT count(*) FROM assets").fetchone() == (0,)
+    stored = sorted(p.name for p in store.rglob("*.jpg"))
+    assert len(stored) == 3
+    estate.cmd_ingest(ingest_args(db, store, src))
+    assert con.execute("SELECT count(*) FROM assets").fetchone() == (3,) and sorted(p.name for p in store.rglob("*.jpg")) == stored
+    assert con.execute("SELECT count(*) FROM assets WHERE width IS NOT NULL").fetchone() == (3,)
+    con.close()
