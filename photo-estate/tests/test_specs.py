@@ -2,6 +2,7 @@
 
   specs/PrivatePhoto.tla   one `private` row and everything that writes it (private.py)
   specs/Lens.tla           a filter lens, a subscription to it and an album's series rows (lenses.py)
+  specs/ChangeSet.tla      an album or change set, its photos, its series row and its inbox items (changes.py)
 
 For each model, <Name>.cfg is the code as it is and must pass; each <Name>.before.<invariant>.cfg is the code
 before a fix, and must still find its violation (an invariant that can no longer fail checks nothing).

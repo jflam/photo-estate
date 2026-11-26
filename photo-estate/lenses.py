@@ -422,7 +422,8 @@ def unsubscribe(con, member: int | None, lid) -> dict:
 
 def publish(con, member: int | None, lid, on: bool) -> dict:
     """Publish a lens of the member's, or take it back (and a proposal of it with it). An estate default stays
-    published (409), and so does one a sysadmin accepted while the request was on its way."""
+    published (409), and so does one a sysadmin accepted while the request was on its way. A series is published
+    only while its album is one to look at (409 for one up for hiding or discarded), as publish_album publishes it."""
     with con:
         _begin(con)          # (a sysadmin may be deciding it: what this goes by is what it writes over, specs/Lens.tla)
         lens = _theirs(con, lid, member)
@@ -430,6 +431,9 @@ def publish(con, member: int | None, lid, on: bool) -> dict:
             raise LensError(409, "an estate default stays published")
         if lens.published == on:
             return {"lens": lens.id, "published": on, "changed": False}
+        if on and lens.kind == "series" and not con.execute(   # (as publish_album: specs/ChangeSet.tla)
+                "SELECT 1 FROM change_sets WHERE id=? AND op='view' AND status IS NOT 'discarded'", (lens.set_id,)).fetchone():
+            raise LensError(409, "a series is published only while its album is there to look at, not up for hiding or put away")
         con.execute("UPDATE lenses SET published=?, proposed_at=CASE WHEN ? THEN proposed_at END WHERE id=?",
                     (int(on), int(on), lens.id))
         if not on and lens.proposed_at:    # a proposal taken back with it: nothing is left for a sysadmin to decide

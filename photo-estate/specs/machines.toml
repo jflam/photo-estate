@@ -62,8 +62,11 @@ tables = ["change_sets", "change_items", "hidden"]
 columns = ["change_sets.status", "change_items.decision"]
 enums = ["ChangeStatus", "ChangeOp", "AlbumKind", "Decision", "SetState"]
 writers = ["changes.py", "estate.py", "lenses.py"]
-checked = "unmodelled"
-note = "survey: `candidates` is not refused on a done set; `hide` and `discard` do not look for a published series"
+checked = "model"
+model = "ChangeSet.tla"
+# (estate.py is migrate, by hand with the app stopped: it writes only lens_id and owner, which the model leaves out)
+code = { "changes.py" = ["Changes.write", "Changes.create", "Changes.add_items", "Changes.summary", "Changes.candidates", "Changes.tell", "Changes.followed"], "lenses.py" = ["_begin", "subscribe", "publish", "publish_album"], "listeners.py" = ["series"], "tasks.py" = ["Tasks.to_review"], "member_inbox.py" = ["put", "close", "dismiss"] }
+stamp = "08b650694af22bdf"
 
 [[machine]]
 name = "a lens: published, proposed, an estate default"
@@ -72,7 +75,7 @@ writers = ["changes.py", "lenses.py"]
 checked = "model"
 model = "Lens.tla"
 code = { "lenses.py" = ["add", "_begin", "_theirs", "get", "owner_of", "is_sysadmin", "publish", "publish_album", "propose", "decide"], "member_inbox.py" = ["put", "close"] }
-stamp = "b9c0aec01c146290"
+stamp = "439db0c38e7eb754"
 
 [[machine]]
 name = "a subscription to a lens"

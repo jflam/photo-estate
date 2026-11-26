@@ -315,8 +315,9 @@ NoAlbum == \A b \in Bens : rq[b].op # "album"
    - what a filter hides (its hiding sets, changes.py), and so what a snapshot copies, and `shown`;
    - Ben's own subscription to his filter once it is an estate default, and Cleo's to the series; subscribe and
      unsubscribe are the same code for both;
-   - publish() on the series row (its id, the same UPDATE as publish_album's), the album being discarded or put up
-     for hiding (changes.py, the change set's machine), and lenses.maintained_by after the row is made;
+   - publish() on the series row (its id, the same UPDATE as publish_album's, refused for an album up for hiding or
+     discarded), the album being discarded or put up for hiding (changes.py): ChangeSet.tla, the change set's
+     machine; and lenses.maintained_by after the row is made;
    - the inbox beyond the two items: one lens_proposed item stands for every sysadmin's, put and closed together;
      put() reading before it inserts; a member dismissing an item (member_inbox.dismiss); the item's title;
    - who is a sysadmin changing while a decision is being made (members.py), and a member revoked;
