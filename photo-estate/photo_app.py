@@ -418,6 +418,11 @@ class PhotoApp:
             self.live.relook(looks, then=self.caught_up)
         return before != looks.people_out()
 
+    def people_out(self) -> set[str] | None:
+        """What People is built without, as the looks say (lenses.State.people_out)."""
+        looks = self.live.looks
+        return looks.people_out() if isinstance(looks, lenses.State) else None
+
     def refused(self, sha: str, member: int | None) -> bool:
         """`member` may not be shown this photo, whether or not it is in the catalog being served (private.py)."""
         looks = self.live.looks
@@ -425,13 +430,21 @@ class PhotoApp:
 
     def load_people(self) -> None:
         """Again after a reload: the one that is ready keeps answering until the new one is, and keeps
-        answering if the new one fails. Loads run one at a time, so the newest faces are the last swapped in."""
+        answering if the new one fails. Loads run one at a time, so the newest faces are the last swapped in.
+        The one answering takes names meanwhile: the new one reads them again before it is swapped in if there
+        were any, and a name that reaches the old one after is passed on to it (People.replaced_by)."""
         with self.people_loading:
             self.people.begin()
             try:
+                old, seen = self.people.snapshot().value, 0
+                if old is not None:
+                    with old.lock:   # (no change half made)
+                        seen = old.writes
                 from faces import People
                 p = People(self.a.db, self.a.store, [self.cache] if self.cache == self.seed else [self.cache, self.seed],
                            log=lambda msg: print(msg, flush=True))
+                if old is not None:
+                    old.replaced_by(p, seen)
             except Exception as e:   # a missing or broken table, out of memory: /people says so, not "loading"
                 self.people.fail(e)
                 print(f"people: failed to load: {self.people.snapshot().error}", flush=True)
@@ -670,7 +683,9 @@ class PhotoApp:
         old one keeps answering; only the swap waits for requests in flight. Asked again mid-run, it runs again.
         The swap is under fav_write: a relook between its read and its install would otherwise put looks read before
         this catalog over the private rows read with it, and a photo just ingested would have no row (specs/Reload.tla).
-        A run that fails before its catalog is in sets the ingest's `fresh` again."""
+        A run that fails before its catalog is in sets the ingest's `fresh` again. If the private rows it read change
+        what People is built without, People is loaded again: a member's relook after would find nothing changed
+        (specs/People.tla)."""
         rs = self.reload_state
         with self.reload_lock:
             if rs["state"] != "idle":
@@ -686,8 +701,12 @@ class PhotoApp:
                     if os.environ.get("PHOTO_ESTATE_CHECK_RELOAD"):   # tools/bench_ingest.py --check
                         print(f"reload check: {fresh.differences(self.load_catalog()) or 'same as a full load'}", flush=True)
                     with self.fav_write:     # not between a relook's read and its install, nor while a favourite is shown
+                        out = self.people_out()
                         self.live.install(fresh, then=self.caught_up, looks=self.with_private)
+                        people = out != self.people_out()
                     self.loaded_through, ok = mark, True
+                    if people and self.live.cat.has_faces:
+                        threading.Thread(target=self.load_people, daemon=True).start()
                     self.listen_wake.set()      # an ingest's new photos are searchable now: the series listener
                     rs.update(at=time.time(), seconds=time.time() - t, error=None)
                     print(f"catalog reloaded: {fresh.N} images in {time.time() - t:.1f}s", flush=True)

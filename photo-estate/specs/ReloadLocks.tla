@@ -23,7 +23,13 @@
                         gate only with it let go
      feeds_lock         inside the gate or outside it (feed_of); a Feed made inside it opens its own file
      members_lock       load_members: inside the gate (change_member, ask_in) or before any (start); then SQLite reads
-     people_loading     load_people, outside the gate (threads), across People's whole load (up to a minute)
+     people_loading     load_people, outside the gate (threads, one of them started by reload_catalog after its swap when
+                        what People is built without changed), across People's whole load (up to a minute)
+     People.lock        each People's own: inside the gate (the People page's requests: then SQLite's write lock, in a
+                        change), and in load_people outside it (People.replaced_by: the old one's, then the new one's,
+                        then SQLite's write lock); a change passed on to the People that replaced it holds the old one's
+                        then the new one's. None is held while the gate, fav_write or people_loading is asked for
+                        (specs/People.tla)
      Changes.lock       Changes.write, inside the gate: then SQLite's write lock
      SQLite's write lock  inside the gate (the routes above); set_favorites, outside it with fav_write held; the
                         ingest script and the other scripts, in their own processes, holding no lock of the app's

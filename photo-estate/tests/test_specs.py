@@ -10,6 +10,9 @@
   specs/Reload.tla         what the app holds in memory from the catalog, and how it is replaced while requests are
                            served (catalog.Live; PhotoApp.reload_catalog, relook, set_favorites, on_hidden_change)
   specs/ReloadLocks.tla    who waits for whom among those threads: the catalog gate, fav_write, SQLite's write lock
+  specs/People.tla         who each face is, in the catalog and in the People page's memory, while People is loaded
+                           again beside the one answering, and the groups of unnamed faces (faces.People;
+                           PhotoApp.load_people, reload_catalog)
 
 For each model, <Name>.cfg is the code as it is and must pass; each <Name>.before.<invariant>.cfg is the code
 before a fix, and must still find its violation (an invariant that can no longer fail checks nothing).

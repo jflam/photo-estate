@@ -35,9 +35,10 @@ SPECS = ROOT / "specs"
 MACHINES = tomllib.loads((SPECS / "machines.toml").read_text())["machine"]
 STATE_COLUMNS = {"status", "state", "why", "mode", "decision", "phase", "stage"}   # names a state column goes by
 ENUM_MODULES = ("core.states", "core.lifecycle")
-# The machines the survey of November 2026 found with no model. This set only gets shorter, as each is modelled:
-# a machine that is new is modelled, or given its table of moves, in the pull request that adds it.
-BACKLOG = {"the clustering of unnamed faces"}
+# The machines the survey of November 2026 found with no model: each has been modelled since, the last (faces and the
+# People page, specs/People.tla) in November 2026, so none is left. The rule stands: a machine that is new is modelled,
+# or given its table of moves, in the pull request that adds it, and never put here.
+BACKLOG: set[str] = set()
 HOW = "see tests/test_machines.py's docstring and specs/README.md"
 
 

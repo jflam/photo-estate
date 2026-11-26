@@ -43,8 +43,10 @@ CUDA libraries, which also runs on a computer with no GPU), else on the CPU.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
+import secrets
 import sqlite3
 import sys
 import threading
@@ -81,6 +83,9 @@ SUGGEST = 0.30     # at or above this, the face is put to you as "is this ...?"
 AUTO = 0.50        # at or above this, and AUTO_MARGIN clear of the next person, it's named without asking
 AUTO_MARGIN = 0.12
 ARC_TEMPLATE = [[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366], [41.5493, 92.3655], [70.7299, 92.2041]]
+# The numbers of a People's groups of unnamed faces (unknown's `cluster`) start at its own multiple of 1000, from a
+# random place in each process, so a label names a group of the People that showed it or none (specs/People.tla).
+GROUPS = itertools.count(secrets.randbelow(1 << 30) * 1000, 1000)
 
 
 def connect(db: str) -> sqlite3.Connection:
@@ -375,6 +380,11 @@ def face_rows(con) -> list[tuple]:
         if r[1] in photo and r[1] not in hidden]
 
 
+class Regrouped(Exception):
+    """A label names a group (`cluster`) that is not one of this People's: it was shown by the People before (a load
+    worked the groups out anew) or by another run of the app. Nothing is named; the page shows the groups again (409)."""
+
+
 class Draft:
     """A copy of what a change touches (who each face is, the not/later sets, the people) and the journal
     records it will write: changed while the change's SQLite transaction runs, and swapped into People
@@ -390,12 +400,18 @@ class Draft:
 
 class People:
     """Every face in memory, who each one is, and the questions worth asking. Used by `faces.py serve`
-    and mounted at /people by `embed.py serve`."""
+    and mounted at /people by `embed.py serve`.
+
+    The app loads a new one beside the one answering (PhotoApp.load_people) and swaps it in: `writes` counts the
+    changes this one has taken, so that the new one reads again the names given while it loaded (refresh), and once
+    replaced, a change that reaches it is passed on to its `successor` (replaced_by). Under self.lock."""
 
     def __init__(self, db: str, store: str, caches: list, log=print):
         import numpy as np
         self.np, self.db, self.store, self.caches = np, db, Path(store), [Path(c) for c in caches]
         self.lock = threading.RLock()
+        self.writes, self.first = 0, next(GROUPS)
+        self.successor: People | None = None
         self.journal = Path(db).resolve().parent / "face-labels.jsonl"
         t0 = time.time()
         with closing(connect(db)) as con:
@@ -428,20 +444,45 @@ class People:
         self.by_sha = {}
         for k, s in enumerate(self.sha):
             self.by_sha.setdefault(s, []).append(k)
-        self.persons = {i: {"name": nm, "born": b} for i, nm, b in con.execute("SELECT id, name, born FROM persons")}
-        self.nots = {}
-        for f, p in con.execute("SELECT face_id, person_id FROM face_not"):
-            if f in self.row:
-                self.nots.setdefault(p, set()).add(self.row[f])
-        self.later = {}
-        for f, p in con.execute("SELECT face_id, person_id FROM face_later"):
-            if f in self.row:
-                self.later.setdefault(p, set()).add(self.row[f])
+        self.persons, self.nots, self.later = self.decisions(con)
         self.sug = np.full(n, -1, np.int32)        # the person a face most resembles, of those not ruled out
         self.sug_score = np.zeros(n, np.float32)
         self.sug_far = np.zeros(n, bool)           # ...judged from named faces more than WINDOW years away
         self.clusters, self.clusters_state, self.clusters_error = [], ClusterState.WAITING, None   # under self.lock
         self.seed(con)
+
+    def decisions(self, con) -> tuple[dict, dict, dict]:
+        """The people, and the not/later decisions about the faces this People holds: (persons, nots, later)."""
+        persons = {i: {"name": nm, "born": b} for i, nm, b in con.execute("SELECT id, name, born FROM persons")}
+        nots: dict[int, set] = {}
+        later: dict[int, set] = {}
+        for t, out in (("face_not", nots), ("face_later", later)):
+            for f, p in con.execute(f"SELECT face_id, person_id FROM {t}"):
+                if f in self.row:
+                    out.setdefault(p, set()).add(self.row[f])
+        return persons, nots, later
+
+    def refresh(self) -> None:
+        """Who each face is, the people and the not/later decisions read again from the catalog, and the suggestions
+        and automatic names worked out again (rescore): for a People built while the one answering took changes, which
+        are in the catalog and not in what this one read. The faces themselves are as it read them."""
+        with self.lock, closing(connect(self.db)) as con:
+            pid, src = self.pid.copy(), self.src.copy()
+            for i, p, s in con.execute("SELECT id, person_id, source FROM faces WHERE model=?", (MODEL,)):
+                if (k := self.row.get(i)) is not None:
+                    pid[k], src[k] = -1 if p is None else p, SRC.get(s, NONE)
+            self.persons, self.nots, self.later = self.decisions(con)
+            self.pid, self.src = pid, src
+            self.rescore()
+
+    def replaced_by(self, new: People, seen: int) -> None:
+        """PhotoApp.load_people, before it swaps `new` in: under this People's lock, `new` reads the names again if this
+        one took a change since `seen` (its writes, noted before `new` read the catalog), and from now on a change that
+        reaches this one is new's (successor): a request that took this People before the swap and its lock after."""
+        with self.lock:
+            if self.writes != seen:
+                new.refresh()
+            self.successor = new
 
     # -- scoring -------------------------------------------------------------------------------
 
@@ -490,7 +531,9 @@ class People:
     def rescore(self):
         """Recompute every suggestion and every automatic name from the faces named so far. Worked out on
         new arrays, the changed names written in one transaction, and the arrays swapped in after it
-        commits, all under self.lock: if SQLite raises, the old suggestions and names stand."""
+        commits, all under self.lock: if SQLite raises, the old suggestions and names stand. A name is written
+        only where the catalog has none of yours or Google's: a People being loaded, that read before a member
+        named a face, works out its own and leaves theirs (refresh then reads it, PhotoApp.load_people)."""
         np = self.np
         with self.lock:
             rows = np.flatnonzero(self.src < GOOGLE)   # everything you or Google haven't settled
@@ -529,7 +572,8 @@ class People:
             changed = rows[pid[rows] != self.pid[rows]]
             if len(changed):
                 with closing(connect(self.db)) as con, con:
-                    con.executemany("UPDATE faces SET person_id=?, source=?, labeled_at=? WHERE id=?",
+                    con.executemany("UPDATE faces SET person_id=?, source=?, labeled_at=? WHERE id=?"
+                                    " AND (source IS NULL OR source='auto')",
                                     [(int(pid[r]) if pid[r] > 0 else None, "auto" if pid[r] > 0 else None,
                                       now(), int(self.ids[r])) for r in changed])
             self.pid, self.src, self.sug, self.sug_score, self.sug_far = pid, src, sug, sug_score, sug_far
@@ -557,8 +601,9 @@ class People:
             return
         have = {p["name"]: i for i, p in self.persons.items()}
         for nm in names:
-            if nm not in have:
-                have[nm] = con.execute("INSERT INTO persons(name, created_at) VALUES (?,?)", (nm, now())).lastrowid
+            if nm not in have:      # (or a member made them since this People read: then theirs, not a second one)
+                con.execute("INSERT OR IGNORE INTO persons(name, created_at) VALUES (?,?)", (nm, now()))
+                have[nm] = con.execute("SELECT id FROM persons WHERE name=?", (nm,)).fetchone()[0]
                 self.persons[have[nm]] = {"name": nm, "born": None}
         good = (self.score >= 0.6) & (self.px >= 40)
         new = []
@@ -607,9 +652,14 @@ class People:
                     taken.add(p)
                     self.pid[k], self.src[k] = p, GOOGLE
                     new.append(k)
-        with con:   # the new people and Google's names together, or neither (and then no People at all)
-            con.executemany("UPDATE faces SET person_id=?, source='google', labeled_at=? WHERE id=?",
-                            [(int(self.pid[k]), now(), int(self.ids[k])) for k in new if self.src[k] == GOOGLE])
+        # The new people and Google's names together, or neither (and then no People at all). Only where the catalog
+        # has no name of yours or Google's, and no "not them": a member may have said so since this People read it.
+        with con:
+            con.executemany("UPDATE faces SET person_id=?, source='google', labeled_at=? WHERE id=?"
+                            " AND (source IS NULL OR source='auto')"
+                            " AND NOT EXISTS (SELECT 1 FROM face_not n WHERE n.face_id=faces.id AND n.person_id=?)",
+                            [(int(self.pid[k]), now(), int(self.ids[k]), int(self.pid[k]))
+                             for k in new if self.src[k] == GOOGLE])
 
     # -- faces nobody has named ----------------------------------------------------------------
 
@@ -784,7 +834,7 @@ class People:
                     j = int(mean.argmax())
                     if mean[j] >= 0.25:
                         guess = {"id": pids[j], "name": self.persons[pids[j]]["name"], "score": round(float(mean[j]), 2)}
-                out.append({"cluster": ci, "n": int(len(rows)), "faces": [self.face(k) for k in rows[:14]],
+                out.append({"cluster": self.first + ci, "n": int(len(rows)), "faces": [self.face(k) for k in rows[:14]],
                             "from": int(ys.min()) if len(ys) else 0, "to": int(ys.max()) if len(ys) else 0, "guess": guess})
                 if len(out) >= limit:
                     break
@@ -836,6 +886,7 @@ class People:
     def commit(self, d: Draft) -> None:
         """Swap in a draft whose transaction committed, and journal what it did. Under self.lock."""
         self.pid, self.src, self.nots, self.later, self.persons = d.pid, d.src, d.nots, d.later, d.persons
+        self.writes += 1
         for op, rows, extra in d.logs:
             self.log(op, rows, **extra)
 
@@ -843,6 +894,8 @@ class People:
         """{items: [label bodies]}: a page of decisions, applied in order in one transaction, then one rescore.
         `actor` (members.id) is who the journal names."""
         with self.lock:
+            if self.successor is not None:   # replaced while this waited (replaced_by): the People answering takes it
+                return self.successor.label_many(body, actor)
             d = Draft(self)
             with closing(connect(self.db)) as con, con:
                 for item in body.get("items") or []:
@@ -859,8 +912,11 @@ class People:
         year), less the ones in `not`, so you can say yes to all of them and find the mistakes afterwards.
         undo: [ids] takes back what was said about those faces first: their name, and "not" or "later" for
         undo_person (for everyone, without it).
-        later: [ids], later_person: id puts those faces aside, unnamed, to be asked about again later."""
+        later: [ids], later_person: id puts those faces aside, unnamed, to be asked about again later.
+        `cluster` is a number unknown() gave: a group of another People's (the one before a load) raises Regrouped."""
         with self.lock:
+            if self.successor is not None:
+                return self.successor.label(body, actor)
             d = Draft(self)
             with closing(connect(self.db)) as con, con:
                 self.decide(body, d, con)
@@ -884,8 +940,10 @@ class People:
                 m = m & (self.year == int(year)) if ok else m & False
             skip = {self.row[i] for i in body.get("not") or [] if i in self.row}
             rows = [int(k) for k in np.flatnonzero(m) if int(k) not in skip]
-        if isinstance(body.get("cluster"), int) and 0 <= body["cluster"] < len(self.clusters):
-            c = self.clusters[body["cluster"]]      # the whole group, not just the faces shown
+        if isinstance(body.get("cluster"), int):
+            if not 0 <= body["cluster"] - self.first < len(self.clusters):
+                raise Regrouped("the unnamed faces have been grouped again since these were shown: look at them again")
+            c = self.clusters[body["cluster"] - self.first]     # the whole group, not just the faces shown
             rows = [int(k) for k in c[(d.pid[c] == -1) & (self.sug_score[c] < SUGGEST)]]
         undo = [self.row[i] for i in body.get("undo") or [] if i in self.row]
         if undo:                                    # take back whatever was said about these faces
@@ -935,6 +993,8 @@ class People:
         rows (a face already ruled out or put aside for both keeps one row), in SQLite and in memory, and
         leaves nothing that names p. Journalled as born, rename and merge records."""
         with self.lock:
+            if self.successor is not None:
+                return self.successor.edit_person(body, actor)
             p = body.get("id")
             if p not in self.persons:
                 return {"error": "unknown person"}
@@ -1040,12 +1100,15 @@ class People:
             if path == "/api/people/photo" and face is not None:
                 return found(self.photo(face))
         elif method == "POST" and body is not None:
-            if path == "/api/people/label":
-                return js(self.label(body, actor))
-            if path == "/api/people/label-many":
-                return js(self.label_many(body, actor))
-            if path == "/api/people/person":
-                return js(self.edit_person(body, actor))
+            try:
+                if path == "/api/people/label":
+                    return js(self.label(body, actor))
+                if path == "/api/people/label-many":
+                    return js(self.label_many(body, actor))
+                if path == "/api/people/person":
+                    return js(self.edit_person(body, actor))
+            except Regrouped as e:     # nothing was named
+                return js({"error": str(e)}, 409)
         return None
 
 

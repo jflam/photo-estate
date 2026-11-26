@@ -148,7 +148,8 @@ ReloadRead(i) ==
 
 \* Live.install(fresh, then=caught_up, looks=with_private): in one swap, with no request reading, the new catalog,
 \* the looks as they are with the private rows read again, the caches let go; then loaded_through and the error
-\* cleared. Guarded: under fav_write, which no relook or favourite then holds
+\* cleared. Guarded: under fav_write, which no relook or favourite then holds. (If the private rows it read changed what
+\* People is built without, a thread is started that loads People: none of this model's variables, specs/People.tla.)
 ReloadInstall(i) ==
   /\ inv[i] = "install" /\ q = "out"
   /\ Guarded => fw = "none"
