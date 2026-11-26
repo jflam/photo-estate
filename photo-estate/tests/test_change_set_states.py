@@ -184,7 +184,8 @@ def test_an_album_moves_as_its_owner_asks(db, con, c):
     assert ok(c.write(sid, "view", {}, actor=BEN))["state"] == "album"
     assert lenses.publish_album(con, BEN, sid, True)["changed"] and published(con, sid)
     lid = lenses.publish_album(con, BEN, sid, False)["lens"]
-    assert lenses.publish(con, BEN, lid, True)["changed"] and lenses.publish(con, BEN, lid, False)["changed"]
+    with pytest.raises(lenses.LensError):        # a series goes by its album: not by the lens's own route (issue #126)
+        lenses.publish(con, BEN, lid, True)
     assert ok(c.write(sid, "discard", {}, actor=BEN)) == {"discarded": sid}
     assert row(con, sid)[1] == "discarded" and not published(con, sid)
 
@@ -205,44 +206,54 @@ def test_a_committed_set_is_as_committed(db, con, c):
     assert s["status"] != "done" or (s["state"] == "done" and s["n"] == 1), "nothing about it changes until it is reopened"
 
 
-def test_an_album_with_new_photos_waiting_is_not_put_up_for_hiding(db, con, c):
-    """WaitingForASeries: Ben's series has new photos waiting; he puts it up for hiding. The item stays open, for an
-    album that is no series now, and adds its photos to the hiding set (the test above)."""
+def test_an_album_put_up_for_hiding_has_no_new_photos_waiting(db, con, c):
+    """WaitingForASeries: Ben's series has new photos waiting; he puts it up for hiding. Before the fix the item stayed
+    open, for an album that is no series now, and added its photos to the hiding set (the test above). The hide goes
+    ahead and the item is done with it (issue #125)."""
     sid = series(c)
     ingest(db, sid)
     got = c.write(sid, "hide", {}, actor=BEN)
     assert not waiting(con, sid) or a_series(con, sid), "new photos wait only for a series"
-    assert refused(got) and row(con, sid) == ("view", "open", 1)
+    assert ok(got)["state"] == "review" and row(con, sid)[0] == "hide" and not waiting(con, sid)
 
 
-def test_an_album_with_new_photos_waiting_is_not_put_away(db, con, c):
-    """WaitingForASeries: the same, discarded: the item opens an album that answers 404, and can never be done."""
+def test_an_album_put_away_has_no_new_photos_waiting(db, con, c):
+    """WaitingForASeries: the same, discarded: before the fix the item opened an album that answers 404, and could
+    never be done. The album is put away and the item is done with it."""
     sid = series(c)
     ingest(db, sid)
     got = c.write(sid, "discard", {}, actor=BEN)
     assert not waiting(con, sid) or a_series(con, sid), "new photos wait only for a series"
-    assert refused(got) and row(con, sid) == ("view", "open", 1)
+    assert ok(got) == {"discarded": sid} and row(con, sid)[1] == "discarded" and not waiting(con, sid)
 
 
-def test_a_published_series_is_not_put_up_for_hiding(db, con, c):
-    """PublishedIsAnAlbum: Ben publishes his album as a series, then puts it up for hiding. Its series stays
-    published, its subscribers' album is gone for them, and publish_album (409 for a set up for hiding) cannot take
-    it back."""
+def unpublished_why(con, sid: int):
+    """Why the album's series was last taken back, as the journal says."""
+    import json
+    got = con.execute("SELECT data FROM journal WHERE kind='album.unpublished' AND subject=? ORDER BY id DESC LIMIT 1",
+                      (f"album:{sid}",)).fetchone()
+    return got and json.loads(got[0]).get("why")
+
+
+def test_a_published_series_put_up_for_hiding_is_taken_back(db, con, c):
+    """PublishedIsAnAlbum: Ben publishes his album as a series, then puts it up for hiding. Before the fix its series
+    stayed published, its subscribers' album was gone for them, and publish_album (409 for a set up for hiding) could
+    not take it back. The series is taken back with the hide, and the journal says why (issue #124)."""
     sid = ok(c.create({"title": "Trips", "op": "view", "items": [S1]}, actor=BEN))["id"]
     lenses.publish_album(con, BEN, sid, True)
     got = c.write(sid, "hide", {}, actor=BEN)
     assert not published(con, sid) or row(con, sid)[0] == "view", "a set up for hiding is not published"
-    assert refused(got) and published(con, sid)
+    assert ok(got)["state"] == "review" and not published(con, sid) and unpublished_why(con, sid) == "hide"
 
 
-def test_a_published_series_is_not_put_away(db, con, c):
-    """PublishedIsAnAlbum: the same, discarded: the series stays published, in every member's lenses, for an album
-    that answers no request, and publish_album (404 for a discarded album) cannot take it back."""
+def test_a_published_series_put_away_is_taken_back(db, con, c):
+    """PublishedIsAnAlbum: the same, discarded: before the fix the series stayed published, in every member's lenses,
+    for an album that answers no request, and publish_album (404 for a discarded album) could not take it back."""
     sid = ok(c.create({"title": "Trips", "op": "view", "items": [S1]}, actor=BEN))["id"]
     lenses.publish_album(con, BEN, sid, True)
     got = c.write(sid, "discard", {}, actor=BEN)
     assert not published(con, sid) or row(con, sid)[1] != "discarded", "a discarded album is published nowhere"
-    assert refused(got) and published(con, sid)
+    assert ok(got) == {"discarded": sid} and not published(con, sid) and unpublished_why(con, sid) == "discard"
 
 
 @pytest.mark.parametrize("what", ["hide", "discard"])
@@ -286,7 +297,7 @@ def test_an_album_published_as_it_is_put_up_for_hiding_or_away_is_one_or_the_oth
     got = c.write(sid, what, {}, actor=BEN)
     assert not published(con, sid) or (row(con, sid)[0] == "view" and row(con, sid)[1] != "discarded"), \
         "a published series is an album there to look at"
-    assert refused(got) and published(con, sid)
+    assert not refused(got) and not published(con, sid)      # (published first, then taken back with the write)
 
 
 @pytest.mark.parametrize("what", ["hide", "discard"])
@@ -297,4 +308,4 @@ def test_an_album_new_photos_are_found_for_as_it_is_put_up_for_hiding_or_away_is
     c.steps = (lambda: ingest(db, sid),)
     got = c.write(sid, what, {}, actor=BEN)
     assert not waiting(con, sid) or a_series(con, sid), "new photos wait only for a series"
-    assert refused(got) and waiting(con, sid)
+    assert not refused(got) and not waiting(con, sid)        # (the item opened first, then done with the write)

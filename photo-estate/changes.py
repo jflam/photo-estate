@@ -570,8 +570,7 @@ class Changes:
                     what = "items" if extra["added"] else what
                 elif what == "hide":             # the album becomes a change set: reviewed, then applied, as any other
                     if was["op"] != ChangeOp.HIDE:
-                        if bad := self.followed(con, was):
-                            return {"error": bad}, 409
+                        self.unfollow(con, was, "hide", actor, acting_for)
                         if was["kind"] == AlbumKind.LIVE:    # fixed as what it finds now: a review needs photos that stay put
                             extra = self.add_items(con, sid, self.members(con, was, viewer), viewer)
                         con.execute("UPDATE change_sets SET op='hide', kind='list', status='open' WHERE id=?", (sid,))
@@ -641,8 +640,7 @@ class Changes:
                 elif what == "discard":          # marked, never deleted: its rows stay, and it is in no listing
                     if con.execute("SELECT 1 FROM hidden WHERE set_id=? LIMIT 1", (sid,)).fetchone():
                         return {"error": "this set is hiding photos; undo it first"}, 409
-                    if bad := self.followed(con, was):
-                        return {"error": bad}, 409
+                    self.unfollow(con, was, "discard", actor, acting_for)
                     con.execute("UPDATE change_sets SET status=?, updated_at=? WHERE id=?", (ChangeStatus.DISCARDED, t, sid))
                     member_inbox.close(con, "review", f"album:{sid}")     # put away: nothing is left to look over
                     journal.append(con, actor, "album.discarded", f"album:{sid}", {"title": was["title"]}, acting_for)
@@ -663,17 +661,15 @@ class Changes:
         return {**out, "busy": bool(self.busy())}, 200
 
     @staticmethod
-    def followed(con, was: dict) -> str | None:
-        """Why an album is not put up for hiding (`hide`) or away (`discard`) now, or None: it is published as a series
-        (members follow it, and a set up for hiding or put away is published nowhere), or new photos are waiting for
-        it as a series (an open series_update item, which only a series has). Its owner takes the series back, or adds
-        the new photos or none, first."""
+    def unfollow(con, was: dict, why: str, actor: int | None, acting_for: int | None) -> None:
+        """An album put up for hiding (`hide`) or put away (`discard`) is a series no longer, in the same transaction:
+        if it is published it is taken back (lenses.series_taken_back: a set up for hiding or put away is published
+        nowhere, and its subscribers' "it changed" items are done), and new photos waiting for it wait no more (its
+        open series_update item, which only a series has, is done; the listener offers none to a set that is not an
+        album to look at). The owner asked for one thing and is not asked to do two others first (issues #124, #125)."""
         if was["published"]:
-            return "this album is published as a series; stop publishing it first"
-        if con.execute("SELECT 1 FROM inbox_items WHERE kind='series_update' AND ref=? AND state='open' LIMIT 1",
-                       (f"album:{was['id']}",)).fetchone():
-            return "new photos are waiting for this series; add them, or none, first"
-        return None
+            lenses.series_taken_back(con, actor, was["id"], why, acting_for)
+        member_inbox.close(con, "series_update", f"album:{was['id']}")
 
     def tell(self, con, sid: int, what: str, was: dict, extra: dict, changed: bool, wrote: bool, viewer, actor) -> None:
         """The inbox (member_inbox.py), in the write's transaction: a hiding set applied in full, or taken down

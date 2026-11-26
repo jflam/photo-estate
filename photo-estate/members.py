@@ -277,9 +277,30 @@ def change(con: sqlite3.Connection, mid: int, actor: int | None, **fields) -> Me
             for kind, ref in con.execute("SELECT kind, ref FROM inbox_items WHERE member_id=? AND state='open'"
                                          " AND kind IN ('member_request', 'lens_proposed')", (mid,)).fetchall():
                 member_inbox.close(con, kind, ref, mid)
+        elif (m.role, m.status) != ("sysadmin", "active"):           # a sysadmin from now: what waits is theirs too
+            _waiting(con, mid)                                       # (issue #127)
     got = get(con, mid)
     assert got is not None
     return got
+
+
+def _waiting(con, mid: int) -> None:
+    """Someone was made a sysadmin: an item of theirs for each thing already waiting for a sysadmin, worded as the
+    others' are: everyone asking to be let in (request), and every filter proposed as an estate default but their
+    own (lenses.propose). In change's transaction."""
+    for other, name, login in con.execute(
+            f"SELECT m.id, m.name, (SELECT login FROM member_logins WHERE member_id=m.id ORDER BY added_at LIMIT 1)"
+            f" FROM members m WHERE m.status='pending' AND {PEOPLE} AND m.id != ? ORDER BY m.id", (mid,)).fetchall():
+        member_inbox.put(con, [mid], "member_request", f"member:{other}", f"{name} asks to be let in ({login})")
+    if not _has(con, "lenses"):
+        return
+    first = (member_inbox.sysadmins(con) or [None])[0]               # whose a lens with no owner is
+    for lid, owner, title in con.execute("SELECT id, owner, title FROM lenses WHERE proposed_at IS NOT NULL"
+                                         " AND estate_default=0 ORDER BY id").fetchall():
+        owner = owner if owner is not None else first
+        if owner != mid:
+            name = (con.execute("SELECT name FROM members WHERE id=?", (owner,)).fetchone() or ["Someone"])[0]
+            member_inbox.put(con, [mid], "lens_proposed", f"lens:{lid}", f"{name} proposes the filter “{title}” as an estate default")
 
 
 def first_start(con: sqlite3.Connection, logins, sysadmin: str | None = None) -> list[Member]:
