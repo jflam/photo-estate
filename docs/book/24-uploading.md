@@ -196,11 +196,17 @@ flowchart LR
   You can withdraw one from view later, but not erase it."*
 - **Approved photos are sent at once** by the in-app uploader (it has the app open: the member just tapped);
   what it cannot send stays approved, and the extension makes jobs for it on its next run. The extension only
-  creates jobs: iOS lets nothing else.
+  creates jobs: iOS lets nothing else. What the extension takes for jobs stays in `GateState.pending`, written in
+  the same locked write that takes it (`Gate.route`), until the jobs exist (`Gate.queued`): iOS may end the
+  extension between any two of its writes, and the next run makes what is left (once kept in its own
+  UserDefaults, after its change token: ended between the two, the photos were lost).
 - **Kept back is a tombstone.** Applying a batch hashes each original file of every marked photo (SHA-256 of
   the bytes, as the store keys them; a Live Photo has two), keeps the hashes with the photo's identifier, and
   sends the hashes, and nothing else, to `POST /api/tombstones` (kept and sent later if the server cannot be
-  reached). On this phone the identifier keeps the photo from ever becoming a job. On a **new phone** the
+  reached). A marked photo whose file cannot be read (in iCloud, with no network), or that was marked while the
+  others were hashed, stays in the batch, marked, and the Inbox says so: it is never kept back with no hash to
+  tell. On this phone the identifier keeps the photo, and one marked in a batch, from ever being sent, by either
+  uploader and under any policy (`Gate.held`). On a **new phone** the
   identifiers are new and only the hashes match: the app reads the member's tombstones from `GET
   /api/tombstones` each time it comes to the front, before it sends anything, and the in-app uploader, which
   hashes every file it sends, keeps such a photo back without a request. If its list is stale (another phone of
@@ -211,7 +217,17 @@ flowchart LR
 - **An opt-out is the member's own.** It refuses their upload of those bytes and nobody else's, and it is no
   withdraw: a copy another member shares, or one already in the estate, is untouched. Only the member takes it
   back, on their phone: **Kept back on this iPhone** lists those photos with **Share after all**, which lifts the
-  tombstone (`lift`) and sends the photo.
+  tombstone (`lift`) and sends the photo once the server has answered the lift (until then it waits in
+  `GateState.lifting`, so that neither uploader sends it while the server still refuses it). Other photos kept
+  back with the same bytes (a duplicate in Photos) are shared after all with it: kept back, they would refuse it.
+  The app talks to the server about tombstones one request at a time (`ServerTurns`: each POST, and the GET when
+  it comes to the front), so that a lift never reaches the server before the add it undoes, nor an old answer
+  of the GET is written over a newer lift.
+- **Checked by a model.** [specs/PhoneGate.tla](../../photo-estate/specs/PhoneGate.tla) is the gate as a TLA+
+  model (chapter 17): the file, the extension ended at any point, the app's functions at their awaits, the
+  in-app uploader, the policy changing, and the server's tombstones and bytes. TLC found what the last three
+  points fix; `ios/Tests/main.swift` replays each trace on `PhoneGate.swift`. Open for the owner: the batches
+  made under a review policy that becomes `everything` are kept, held and shown nowhere.
 - **The Hidden album.** PhotoKit leaves hidden photos out of every fetch unless asked, and nothing here asks: a
   hidden photo is never a candidate, never in a chunk and never sent (the extension drops it from its pending
   list for good, as before). A photo unhidden later is offered with its year's chunk.
@@ -343,8 +359,9 @@ ios/Tests/run.sh                                                     # the gate'
 
 `Tests/run.sh` compiles `PhoneGate.swift` and `UploadRequest.swift` with `Tests/main.swift` for the Mac
 (`swiftc`) and runs them: the routing of new photos under each policy, batches and marks, opt-outs and their
-hashes, share after all, a new phone's tombstones, chunks, the state file (and one an older build wrote), and the
-request's path and headers. There is no Xcode test target. To try uploads against a demo server, start it with
+hashes, share after all, a new phone's tombstones, chunks, the state file (and one an older build wrote), the
+request's path and headers, and the traces of `specs/PhoneGate.tla`, in the order the app, the in-app uploader and
+the extension make their calls. There is no Xcode test target. To try uploads against a demo server, start it with
 `--inbox <a scratch folder> --ingest-quiet 0`: uploads land in the folder and no ingest runs (an ingest in
 `--demo` would write into the checked-in demo store).
 

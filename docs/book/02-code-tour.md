@@ -366,7 +366,10 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             lock); People.tla, who each face is in the catalog and in People's memory, a load of
                             People beside the one answering, a member's change, a group named from the page, and
                             what People is built without (faces.People, PhotoApp.load_people, reload_catalog);
-                            <Name>.cfg is the
+                            PhoneGate.tla, the iPhone's phone gate: GateState in the app group, the upload
+                            extension, the app's functions at their awaits, the in-app uploader, and the member's
+                            tombstones and the bytes on the server (ios/Shared/PhoneGate.swift and its callers,
+                            private.py's tombstones); <Name>.cfg is the
                             code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail;
                             machines.toml, the register of every state machine, its writers and how it is checked
   demo/                     104 CC0 photos, their catalog, and credits
@@ -385,8 +388,9 @@ ios/                 6,705  the iPhone app (chapters 19-24, 26)
   UploadExtension/         106  the background upload extension (jobs, or candidates for the Inbox)
   Shared/                  347  the server's address (and a debug build's demo member), the upload request, the
                                 extension's log, PhoneGate.swift (217: the gate's rules and state, in the app group)
-  Tests/                   220  the phone's unit tests (the gate, the upload request, questions and stories): run.sh
-                                compiles them with Shared/ and StoryModel.swift for the Mac and runs them
+  Tests/                   220  the phone's unit tests (the gate, the upload request, questions and stories, and
+                                specs/PhoneGate.tla's traces replayed on the gate): run.sh compiles them with Shared/
+                                and StoryModel.swift for the Mac and runs them
   project.yml, project-sim.yml, deploy.sh, build-number   XcodeGen specs; build and install on the phone
 ```
 
