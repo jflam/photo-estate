@@ -334,8 +334,9 @@ class PhotoApp:
         # and `estate.py link` writes it again on every ingest, so what a person says here is kept beside it
         # (the `favorites` table) and wins. It shows at once: the member's view (its rows, the count) and every
         # cached order and cover are brought up to date here, and the looks (lenses.State, which every view is
-        # worked out from) are told, so a view worked out again agrees. fav_write puts one set_favorites, or
-        # one re-reading of the looks (relook), at a time. Lock order: fav_write, then live.gate (catalog.Gate).
+        # worked out from) are told, so a view worked out again agrees. fav_write puts one set_favorites, one
+        # re-reading of the looks (relook, from its read to its install), or one install of a reloaded catalog, at a
+        # time. Lock order: fav_write, then live.gate (catalog.Gate).
         self.fav_write = threading.Lock()
         # Re-reading the catalog is in one of three states: idle, running, or rerun (asked again while
         # running: when this run ends, another starts, so nothing that was asked for is missed).
@@ -414,9 +415,7 @@ class PhotoApp:
         with self.fav_write:     # not while a favourite is being shown: it would be lost from the looks
             before = self.live.looks.people_out() if isinstance(self.live.looks, lenses.State) else None
             looks = self.read_looks()
-            self.live.relook(looks)
-            self.browse.forget()
-            self.admin.forget_library()
+            self.live.relook(looks, then=self.caught_up)
         return before != looks.people_out()
 
     def refused(self, sha: str, member: int | None) -> bool:
@@ -661,13 +660,17 @@ class PhotoApp:
             con.close()
 
     def caught_up(self, cat: catalog.Catalog) -> None:
-        """In the swap that installs a reloaded catalog: what was worked out from the old one is let go."""
+        """In the swap that installs a reloaded catalog, or new looks (relook): what was worked out from the old ones is
+        let go, before any request could be answered from it (Admin's library numbers are not kept by generation)."""
         self.browse.forget()      # cached masks and rankings are the old catalog's
         self.admin.forget_library()
 
     def reload_catalog(self) -> None:
         """Re-read the catalog and swap it in, with no restart. The new catalog is built on the side while the
-        old one keeps answering; only the swap waits for requests in flight. Asked again mid-run, it runs again."""
+        old one keeps answering; only the swap waits for requests in flight. Asked again mid-run, it runs again.
+        The swap is under fav_write: a relook between its read and its install would otherwise put looks read before
+        this catalog over the private rows read with it, and a photo just ingested would have no row (specs/Reload.tla).
+        A run that fails before its catalog is in sets the ingest's `fresh` again."""
         rs = self.reload_state
         with self.reload_lock:
             if rs["state"] != "idle":
@@ -676,14 +679,15 @@ class PhotoApp:
             rs["state"] = "running"
         try:
             while True:
-                t = time.time()
+                t, ok = time.time(), False
                 try:
                     mark = self.journal_end()
                     fresh = self.load_catalog(self.live.cat.raw)
                     if os.environ.get("PHOTO_ESTATE_CHECK_RELOAD"):   # tools/bench_ingest.py --check
                         print(f"reload check: {fresh.differences(self.load_catalog()) or 'same as a full load'}", flush=True)
-                    self.live.install(fresh, then=self.caught_up, looks=self.with_private)
-                    self.loaded_through = mark
+                    with self.fav_write:     # not between a relook's read and its install, nor while a favourite is shown
+                        self.live.install(fresh, then=self.caught_up, looks=self.with_private)
+                    self.loaded_through, ok = mark, True
                     self.listen_wake.set()      # an ingest's new photos are searchable now: the series listener
                     rs.update(at=time.time(), seconds=time.time() - t, error=None)
                     print(f"catalog reloaded: {fresh.N} images in {time.time() - t:.1f}s", flush=True)
@@ -693,6 +697,8 @@ class PhotoApp:
                 except Exception as e:   # keep serving the old catalog
                     rs["error"] = f"{type(e).__name__}: {e}"
                     print(f"catalog reload failed: {rs['error']}", flush=True)
+                    if self.ingest and not ok:   # what the ingest catalogued is not in: /stats says so again, though
+                        self.ingest.fresh = True  # an earlier call, done meanwhile, cleared it (specs/Reload.tla)
                 with self.reload_lock:
                     if rs["state"] != "rerun":
                         rs["state"] = "idle"
@@ -723,7 +729,12 @@ class PhotoApp:
         background; `busy` (the review page's check) is true until it is done."""
         with self.settling_lock:
             self.settling += 1
-        threading.Thread(target=self.hidden_changed, args=(people,), daemon=True).start()
+        try:
+            threading.Thread(target=self.hidden_changed, args=(people,), daemon=True).start()
+        except BaseException:   # no thread: nothing will count it down (busy would be true for ever)
+            with self.settling_lock:
+                self.settling -= 1
+            raise
 
     def reading(self, fn):
         """fn(), as a request reads the catalog: inside the gate."""
