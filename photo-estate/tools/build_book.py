@@ -191,7 +191,7 @@ class Site:
 
     def fence_blocks(self, body: str, tokens) -> str:
         """Fenced code: Mermaid stays as source for the browser to draw; the rest is highlighted."""
-        fences = [t for t in tokens if t.type == "fence"]
+        fences = [t for t in tokens if t.type in ("fence", "code_block")]   # an indented block renders as <pre><code> too
         parts = re.split(r'(<pre><code(?: class="language-[^"]*")?>.*?</code></pre>\n)', body, flags=re.S)
         n = 0
         for k, part in enumerate(parts):
