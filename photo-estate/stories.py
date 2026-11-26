@@ -172,16 +172,21 @@ def _for(con, member: int) -> list[tuple]:
 
 def deal(con, member: int | None, now: datetime | None = None, refused: Refused = lambda s, m: False) -> int:
     """Put questions in `member`'s inbox, within their allowance (the module docstring has the rules). Returns how
-    many new inbox items it made. In its own transaction."""
+    many new inbox items it made. In its own transaction, which takes the write lock before it reads what it deals
+    and the items open: two reads of one inbox at once (two tabs, the phone) deal a question once, into one item,
+    and never into an item done meanwhile (specs/InboxItem.tla)."""
     if member is None:
         return 0
     now = now or datetime.now(timezone.utc)
     t = stamp(now)
     rows = [r for r in _for(con, member) if not any(refused(s, member) for s in json.loads(r[1]))]
-    if not rows:
+    if not rows:            # (most reads of the inbox have nothing to deal, and take no lock)
         return 0
     made = 0
     with con:
+        if not con.in_transaction:
+            con.execute("BEGIN IMMEDIATE")
+        rows = [r for r in _for(con, member) if not any(refused(s, member) for s in json.loads(r[1]))]   # (again)
         groups: dict[str, list[tuple]] = {}
         for r in rows:
             groups.setdefault(_group(r[3], r[0]), []).append(r)

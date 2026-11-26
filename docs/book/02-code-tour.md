@@ -69,13 +69,14 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             request-access page and /members' routes, favourites, reloads) and its HTTP
                             handler, which streams uploads, album downloads and videos (/video/, with Range)
   http_util.py         186  what the servers share: Response, bounded JSON bodies, int_param (400s), byte_range, the Auth rules
-  members.py           180  who the estate knows: members, their Tailscale logins, roles and upload policies; the first
-                            start from --upload-user, the demo's members; every change journaled; a member's own
-                            agents, one per device (agent_bindings: pending, approved, revoked) (chapter 11)
+  members.py           187  who the estate knows: members, their Tailscale logins, roles and upload policies; the first
+                            start from --upload-user, the demo's members; every change journaled; one who stops being
+                            an active sysadmin has nothing left to decide in their inbox; a member's own agents, one
+                            per device (agent_bindings: pending, approved, revoked) (chapter 11)
   journal.py            63  the estate's append-only log: append(con, actor, kind, subject, data) in the caller's
                             transaction, since(con, id); the kinds, where each is appended and who may read it;
                             by_agent (a member's own agent's writes) and for_member (journal_since) (chapter 11)
-  lenses.py            603  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
+  lenses.py            607  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
                             out of an estate default), "show it anyway", each member's favourites, why a photo is
                             hidden; State, the looks every member view is worked out from (chapter 11)
   private.py           745  photos private to their sharer (chapter 11): who may be shown a photo, the sharer ingest
@@ -86,11 +87,13 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             and review, "Reviewed up to here"); every writer of a row takes the write lock and
                             reads it again first (_begin); the phone gate's tombstones (a member's opt-outs)
   hold-prompts.json         the hold's prompts as SigLIP text vectors, made once by `embed.py hold-prompts`
-  member_inbox.py      169  each member's inbox (inbox_items; not the upload folder): put, close and retitle, called by the
+  member_inbox.py      174  each member's inbox (inbox_items; not the upload folder): put, close and retitle, called by the
                             code that makes and decides each kind, what an item opens, the member's list,
-                            dismissing; a lens that changed tells its live subscribers once (chapter 11)
-  stories.py           486  questions and stories (chapter 11): ask (only photos the recipient may be shown), the
-                            inbox's weekly allowance, ranking and grouping (deal), answering typed or spoken,
+                            dismissing (with the write lock held); a lens that changed tells its live subscribers once
+                            (chapter 11)
+  stories.py           491  questions and stories (chapter 11): ask (only photos the recipient may be shown), the
+                            inbox's weekly allowance, ranking and grouping (deal, which takes the write lock and reads
+                            again what it deals), answering typed or spoken,
                             telling a story, who may read one, a recording into the store with no assets row
   listeners.py         218  what the estate does by itself: listeners reading the journal from their cursors, at
                             least once; series kept up to date as photos arrive, an answer that wakes the agent
@@ -223,7 +226,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      49  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             7,994  16 self-running test scripts and 24 pytest files; conftest.py runs the scripts under pytest,
+  tests/             8,200  16 self-running test scripts and 25 pytest files; conftest.py runs the scripts under pytest,
                             test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_members.py checks members.py and its journal entries on a scratch catalog;
@@ -257,6 +260,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             photos, a published series or one with new photos waiting put up for hiding or away, the
                             series of a hiding set published by the lens's route, and the listener, hide or discard
                             landing between another writer's read and its write;
+                            test_inbox_states.py replays the same way each way the model of the inbox items about one
+                            thing (specs/InboxItem.tla) found one open about nothing, done with a question waiting in
+                            it, or put away once decided: a sysadmin who stops being one, a lens taken back, two reads
+                            of one inbox dealing a question at once, a question dealt into an item done meanwhile, and
+                            a dismiss landing after the item's decision;
                             test_specs.py runs TLC on every model in specs/ (skipped without Java and tla2tools.jar);
                             test_machines.py holds specs/machines.toml to the code: unregistered state, a new
                             writer of a registered table, or a change to a modelled function fails;
@@ -305,12 +313,13 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
   deploy/              330  launchd plists, photo-search.service (systemd) and HOME-COMPUTE.md for the Linux PC, the cloud
                             preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
-  specs/               943  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
+  specs/             1,334  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
                             says when a change needs one, how to read one and how to run them; chapter 17):
                             PrivatePhoto.tla, one `private` row and everything that writes it; Lens.tla, a filter
                             lens, a subscription to it and an album's series rows (lenses.py); ChangeSet.tla, an
                             album or change set, its photos, its series row and its inbox items (changes.py, and
-                            the listener and lenses.py beside it); <Name>.cfg is the
+                            the listener and lenses.py beside it); InboxItem.tla, the inbox items about one thing
+                            (member_inbox.py and its callers: members.py, lenses.py, stories.py, private.py); <Name>.cfg is the
                             code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail;
                             machines.toml, the register of every state machine, its writers and how it is checked
   demo/                     104 CC0 photos, their catalog, and credits

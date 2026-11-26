@@ -102,7 +102,9 @@ def sysadmins(con: sqlite3.Connection) -> list[int]:
 
 def put(con: sqlite3.Connection, members, kind: str, ref: str, title: str) -> list[int]:
     """One open item of `kind` about `ref` for each of `members` (members.id; None is skipped): made, or, when
-    one is open already, given this title and moved to the top. In the caller's transaction. Returns their ids."""
+    one is open already, given this title and moved to the top. In the caller's transaction, which holds the write
+    lock already (it has written, or begun with BEGIN IMMEDIATE): put reads, then inserts, and two callers reading at
+    once with no lock would each insert one (stories.deal did: specs/InboxItem.tla). Returns their ids."""
     assert kind in OPENS, f"not an inbox kind: {kind}"
     t, out = now(), []
     for m in dict.fromkeys(x for x in members if x is not None):
@@ -150,8 +152,11 @@ def mine(con: sqlite3.Connection, member: int | None, keep=None) -> dict:
 
 def dismiss(con: sqlite3.Connection, member: int | None, iid: int) -> dict:
     """POST /api/inbox/<id>/dismiss: the member puts one of their own open items away. inbox.dismissed in the
-    journal. InboxError 404 for an item that is not theirs (as if there were none), 409 for one not open."""
+    journal. InboxError 404 for an item that is not theirs (as if there were none), 409 for one not open. It takes the
+    write lock before it reads the item: one decided (or put away from another tab) as this was asked is not open."""
     with con:
+        if not con.in_transaction:
+            con.execute("BEGIN IMMEDIATE")
         row = con.execute("SELECT kind, ref, state FROM inbox_items WHERE id=? AND member_id IS ?", (iid, member)).fetchone()
         if row is None:
             raise InboxError(404, "no such item")
