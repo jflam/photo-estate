@@ -110,6 +110,24 @@ Changes page and from `/mcp`'s `submit_task`; the agent calls `/mcp` from this c
 token, and is answered as that member sees the library (below, [What each member
 sees](#what-each-member-sees-lenses), and [the estate's agent](#the-estates-agent-listeners-questions-and-stories)).
 
+**What is checked, and what is not yet decided.** Who a request is let through as is the copy the app keeps, so
+`specs/Member.tla` models the copy too: every change of a member and every request to be let in, the load that
+reads the copy again after each (`PhotoApp.load_members`), and requests let through by what the copy says. Its
+rules: the estate keeps an active sysadmin; a change writes only the fields it was given, the others as they are;
+`joined_at` is set once a member is let in, and stays; once every change has been read again, the copy is what the
+catalog says, and a request is let through only as the catalog says (but in the moment between a change and its
+own load, milliseconds); a second request from one login is answered with its member. `members.change` and
+`members.request` take the write lock before they read (`members._begin`), and `load_members` runs one at a time
+(`members_lock`): before, two changes of one member at once could undo each other (a revoke undone by a rename; a
+member let in waiting again, with no item to let them in by), two loads at once could leave the older copy in
+place until the next change (a member revoked, or a sysadmin made a member, let through as before), and a second
+tap of the request-access button was answered with a dropped connection. `members.change` does not ask who its
+actor is: that is the route's gate alone. What the model shows the code does, and leaves to the owner
+(tests/test_member_states.py has each): a revoke leaves the member's approved agents approved, refused while the
+member is and back, unasked, when they are let in again; a run of the estate's agent acting for them goes on until
+it ends, and a task they queued starts after; and any status may follow any other (`/members` offers let in, turn
+away, turn off and let in again; the API also takes pending again).
+
 **The first start.** A catalog made before members has none. On the first start of the new code, the
 logins given by `--upload-user` become active members who may upload everything, the first of them the
 sysadmin (or the one `--sysadmin` names). After that the options are not read again: members are kept on
@@ -544,7 +562,12 @@ off means it no longer acts as the member at all. Only the member moves it, on t
 never through `/mcp`: pending → approved or revoked, approved → revoked, revoked → approved. **Allowing must come
 from another device than the agent's own** (403 otherwise): the agent holds the member's login on its device and
 could send any request a browser there could, so nothing that comes from that device is proof that the member said
-yes. Turning one off is allowed from anywhere. Another member's binding is a 404.
+yes. Turning one off is allowed from anywhere. Another member's binding is a 404. `decide_binding` reads the binding with the
+write lock held, so an allow and a turn-off at once end as the later one answered (before, a turn-off that read
+the binding already off could answer "off" while an allow landed in between). The rule compares the node strings
+`PhotoApp.device` gives, and one laptop is `node:<StableID>` when whois answers for its address and `addr:<ip>`
+when it does not: an agent whose first call came while whois could not answer (or whose allow comes while it
+cannot) is allowed from its own device. That is a question for the owner, open (specs/Member.tla).
 
 **What it may call.** The estate's agent's tools acting for its member, less `submit_task`, `get_task` and
 `cancel_task` (its work runs in the member's harness, never on the owner's subscription; called anyway they answer
