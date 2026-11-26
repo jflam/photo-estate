@@ -291,15 +291,18 @@ final class Catalog {
 
     // MARK: a sync's steps (SyncEngine), and a favourite kept (Favourites): each one transaction on the store's writer
 
-    /// Where the replica is in the feed: what it sends as `epoch`, `since` and `after`.
+    /// Where the replica is in the feed: what it sends as `epoch`, `since` and `after`; and `edits`, how many times
+    /// the phone's copy was changed here (`keep`), so a page asked before one is not applied over it.
     struct Cursor: Equatable {
         var epoch = ""
         var since = "0"
         var after = ""
+        var edits = "0"
     }
 
     static func cursor(_ db: SQLite) throws -> Cursor {
-        Cursor(epoch: try get(db, "epoch") ?? "", since: try get(db, "since") ?? "0", after: try get(db, "after") ?? "")
+        Cursor(epoch: try get(db, "epoch") ?? "", since: try get(db, "since") ?? "0", after: try get(db, "after") ?? "",
+               edits: try get(db, "edits") ?? "0")
     }
 
     /// One page of the feed, as the server answered it (`GET /api/sync`).
@@ -314,9 +317,14 @@ final class Catalog {
     }
 
     /// A page and its cursor, in one transaction; when there is no more, whatever another epoch left is dropped and
-    /// the trips replaced. `asked` is the cursor the page was asked with. Returns whether the page was applied.
+    /// the trips replaced. `asked` is the cursor the page was asked with. Returns whether the page was applied: not if
+    /// the phone's copy was changed since it was asked (a favourite kept: the page may be from before it, and would
+    /// put the old one back), and then nothing is written and the caller asks again (specs/PhoneReplica.tla).
     static func applyPage(_ db: SQLite, _ page: Page, asked: Cursor) throws -> Bool {
+        var applied = false
         try db.transaction {
+            guard try get(db, "edits") ?? "0" == asked.edits else { return }
+            applied = true
             try apply(db, rows: page.rows, deleted: page.deleted, epoch: page.epoch)
             try set(db, "epoch", page.epoch)
             try set(db, "since", String(page.since))
@@ -326,12 +334,15 @@ final class Catalog {
                 if let trips = page.trips { try set(db, "trips", trips) }
             }
         }
-        return true
+        return applied
     }
 
-    /// The server has made these favourites (or not): the phone's copy says so too.
+    /// The server has made these favourites (or not): the phone's copy says so too, and `edits` moves on.
     static func keep(_ db: SQLite, _ shas: [String], _ on: Bool) throws {
-        try db.transaction { for s in shas { try db.run("UPDATE photos SET fav=? WHERE sha=?", [on, s]) } }
+        try db.transaction {
+            for s in shas { try db.run("UPDATE photos SET fav=? WHERE sha=?", [on, s]) }
+            try set(db, "edits", String((Int(try get(db, "edits") ?? "0") ?? 0) + 1))
+        }
     }
 
     // MARK: reading

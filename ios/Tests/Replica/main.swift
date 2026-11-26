@@ -76,7 +76,10 @@ do {
     let applied = try await s.write { try Catalog.applyPage($0, page([row(y, place: "Lyon")], since: 2), asked: asked) }
     check(try await photos(s)[y] == true, "KeptStays: a page answered before a favourite the phone kept is not applied over it")
     let now = try await s.read { try Catalog.cursor($0) }
-    check(!applied && now == asked, "that page is not applied: the cursor is where it was, to ask again")
+    check(!applied && (now.epoch, now.since, now.after) == (asked.epoch, asked.since, asked.after),
+          "that page is not applied: the cursor is where it was, to ask again")
+    _ = try await sync(s, page([row(y, fav: true, place: "Lyon")], since: 3))    // asked again: answered after the favourite
+    check(try await photos(s) == [y: true, w: false], "the page asked again is applied")
 }
 
 print(failures == 0 ? "replica: ok" : "replica: \(failures) failed")

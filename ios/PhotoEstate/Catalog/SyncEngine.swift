@@ -8,6 +8,8 @@ import SwiftUI
 /// changed since the cursor we hold, apply each page in one transaction together with the new cursor,
 /// repeat until it says there is no more. A page that fails leaves the cursor where it was, so the next
 /// run carries on from there; with no network the catalog simply stays as it is and the app works from it.
+/// A page asked before a favourite was kept here (Favourites.keep) is not applied, and is asked for again: it may be
+/// from before the favourite (Catalog.applyPage; specs/PhoneReplica.tla).
 @MainActor
 final class SyncEngine: ObservableObject {
     static let shared = SyncEngine()
@@ -109,10 +111,10 @@ final class SyncEngine: ObservableObject {
                 let more = j["more"] as? Bool ?? false
                 let trips = j["trips"].flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { String(data: $0, encoding: .utf8) }
                 let page = Catalog.Page(rows: rows, deleted: deleted, epoch: epoch, since: since, after: after, more: more, trips: trips)
-                let count = try await Catalog.shared.store.write { db -> Int in
-                    _ = try Catalog.applyPage(db, page, asked: cursor)
-                    return try db.one("SELECT count(*) FROM photos") { Int($0.int(0)) } ?? 0
+                let (taken, count) = try await Catalog.shared.store.write { db -> (Bool, Int) in
+                    (try Catalog.applyPage(db, page, asked: cursor), try db.one("SELECT count(*) FROM photos") { Int($0.int(0)) } ?? 0)
                 }
+                if !taken { continue }       // a favourite was kept since this page was asked: ask again
                 serverTotal = (j["total"] as? NSNumber)?.intValue ?? serverTotal
                 if !rows.isEmpty || !deleted.isEmpty || count != photos {
                     applied += rows.count + deleted.count

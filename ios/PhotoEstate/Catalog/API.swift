@@ -70,10 +70,11 @@ enum API {
 /// only when it has agreed is the phone's copy changed to match, at once rather than at the next sync (which
 /// brings the same row again).
 enum Favourites {
-    /// One photo. Throws what the server said if it would not have it.
+    /// One photo. Throws what the server said if it would not have it. Keeps what the server answers it is now, which
+    /// is not what was asked if another of the member's requests changed it meanwhile (specs/PhoneReplica.tla).
     static func set(_ sha: String, _ on: Bool) async throws {
-        _ = try await API.post("api/favorite", ["sha": sha, "fav": on])
-        await keep([sha], on)
+        let got = try await API.post("api/favorite", ["sha": sha, "fav": on])
+        await keep([sha], got["fav"] as? Bool ?? on)
     }
 
     /// The server has made these favourites (or not): the phone's catalog now says so too.
