@@ -69,16 +69,20 @@ note = "survey: `candidates` is not refused on a done set; `hide` and `discard` 
 name = "a lens: published, proposed, an estate default"
 tables = ["lenses"]
 writers = ["changes.py", "lenses.py"]
-checked = "unmodelled"
-note = "survey: decide() reads proposed_at before its transaction, so a proposal taken back can still be accepted"
+checked = "model"
+model = "Lens.tla"
+code = { "lenses.py" = ["add", "_begin", "_theirs", "get", "owner_of", "is_sysadmin", "publish", "publish_album", "propose", "decide"], "member_inbox.py" = ["put", "close"] }
+stamp = "b9c0aec01c146290"
 
 [[machine]]
 name = "a subscription to a lens"
 tables = ["subscriptions"]
 columns = ["subscriptions.mode"]
 writers = ["lenses.py"]
-checked = "unmodelled"
-note = "one module, but requests run side by side and its reads come before its transactions; model it with the lens"
+checked = "model"
+model = "Lens.tla"
+code = { "lenses.py" = ["_begin", "_visible", "get", "owner_of", "subscribe", "unsubscribe"], "member_inbox.py" = ["close", "lens_changed"] }
+stamp = "879417a448024623"
 
 [[machine]]
 name = "a member"
