@@ -60,6 +60,7 @@ from datetime import datetime, timezone
 
 import journal
 import member_inbox
+from core.states import MEMBER_MOVES
 
 ROLES = ("sysadmin", "member")
 STATUSES = ("pending", "active", "revoked")
@@ -216,16 +217,28 @@ def request(con: sqlite3.Connection, login: str, name: str | None = None) -> Mem
 FIELDS = ("name", "role", "status", "upload_policy", "person_id")
 
 
+class Forbidden(ValueError):
+    """members.change by someone who is not an active sysadmin (the route answers 403)."""
+
+
 def change(con: sqlite3.Connection, mid: int, actor: int | None, **fields) -> Member:
     """Change some of a member's FIELDS. Approving is status active (joined_at is set the first time),
     revoking is status revoked. One member.changed entry for what changed (none when nothing did).
     ValueError for an unknown member, field or value, a person_id that is no person, or a change that
-    would leave the estate with no active sysadmin. The member is read with the write lock held, so the fields
-    not given are written as they are, never as another change at the same moment found them."""
+    would leave the estate with no active sysadmin, or a status that may not follow the one they have (MEMBER_MOVES:
+    nobody goes back to pending). The member is read with the write lock held, so the fields not given are written as
+    they are, never as another change at the same moment found them.
+    `actor` (members.id) must be an active sysadmin, read under the same lock: Forbidden otherwise, whatever the route
+    checked. None is this computer itself before there is any member, and a script.
+    Revoking sets the member's approved agents to pending (binding.pending, and a `binding` item for them): let in
+    again, they allow each one again, from another device (decide_binding). The route also stops their runs of the
+    estate's agent (Tasks.cancel_for)."""
     if bad := set(fields) - set(FIELDS):
         raise ValueError(f"not a member field: {', '.join(sorted(bad))}")
     with con:
         _begin(con)          # (the member as it is when this writes: specs/Member.tla)
+        if actor is not None and not ((by := get(con, actor)) and by.is_sysadmin):
+            raise Forbidden("only a sysadmin changes a member")
         m = get(con, mid)
         if m is None:
             raise ValueError("no such member")
@@ -234,6 +247,8 @@ def change(con: sqlite3.Connection, mid: int, actor: int | None, **fields) -> Me
         new = {**asdict(m), **fields}
         new["name"] = " ".join(str(new["name"] or "").split())[:80] or m.name
         _check(new["role"], new["status"], new["upload_policy"])
+        if new["status"] != m.status and new["status"] not in MEMBER_MOVES[m.status]:
+            raise ValueError(f"a member who is {m.status} is not made {new['status']}")
         if new["person_id"] is not None:
             if not isinstance(new["person_id"], int) or isinstance(new["person_id"], bool) or not _has(con, "persons") \
                     or not con.execute("SELECT 1 FROM persons WHERE id=?", (new["person_id"],)).fetchone():
@@ -249,6 +264,15 @@ def change(con: sqlite3.Connection, mid: int, actor: int | None, **fields) -> Me
         journal.append(con, actor, "member.changed", f"member:{mid}", diff)
         if m.status == "pending" and new["status"] != "pending":     # let in or turned away: the request is decided
             member_inbox.close(con, "member_request", f"member:{mid}")
+        if new["status"] == "revoked" and m.status != "revoked" and _has(con, "agent_bindings"):
+            # their own agents wait to be allowed again: nobody is asked when the member is let back in (issue #130)
+            for bid, device in con.execute("SELECT id, device FROM agent_bindings WHERE member_id=? AND status='approved'",
+                                           (mid,)).fetchall():
+                con.execute("UPDATE agent_bindings SET status='pending', decided_at=? WHERE id=?", (now(), bid))
+                journal.append(con, actor, "binding.pending", f"binding:{bid}", {"device": device, "was": "approved",
+                                                                                  "why": "member revoked"}, mid)
+                member_inbox.put(con, [mid], "binding", f"binding:{bid}",
+                                 f"Your agent on {device} was turned off while you were not let in. Allow it again?")
         if (new["role"], new["status"]) != ("sysadmin", "active"):   # no sysadmin now: nothing is theirs to decide
             for kind, ref in con.execute("SELECT kind, ref FROM inbox_items WHERE member_id=? AND state='open'"
                                          " AND kind IN ('member_request', 'lens_proposed')", (mid,)).fetchall():
@@ -264,6 +288,7 @@ def first_start(con: sqlite3.Connection, logins, sysadmin: str | None = None) ->
     sysadmin. Nothing happens once there is any member."""
     wanted = list(dict.fromkeys(norm(x) for x in ([sysadmin] if sysadmin else []) + list(logins) if norm(x)))
     with con:
+        _begin(con)          # (two apps starting at once on an empty catalog made two first sysadmins: issue #137)
         if not wanted or con.execute(f"SELECT 1 FROM members WHERE {PEOPLE} LIMIT 1").fetchone():
             return []
         return [_add(con, login.split("@")[0], login, "sysadmin" if i == 0 else "member", "active", "everything", None)
@@ -274,6 +299,7 @@ def demo(con: sqlite3.Connection) -> list[Member]:
     """The demo's members, made in its scratch catalog at start: a sysadmin and two members, each with
     the lower-case name as its login (X-Demo-Member: ben)."""
     with con:
+        _begin(con)
         if con.execute(f"SELECT 1 FROM members WHERE {PEOPLE} LIMIT 1").fetchone():
             return []
         return [_add(con, name, name.lower(), role, "active", policy, None) for name, role, policy in DEMO]

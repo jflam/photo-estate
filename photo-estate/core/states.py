@@ -24,7 +24,7 @@ cancelled), JOB_ACTIVE and JOB_RETRYABLE (intake jobs).
 The moves each lifecycle may make are tables, {state: the states it may go to}, and every write of a
 state goes through check_move(table, from, to, what), which raises IllegalMove for any other step
 (issue #86): TASK_MOVES (tasks.Tasks.move), JOB_MOVES (intake.engine.Store.move), QUESTION_MOVES
-(stories._move), and upload.IngestJob.MOVES (IngestJob._to). core.lifecycle's MOVES is checked the same way.
+(stories._move), MEMBER_MOVES (members.change), and upload.IngestJob.MOVES (IngestJob._to). core.lifecycle's MOVES is checked the same way.
 """
 from __future__ import annotations
 
@@ -68,6 +68,15 @@ class TaskStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
 
+
+# members.status (a plain string in the catalog and the API): pending | active | revoked. Someone who asked is let in
+# or turned away; someone let in is revoked; someone revoked is let in again. Nobody goes back to pending: nothing would
+# put the request before a sysadmin again (issue #132). Checked by members.change.
+MEMBER_MOVES: dict[str, frozenset[str]] = {
+    "pending": frozenset({"active", "revoked"}),
+    "active": frozenset({"revoked"}),
+    "revoked": frozenset({"active"}),
+}
 
 TASK_ACTIVE = frozenset({TaskStatus.QUEUED, TaskStatus.RUNNING})     # a task that can still be cancelled
 TASK_MOVES: dict[TaskStatus, frozenset[TaskStatus]] = {

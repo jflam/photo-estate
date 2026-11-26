@@ -1104,8 +1104,9 @@ class PhotoApp:
     def agents_route(self, req: Request, m: Member | None, bid: int | None = None, body=None) -> Response:
         """GET /api/agents: the member's own agents, one per device, and how to connect one (the address of /mcp as
         this request reached the app); POST /api/agents/<id> {allow: true | false}: allow one (from another device
-        than its own) or turn it off. A member's own only (404 for anyone else's)."""
-        viewer = m.id if m and not m.local else None
+        than its own) or turn it off. A member's own only (404 for anyone else's). This computer itself is the first
+        sysadmin, as everywhere: it lists and turns off theirs (issue #135), and cannot allow one (its device has no name)."""
+        viewer = m.id if m else None
         node, device = self.device(req.headers)
         con = connect(self.a.db)
         try:
@@ -1493,8 +1494,13 @@ class PhotoApp:
             return json_response({"error": "expected a JSON object"}, 400)
         con = connect(self.a.db)
         try:
-            members.change(con, mid, m.id if m else None, **body)
+            got = members.change(con, mid, m.id if m else None, **body)
+            if got.status == "revoked":     # their runs of the estate's agent stop, and none queued starts (issue #131)
+                for tid in self.tasks.cancel_for(mid, m.id if m else None):
+                    print(f"members: task {tid} cancelled: {got.name} was revoked", flush=True)
             row = next(x for x in members.everyone(con) if x["id"] == mid)
+        except members.Forbidden as e:
+            return json_response({"error": str(e)}, 403)
         except ValueError as e:
             return json_response({"error": str(e)}, 404 if str(e) == "no such member" else 400)
         finally:

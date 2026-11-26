@@ -359,49 +359,140 @@ def test_the_demos_devices_still_allow(app):
     assert call(app, "POST", f"/api/agents/{b['id']}", CLEO, {"allow": True})["binding"]["status"] == "approved"
 
 
-# -- what is, where the owner decides (specs/Member.tla's invariants not in Member.cfg) -------------------------
+# -- what the owner decided (issues #130, #131, #132, #134), once "what is" tests: now what must hold -----------------
 
 
-def test_a_revoked_members_agent_is_refused_and_back_with_them(app):
-    """AllowedSinceLetIn, what is: Ben's agent, allowed. Ada revokes Ben: its next call is refused at once (the roster
-    says revoked; the binding stays approved). Ada lets Ben in again: his agent writes as him again, with no word from
-    him. A revoked binding stays revoked on its next call (bind writes only seen_at and device), and a pending one
-    may only look (tests/test_personal_agents.py)."""
+def test_a_revoked_members_agent_waits_to_be_allowed_again(app):
+    """AllowedSinceLetIn: Ben's agent, allowed. Ada revokes Ben: its next call is refused at once, and the binding is
+    pending again (binding.pending, and an item in Ben's inbox). Ada lets Ben in again: his agent may look and may not
+    write, until he allows it again from another device."""
     b = bind(app, BEN, "Ben-Laptop")
     h = {**BEN, "X-Demo-Device": "Ben-Laptop"}
     ben = mid(app, BEN)
     call(app, "POST", f"/api/members/{ben}", ADA, {"status": "revoked"})
     call(app, "POST", "/mcp", h, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, expect=403)
     con = sqlite3.connect(app.a.db)
-    assert con.execute("SELECT status FROM agent_bindings WHERE id=?", (b["id"],)).fetchone() == ("approved",)
+    assert con.execute("SELECT status FROM agent_bindings WHERE id=?", (b["id"],)).fetchone() == ("pending",)
+    assert con.execute("SELECT kind, acting_for FROM journal WHERE subject=? ORDER BY id DESC LIMIT 1",
+                       (f"binding:{b['id']}",)).fetchone() == ("binding.pending", ben)
+    assert con.execute("SELECT count(*) FROM inbox_items WHERE member_id=? AND kind='binding' AND ref=? AND state='open'",
+                       (ben, f"binding:{b['id']}")).fetchone() == (1,)
     con.close()
     call(app, "POST", f"/api/members/{ben}", ADA, {"status": "active"})
-    got = call(app, "POST", "/mcp", h, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                                        "params": {"name": "create_album", "arguments": {"title": "After"}}})
-    assert got["result"]["isError"] is False
+    make = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "create_album", "arguments": {"title": "After"}}}
+    assert call(app, "POST", "/mcp", h, make)["result"]["isError"] is True          # not yet: he has not said so again
+    call(app, "POST", f"/api/agents/{b['id']}", {**BEN, "X-Demo-Device": "Ben-Phone"}, {"allow": True})
+    assert call(app, "POST", "/mcp", h, make)["result"]["isError"] is False
     settle(app)
 
 
-def test_a_run_acting_for_a_revoked_member_goes_on(app):
-    """RunsOnlyForActive, what is: a run of the estate's agent acting for Ben is under way (its token). Ada revokes
-    Ben. The run's calls still act for him until it ends (its timeout is an hour): it searches what Ben sees and makes
-    albums that are his. A task he queued before is started after (Tasks.worker reads no member)."""
-    h = {"X-Estate-Agent": app.tasks.mint(task(app, mid(app, BEN)))}
-    call(app, "POST", f"/api/members/{mid(app, BEN)}", ADA, {"status": "revoked"})
-    made = tool(app, h, "create_album", {"title": "For Ben, revoked"})
+def test_a_run_acting_for_a_revoked_member_is_over(app):
+    """RunsOnlyForActive: a run of the estate's agent acting for Ben is under way (its token), and he has another task
+    queued. Ada revokes Ben: both tasks are cancelled, and the run's next call is refused."""
+    ben = mid(app, BEN)
+    running, queued = task(app, ben), task(app, ben)
+    h = {"X-Estate-Agent": app.tasks.mint(running)}
+    call(app, "POST", f"/api/members/{ben}", ADA, {"status": "revoked"})
     con = sqlite3.connect(app.a.db)
-    assert con.execute("SELECT owner FROM change_sets WHERE id=?", (made["album"],)).fetchone() == (mid(app, BEN),)
+    assert {s for s, in con.execute("SELECT status FROM agent_tasks WHERE id IN (?,?)", (running, queued))} == {"cancelled"}
     con.close()
+    got = app.request("POST", "/mcp", h, body={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, local=True)
+    assert got.status == 403 and b"no longer let in" in got.body
     settle(app)
 
 
-def test_a_member_let_in_may_be_set_waiting_again(db, con):
-    """PendingOnlyBeforeLetIn, what is: any status may follow any other (the raw API; members.html offers let in, turn
-    away, turn off, and let in again). Ben let in, then set to pending: he waits again, with no member_request item for
-    anyone (/members lists him first, with Let in), and his joined_at is kept. Revoked to pending is the same."""
+def test_a_task_queued_for_a_member_revoked_since_never_starts(app):
+    """The worker's own check (a listener may queue a task for a member, and a revoke may lose a race with the claim):
+    a task queued for someone not active is cancelled where it would have been claimed."""
+    ben = mid(app, BEN)
+    con = sqlite3.connect(app.a.db)
+    con.execute("UPDATE members SET status='revoked' WHERE id=?", (ben,))     # (as if the route's cancel never ran)
+    con.commit()
+    tid = task(app, ben)
+    assert not app.tasks.lets(ben) and app.tasks.lets(None)
+    con.execute("UPDATE agent_tasks SET status='queued' WHERE id=?", (tid,))
+    con.commit()
+    app.tasks.stopping.clear()
+    worker = threading.Thread(target=app.tasks.worker, daemon=True)
+    worker.start()
+    for _ in range(100):
+        if con.execute("SELECT status FROM agent_tasks WHERE id=?", (tid,)).fetchone() == ("cancelled",):
+            break
+        threading.Event().wait(0.05)
+    assert con.execute("SELECT status FROM agent_tasks WHERE id=?", (tid,)).fetchone() == ("cancelled",)
+    con.close()
+    app.tasks.stop()
+
+
+def test_nobody_goes_back_to_waiting(db, con):
+    """PendingOnlyBeforeLetIn (core.states.MEMBER_MOVES): let in or turned away, then revoked, then let in again; never
+    pending again, from active or from revoked, and nothing is written by the refused change."""
     members.change(con, B, A, status="active")
-    members.change(con, B, A, status="pending")
-    assert row(con, B)[2] == "pending" and row(con, B)[3] and opened(con, "member_request") == []
+    with pytest.raises(ValueError, match="is not made pending"):
+        members.change(con, B, A, status="pending")
     members.change(con, B, A, status="revoked")
-    members.change(con, B, A, status="pending")
-    assert row(con, B)[2] == "pending"
+    with pytest.raises(ValueError, match="is not made pending"):
+        members.change(con, B, A, status="pending", name="Benjamin")
+    assert row(con, B)[0] == "Ben" and row(con, B)[2] == "revoked"
+    members.change(con, B, A, status="active")
+    assert row(con, B)[2] == "active"
+
+
+def test_only_a_sysadmin_changes_a_member(db, con, app):
+    """members.change checks who asks, whatever its caller checked: a member, a revoked sysadmin and someone unknown
+    are Forbidden; this computer itself before there are members (None) and a sysadmin are not. The route answers 403."""
+    members.change(con, B, A, status="active")
+    for who in (B, 99):
+        with pytest.raises(members.Forbidden):
+            members.change(con, A, who, name="Mine now")
+    members.change(con, D, A, status="revoked")
+    with pytest.raises(members.Forbidden):
+        members.change(con, B, D, status="revoked")
+    assert row(con, A)[0] == "Ada" and row(con, B)[2] == "active"
+    assert members.change(con, B, None, name="Benny").name == "Benny"
+
+
+def test_this_computer_lists_and_turns_off_the_first_sysadmins_agents(real):
+    """Issue #135: the owner at the computer itself (no tailnet login) is the first sysadmin, on /agents too: it sees
+    their agents and turns one off. It cannot allow one: nothing names the computer as a device."""
+    owner = {"Tailscale-User-Login": "owner@example.com"}
+    whois(real, True)
+    real.request("POST", "/mcp", {**owner, "X-Forwarded-For": "100.64.0.5"}, body={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    bid = status(real)[-1]["id"]
+    assert real.request("POST", f"/api/agents/{bid}", {**owner, "X-Forwarded-For": "100.64.0.9"}, body={"allow": True}).status == 200
+    import json
+    listed = json.loads(real.request("GET", "/api/agents", {}, local=True).body)["bindings"]
+    assert [b["id"] for b in listed] == [bid]
+    assert real.request("POST", f"/api/agents/{bid}", {}, body={"allow": False}, local=True).status == 200
+    assert status(real)[-1]["status"] == "revoked"
+    assert real.request("POST", f"/api/agents/{bid}", {}, body={"allow": True}, local=True).status == 403
+
+
+def test_two_first_starts_at_once_make_one_first_sysadmin(tmp_path):
+    """Issue #137: two apps starting on an empty catalog. The second's check for members is made with the write lock
+    held, so it waits for the first and finds its members."""
+    path = str(tmp_path / "estate.db")
+    c1 = estate.connect(path)
+    schema.ensure(c1, *schema.CATALOG_AREAS)
+    c2 = estate.connect(path)
+    real_add, went = members._add, []
+
+    def add(con, *a, **k):
+        if not went:                       # the first, about to insert: the second starts now, on another thread
+            went.append(threading.Thread(target=lambda: went.append(members.first_start(c2x(), ["bo@example.com"]))))
+            went[0].start()
+            went[0].join(0.3)              # it waits for the write lock (or, unfixed, reads no members and goes on)
+        return real_add(con, *a, **k)
+
+    def c2x():
+        return estate.connect(path)
+
+    members._add = add
+    try:
+        members.first_start(c1, ["al@example.com"])
+    finally:
+        members._add = real_add
+    went[0].join(10)
+    assert c1.execute("SELECT count(*) FROM members WHERE role='sysadmin'").fetchone() == (1,)
+    c1.close()
+    c2.close()
