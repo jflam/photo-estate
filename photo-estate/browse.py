@@ -4,18 +4,23 @@ browsed lists, and the same searches as an agent's tools (estate_mcp.py) ask the
 
   GET /api/search    ?q= (words, names, places, key:value filters) and the facet params -> a page of results
                      (`kind=video|photo` or `is:video` in q: only those; a video found by words carries `at`,
-                     the seconds into it where they match best)
+                     the seconds into it where they match best; `is:private`, `is:held`, `is:withdrawn` in q:
+                     the member's own private photos, private.py)
   GET /api/similar   ?sha= -> photos that look like it
   GET /api/facets    counts per facet value under the current filters
   GET /api/periods   the Library's Years and Months: a card each, with its cover
   GET /api/layout    a byte per photo: the shapes of the Library's photos, in /api/search's order
   GET /api/log       ?ev=open|share&sha=&pos= : a photo opened or shared from a result list (query log)
 
-  Browse.handle(method, path, qs, body, headers) -> (status, body, content type, Cache-Control[, headers]) or None
-  Browse.find / row / faces / overview            what estate_mcp.py's tools are made of
+  Browse.handle(method, path, qs, body, headers, member) -> (status, body, content type, Cache-Control[, headers]) or None
+  Browse.find / row / faces / overview            what estate_mcp.py's tools are made of (each for a member)
 
-Every answer is worked out from the catalog being served (catalog.Live), read once per request. A
-`limit` or `cursor` that is not a whole number raises http_util.HTTPError (400), which PhotoApp answers.
+Every answer is worked out from the catalog being served (catalog.Live), read once per request, as the member
+the request is for sees it: Live.visible_for(member), the one way to ask (multiplayer: one member's filters
+hide nothing for another). A photo private to someone else does not exist for them: a sha of one (similar,
+stack, an agent's `like`), an event or trip only it is in, or a person or place only it shows is answered as
+one the library does not have. A `limit` or `cursor` that is not a whole number raises http_util.HTTPError (400),
+which PhotoApp answers.
 """
 from __future__ import annotations
 
@@ -31,7 +36,7 @@ from pathlib import Path
 
 import numpy as np
 
-from catalog import COMMON_WORDS, Catalog, Live, chunks, is_screenshot
+from catalog import COMMON_WORDS, Catalog, Live, View, chunks, is_screenshot
 from http_util import int_param
 
 filter_re = re.compile(r'\b(place|camera|album|person|people|year|date|event|trip|is):("([^"]*)"|(\S+))', re.I)
@@ -59,8 +64,10 @@ def js(o, code: int = 200):
     return code, json.dumps(o, separators=(",", ":")).encode(), "application/json", "no-store"
 
 
-def read_words(c: Catalog, text: str):
-    """'ben and matthew in san diego' -> (['Ben Lam', 'Matthew Lam'], ['San Diego'], '')."""
+def read_words(c: Catalog, text: str, known=None):
+    """'ben and matthew in san diego' -> (['Ben Lam', 'Matthew Lam'], ['San Diego'], ''). `known(kind, name)`
+    ("who" or "where"): whether the member asking may be shown a photo of that person or place; a name only
+    their unshared photos carry is read as a plain word, as one the library does not have."""
     names, places, parts, at = [], [], [], 0
     for m in c.word_re.finditer(text):
         word = m.group("who") or m.group("where")
@@ -73,6 +80,8 @@ def read_words(c: Catalog, text: str):
             if key in c.common_place and not capital:
                 continue
             mark, got, val = "\1", places, c.where[key]
+        if known is not None and not known("who" if mark == "\0" else "where", val):
+            continue
         parts += [text[at:m.start()], mark]
         at = m.end()
         if val not in got:
@@ -87,8 +96,9 @@ def read_words(c: Catalog, text: str):
     return names, places, "" if all(t.lower() in everything for t in rest.split()) else rest
 
 
-def parse(c: Catalog, q: str):
+def parse(view: View, q: str):
     """Split 'beach place:oregon year:2010' into the free text and a mask for the typed filters."""
+    c = view.cat
     mask, applied, scope = np.ones(c.N, bool), [], None
     for m in filter_re.finditer(q):
         key, val = m.group(1).lower(), (m.group(3) if m.group(3) is not None else m.group(4))
@@ -104,12 +114,14 @@ def parse(c: Catalog, q: str):
             mask &= np.fromiter((w.startswith(v) for w in c.when), bool, len(c.when))
         elif key in ("event", "trip") and v.lstrip("-").isdigit():
             mask &= (c.event_of if key == "event" else c.trip_of) == int(v)
-            scope = c.scope_of(key, int(v)) or scope
+            scope = scope_for(view, key, int(v)) or scope
             val = (scope or {}).get("title") or val
         elif key == "is" and v in ("fav", "favorite", "favourite"):
-            mask &= c.fav
+            mask &= view.fav
         elif key == "is" and v in ("video", "videos", "photo", "photos"):
             mask &= c.video if v.startswith("video") else ~c.video
+        elif key == "is" and v in ("private", "held", "withdrawn"):   # the member's own private photos (private.py)
+            mask &= view.private_mask(None if v == "private" else v)
         else:
             continue
         applied.append(f"{key}:{val}")
@@ -117,18 +129,35 @@ def parse(c: Catalog, q: str):
     return text, mask, applied, scope
 
 
-def view_masks(c: Catalog, qs: dict, masks: dict, text: str, similar: bool) -> bool:
+def scope_for(v: View, kind: str, ident: int):
+    """An event or trip as the member may be told of it: its title and dates, and how many of its photos they
+    may be shown (None when they may be shown none: then, for them, there is no such event)."""
+    c = v.cat
+    got = c.scope_of(kind, ident)
+    if not got:
+        return None
+    of = (c.event_of if kind == "event" else c.trip_of) == ident
+    mine = of & v.shared
+    if not mine.any():
+        return None
+    if mine.sum() != of.sum():   # some of its photos are not theirs to see: its count and dates are of the rest
+        when = sorted(w for w in c.when[mine] if w)
+        got.update(n=int(mine.sum()), start=when[0] if when else None, end=when[-1] if when else None)
+    return got
+
+
+def view_masks(v: View, qs: dict, masks: dict, text: str, similar: bool) -> bool:
     """The view options, for browsing and filtering (no words to rank by, not "More like this"), as the
     iPhone app has them: screenshots out (`shots=0`), and stacks shown as their top photo (`dedupe=1`) by
     the library-wide flag the iPhone uses too, so a count is the count of what shows, and a cursor is a
     position in that list. True when browsing: take() then skips nothing page by page.
     Stacks collapse in every list, a ranked one too, except the list that is one stack's photos."""
     if (qs.get("dedupe") or ["1"])[0] == "1" and "stack" not in masks:
-        masks["dup"] = ~c.dup
+        masks["dup"] = ~v.dup
     if text or similar:
         return False
     if (qs.get("shots") or ["1"])[0] == "0":
-        masks["shots"] = ~c.shot
+        masks["shots"] = ~v.cat.shot
     return True
 
 
@@ -144,12 +173,13 @@ class Browse:
 
     # -- caching --------------------------------------------------------------------------------
 
-    def remember(self, key, make):
+    def remember(self, key, make, member: int | None = None):
         """Small cache so paging through one search doesn't redo the text encoding and the ranking. An entry
         is the catalog generation's it was made in (Live.generation): one made while the catalog was
-        replaced or a favourite set is not kept, and none is found again in a later generation."""
+        replaced, what anyone hides changed, or a favourite set is not kept, and none is found again in a
+        later generation. One member's entry is never another's: `member` is part of the key."""
         gen = self.live.generation
-        key = (gen, key)
+        key = (gen, member, key)
         with self.lru_lock:
             if key in self.lru:
                 self.lru.move_to_end(key)
@@ -179,44 +209,54 @@ class Browse:
             return np.fromiter((bool(rx.search(x)) for x in c.cols["place"]), bool, c.N)
         return self.remember(("place", place), make)
 
-    def select(self, c: Catalog, qs: dict):
+    def known(self, v: View):
+        """read_words' `known`, for this member: a person or a place counts only if they may be shown a photo of
+        it. None when they may be shown every photo (nothing to ask)."""
+        if v.shared.all():
+            return None
+        return lambda kind, name: bool((v.shared & (v.cat.person_mask(name) if kind == "who"
+                                                    else self.place_mask(v.cat, name))).any())
+
+    def select(self, v: View, qs: dict):
         """Query string -> one mask per kind of filter, the free text, and the event/trip in scope."""
-        masks = {}
+        c, masks = v.cat, {}
         for k, f in c.single.items():
             if qs.get(k):
-                masks[k] = np.isin(f["codes"], [f["ix"][v] for v in qs[k] if v in f["ix"]])
+                masks[k] = np.isin(f["codes"], [f["ix"][x] for x in qs[k] if x in f["ix"]])
         for k, f in c.multi.items():
             if qs.get(k):
                 each = []
-                for v in qs[k]:
+                for x in qs[k]:
                     m = np.zeros(c.N, bool)
-                    if v in f["ix"]:
-                        m[f["rows"][f["codes"] == f["ix"][v]]] = True
+                    if x in f["ix"]:
+                        m[f["rows"][f["codes"] == f["ix"][x]]] = True
                     each.append(m)
                 masks[k] = (np.logical_and if k == "person" else np.logical_or).reduce(each)
         lo, hi = c.month_index((qs.get("from") or [""])[0]), c.month_index((qs.get("to") or [""])[0], end=True)
         if lo is not None or hi is not None:
             masks["date"] = (c.ym >= (lo if lo is not None else 0)) & (c.ym <= (hi if hi is not None else c.nmonths))
         if (qs.get("fav") or ["0"])[0] == "1":
-            masks["fav"] = c.fav
+            masks["fav"] = v.fav
         if (kind := (qs.get("kind") or [""])[0]) in ("video", "photo"):
             masks["kind"] = c.video if kind == "video" else ~c.video
-        if (qs.get("hidden") or ["0"])[0] == "1":
-            masks["hidden"] = ~c.visible
-        member = c.index.get((qs.get("stack") or [""])[0])
-        if member is not None:   # the photos of one stack, named by any of them
-            masks["stack"] = c.stack_of == c.stack_of[member] if c.stack_of[member] >= 0 else np.arange(c.N) == member
+        if (qs.get("hidden") or ["0"])[0] == "1":   # what the member's filters hide (of what they may be shown)
+            masks["hidden"] = ~v.visible
+        one = c.index.get((qs.get("stack") or [""])[0])
+        if one is not None and not v.shared[one]:
+            one = None        # a photo they may not be shown: as a sha the library does not have
+        if one is not None:   # the photos of one stack, named by any of them
+            masks["stack"] = v.stack_of == v.stack_of[one] if v.stack_of[one] >= 0 else np.arange(c.N) == one
         scope = None
         ev = (qs.get("event") or [""])[0]
         if ev.lstrip("-").isdigit():
             masks["event"] = c.event_of == int(ev)
-            scope = c.scope_of("event", int(ev))
+            scope = scope_for(v, "event", int(ev))
         elif len(qs.get("trip") or []) == 1 and qs["trip"][0].lstrip("-").isdigit():
-            scope = c.scope_of("trip", int(qs["trip"][0]))
-        text, typed, applied, typed_scope = parse(c, (qs.get("q") or [""])[0].strip())
+            scope = scope_for(v, "trip", int(qs["trip"][0]))
+        text, typed, applied, typed_scope = parse(v, (qs.get("q") or [""])[0].strip())
         if applied:
             masks["typed"] = typed
-        names, places, rest = read_words(c, text)
+        names, places, rest = read_words(c, text, self.known(v))
         if (names or places) and (qs.get("names") or ["1"])[0] != "0":
             if names:
                 masks["names"] = np.logical_and.reduce([c.person_mask(n) for n in names])
@@ -240,55 +280,58 @@ class Browse:
 
     # -- http -----------------------------------------------------------------------------------
 
-    def handle(self, method: str, path: str, qs: dict, body, headers):
-        """One request -> (status, body bytes, content type, Cache-Control[, headers]), or None if it isn't ours."""
+    def handle(self, method: str, path: str, qs: dict, body, headers, member: int | None = None):
+        """One request for `member` (members.id) -> (status, body bytes, content type, Cache-Control[, headers]),
+        or None if it isn't ours."""
         if method != "GET":
             return None
-        c = self.live.cat
+        v = self.live.visible_for(member)
+        c = v.cat
         one = lambda k, d="": (qs.get(k) or [d])[0]
         if path in ("/api/search", "/api/similar"):
-            return self.search(c, path, qs, headers)
+            return self.search(v, path, qs, headers)
         if path == "/api/log":  # the page reports photos opened or shared from a result list
             if one("ev") in ("open", "share") and sha_re.match(one("sha")):
                 pos = one("pos")
                 self.record(headers, one("ev"), qs, sha=one("sha"), pos=int(pos) if pos.isdigit() else None)
             return 204, b"", "text/plain", "no-store"
         if path == "/api/facets":
-            masks, text = self.select(c, qs)[:2]
-            view_masks(c, qs, masks, text, bool(one("sha")))
-            return js(c.facet_counts(masks))
+            masks, text = self.select(v, qs)[:2]
+            view_masks(v, qs, masks, text, bool(one("sha")))
+            return js(v.facet_counts(masks))
         if path == "/api/periods":   # the Library's Years and Months
-            masks, text = self.select(c, qs)[:2]
-            view_masks(c, qs, masks, "", False)
-            mask, sort = c.combine(masks), one("sort") or "new"
-            key = ("periods", sort, tuple(sorted((k, tuple(v)) for k, v in qs.items())))
+            masks, text = self.select(v, qs)[:2]
+            view_masks(v, qs, masks, "", False)
+            mask, sort = v.combine(masks), one("sort") or "new"
+            key = ("periods", sort, tuple(sorted((k, tuple(x)) for k, x in qs.items())))
 
             def make():
                 by_time = c.oldest if sort == "old" else c.newest
-                return {**c.periods(by_time[mask[by_time]]), "matching": int(mask.sum()), "total": c.info["total"]}
-            return js(self.remember(key, make))
+                return {**v.periods(by_time[mask[by_time]]), "matching": int(mask.sum()), "total": v.info["total"]}
+            return js(self.remember(key, make, member))
         if path == "/api/layout":    # the shapes of the Library's photos, in /api/search's order
-            masks, text = self.select(c, qs)[:2]
-            view_masks(c, qs, masks, "", False)
+            masks, text = self.select(v, qs)[:2]
+            view_masks(v, qs, masks, "", False)
             sort = one("sort") or "new"
             if sort in ("best", "best-month") and c.best is None:
                 sort = "new"
-            key = ("layout", sort, tuple(sorted((k, tuple(v)) for k, v in qs.items())))
-            out = self.remember(key, lambda: c.shapes(c.browse_order(c.combine(masks), sort)))
+            key = ("layout", sort, tuple(sorted((k, tuple(x)) for k, x in qs.items())))
+            out = self.remember(key, lambda: c.shapes(c.browse_order(v.combine(masks), sort)), member)
             return 200, out, "application/octet-stream", "no-cache", {"ETag": f'"{hashlib.md5(out).hexdigest()}"'}
         return None
 
-    def search(self, c: Catalog, path: str, qs: dict, headers):
+    def search(self, v: View, path: str, qs: dict, headers):
         """/api/search and /api/similar: one page of a ranked or browsed list."""
+        c = v.cat
         one = lambda k, d="": (qs.get(k) or [d])[0]
         t = time.time()
         limit = int_param(qs, "limit", 120, min=1, max=500)        # http_util.HTTPError 400 when not a number
         start = int_param(qs, "cursor", 0, min=0)
-        masks, text, applied, scope, names, places = self.select(c, qs)
-        deduped = view_masks(c, qs, masks, text, path == "/api/similar")
-        mask = c.combine(masks)
+        masks, text, applied, scope, names, places = self.select(v, qs)
+        deduped = view_masks(v, qs, masks, text, path == "/api/similar")
+        mask = v.combine(masks)
         sha = one("sha")
-        if path == "/api/similar" and sha not in c.index:
+        if path == "/api/similar" and (sha not in c.index or not v.shared[c.index[sha]]):   # (one they may not be shown: the same)
             return js({"error": "unknown photo"}, 404)
         by_default = "best" if "stack" in masks else "old" if scope else "new"   # a stack: its top photo first
         sort = one("sort") or by_default
@@ -319,8 +362,8 @@ class Browse:
                     return found[np.argsort(c.scored()[1][found], kind="stable")]
             return np.argsort(-sims)[: int(np.isfinite(sims).sum())]
 
-        order = self.remember(key, ranked)
-        results, hidden, nxt = c.take(order, start, limit, one("dedupe", "1") == "1" and not deduped)
+        order = self.remember(key, ranked, v.member)
+        results, hidden, nxt = v.take(order, start, limit, one("dedupe", "1") == "1" and not deduped)
         if text and path != "/api/similar" and any(r.get("kind") == "video" for r in results):
             vec = self.text_vec(text)     # where in each video the words match best: the viewer starts there
             for r in results:
@@ -330,7 +373,7 @@ class Browse:
                     filters=applied, people=names, places=places, cursor=start, matching=int(len(order)),
                     ms=round((time.time() - t) * 1000),
                     top=[r["sha"] for r in results[:20]] if start == 0 else None)
-        return js({"results": results, "next": nxt, "hidden": hidden, "total": c.info["total"],
+        return js({"results": results, "next": nxt, "hidden": hidden, "total": v.info["total"],
                    "matching": int(len(order)), "text": text, "filters": applied, "people": names, "places": places,
                    "scope": scope, "sort": sort, "ms": round((time.time() - t) * 1000)})
 
@@ -339,18 +382,21 @@ class Browse:
     # taken from the description) and no view option applies: it finds near-identical shots and
     # screenshots too, and every match, not a screenful.
 
-    def find(self, args: dict) -> tuple[list[str], list[float] | None]:
-        """Photos matching the filters, best first: ([ids], [scores]), or ([ids], None) newest first
-        when there is nothing to rank by. Ranks by `query` (words) or `like` (a photo's id)."""
-        c = self.live.cat
+    def find(self, args: dict, member: int | None = None) -> tuple[list[str], list[float] | None]:
+        """Photos `member` sees that match the filters, best first: ([ids], [scores]), or ([ids], None) newest
+        first when there is nothing to rank by. Ranks by `query` (words) or `like` (a photo's id).
+        `hidden_only`: the photos the member's filters hide instead (of those they may be shown)."""
+        view = self.live.visible_for(member)
+        c = view.cat
         N, M, index, shas = c.N, c.M, c.index, c.shas
-        mask = ~c.visible if args.get("hidden_only") else c.visible.copy()
+        mask = view.shared & ~view.visible if args.get("hidden_only") else view.visible.copy()
         for key in ("place", "album", "camera"):
             if args.get(key):
                 v = str(args[key]).lower()
                 mask &= np.fromiter((v in x for x in c.cols[key]), bool, N)
+        known = self.known(view)
         for name in args.get("people") or []:
-            if name not in c.people_ix:
+            if name not in c.people_ix or known and not known("who", name):
                 raise ValueError(f"nobody in the library is named {name!r}; library_overview lists the names")
             mask &= c.person_mask(name)
         if args.get("named_people") in ("none", "some"):
@@ -364,20 +410,20 @@ class Browse:
         if args.get("trip") is not None:
             mask &= c.trip_of == int(args["trip"])
         if args.get("favorite"):
-            mask &= c.fav
+            mask &= view.fav
         if args.get("screenshots") is False:
             mask &= ~c.shot
         if args.get("kind") in ("video", "photo"):
             mask &= c.video if args["kind"] == "video" else ~c.video
         if args.get("distinct"):         # the top photo of each stack of near-identical shots, not the others
-            mask &= ~c.dup
+            mask &= ~view.dup
         by_best = args.get("order") == "best"
         if by_best and c.rank is None:
             raise ValueError("this library has no quality scores, so nothing can be ordered best first")
         quality = lambda ids: [round(float(x), 3) for x in c.scored()[2][ids]]
         like, text = args.get("like"), str(args.get("query") or "").strip()
         if like:
-            if like not in index:
+            if like not in index or not view.shared[index[like]]:   # (one they may not be shown: the same)
                 raise ValueError("no photo has that id")
             sims = c.sims(M[index[like]])
             mask[index[like]] = False
@@ -401,19 +447,23 @@ class Browse:
         order = np.argsort(-sims)[: int(np.isfinite(sims).sum())]
         return [shas[i] for i in order], [round(float(sims[i]), 4) for i in order]
 
-    def row(self, sha: str) -> dict | None:
-        c = self.live.cat
+    def row(self, sha: str, member: int | None = None) -> dict | None:
+        """What an agent is told of one photo, as `member` sees it; None for no such photo, or one they may not
+        be shown (shared_for)."""
+        v = self.live.visible_for(member)
+        c = v.cat
         m = c.meta.get(sha)
-        if m is None:
+        if m is None or not v.shared[c.index[sha]]:
             return None
         i = c.index[sha]
         row = {"id": sha, "date": m.get("local") or m["taken"], "place": m.get("place"), "people": m["people"],
                "albums": m["albums"], "event": m.get("event_title"), "event_id": m.get("event"), "trip": m.get("trip_title"),
-               "camera": m.get("camera"), "favorite": m["fav"] or None, "screenshot": is_screenshot(m) or None,
-               "source_path": m["path"], "hidden": (not c.visible[i]) or None,
+               "camera": m.get("camera"), "favorite": bool(v.fav[i]) or None, "screenshot": is_screenshot(m) or None,
+               "source_path": m["path"], "hidden": (not v.visible[i]) or None,
                "kind": m.get("kind"), "seconds": m.get("dur"), "live_photo": bool(m.get("live")) or None,
                "quality": round(float(c.score[i]), 3) if c.score is not None else None,
-               "shots_alike": int(c.stack_n[i]) if c.stack_n[i] > 1 else None}
+               "shots_alike": int(v.stack_n[i]) if v.stack_n[i] > 1 else None,
+               "private": v.mine[sha]["why"] if sha in v.mine else None}
         return {k: v for k, v in row.items() if v not in (None, [], "")}
 
     def faces(self, ids: list[str]) -> dict[str, tuple[int, int]]:
@@ -429,16 +479,17 @@ class Browse:
         finally:
             con.close()
 
-    def overview(self) -> dict:
-        c = self.live.cat
-        top = lambda pairs, n=40: [{"name": k, "photos": v} for k, v in pairs[:n]]
-        f = c.info["facets"]
+    def overview(self, member: int | None = None) -> dict:
+        v = self.live.visible_for(member)
+        c = v.cat
+        top = lambda pairs, n=40: [{"name": k, "photos": x} for k, x in pairs[:n]]
+        f = v.info["facets"]
         month = lambda i: f"{(c.m0 + i) // 12}-{(c.m0 + i) % 12 + 1:02d}"
-        dated = [i for i, n in enumerate(c.info["months"]) if n]
-        return {"photos": c.info["total"], "hidden": int(c.N - c.visible.sum()),
+        dated = [i for i, n in enumerate(v.info["months"]) if n]
+        return {"photos": v.info["total"], "hidden": int((v.shared & ~v.visible).sum()),
                 "first_month": month(dated[0]) if dated else None, "last_month": month(dated[-1]) if dated else None,
-                "by_year": dict(sorted(Counter(str(y) if y else "undated" for y in c.year[c.visible].tolist()).items())),
+                "by_year": dict(sorted(Counter(str(y) if y else "undated" for y in c.year[v.visible].tolist()).items())),
                 "people": top(f["person"], 200), "countries": top(f["country"]), "cities": top(f["city"]),
-                "albums": top(f["album"]), "cameras": top(f["camera"]), "trips": len(c.trip_list),
+                "albums": top(f["album"]), "cameras": top(f["camera"]), "trips": len(v.trip_list),
                 "faces_found": c.has_faces,
                 "search": {"model": self.model, "match_floor": self.match_floor, "match_window": self.match_window}}

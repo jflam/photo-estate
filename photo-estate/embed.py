@@ -12,6 +12,8 @@ catalog tools don't pull in PyTorch).
           their mean as the video's own vector
   search  text query -> best-matching photos, by cosine similarity
   stats   how many images are embedded per model
+  hold-prompts   the text vectors of private.py's PROMPTS, written to hold-prompts.json (the hold at ingestion
+          reads them there, so it never loads the model)
   serve   the photo app (http://127.0.0.1:8766/): photo_app.PhotoApp, behind cmd_serve
 
   uv run embed.py --db /Volumes/estate/estate.db run --store /Volumes/estate/store
@@ -323,6 +325,31 @@ def cmd_serve(a) -> None:
     app.serve()
 
 
+def text_vectors(texts: list[str], model_id: str, threads: int = 8, device: str = "auto"):
+    """Unit text vectors (float32, a row each) for these texts as written, as cmd_search makes a query's."""
+    torch, model, proc, dev = load_model(model_id, threads, device)
+    with torch.no_grad():
+        ti = proc(text=[t.lower() for t in texts], padding="max_length", max_length=64, return_tensors="pt").to(dev)
+        return torch.nn.functional.normalize(_features(torch, model.get_text_features(**ti)), dim=-1).cpu().numpy()
+
+
+def cmd_hold_prompts(a) -> None:
+    """Write private.VECTORS: the text vectors of private.PROMPTS for --model, which the hold at ingestion
+    compares each new photo with (private.py). Made once, and again when the prompts or the model change, so
+    the ingest path never loads the model. Other models' vectors in the file are kept."""
+    import base64
+    import json
+    import private
+    try:
+        got = json.loads(private.VECTORS.read_text())
+    except (OSError, ValueError):
+        got = {}
+    vecs = text_vectors(list(private.PROMPTS), a.model, a.threads, "cpu")
+    got[a.model] = {p: base64.b64encode(v.astype("float16").tobytes()).decode() for p, v in zip(private.PROMPTS, vecs)}
+    private.VECTORS.write_text(json.dumps(got, indent=1, sort_keys=True) + "\n")
+    print(f"{private.VECTORS}: {len(private.PROMPTS)} prompts for {a.model}")
+
+
 def cmd_stats(a) -> None:
     con = connect(a.db)
     images = con.execute("SELECT count(*) FROM assets WHERE kind='image'").fetchone()[0]
@@ -357,6 +384,8 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--limit", type=int, default=15)
     s.set_defaults(fn=cmd_search)
     sub.add_parser("stats").set_defaults(fn=cmd_stats)
+    sub.add_parser("hold-prompts", help="write the text vectors the hold at ingestion compares photos with"
+                   " (private.py's PROMPTS, in hold-prompts.json)").set_defaults(fn=cmd_hold_prompts)
     s = sub.add_parser("serve", help="local search page")
     s.add_argument("--root", help="the library's folder: estate.db and store/ inside it (default: the one chosen on"
                    " the setup page; with no library yet, the app opens the setup page)")
@@ -387,8 +416,11 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--ingest-max-wait", type=float, default=600.0,
                    help="an ingest starts at least this long after the first upload of a burst, however many follow")
     s.add_argument("--upload-user", action="append", default=[],
-                   help="Tailscale login allowed to change the library: upload, ingest, favourites, albums, People"
-                        " (repeatable); requests from this computer always may. Default: anyone who can reach the app")
+                   help="a Tailscale login that becomes an active member on the first start of a catalog with no"
+                        " members, the first of them the sysadmin (repeatable); ignored once there are members,"
+                        " who are kept on /members. Requests from this computer are always the sysadmin")
+    s.add_argument("--sysadmin", help="the login that becomes the sysadmin on that first start (default: the first"
+                                      " --upload-user)")
     s.add_argument("--backup-dir", help="copy the catalog and face-labels.jsonl here every --backup-every hours"
                    " (e.g. a folder on another disk than the catalog)")
     s.add_argument("--backup-every", type=float, default=24.0, help="hours between catalog backups")

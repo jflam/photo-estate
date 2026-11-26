@@ -40,6 +40,8 @@ def tool(name, args):
         out({"type": "user", "message": {"content": [{"type": "tool_result", "is_error": True, "content": got["content"]}]}})
     return got.get("structuredContent")
 out({"type": "system", "subtype": "init", "mcp_servers": [{"name": "photo-estate", "status": "connected"}]})
+if os.environ.get("FAKE_TOKEN_FILE"):          # (the test tries the run's token again once the run has ended)
+    open(os.environ["FAKE_TOKEN_FILE"], "a").write(conf["headers"].get("X-Estate-Agent", "") + "\n")
 if "sleep" in prompt:
     out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Thinking for a long time"}]}})
     time.sleep(120)
@@ -90,9 +92,11 @@ fake, env_file = tmp / "claude", tmp / "agent.env"
 fake.write_text(FAKE)
 fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
 env_file.write_text("# the agent's sign-in\nCLAUDE_CODE_OAUTH_TOKEN=sekrit-value\n")
+token_file = tmp / "tokens"
 app = subprocess.Popen(["uv", "run", "--quiet", str(ROOT / "embed.py"), "serve", "--demo", "--port", str(PORT), "--no-pregenerate",
                         "--agent-cmd", str(fake), "--agent-env", str(env_file)],
-                       env={**os.environ, "HF_HUB_OFFLINE": "1"}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                       env={**os.environ, "HF_HUB_OFFLINE": "1", "FAKE_TOKEN_FILE": str(token_file)}, stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT)
 try:
     for _ in range(600):
         try:
@@ -125,13 +129,15 @@ try:
     assert "no such task" in tool("get_task", {"task": 99}, error=True)
     assert "sekrit" not in json.dumps(http("/api/tasks")) + json.dumps(t), "the sign-in is in no answer"
 
-    # the agent a task runs is told apart by its header, only from this computer, and has no task tools
-    as_task = {"X-Estate-Task": "7"}
-    assert tool("submit_task", {"request": "again"}, headers=as_task)["code"] == -32602
-    listed = http("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, headers=as_task)["result"]["tools"]
-    assert len(listed) == 13 and not [x for x in listed if "task" in x["name"]]
-    proxied = {**as_task, "X-Forwarded-For": "100.64.0.9"}   # through `tailscale serve`: an ordinary caller
-    assert len(http("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, headers=proxied)["result"]["tools"]) == 16
+    # the agent a task runs is told apart by its token (in its MCP config, X-Estate-Agent), which worked while it ran
+    # (tasktools:False above: it was offered no task tools) and ended with the run: it is refused now, as is the
+    # task number runs carried before (X-Estate-Task), and a token is never honoured from another computer
+    token = token_file.read_text().split()[0]
+    listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    assert len(http("/mcp", listing)["result"]["tools"]) == 17
+    for h in ({"X-Estate-Agent": token}, {"X-Estate-Task": str(tid)}, {"X-Estate-Agent": "not-a-token"},
+              {"X-Estate-Agent": token, "X-Forwarded-For": "100.64.0.9"}):
+        assert http("/mcp", listing, expect=403, headers=h)["error"]["code"] == -32001, h
 
     # one at a time: the second waits; a running task can be stopped, and one waiting can be withdrawn
     slow = http("/api/tasks", {"prompt": "sleep on it"}, expect=201)["id"]

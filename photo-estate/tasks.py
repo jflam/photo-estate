@@ -8,9 +8,11 @@ cloud; what reaches it is the request, and what those tools return. It can propo
 cannot apply one. A task outlives the chat or page that started it, and what the agent did is kept as
 a list of events, so the work can be watched while it runs and read afterwards. Tasks run one at a time.
 
-  GET  /api/tasks                 whether an agent can run here, and every task, newest first
-  GET  /api/tasks/<id>?after=N    one task, with its events after event N, and the change set it made
-  POST /api/tasks      {prompt}   start one
+  GET  /api/tasks                 whether an agent can run here, and the member's own tasks, newest first
+  GET  /api/tasks/<id>?after=N    one task, with its events after event N, and the change set it made (a task
+                                  acting for someone else: 404, as one that does not exist: what its agent saw
+                                  is what that member sees, their private photos too)
+  POST /api/tasks      {prompt}   start one (it records the member who asked: acting_for)
   POST /api/tasks/<id>/cancel
 
 The same over MCP for a chat client: submit_task, get_task, cancel_task.
@@ -26,22 +28,54 @@ status=?), so whichever of the worker and a cancel gets there first wins and the
 the worker runs a task only if its claim (queued -> running) took, and a run's ending (running -> done |
 failed) never overwrites a cancel. A cancel stops the agent with SIGTERM, then SIGKILL after `grace`
 seconds (core.procs.stop), as the timeout does.
+
+The journal (journal.py) gets task.submitted (the actor is who asked) and task.finished when a task reaches
+done, failed or cancelled, in the transaction of that move: the actor is who cancelled it, or NULL for a
+run's own end (the agent is not a member yet), acting for whoever asked. In that transaction too, each
+hiding set the task's agent made (with photos, hiding none yet) becomes a `review` item in the inbox of
+whoever asked (member_inbox.py), opening its review page; reviewing it there closes the item.
+
+The agent acts for whoever asked (acting_for), and every tool answers as that member sees the library
+(catalog.Live.visible_for); what it makes is theirs (estate_mcp.py).
+
+The estate's agent is a member (multiplayer phase 7: members.agent, kind agent). A run is given a capability, not
+a task number: run() mints a random token for *this agent, acting for this member (or no one), for this task*
+(`mint`), puts it in the agent's MCP config as the X-Estate-Agent header, and forgets it when the run ends
+(`forget`, in run()'s finally). The tokens are held in memory only, in `runs`: never in the catalog, a log or a
+file, so a restart of the app ends every token (and Tasks() marks the run that was going failed). /mcp honours a
+token only from this computer (estate_mcp.py), and X-Estate-Task, the number a run carried before, is refused.
+Its journal entries name the agent as the actor, acting for its member.
+
+Who may start a run (open question 4): any member, for themselves, or with `family` for the family archivist (the
+agent acting for no one, which sees only photos private to nobody and whose albums are published series it
+keeps). The estate starts runs itself too: listeners.py, when new photos match a family series, or when someone
+answers a question an agent asked and wanted the answer to. Every run is a row here with `started_by`: member:<id>
+for a person, journal:<entry>/<what> for a listener (also how a listener knows it has started that run already).
+A run a person asked for to hide photos is told BRIEF; any other (a family request, or a listener's) WORK_BRIEF.
+Who may read a task: the member it acts for; one acting for no one, whoever started it and the sysadmins.
+
+  POST /api/tasks {prompt, family?: true}    family: a run of the family archivist (acting for no one)
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import subprocess
 import tempfile
 import threading
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import journal
+import member_inbox
+import members
 from core import schema
 from core.procs import stop
 from core.states import TASK_ACTIVE, TASK_MOVES, TaskStatus, check_move
@@ -62,6 +96,23 @@ How to work:
 6. End with a short report in plain words: how many photos you proposed, the descriptions and thresholds you used, what you left out and why, what you are least sure of, and the review link.
 
 Nothing you do hides a photo: the person applies the change set after looking. Nobody is there to answer a question, so do not ask one: make the reasonable choice and say what you assumed. If the request is not about choosing photos to hide, or cannot be done with these tools, say so and create nothing."""
+
+WORK_BRIEF = """You are the estate's agent in Photo Estate, one family's photo library, on the computer that holds it. You were started either by a person asking for something for the whole family, or by the estate itself: a series has new photos that may belong in it, or someone has answered a question you asked. The request says which, with the ids you need. Your only tools are the library's; you cannot see a photo, only ids, scores, dates, places, the names of people in it, albums and the stories people have told.
+
+Who you act for is fixed for this run: a member (you see what they see, and what you make is theirs), or no one, as the family archivist (you see only what the whole family may see, and an album you make is published as a family series that you keep up to date). Do what the request asks with the tools:
+- A series to keep up to date: look at each new photo (get_photos; similar_photos to the series' own photos, get_album), add those that belong with amend_album and a short reason, and leave out the rest.
+- An answer to your question: it is a story, what a person said, attributed to them. Never change or retell it; use it (an album, a section, a better question) if the request says what for.
+- A family request: make the albums or series it asks for (create_album; `grow` keeps a series growing as photos arrive).
+Only people know some things: who is in a photo, where, why. When a story would help, ask one person, or the family, with ask_member: a few plain questions about photos they can see, grouped by event (group_key), never many. Nobody answers during this run: the answer comes later.
+End with a short report in plain words: what you did, and what you are least sure of. You cannot hide photos for anyone, or apply anything."""
+
+
+@dataclass(frozen=True)
+class Run:
+    """What a run's token stands for: this agent (members.id), acting for this member (None: no one), for this task."""
+    task: int
+    acting_for: int | None
+    agent: int
 
 
 def now() -> str:
@@ -95,13 +146,29 @@ class Tasks:
         self.grace = grace       # seconds between SIGTERM and SIGKILL when an agent is stopped
         self.command, self.env_file = find_command(command), Path(env_file) if env_file else DEFAULT_ENV
         self.lock, self.wake, self.procs = threading.Lock(), threading.Event(), {}
+        self.runs: dict[str, Run] = {}     # token -> the run it is for: in memory only, while the run lasts
         with closing(self.con()) as con:
-            schema.ensure(con, "tasks", "changes")   # changes: a task's change sets are read from change_sets
+            schema.ensure(con, "tasks", "changes", "members")   # changes: a task's change sets; members: the journal
+            agent = members.agent(con).id          # the estate's agent: whom the journal names for what a run does
+            assert agent is not None
+            self.agent: int = agent
             # whatever was running when the app last stopped did not finish (running -> failed)
-            con.execute("UPDATE agent_tasks SET status='failed', error='the app restarted while this was running', finished_at=?"
-                        " WHERE status='running'", (now(),))
+            why = "the app restarted while this was running"
+            for tid, af in con.execute("SELECT id, acting_for FROM agent_tasks WHERE status='running'").fetchall():
+                con.execute("UPDATE agent_tasks SET status='failed', error=?, finished_at=? WHERE id=?", (why, now(), tid))
+                journal.append(con, None, "task.finished", f"task:{tid}", {"status": TaskStatus.FAILED, "error": why}, af)
+                self.to_review(con, tid, af)
             con.commit()
-        threading.Thread(target=self.worker, daemon=True).start()
+        self.stopping = threading.Event()
+        self.thread = threading.Thread(target=self.worker, daemon=True, name="tasks worker")
+        self.thread.start()
+
+    def stop(self, wait: float = 5.0) -> None:
+        """Let the worker end, waiting at most `wait` seconds (a task it is running finishes first): before the
+        catalog it reads goes away, as the demo's scratch copy does at exit."""
+        self.stopping.set()
+        self.wake.set()
+        self.thread.join(wait)
 
     def con(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.db, timeout=60)
@@ -115,7 +182,8 @@ class Tasks:
 
     # -- reading ---------------------------------------------------------------------------------
 
-    COLS = ("id", "prompt", "status", "created_by", "created_at", "started_at", "finished_at", "result", "error", "turns", "cost")
+    COLS = ("id", "prompt", "status", "created_by", "created_at", "started_at", "finished_at", "result", "error", "turns", "cost",
+            "acting_for", "started_by")
 
     def task(self, con, tid: int, after: int | None = None) -> dict | None:
         row = con.execute(f"SELECT {', '.join(self.COLS)} FROM agent_tasks WHERE id=?", (tid,)).fetchone()
@@ -125,7 +193,7 @@ class Tasks:
         # the change set(s) the agent made, by the name it was given while it worked
         t["change_sets"] = [{"id": i, "title": title, "photos": n, "review": f"/changes/{i}"} for i, title, n in con.execute(
             "SELECT s.id, s.title, (SELECT count(*) FROM change_items WHERE set_id=s.id) FROM change_sets s"
-            " WHERE s.created_by=? ORDER BY s.id", (f"task:{tid}",))]
+            " WHERE s.created_by=? AND s.status IS NOT 'discarded' ORDER BY s.id", (f"task:{tid}",))]
         last = con.execute("SELECT id, kind, text FROM agent_events WHERE task_id=? ORDER BY id DESC LIMIT 1", (tid,)).fetchone()
         t["last"] = {"id": last[0], "kind": last[1], "text": last[2]} if last else None
         if after is not None:
@@ -133,18 +201,45 @@ class Tasks:
                 "SELECT id, at, kind, text FROM agent_events WHERE task_id=? AND id>? ORDER BY id", (tid, after))]
         return t
 
-    def get(self, tid: int, after: int | None = 0) -> dict | None:
+    ANYONE = object()      # get()/listing() for the app itself (the /mcp header's lookup), not for a member
+
+    @staticmethod
+    def whose(con, acting_for) -> int | None:
+        """Whose a task is: who it acts for; one from before members (no acting_for) is the first sysadmin's."""
+        return acting_for if acting_for is not None else (member_inbox.sysadmins(con) or [None])[0]
+
+    @staticmethod
+    def readers(con, acting_for, started_by) -> set[int | None]:
+        """Who may read a task: the member it acts for. One acting for no one (the archivist's, or one from before
+        members) saw only what is private to nobody: whoever started it, and the sysadmins."""
+        if acting_for is not None:
+            return {acting_for}
+        out: set[int | None] = set(member_inbox.sysadmins(con))
+        if isinstance(started_by, str) and started_by.startswith("member:") and started_by[7:].isdigit():
+            out.add(int(started_by[7:]))
+        return out
+
+    def get(self, tid: int, after: int | None = 0, viewer=ANYONE) -> dict | None:
+        """One task, or None: also for a member who may not read it (`viewer`, members.id; None: no members yet;
+        readers). A task's events and report hold what its agent saw, which is what that member sees (their private
+        photos too): nobody else's to read."""
         con = self.con()
         try:
-            return self.task(con, tid, after)
+            t = self.task(con, tid, after)
+            if t and viewer is not self.ANYONE and viewer is not None and viewer not in self.readers(
+                    con, t["acting_for"], t["started_by"]):
+                return None
+            return t
         finally:
             con.close()
 
-    def listing(self) -> dict:
+    def listing(self, viewer=ANYONE) -> dict:
+        """Whether an agent can run here, and the newest tasks (for a member: only those they may read)."""
         con = self.con()
         try:
             ok, why = self.available()
-            ids = [r[0] for r in con.execute("SELECT id FROM agent_tasks ORDER BY id DESC LIMIT 50")]
+            ids = [i for i, af, by in con.execute("SELECT id, acting_for, started_by FROM agent_tasks ORDER BY id DESC")
+                   if viewer is self.ANYONE or viewer is None or viewer in self.readers(con, af, by)][:50]
             return {"available": ok, "why": why, "tasks": [self.task(con, i) for i in ids]}
         finally:
             con.close()
@@ -170,9 +265,11 @@ class Tasks:
         with closing(self.con()) as con, con:
             con.execute(f"UPDATE agent_tasks SET {', '.join(k + '=?' for k in fields)} WHERE id=?", (*fields.values(), tid))
 
-    def move(self, tid: int, to: TaskStatus, frm: TaskStatus | frozenset[TaskStatus], **fields) -> bool:
+    def move(self, tid: int, to: TaskStatus, frm: TaskStatus | frozenset[TaskStatus], actor: int | None = None,
+             **fields) -> bool:
         """Move a task from `frm` (one status or a set) to `to`, with FIELDS beside it, in one conditional
         UPDATE. True if it moved; False if the task was not in `frm` by then (someone else got there first).
+        A move to done, failed or cancelled appends task.finished (by `actor`) in the same transaction.
         IllegalMove if TASK_MOVES does not allow the step, ValueError for an unknown field."""
         frms = frozenset({frm}) if isinstance(frm, str) else frm
         for f in frms:
@@ -183,21 +280,51 @@ class Tasks:
         with closing(self.con()) as con, con:
             cur = con.execute(f"UPDATE agent_tasks SET {sets} WHERE id=? AND status IN ({', '.join('?' * len(frms))})",
                               (to, *fields.values(), tid, *sorted(frms)))
+            if cur.rowcount == 1 and to not in TASK_ACTIVE:
+                af = con.execute("SELECT acting_for FROM agent_tasks WHERE id=?", (tid,)).fetchone()[0]
+                journal.append(con, actor, "task.finished", f"task:{tid}",
+                               {"status": to, **({"error": fields["error"]} if fields.get("error") else {})}, af)
+                self.to_review(con, tid, af)
             return cur.rowcount == 1
 
-    def submit(self, prompt, who: str = "") -> tuple[dict, int]:
+    @staticmethod
+    def to_review(con, tid: int, acting_for: int | None) -> None:
+        """A task has ended: each hiding set its agent made that has photos and hides none yet is waiting for
+        the member it acted for to look it over (member_inbox.py: a `review` item, opening /changes/<id>), in
+        the transaction of the task's last move. A task from before members acted for the first sysadmin."""
+        who = acting_for if acting_for is not None else (member_inbox.sysadmins(con) or [None])[0]
+        for sid, title, n in con.execute(
+                "SELECT s.id, s.title, (SELECT count(*) FROM change_items WHERE set_id=s.id) FROM change_sets s"
+                " WHERE s.created_by=? AND s.op='hide' AND s.status IS NOT 'discarded'"
+                " AND NOT EXISTS (SELECT 1 FROM change_items WHERE set_id=s.id AND applied=1) ORDER BY s.id",
+                (f"task:{tid}",)).fetchall():
+            if n:
+                member_inbox.put(con, [who], "review", f"album:{sid}",
+                                 f"“{title}”: {n} photo{'' if n == 1 else 's'} the agent proposes to hide, for you to look over")
+
+    def submit(self, prompt, who: str = "", acting_for: int | None = None, family: bool = False,
+               started_by: str | None = None) -> tuple[dict, int]:
+        """A task for the agent. From a person: `acting_for` is the member (members.id) who asked for it, and the run
+        acts for them; with `family`, for no one (the family archivist), started by them. From a listener:
+        `started_by` journal:<entry>/<what>, acting for `acting_for` (None: no one)."""
         prompt = str(prompt or "").strip()
         if not prompt:
             return {"error": "say what you want done"}, 400
         ok, why = self.available()
         if not ok:
             return {"error": why}, 409
+        asker = None if started_by else acting_for
+        by = started_by or (f"member:{asker}" if asker is not None else None)
+        runs_for = None if family else acting_for
         con = self.con()
         try:
-            tid = con.execute("INSERT INTO agent_tasks(prompt, created_by, created_at) VALUES (?,?,?)",
-                              (prompt[:8000], who or None, now())).lastrowid
-            con.commit()
+            tid = con.execute("INSERT INTO agent_tasks(prompt, created_by, created_at, acting_for, started_by) VALUES (?,?,?,?,?)",
+                              (prompt[:8000], who or None, now(), runs_for, by)).lastrowid
             assert tid is not None
+            journal.append(con, asker, "task.submitted", f"task:{tid}",
+                           {"prompt": prompt[:500], **({"started_by": by} if started_by or family else {})},
+                           runs_for if runs_for != asker else None)
+            con.commit()
             out = self.task(con, tid)
             assert out is not None   # just written
         finally:
@@ -205,21 +332,26 @@ class Tasks:
         self.wake.set()
         return out, 201
 
-    def cancel(self, tid: int) -> tuple[dict, int]:
+    def cancel(self, tid: int, actor: int | None = None) -> tuple[dict, int]:
+        """`actor`: the member who cancelled it (members.id), for the journal. Any member may stop a run (it spends
+        the owner's subscription); what it saw is told only to whom it acts for (get)."""
         t = self.get(tid, None)
         if not t:
             return {"error": "no such task"}, 404
         with self.lock:      # beside run()'s check before it starts the agent: one or the other goes first
-            moved = self.move(tid, TaskStatus.CANCELLED, TASK_ACTIVE, finished_at=now())
+            moved = self.move(tid, TaskStatus.CANCELLED, TASK_ACTIVE, actor, finished_at=now())
             proc = self.procs.get(tid) if moved else None
         if proc:             # SIGTERM, then SIGKILL after the grace: not in this request's thread
             threading.Thread(target=stop, args=(proc, self.grace), daemon=True, name=f"stop task {tid}").start()
-        return self.get(tid, None) or t, 200
+        got = self.get(tid, None) or t
+        if actor is not None and self.get(tid, None, actor) is None:      # someone else's: only how it stands
+            got = {k: got[k] for k in ("id", "status", "created_at", "finished_at") if k in got}
+        return got, 200
 
     # -- running ---------------------------------------------------------------------------------
 
     def worker(self) -> None:
-        while True:
+        while not self.stopping.is_set():
             with closing(self.con()) as con:
                 row = con.execute("SELECT id, prompt FROM agent_tasks WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
             if not row:
@@ -235,12 +367,53 @@ class Tasks:
                 self.move(row[0], TaskStatus.FAILED, TaskStatus.RUNNING, error=f"{type(e).__name__}: {e}", finished_at=now())
                 self.log(f"task {row[0]} failed: {type(e).__name__}: {e}")
 
+    # -- a run's token -------------------------------------------------------------------------
+
+    def mint(self, tid: int) -> str:
+        """A new token for a run of task `tid`: this agent, acting for the task's member, for this task (Run)."""
+        with closing(self.con()) as con:
+            row = con.execute("SELECT acting_for FROM agent_tasks WHERE id=?", (tid,)).fetchone()
+        if row is None:
+            raise ValueError(f"no task {tid}")
+        token = secrets.token_urlsafe(32)
+        with self.lock:
+            self.runs[token] = Run(tid, row[0], self.agent)
+        return token
+
+    def forget(self, token: str) -> None:
+        with self.lock:
+            self.runs.pop(token, None)
+
+    def run_of(self, token: str | None) -> Run | None:
+        """The run a token is for, while it lasts; None for any other string."""
+        if not token:
+            return None
+        with self.lock:
+            return self.runs.get(token)
+
+    # -- running, continued ----------------------------------------------------------------------
+
+    def brief(self, tid: int) -> str:
+        """BRIEF for a person's request to hide photos; WORK_BRIEF for a family request or a listener's run."""
+        with closing(self.con()) as con:
+            row = con.execute("SELECT acting_for, started_by FROM agent_tasks WHERE id=?", (tid,)).fetchone()
+        af, by = row if row else (None, None)
+        return WORK_BRIEF if (by or "").startswith("journal:") or (af is None and (by or "").startswith("member:")) else BRIEF
+
     def run(self, tid: int, prompt: str) -> None:
-        """Run a task the worker has claimed (it is `running`) to its end."""
+        """Run a task the worker has claimed (it is `running`) to its end, with a token that lasts as long."""
         if not self.command:     # submit() takes no task then (available())
             raise RuntimeError("Claude Code is not installed on this computer")
-        config = {"mcpServers": {SERVER: {"type": "http", "url": self.mcp_url, "headers": {"X-Estate-Task": str(tid)}}}}
-        cmd = [self.command, "-p", prompt, "--system-prompt", BRIEF, "--mcp-config", json.dumps(config), "--strict-mcp-config",
+        token = self.mint(tid)
+        try:
+            self._run(tid, prompt, token)
+        finally:
+            self.forget(token)
+
+    def _run(self, tid: int, prompt: str, token: str) -> None:
+        assert self.command is not None
+        config = {"mcpServers": {SERVER: {"type": "http", "url": self.mcp_url, "headers": {"X-Estate-Agent": token}}}}
+        cmd = [self.command, "-p", prompt, "--system-prompt", self.brief(tid), "--mcp-config", json.dumps(config), "--strict-mcp-config",
                "--tools", "", "--allowedTools", f"mcp__{SERVER}", "--output-format", "stream-json", "--verbose",
                "--no-session-persistence", "--max-turns", str(self.max_turns)] + (["--model", self.model] if self.model else [])
         env = {**os.environ, **read_env(self.env_file)}
@@ -319,8 +492,9 @@ class Tasks:
 
     # -- http ------------------------------------------------------------------------------------
 
-    def handle(self, method: str, path: str, qs: dict, body: dict | None, who: str = ""):
-        """One request -> (status, body bytes, content type, Cache-Control), or None if it isn't ours."""
+    def handle(self, method: str, path: str, qs: dict, body: dict | None, who: str = "", acting_for: int | None = None):
+        """One request -> (status, body bytes, content type, Cache-Control), or None if it isn't ours.
+        `acting_for`: the member the request is for (members.id), who submits or cancels."""
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":")).encode(), "application/json", "no-store")
         m = ROUTE.match(path)
         if not m:
@@ -328,13 +502,13 @@ class Tasks:
         tid, what = int(m[1]) if m[1] else None, m[2]
         if method == "GET" and not what:
             if tid is None:
-                return js(self.listing())
+                return js(self.listing(acting_for))
             after = (qs.get("after") or ["0"])[0]
-            got = self.get(tid, int(after) if after.isdigit() else 0)
+            got = self.get(tid, int(after) if after.isdigit() else 0, acting_for)
             return js(got) if got else js({"error": "no such task"}, 404)
         if method == "POST" and isinstance(body, dict):
             if tid is None:
-                return js(*self.submit(body.get("prompt"), who))
+                return js(*self.submit(body.get("prompt"), who, acting_for, family=body.get("family") is True))
             if what == "cancel":
-                return js(*self.cancel(tid))
+                return js(*self.cancel(tid, acting_for))
         return js({"error": "not found"}, 404)

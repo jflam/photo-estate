@@ -1,7 +1,13 @@
 # Appendix C: glossary
 
+**Acting for.** The member a run of the estate's agent works for (`agent_tasks.acting_for`): it sees what they see, writes to what is theirs, and every journal entry it writes names the agent as the actor and them as `acting_for`. Acting for no one, it is the family archivist ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
+**Allowance (questions).** How many question items a member's inbox is dealt in any 7 days: `stories.ALLOWANCE` (3), or the member's own `members.questions_per_week`; never while that many are open ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
 **Album.** A named group of photos. From Google: a Takeout folder with a `metadata.json`. From Flickr:
 the albums in a photo's JSON. iCloud's date folders are *not* albums.
+
+**Archivist (family).** The estate's agent acting for no one: it sees only photos private to nobody, with the estate defaults applied, and an album it makes is published at once as a family series it keeps (`lenses.maintained_by`) ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
 
 **Anchor.** A candidate position on a detector's grid. SCRFD has two per cell at each of three strides.
 
@@ -19,7 +25,13 @@ exactly on at least one piece; used to find near-duplicates without comparing al
 
 **Batch (upload).** The files a phone sends together, named in an `X-Batch: <id>/<count>` header; when the last arrives, the server starts cataloguing at once ([24](24-uploading.md)).
 
+**Batch (to look over).** An item of the iPhone app's Inbox made on the phone (the phone gate): new photos, or a chunk of older ones, that a member with a review policy looks at before any is sent. Everything in it is shared unless marked; a mark keeps a photo back ([24](24-uploading.md#the-phone-gate-looking-before-sharing)).
+
+**Candidate.** A new photo the upload extension saw arrive and made no upload job for, because the member's policy is a review one (or not known yet); the app makes candidates a batch to look over ([24](24-uploading.md#the-phone-gate-looking-before-sharing)).
+
 **Best frame.** Of a video's kept frames, the one closest to a search. A video's score in a search is its best frame's, or its mean's when that is higher (`Catalog.sims`), and `at` on its row says where that frame is, in seconds ([10](10-embeddings.md#videos)).
+
+**Binding (agent).** A member's own agent on one device (`agent_bindings`, members.py): made `pending` by its first call to `/mcp` with the member's login, then `approved` or `revoked` by the member on Connect your agent (`/agents`), never by anything the agent sends, and allowed only from another device than the agent's own. Pending it may only look; revoked it is refused ([11](11-server.md#a-members-own-agent)).
 
 **Bradley–Terry model.** A model of pairwise choices: each item has a score, and the chance A is picked over B is `sigmoid(score A − score B)`. The taste scorer is one ([25](25-best-photos.md)).
 
@@ -28,6 +40,8 @@ exactly on at least one piece; used to find near-duplicates without comparing al
 **Centroid.** The mean (normalised sum) of a person's trusted face vectors for one year.
 
 **Clip (Live Photo).** The short video, a few seconds long, taken with a Live Photo's still and stored as a file of its own. Told by Apple's content identifier, or a Google `MVIMG` name, plus a still of its name in the same folder (of its own source first, then of any other); recorded in `live_pairs`. A paired clip is never an item of its own: its still carries it (`live`) ([6](06-linking.md#step-2-live-photos-and-motion-photos)).
+
+**Connect your agent.** The page `/agents` (agents.html), in the Library's menu: the command that adds the estate to Claude Code with this app's address, a configuration for other harnesses, where an agent can run (only on the tailnet), and the member's own agents with their state ([11](11-server.md#a-members-own-agent)).
 
 **Content-addressed.** Stored under a name derived from the content (its SHA-256), so identical bytes
 share one file.
@@ -38,18 +52,26 @@ unrelated. Used for image-text matching, "more like this", and face matching.
 **dHash (difference hash).** A 64-bit perceptual fingerprint: whether each pixel of a 9×8 grey
 thumbnail is brighter than its right-hand neighbour. Similar images have hashes a few bits apart.
 
+**Cursor (journal).** The `next_cursor` journal_since gives a member's own agent: the last journal entry it looked at, kept for its next call ([11](11-server.md#a-members-own-agent)).
+
 **Cursor (sync).** The pair `(since, after)` a device sends to say "I have every row up to this version and hash" ([20](20-sync.md)).
+
+**Estate's agent.** The member of kind `agent` (`members.agent`): Claude Code run headless on the mini (tasks.py), on the owner's subscription, with a token per run. Every run is an `agent_tasks` row with who or what started it ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
 
 **Embedding.** A fixed-length list of numbers that represents the meaning of an image, a sentence or a
 face, such that similar things have similar vectors.
 
 **Epoch (sync).** A random name for one `sync-feed.db`. A device that sees an epoch it doesn't know fetches everything again and drops what the new feed lacks ([20](20-sync.md)).
 
+**Estate default.** A published filter lens every member sees through unless they opt out (`lenses.estate_default`). The first, **Estate defaults**, is the owner's hiding from before lenses, named by `estate.py migrate`; any member may propose a filter of theirs as one, and a sysadmin accepts or declines ([11](11-server.md#what-each-member-sees-lenses)).
+
 **Event.** A burst of photos with no gap of more than 3 hours (configurable) between consecutive
 photos. Its id is its start time in epoch seconds.
 
 **EXIF.** Metadata a camera writes inside a photo file: camera, lens, exposure, often date and offset.
 Read with `exiftool`.
+
+**Filter (lens).** A lens that leaves photos out: the photos the hiding change sets that name it hide (`change_sets.lens_id`). Always on for its owner and for its subscribers, everywhere; a member's filters add their hides together ([11](11-server.md#what-each-member-sees-lenses)).
 
 **Facet.** A field you can filter by and count: country, region, city, person, album, camera, lens,
 trip.
@@ -62,28 +84,54 @@ trip.
 
 **Hamming distance.** The number of bits in which two bit strings differ.
 
+**Held.** A photo kept private to its sharer when it came in from a phone, because it looks like a receipt, a screenshot or a document (`private.py check`: three prompts scored against its SigLIP vector, and `is_screenshot`), or by the one-off run over the library. Its sharer is told in their inbox and looks it over on `/held`, the review of held photos: released, or kept private and *looked over* (`reviewed_at`), after which it no longer waits there but is still private and still found by `is:held` ([11](11-server.md#private-photos)).
+
 **Home.** The place (per year) with photos on the most distinct days; used to decide what is "away".
 
 **icloudpd.** The open-source iCloud Photos downloader the project uses.
 
+**Immutable flag.** The user-immutable file flag (`chflags uchg`) ingest sets on each file it writes to a store marked with a `.immutable` file (the Mac mini's), so not even `rm -rf` removes it by accident. Any user of the Mac can clear it (`chflags nouchg`): it guards against accidents, not intent ([4](04-store-and-ingest.md#append-only-sources-only-add)).
+
 **Inbox.** The folder (`iphone/` next to the catalog) where phone uploads land, in the same shape as the iCloud mirror; `ingest-iphone.sh` catalogues it ([24](24-uploading.md)).
+
+**Inbox (a member's).** What waits for a member to decide (member_inbox.py, the table `inbox_items`, the page `/inbox`): someone asking to be let in, a change set an agent made for them, a filter proposed as an estate default, a lens they follow that changed, photos of theirs held as private. Each item is made by the code that needs the decision, opens the page that decides it, and is closed by that decision; a member can also dismiss one. Not the upload folder above, which only shares the word ([11](11-server.md#the-inbox)). The iPhone app's Inbox tab shows these beside the phone's own batches to look over ([19](19-iphone-app.md#starting-up)).
+
+**Kept back.** A photo a member marked in a batch on their phone: never sent from that phone, and its hashes are tombstones, so the server refuses it from any phone of theirs. **Share after all** takes it back ([24](24-uploading.md#the-phone-gate-looking-before-sharing)).
+
+**Journal.** The estate's append-only log of what happened (journal.py), one row of `journal` per action with who did it (`actor`), its `kind` (`album.applied`, `favorite.set`, `faces.labeled`, `task.finished`, `ingest.finished`, `photo.purged`, `member.changed`, ...) and what it is about (`subject`, such as `album:12` or a sha); one entry per action, never one per photo. Appended in the same transaction as the change; triggers refuse changing or deleting it. The listeners read it, and a member's own agent reads what its member may know of it (`journal_since`). Not the face journal below, nor the `events` tables ([11](11-server.md#the-journal)).
 
 **Journal (face).** `face-labels.jsonl`: an append-only record of your face decisions, keyed by photo
 hash and box.
 
+**Released.** A private photo shared with the family again, by its sharer (now, from the viewer; in a batch from the review of held photos, or those chosen in the held view) or by itself on the day they set ("private until Dec 26": the app's timer). Its row stays, so it is never held again ([11](11-server.md#private-photos)).
+
 **Replica.** The phone's read-only copy of the catalog, in `catalog.db`; the server is the only writer ([20](20-sync.md)).
+
+**Lens.** A named view, a row of `lenses`, its owner's and private until published: a filter, or a series. Not a camera lens (the `lens` facet) ([11](11-server.md#what-each-member-sees-lenses)).
+
+**Listener.** A function of listeners.py that reads the journal from its own cursor (`listener_cursors`) and acts, at least once, each handler making nothing twice: the series listener and the stories listener ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
 
 **Live Photo.** A still and a clip taken together by an iPhone (or a Pixel's motion photo). Here the still is the photo and the clip is part of it: one item, searched, scored and counted by its still ([6](06-linking.md#step-2-live-photos-and-motion-photos)).
 
+**Local (request).** One from the computer the app runs on, not through `tailscale serve` (`is_local`). It is the sysadmin ([11](11-server.md#members-and-who-may-do-what)).
+
 **Locality.** The nearer suburb or neighbourhood when a big city was chosen as a photo's `city`.
+
+**Login.** A Tailscale login (`alice@icloud.com`), which `tailscale serve` sends as `Tailscale-User-Login`. Each is one member's; a member may have several ([11](11-server.md#members-and-who-may-do-what)).
 
 **Match floor / match window.** The two constants (0.085 and 0.04) that decide which photos count as
 matching a typed search: at least the floor, and within the window of the best match.
+
+**Member view.** What one member sees of the catalog (`catalog.View`): the mask, and what is worked out from it for them (stacks and their tops, trip cards and covers, the counts in `/api/info`, their favourites). Asked of `Live.visible_for(member)`, the one way any route asks ([11](11-server.md#what-each-member-sees-lenses)).
+
+**Member.** Someone the estate knows and lets in, a row of `members`: a name, a role, a status (`pending`, `active`, `revoked`; never deleted), an upload policy, and the person in People they are, if linked. Not a person, which is someone *in* the photos ([11](11-server.md#members-and-who-may-do-what)).
 
 **NMS (non-maximum suppression).** Discarding overlapping detector boxes except the best.
 
 **Occurrence.** One place a file was found: a source (zip or folder), a path, and the album that implies.
 One asset can have many.
+
+**Own agent (a member's).** An agent a member brings, in their own harness, on their own account, calling `/mcp` through `tailscale serve` with their login: that member's agent on one device (a binding), with the estate's agent's tools acting for them, no task tools, and `journal_since`. Its writes are the member's, each journal entry carrying the binding ([11](11-server.md#a-members-own-agent)).
 
 **Pending (face).** A face whose best-matching person scores at least 0.30 but who is not yet named: it
 is waiting for your yes or no.
@@ -98,9 +146,37 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **PWA.** Progressive Web App: a web page that can be installed on a phone's home screen.
 
+**Private (photo).** Private to its sharer: a row of `private` names them and is not released, so only they see it; reached by being *held* or *withdrawn*. A photo all of whose sharers hold it private is shown to those sharers only; one another sharer still shares is shown to everyone. To everyone else it does not exist: every route answers it as a sha the library does not have ([11](11-server.md#private-photos)).
+
+**Protected table.** One the catalog's triggers keep append-only: no `DELETE` from `assets`, `occurrences`, `sharers`, `tombstones`, `members`, `member_logins` or `journal`, no `UPDATE` of `journal`, no change of a key (a sha, an id) of the others, and no insert that replaces a row ([5](05-catalog.md#protected-tables)).
+
+**Purge.** `estate.py purge <sha> --reason "..."`: the one way a photo leaves the estate, run by hand by the sysadmin. It backs the catalog up, journals `photo.purged`, adds a tombstone for everyone and removes the photo's rows and file ([4](04-store-and-ingest.md#append-only-sources-only-add)).
+
+**Question.** What the estate's agent (or a member) asks one member or the whole family about photos they can see (`ask_member`, a `questions` row): queued until the member's inbox deals it, grouped by `group_key`; its answer is a story ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
 **Quality (score).** A photo's score from the general aesthetic scorer, about 1 to 7; at least 5.0 counts as a good photo ([25](25-best-photos.md)).
 
+**Request access.** What someone whose login is no member's does on the page they are shown (`/request-access`): it makes a `pending` member, whom a sysadmin lets in on `/members` ([11](11-server.md#members-and-who-may-do-what)).
+
+**Role.** What a member may do: `sysadmin` (let people in, bring photos in from a folder, restart) or `member` (everything else). Several members may be sysadmins, and there is always at least one ([11](11-server.md#members-and-who-may-do-what)).
+
 **Scrubber.** The handle at the iPhone grid's right edge that shows the month you are in and lets you drag to any date ([23](23-native-interface.md)).
+
+**Series update.** New photos that match a member's own series: a `series.update_requested` journal entry naming them, and a `series_update` inbox item, from which the owner adds them or none ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
+**Sharer.** A member who shared a photo (`sharers`: photo, member, when). A photo two members sent has two. Ingest records it: the member whose inbox folder a phone upload is in (`m<member id>/`), else the first sysadmin (bulk imports, uploads from before member folders); `estate.py migrate` made the sysadmin the sharer of every photo that had none ([4](04-store-and-ingest.md#who-shared-it)).
+
+**Series.** A lens that picks and orders photos: an album (`lenses.set_id`), given its lens when its owner publishes it. Opened, never on: subscribing puts it in the member's Albums, and its photos are listed through the viewer's own filters ([11](11-server.md#what-each-member-sees-lenses)). One that keeps growing is a list album with a search it grows from (`change_sets.grows_from`): new photos it finds are added by the estate's agent (a family series) or offered to its owner (a member's own) ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
+**Shared (for a member).** What a member may ever be shown (`Live.shared_for`): every photo, until private photos (phase 5 of the multiplayer plan). The pixel routes, `why` and "show it anyway" go by it ([11](11-server.md#what-each-member-sees-lenses)).
+
+**Show hidden.** Search with `hidden=1`: only the photos a member's filters hide, under a *Hidden from you* chip; the Albums tab's **See them** ([26](26-albums-and-agents.md#lenses-on-the-pages)).
+
+**Show it anyway.** A member's word that one photo their filters hide is shown to them all the same (`shown`); said from the viewer's why line ([11](11-server.md#what-each-member-sees-lenses), [26](26-albums-and-agents.md#lenses-on-the-pages)).
+
+**Snapshot (subscription).** A copy of what a lens holds now into a lens or album of the member's own; it does not follow later changes, as a live subscription does ([11](11-server.md#what-each-member-sees-lenses)).
+
+**Subscription.** A member and a lens of someone else's (`subscriptions`): `live`, `snapshot`, or for an estate default `opted_out` ([11](11-server.md#what-each-member-sees-lenses)).
 
 **Sidecar.** A small metadata file next to a photo. Google's is JSON; iCloud's (via `icloudpd`) is XMP.
 
@@ -119,7 +195,11 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Stride.** The spacing, in pixels, of a detector's grid cells: 8, 16 and 32 here.
 
+**Sysadmin.** A member with the sysadmin role; the first is the first `--upload-user` (or `--sysadmin`) on the first start. A request from this computer is the sysadmin too.
+
 **Takeout.** Google's data-export service; the only complete export of a Google Photos library.
+
+**Story.** What a member said about photos, attributed and dated: typed text, or a recording (a file in the store with no `assets` row) and its transcript. Never edited: a second answer is a second story. Read by its teller and whoever may be shown every one of its photos ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
 
 **Tailscale.** A private network (a "tailnet") used here to reach the app from a phone, with
 `tailscale serve` providing HTTPS.
@@ -128,20 +208,32 @@ ahead of time so opening a photo never waits on its original. Chapter 11.
 
 **Teacher (scorer).** Aesthetic Predictor V2.5, used only as a local tool to label photos for the quality scorer; never shipped ([25](25-best-photos.md)).
 
+**Teller.** The component that tells a story, typed or spoken, on the pages (`app/story-flow.js`) and the phone (`Teller.swift`): a field, Record (the microphone asked for only then), the clip listened to and redone before it is sent, and what failed sent again. The inbox answers a question with it; the viewer tells a story about a photo with it ([26](26-albums-and-agents.md#questions-and-stories)).
+
 **Thumbnail.** The 360 px image of a photo in a grid (`/thumb/<sha>`), a WebP at quality 78 since
 2026-11-20 (a JPEG before). Chapter 11.
 
 **Tile.** What the iPhone grid needs to draw a photo and nothing else: its hash, aspect ratio, local time, city and favourite flag ([21](21-offline-search.md)).
+
+**Token (a run's).** The random capability `tasks.Tasks.mint` gives one run of the estate's agent, in its MCP config as `X-Estate-Agent`: this agent, acting for this member, for this task. Held in memory only, honoured only from the mini, forgotten when the run ends ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
+
+**Tombstone.** A photo the estate refuses, by its sha (`tombstones`): one the sysadmin purged (member 0: refused from every source, for good), or one a member opted out of (kept back) on their phone, which refuses that member's upload of those bytes and nobody else's (`GET`/`POST /api/tombstones`). Never deleted; an opt-out is taken back with `lifted_at`, by its member ([4](04-store-and-ingest.md#append-only-sources-only-add), [11](11-server.md#private-photos)).
+
+**Transcript.** A recording written out on the mini by transcribe.py (Parakeet TDT 0.6B v2 on MLX): the one change a story ever takes, written once ([11](11-server.md#the-estates-agent-listeners-questions-and-stories)).
 
 **Trip.** A run of events more than 100 km (configurable) from home, spanning at least two dates.
 
 **Trusted (face).** One whose name came from Google or from you. Only trusted faces build the reference
 faces everything else is compared with.
 
+**Upload policy.** What the iPhone app asks a member before it shares their photos: `everything` (nothing: as before), `review` (each batch) or `review_flagged` (only what PhotoKit or Vision thinks may be private). Set on `/members`; the app reads it from `GET /api/me` ([24](24-uploading.md#the-phone-gate-looking-before-sharing)).
+
 **uv.** The Python package and script runner used to run each script with its inline dependencies.
 
 **VLM.** A vision-language model that answers questions about images; here, any OpenAI-compatible
 server used by `estate.py tag`.
+
+**Withdrawn.** A photo its sharer took back from the family, from the viewer: private to them until they release it ([11](11-server.md#private-photos)).
 
 **WAL (write-ahead log).** SQLite's journal mode that lets readers and a writer work at once.
 

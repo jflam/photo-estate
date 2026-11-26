@@ -116,8 +116,14 @@ def _make(job: tuple[str, str | None, str | None]) -> bool:
 
 
 class Images:
-    def __init__(self, live: Live, store: Path, cache: Path, seed: Path):
+    """`may_see(sha, member)`: whether a member may be shown that photo at all. PhotoApp gives Live.shared_for
+    (every photo but those private to their sharers when the member is not one: private.py); by default,
+    everyone may see everything. Every route here answers a photo they may not be shown exactly as one that
+    does not exist: 404, an empty body, no-store."""
+
+    def __init__(self, live: Live, store: Path, cache: Path, seed: Path, may_see=None):
         self.live, self.store, self.cache, self.seed = live, store, cache, seed
+        self.may_see = may_see or (lambda sha, member: True)
         self.pregen_lock = threading.Lock()       # guards the two flags below
         self.pregen_running = self.pregen_again = False
 
@@ -150,14 +156,19 @@ class Images:
                 return None
         return dest.read_bytes(), TYPES[dest.suffix]
 
-    def video_file(self, sha: str, original: bool = False) -> tuple[Path, str, str] | None:
+    def video_file(self, sha: str, original: bool = False, member: int | None = None) -> tuple[Path, str, str] | None:
         """(the file to send, the type to send it as, its name) for a video in the catalog or a Live Photo's
-        clip; None for anything else, or a file that is not on the disk. The file is the copy to play from
-        if one has been made (_streams), unless `original`: then always the stored file."""
+        clip; None for anything else, a video `member` may not be shown (shared_for), a clip none of whose
+        stills they may be shown, or a file that is not on the disk. The file is the copy to play from if one has been made (_streams), unless `original`:
+        then always the stored file."""
         if not sha_re.match(sha):
             return None
         cat = self.live.cat
         m = cat.meta.get(sha)
+        if m is not None and not self.may_see(sha, member):
+            return None
+        if m is None and not any(self.may_see(still, member) for still in cat.stills.get(sha, ())):
+            return None      # a Live Photo's clip is shown to whoever may be shown one of its stills, and no one else
         ext = m["ext"] if m and m.get("kind") == "video" else cat.clips.get(sha)
         if not ext or ext not in VIDEO_TYPES:
             return None
@@ -170,14 +181,15 @@ class Images:
             return copy, "video/mp4", name.rsplit(".", 1)[0] + ".mp4"
         return src, VIDEO_TYPES[ext], name
 
-    def handle(self, method: str, path: str, qs: dict, body):
-        """One request -> (status, body bytes, content type, Cache-Control[, headers]), or None if it isn't ours."""
+    def handle(self, method: str, path: str, qs: dict, body, member: int | None = None):
+        """One request for `member` -> (status, body bytes, content type, Cache-Control[, headers]), or None if it
+        isn't ours. A photo `member` may not be shown (shared_for) is a 404, as one that does not exist."""
         if method != "GET":
             return None
         meta = self.live.cat.meta
         if path.startswith("/original/"):
             sha = path[len("/original/"):]
-            m = meta.get(sha) if sha_re.match(sha) else None
+            m = meta.get(sha) if sha_re.match(sha) and self.may_see(sha, member) else None
             src = self.original(sha, m["ext"]) if m else None
             if not m or src is None or m["ext"] not in original_types or not src.exists():
                 return 404, b"", "text/plain", "no-store"
@@ -187,7 +199,7 @@ class Images:
         for prefix, kind, side in SIZES:
             if path.startswith(prefix):
                 sha = path[len(prefix):]
-                if sha_re.match(sha) and sha in meta and (got := self.image(sha, kind, side)):
+                if sha_re.match(sha) and sha in meta and self.may_see(sha, member) and (got := self.image(sha, kind, side)):
                     return 200, got[0], got[1], FOREVER
                 return 404, b"", "text/plain", "no-store"
         return None

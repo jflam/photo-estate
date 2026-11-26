@@ -27,6 +27,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Photo Estate records you only when you tap Record, to keep a story you tell about your photos.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Photo Estate uploads the photos and videos you take to your own server.</string>
 	<key>UILaunchScreen</key>

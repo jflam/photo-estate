@@ -62,9 +62,11 @@ flowchart TD
     M --> R{"already recorded?<br/>occurrences(source, path)"}
     R -->|yes| SKIP["skip: resuming"]
     R -->|no| H["store_blob: stream to .tmp while hashing"]
-    H --> Q{"sha already in assets?"}
+    H --> P{"purged?<br/>a tombstone for everyone"}
+    P -->|yes| REF["delete .tmp<br/>st.refused += 1: nothing recorded"]
+    P -->|no| Q{"sha already in assets?"}
     Q -->|yes| DUP["delete .tmp<br/>st.dup += 1"]
-    Q -->|no| MV["os.replace to store/ab/cd/sha.ext"]
+    Q -->|no| MV["os.replace to store/ab/cd/sha.ext<br/>(kept if already there; locked in a store marked .immutable)"]
     MV --> F["image_facts: width, height,<br/>EXIF date, dHash"]
     F --> AI["INSERT assets"]
     DUP --> OC["INSERT OR IGNORE occurrences"]
@@ -74,19 +76,27 @@ flowchart TD
 ### `store_blob`: hash while writing
 
 ```python
-def store_blob(con, store, fp, ext):
+def store_blob(con, store, fp, ext, lock=False):
     tmp = store / ".tmp" / f"{os.getpid()}.{time.time_ns()}"
     h, n = hashlib.sha256(), 0
     with open(tmp, "wb") as out:
         while chunk := fp.read(1 << 20):      # 1 MiB at a time
             h.update(chunk); out.write(chunk); n += len(chunk)
     sha = h.hexdigest()
+    if purged(con, sha):                       # the sysadmin purged it: no source brings it back
+        tmp.unlink()
+        raise Purged(sha)
     if con.execute("SELECT 1 FROM assets WHERE sha256=?", (sha,)).fetchone():
         tmp.unlink()                           # already stored: discard the copy
         return sha, n, None
     dest = blob_path(store, sha, ext)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    os.replace(tmp, dest)                      # atomic on one filesystem
+    if dest.exists():                          # same bytes, from a run stopped before it recorded them
+        tmp.unlink()
+    else:
+        os.replace(tmp, dest)                  # atomic on one filesystem
+    if lock:
+        set_immutable(dest)                    # chflags uchg (a warning where it cannot be set)
     return sha, n, dest
 ```
 
@@ -104,6 +114,9 @@ Why it is written this way:
   is called or where it was found.
 - **The temp name** includes the process id and a nanosecond timestamp, so several ingest
   processes (or a crashed one's leftovers) never collide.
+- **A file already at its place is never replaced.** An ingest stopped after it wrote a file and before
+  it committed the row leaves the file behind; the next run keeps it (it is the same bytes) rather than
+  renaming over it, which an immutable file would refuse.
 
 ### `assets` versus `occurrences`
 
@@ -241,10 +254,62 @@ de-duplication problem is not exact copies, it is near-copies (chapter 8).
 
 ### `--delete-after`
 
-`ingest --delete-after zip` deletes the *source zip* once it is fully ingested. This is the one
-place the system deletes anything, and it is opt-in. It is what keeps the rolling pull's local
-disk use to about one zip: the disk never holds more than the zip being ingested plus the one being
-downloaded.
+`ingest --delete-after zip` deletes the *source zip* once it is fully ingested. Apart from `purge`
+(below), this is the one place the system deletes anything, and it is opt-in. It is what keeps the
+rolling pull's local disk use to about one zip: the disk never holds more than the zip being ingested
+plus the one being downloaded.
+
+## Append-only: sources only add
+
+The estate only grows ([the multiplayer plan](../notes/MULTIPLAYER-PLAN.md#append-only)). A photo deleted
+on an iPhone, in iCloud, in the OneDrive mirror or from a Takeout stays in the estate: ingest reads what a
+source has and adds what is new, and nothing it does removes a row or a file because a source no longer
+has it. `tests/test_append_only.py` checks this for each kind of source (a Takeout zip downloaded again
+without a photo, an iCloud folder, the OneDrive mirror, the phone's inbox read with `--force` as
+`ingest-iphone.sh` does): the catalog and the store are the same after the second run. Four more things
+hold it in place:
+
+- **The protected tables.** SQLite triggers refuse a `DELETE` from `assets`, `occurrences`, `sharers`,
+  `tombstones`, `members`, `member_logins` and the journal, any `UPDATE` of the journal, and an `UPDATE`
+  that changes a key (a sha, an id). The other columns stay correctable: `link`, `exif` and `embed`
+  rewrite dates, places and sizes as they always have ([chapter 5](05-catalog.md#protected-tables)).
+- **The immutable flag.** In a store whose root holds a file named `.immutable` (the Mac mini's), ingest
+  sets the user-immutable flag (`chflags uchg`) on each file it writes, so even `rm -rf` in the wrong
+  folder fails. A store without that file (a scratch one, a test's, the setup page's practice library)
+  is written as before and can be deleted as usual, and the checked-in demo store never gets it, even if
+  marked (git must be able to change it). On a system without file flags, ingest says so and goes on.
+  The flag guards against accidents, not intent: the estate disk ignores ownership, so any user of the
+  Mac can clear it. The files stored before the flag came are given it once, by hand
+  ([MAC-MINI.md](../../photo-estate/deploy/MAC-MINI.md#append-only-the-one-off-steps)).
+- **The journal.** Each source that added anything is one `ingest.finished` entry (how many new, how
+  many copies of photos already stored, how many refused), not one per photo; a run that found nothing
+  new leaves none.
+- **Purge, by hand.** `estate.py purge <sha> --reason "..."` is the one way a photo leaves the estate:
+  run by the sysadmin on the Mac, never from a page, a phone or an agent. It takes a catalog backup
+  first (`PRAGMA quick_check` on the copy, or it stops), then in one transaction appends a
+  `photo.purged` journal entry (who, when, why, where it came from: the fact survives the bytes), adds a
+  **tombstone** for everyone (`tombstones`, member 0) and deletes the photo's rows: `assets`,
+  `occurrences` and `sharers` (the one place their `*_no_delete` triggers are dropped, and made again
+  before the commit) and everything worked out from it (vectors, faces, places, tags, its line in the
+  text index, album items, favourites, Live Photo pairs). Then it clears the flag, removes the file and,
+  with `--cache DIR`, its thumbnails, previews and face crops. A purged photo is refused by every later
+  ingest, from any source: `store_blob` drops it before it reaches the store (`N refused (purged)`). The
+  photo stays in older catalog backups until they rotate out, in `face-labels.jsonl`'s lines, in the
+  source metadata keyed by path (`sidecars`, `xmp`, `flickr`), and in the sources themselves, which purge
+  lists and never touches.
+
+## Who shared it
+
+Ingest records, in the transaction that records each photo, who shared it (`sharers`, multiplayer phase 5;
+[private.py](../../photo-estate/private.py) `record_sharer`): for every file it reads, new or a copy of a
+photo already stored, the first sysadmin, or, for the phone's inbox read with `--uploads` (as
+ingest-iphone.sh reads it), the member whose folder it is in (`m<member id>/YYYY/MM/DD/...`; a folder of
+no member's, or none, is the first sysadmin's). A photo that was in the estate with no sharer (before
+`estate.py migrate` gave every photo one) was the first sysadmin's, so that row is written first. With
+`--uploads`, an image nobody else is shown yet (a new photo, or one all of whose sharers hold it private)
+also gets a `new` row in `private`: it is private to its sharer until `private.py check` has scored it
+([chapter 11](11-server.md#private-photos)). A member folder is not an album (`default_album` reads
+`m3/2026/11/14` as a date, as it reads `2026/11/14`).
 
 ## The catalog-side effects of ingest
 
@@ -254,6 +319,8 @@ After an ingest the database holds, for the new source:
 |---|---|
 | `assets` | One row per new unique file |
 | `occurrences` | One row per file found, new or duplicate |
+| `sharers` | Who shared each file found (the first sysadmin, or the inbox folder's member) |
+| `private` | With `--uploads`: a `new` row for each phone upload the family is not shown yet |
 | `sidecars` | One row per Google photo JSON (whole JSON kept) |
 | `albums` | One row per album folder's `metadata.json` (its localised title) |
 | `xmp` | One row per iCloud XMP sidecar, with the few parsed fields as JSON |
@@ -278,6 +345,8 @@ still catch bit rot.
 |---|---|
 | Path computation | `blob_path` |
 | Streaming hash and atomic write | `store_blob` |
+| The immutable flag, purged photos | `immutable`, `set_immutable`, `purged` |
+| Removing a photo for good; the one-off sharers migration | `cmd_purge`, `cmd_migrate` |
 | Dimensions, EXIF date, dHash | `image_facts` |
 | The ingest loop | `cmd_ingest` |
 | Source enumeration | `iter_entries` |

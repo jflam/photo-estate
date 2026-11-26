@@ -28,7 +28,7 @@ import scores  # noqa: E402
 from core import states  # noqa: E402
 
 MODEL = "google/siglip2-base-patch16-256"     # the demo library's embeddings (embed.py's DEFAULT_MODEL)
-BOOKKEEPING = ("raw", "model", "demo", "info")
+BOOKKEEPING = ("raw", "model", "demo")
 
 
 def demo_copy(tmp_path: Path) -> Path:
@@ -55,22 +55,27 @@ def test_catalog_is_a_slotted_dataclass_with_every_field():
     assert catalog.STATE == tuple(n for n in names if n not in BOOKKEEPING)
     # what the routes read, the nullable three among them; no field is left without a type
     for n in ("shas", "N", "index", "M", "meta", "events", "trips", "has_faces", "when", "ym", "m0", "nmonths",
-              "single", "multi", "trip_list", "people_ix", "word_re", "visible", "best", "rank", "score",
-              "stack_of", "stack_n", "dup", "fav", "ars", "oldest", "newest", "info"):
+              "single", "multi", "people_ix", "word_re", "best", "rank", "score", "said_fav", "secs",
+              "ars", "oldest", "newest"):
         assert n in names, n
+    # what one member sees is a View, never the Catalog's (multiplayer phase 3): no mask of its own
+    for n in ("visible", "stack_of", "stack_n", "dup", "fav", "trip_list", "info", "stack_live"):
+        assert n not in names, n
+    view = [f.name for f in dataclasses.fields(catalog.View)]
+    for n in ("cat", "member", "shared", "visible", "fav", "stack_of", "stack_n", "dup", "stack_live", "trip_list", "info"):
+        assert n in view, n
     hints = typing.get_type_hints(catalog.Catalog)
     assert set(hints) == set(names)
     for n in ("best", "rank", "score"):
         assert type(None) in typing.get_args(hints[n]), f"{n} must be Optional"
-    for n in ("M", "visible", "ars", "stack_of"):
+    for n in ("M", "ars", "secs"):
         assert type(None) not in typing.get_args(hints[n]), f"{n} is never None"
-    # info is worked out from the rest, not passed in
-    assert not next(f for f in dataclasses.fields(catalog.Catalog) if f.name == "info").init
+    assert set(typing.get_type_hints(catalog.View)) == set(view)
 
 
 def test_photo_meta_keys():
     req, opt = catalog.PhotoMeta.__required_keys__, catalog.PhotoMeta.__optional_keys__
-    assert req == {"ext", "taken", "lat", "lon", "desc", "people", "albums", "fav", "w", "h", "path"}
+    assert req == {"ext", "taken", "lat", "lon", "desc", "people", "albums", "w", "h", "path"}   # no fav: View.fav
     assert {"ar", "camera", "lens", "local", "tz", "place", "country", "region", "city", "county", "event",
             "event_title", "trip", "trip_title", "place_inferred"} <= opt
 
@@ -79,20 +84,23 @@ def test_demo_catalog_types(demo: catalog.Catalog):
     c = demo
     assert c.N == len(c.shas) == len(c.index) == c.M.shape[0] > 0
     assert c.M.dtype == np.float32 and c.ars.dtype == np.float32
-    for name in ("when", "year", "ym", "event_of", "trip_of", "fav", "shot", "ars", "oldest", "newest",
-                 "visible", "stack_of", "stack_n", "dup"):
+    v = c.view(None, np.zeros(c.N, bool), c.said_fav)
+    for name in ("when", "year", "ym", "event_of", "trip_of", "said_fav", "shot", "ars", "oldest", "newest", "secs"):
         a = getattr(c, name)
         assert isinstance(a, np.ndarray) and len(a) == c.N, name
-    assert c.visible.dtype == bool and c.dup.dtype == bool and c.stack_of.dtype == np.int64
+    for name in ("shared", "visible", "fav", "stack_of", "stack_n", "dup"):
+        a = getattr(v, name)
+        assert isinstance(a, np.ndarray) and len(a) == c.N, name
+    assert v.visible.dtype == bool and v.dup.dtype == bool and v.stack_of.dtype == np.int64
     assert isinstance(c.word_re, re.Pattern) and isinstance(c.cities, set) and isinstance(c.m0, int)
     # the demo library has no scorers and no faces: the nullable fields are None, the flags false
     assert c.best is None and c.rank is None and c.score is None
-    assert c.has_faces is False and c.info["best"] is False and c.info["faces"] is False
+    assert c.has_faces is False and v.info["best"] is False and v.info["faces"] is False
     with pytest.raises(ValueError):
         c.scored()
     with pytest.raises(ValueError):
-        c.browse_order(c.combine({}), "best")
-    assert len(c.browse_order(c.combine({}), "new")) == int(c.visible.sum())
+        c.browse_order(v.combine({}), "best")
+    assert len(c.browse_order(v.combine({}), "new")) == int(v.visible.sum())
     # every photo's dict has the keys PhotoMeta requires, and `ar` once the catalog is built
     for sha in c.shas:
         m = c.meta[sha]
@@ -100,9 +108,9 @@ def test_demo_catalog_types(demo: catalog.Catalog):
         assert set(m) <= catalog.PhotoMeta.__required_keys__ | catalog.PhotoMeta.__optional_keys__, set(m)
     assert c.events and all(set(e) == set(catalog.Event.__annotations__) for e in c.events.values())
     assert c.trips and all(set(t) == set(catalog.Trip.__annotations__) for t in c.trips.values())
-    assert all(set(t) == set(catalog.TripCard.__annotations__) for t in c.trip_list)
-    json.dumps(c.info)                              # what /api/info sends
-    json.dumps([c.feed_row(s) for s in c.shas])     # what the sync feed sends
+    assert all(set(t) == set(catalog.TripCard.__annotations__) for t in v.trip_list)
+    json.dumps(v.info)                              # what /api/info sends
+    json.dumps([v.feed_row(s) for s in c.shas])     # what the sync feed sends
     with pytest.raises(AttributeError):             # slots: no attribute appears from nowhere
         c.not_a_field = 1                           # type: ignore[attr-defined]
 
@@ -124,16 +132,17 @@ def test_catalog_with_scorers(tmp_path):
     con.close()
     c = load(db, tmp_path)
     best, rank, score = c.scored()
-    assert c.best is best and c.rank is rank and c.score is score and c.info["best"] is True
+    v = c.view(None, np.zeros(c.N, bool), c.said_fav)
+    assert c.best is best and c.rank is rank and c.score is score and v.info["best"] is True
     assert sorted(best.tolist()) == list(range(c.N)) and (rank[best] == np.arange(c.N)).all()
     assert score.dtype == np.float64 and len(score) == c.N
-    assert len(c.browse_order(c.combine({}), "best-month")) == int(c.visible.sum())
+    assert len(c.browse_order(v.combine({}), "best-month")) == int(v.visible.sum())
 
 
 def test_enum_values_are_the_legacy_strings():
     legacy = {
         states.ChangeOp: ("hide", "view"),
-        states.ChangeStatus: ("open", "reverted", "done"),
+        states.ChangeStatus: ("open", "reverted", "done", "discarded"),   # discarded: phase 2 of the multiplayer plan
         states.AlbumKind: ("list", "live"),
         states.SetState: ("empty", "album", "review", "applied", "reverted", "done"),
         states.Decision: ("pending", "accept", "reject"),

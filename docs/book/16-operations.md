@@ -336,6 +336,14 @@ Because the store is append-only and content-addressed, backing it up is unusual
 | A filesystem with checksums | btrfs `scrub` monthly, or ZFS |
 | Moving an estate | It is just files: `rsync`, then compare file counts, total bytes and the SHA-256 of `estate.db` before erasing the old disk |
 
+The store on the Mac mini is also **immutable**: its files carry the user-immutable flag (`chflags uchg`,
+set by ingest in a store marked with a `.immutable` file, [chapter 4](04-store-and-ingest.md#append-only-sources-only-add)),
+so `rm` in the wrong folder fails. A backup that copies the flag (`cp -p`, Python's `copy2`, `rsync
+--fileflags` where rsync has it) makes files that cannot be pruned or replaced until it is cleared
+(`chflags -R nouchg`): say so in the backup plan, and check what the backup tool does with one file first. The one way a photo leaves the estate is
+`estate.py purge <sha> --reason "..."`, by hand ([appendix A](appendix-a-commands.md)); it backs the
+catalog up first, and the photo stays in older backups until they rotate out.
+
 What to back up, in priority order: the **store** (which includes what phones uploaded, once ingested);
 the **inbox** `iphone/` until it has been ingested and the store copied; the **catalog**;
 `face-labels.jsonl` and `review/decisions.json` (your work); everything else can be regenerated, including

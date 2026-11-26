@@ -3,6 +3,7 @@ import SwiftUI
 
 struct UploadsView: View {
     @ObservedObject var uploader: ForegroundUploader
+    @ObservedObject private var gate = GateModel.shared
     @State private var access = PHPhotoLibrary.authorizationStatus(for: .readWrite)
     @State private var systemUploader = "Off"
     @State private var systemOn = false
@@ -15,6 +16,10 @@ struct UploadsView: View {
             List {
                 Section("Server") {
                     LabeledContent("Address", value: UploadRequest.baseURL.absoluteString)
+                    if let me = gate.me {
+                        LabeledContent("You are", value: me.name)
+                        Text(me.policyText).font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
                 Section {
                     LabeledContent("Photo access", value: accessText)
@@ -24,9 +29,10 @@ struct UploadsView: View {
                         Task { systemOn ? disable() : await enable() }
                     }
                 } header: { Text("New photos") } footer: {
-                    Text("Once on, iOS sends each new photo to your server in the background, even with this app closed. Photos taken before you turn it on are not sent: use the button below for those.")
+                    Text(gate.gated ? "Once on, iOS hands each new photo to this app in the background, and it waits in your Inbox for you to look over: nothing is sent until you have. Older photos are offered in the Inbox a year at a time."
+                         : "Once on, iOS sends each new photo to your server in the background, even with this app closed. Photos taken before you turn it on are not sent: use the button below for those.")
                 }
-                Section {
+                if !gate.gated { Section {
                     Stepper("Last \(days) days", value: $days, in: 1...3650)
                     Button(uploader.running ? "Stop" : "Upload recent photos") {
                         uploader.running ? uploader.stop() : uploader.start(days: days)
@@ -35,7 +41,7 @@ struct UploadsView: View {
                     if uploader.total > 0 { ProgressView(value: Double(uploader.sent + uploader.skipped + uploader.failed), total: Double(max(uploader.total, 1))) }
                 } header: { Text("Older photos") } footer: {
                     Text("Keep the app open while this runs. Photos the server already has are skipped.")
-                }
+                } }
                 if systemOn { activity }
             }
             .navigationTitle("Uploads")

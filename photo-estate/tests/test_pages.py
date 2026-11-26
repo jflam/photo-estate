@@ -59,7 +59,8 @@ def imports(src: str) -> list[tuple[str, list[str]]]:
 
 
 def test_the_pages_are_the_ones_we_know():
-    assert PAGES == ["changes.html", "compare.html", "people.html", "review.html", "search.html", "setup.html", "stats.html"]
+    assert PAGES == ["agents.html", "changes.html", "compare.html", "inbox.html", "members.html", "people.html", "review.html", "search.html",
+                     "setup.html", "stats.html"]
 
 
 def test_module_serves_the_modules_and_nothing_else():
@@ -163,7 +164,8 @@ def test_photo_app_serves_modules_as_javascript(app):
 
 
 def test_photo_app_pages_name_modules_it_serves(app):
-    for path, page in (("/", "search.html"), ("/changes", "changes.html"), ("/stats", "stats.html")):
+    for path, page in (("/", "search.html"), ("/changes", "changes.html"), ("/stats", "stats.html"), ("/members", "members.html"),
+                       ("/inbox", "inbox.html")):
         r = app.request("GET", path)
         assert r.status == 200 and b'<script type="module">' in r.body, path
         for addr, _ in imports(script(page)):

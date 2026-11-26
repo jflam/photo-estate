@@ -31,6 +31,15 @@ h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032
 .ask { display: flex; gap: 10px; align-items: flex-end; margin-top: 22px; max-width: 900px; }
 .ask textarea { flex: 1; min-height: 60px; padding: 12px 16px; border-radius: 18px; border: 0; outline: 0; background: var(--well); font: inherit; color: inherit; resize: vertical; }
 .ask textarea:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 4px var(--sun-wash); }
+/* whom the agent works for: the member asking, or the family (the archivist: tasks.py) */
+.ask { flex-wrap: wrap; }
+.for { display: flex; gap: 8px; flex-wrap: wrap; flex: 1 1 100%; }
+.for label { flex: 1 1 260px; display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 16px; background: var(--well); cursor: pointer; transition: background .15s, box-shadow .15s; }
+.for label:has(input:checked) { background: var(--sun-wash); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sun) 45%, transparent); }
+.for input { margin-top: 3px; accent-color: var(--sun); }
+.for b { display: block; font-size: 14.5px; font-weight: 600; }
+.for small { display: block; margin-top: 1px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.task .pill.family { background: var(--well-2); color: var(--ink-2); margin-left: 6px; }
 .task { margin-top: 10px; padding: 16px 20px; border-radius: var(--r); background: var(--well); max-width: 900px; }
 .task .row { display: flex; gap: 12px; align-items: flex-start; }
 .task h3 { font-size: 16px; font-weight: 600; margin-right: auto; }
@@ -55,6 +64,10 @@ h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032
 .why .ok { color: var(--yes); font-weight: 700; }
 .why .bad { color: var(--no); font-weight: 700; }
 .why .link { margin-left: 6px; }
+.for:empty { display: none; }
+.for .seg { margin: 0 6px; vertical-align: middle; }
+.for i { color: var(--ink-2); }
+.for b { color: var(--ink-2); font-weight: 600; }
 .fin { margin: 0 4px 12px; padding: 14px 18px; border-radius: var(--r); background: var(--well); font-size: 15px; color: var(--ink-2); max-width: 110ch; }
 .fin b { color: var(--ink); }
 .fin.done b:first-child { color: var(--yes); }
@@ -63,6 +76,14 @@ h1 { font-size: 40px; line-height: 1.08; font-weight: 700; letter-spacing: -.032
 .grid::after { content: ""; flex: 100 1 0; }
 .m { height: var(--h); flex: 0 0 auto; padding: 0 10px 6px 6px; display: flex; align-items: flex-end; font-size: 12px; font-weight: 700;
   color: var(--muted); line-height: 1.15; }
+/* the held review: a heading where each section starts, the width of the wall */
+.sec { flex: 0 0 100%; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 22px 4px 8px; }
+.sec:first-child { padding-top: 4px; }
+.sec b { font-size: 17px; font-weight: 700; letter-spacing: -.012em; }
+.sec .num { color: var(--muted); font-size: 13.5px; font-weight: 600; }
+.sec small { flex: 1 1 100%; color: var(--muted); font-size: 13.5px; }
+.t .hid { position: absolute; right: 4px; top: 4px; height: 18px; padding: 0 6px; border-radius: 999px; font-size: 10.5px; font-weight: 700;
+  display: inline-flex; align-items: center; background: rgba(0,0,0,.55); color: #fff; pointer-events: none; }
 .t { position: relative; height: var(--h); flex: 1 1 calc(var(--h) * var(--ar)); max-width: calc(var(--h) * var(--ar) * 1.6); background: var(--tile);
   overflow: hidden; cursor: pointer; }
 .t img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -112,6 +133,8 @@ import { api, isAbort } from "/app/api.js";
 import { latest, STALE } from "/app/fsm.js";
 import { loop } from "/app/loop.js";
 import { settle, edits } from "/app/changes-flow.js";
+import { lensName } from "/app/lens-flow.js";
+import { heldReview, heldSays, whyHeld, SECTION_WORDS } from "/app/held-flow.js";
 import { toast } from "/app/toast.js";
 
 const store = {   // what this browser remembers: the size of the photos, and where you were in each set
@@ -131,7 +154,7 @@ const said = e => !e ? "" : e.kind === "tool" ? "Looking: " + e.text.replace(/^(
   catch { return n.replace(/_/g, " "); } }) : e.text;
 function taskCard(t) {
   const live = t.status === "queued" || t.status === "running";
-  return `<div class="task ${t.status}"><div class="row"><h3>${esc(t.prompt.length > 140 ? t.prompt.slice(0, 140) + "…" : t.prompt)}<span class="pill ${live ? "review" : ""}">${TASK[t.status]}</span></h3>
+  return `<div class="task ${t.status}"><div class="row"><h3>${esc(t.prompt.length > 140 ? t.prompt.slice(0, 140) + "…" : t.prompt)}<span class="pill ${live ? "review" : ""}">${TASK[t.status]}</span>${t.acting_for == null ? `<span class="pill family">For the family</span>` : ""}</h3>
       ${live ? `<button class="btn" data-cancel="${t.id}">Stop</button>` : ""}</div>
     ${live ? `<p class="now">${esc(said(t.last) || "Starting…").slice(0, 220)}</p>` : ""}
     ${t.error ? `<p class="err">${esc(t.error)}</p>` : ""}
@@ -139,16 +162,23 @@ function taskCard(t) {
     ${t.change_sets.map(c => `<a class="btn ask" href="${c.review}">Review ${plural(c.photos, "photo")}: ${esc(c.title)}</a>`).join(" ")}</div>`;
 }
 async function home(signal) {
-  const [d, k] = await Promise.all([api("/api/changes", undefined, { signal }), api("/api/tasks", undefined, { signal })]);
+  const [d, k, me] = await Promise.all([api("/api/changes", undefined, { signal }), api("/api/tasks", undefined, { signal }),
+    api("/api/me", undefined, { signal }).catch(() => null)]);
+  d.sysadmin = me?.role === "sysadmin";
   $("#crumb").innerHTML = "Changes";
-  $("#sum").textContent = d.hidden ? `${plural(d.hidden, "photo")} hidden` : "";
+  $("#sum").textContent = d.hidden ? `${plural(d.hidden, "photo")} hidden from you` : "";
   const counts = s => [s.applied && `${fmt(s.applied)} hidden`, s.n - s.reject - s.applied > 0 && `${fmt(s.n - s.reject - s.applied)} to hide`,
     s.reject && `${fmt(s.reject)} kept`].filter(Boolean).join(" · ");
   const draft = $("#ask")?.value ?? "", typing = document.activeElement?.id === "ask";
+  const family = !!$("#askForm input[name=for][value=family]:checked");     // (the list is drawn again every 2 s: the choice stays)
   $("#main").innerHTML = `<h1>Changes</h1>
-    <p class="sub">Say what should go, and an agent on this computer works out which photos you mean. It proposes them as a change set; nothing happens to the library until you have looked and applied it. An applied set is then committed, or reverted to show every photo again.</p>
+    <p class="sub">Say what should go, and an agent on this computer works out which photos you mean. It proposes them as a change set; nothing is hidden until you have looked and applied it, and then only from you${d.sysadmin ? ", unless you hide them from everyone" : ""}. An applied set is then committed, or reverted to show every photo again.</p>
     <form class="ask" id="askForm"><textarea id="ask" rows="2" placeholder="Hide the photos from the school: young children nobody has named, outdoors or in a classroom" ${k.available ? "" : "disabled"}></textarea>
-      <button class="btn pri" ${k.available ? "" : "disabled"}>Ask</button></form>
+      <button class="btn pri" ${k.available ? "" : "disabled"}>Ask</button>
+      <div class="for" role="radiogroup" aria-label="Whom the agent works for">
+        <label><input type="radio" name="for" value="me"${family ? "" : " checked"}><span><b>For me</b><small>It sees what you see, your private photos too; what it makes is yours to look over.</small></span></label>
+        <label><input type="radio" name="for" value="family"${family ? " checked" : ""}><span><b>For the family</b><small>It sees only what everyone can see; what it makes is published as a family series.</small></span></label>
+      </div></form>
     ${k.available ? "" : `<p class="sub">${esc(k.why)}.</p>`}
     <div id="tasks">${k.tasks.map(taskCard).join("")}</div>
     ${d.sets.length ? `<div class="cards">${d.sets.map(s => `<a class="card" href="/changes/${s.id}">
@@ -162,7 +192,8 @@ async function home(signal) {
     e.preventDefault();
     const prompt = $("#ask").value.trim();
     if (!prompt) return;
-    try { await api("/api/tasks", { prompt }); $("#ask").value = ""; watching.now(); } catch (err) { toast(err.message); }
+    const family = !!$("#askForm input[name=for][value=family]:checked");
+    try { await api("/api/tasks", family ? { prompt, family: true } : { prompt }); $("#ask").value = ""; watching.now(); } catch (err) { toast(err.message); }
   };
   $("#ask").onkeydown = e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("#askForm").requestSubmit(); };
   $("#tasks").onclick = async e => {
@@ -188,7 +219,11 @@ const watching = loop(async signal => {
 const SIZES = [64, 88, 120, 170, 240, 340];
 let S = null, shown = [], filter = "all", cur = null, anchor = null, lb = null, moved = 0;
 let size = Math.max(0, Math.min(SIZES.length - 1, +store.get("size", 2) || 0));
-const kept = it => it.decision === "reject";
+// The same wall serves the review of held photos (/held): there every photo stays private unless it is marked to
+// release, as here every photo is hidden unless it is marked to keep. HELD is that review (app/held-flow.js).
+const IS_HELD = location.pathname === "/held";
+let HELD = null;
+const kept = it => IS_HELD ? HELD.isMarked(it.sha) : it.decision === "reject";   // marked: to keep (a set), to release (held)
 const item = sha => S.items.find(it => it.sha === sha);
 const tile = sha => sha && document.getElementById("t" + sha);
 
@@ -205,6 +240,7 @@ function tally() {
   return { keep, hide, show, applied, all: S.items.length };
 }
 function paintBars() {
+  if (IS_HELD) return paintHeld();
   const n = tally();
   $("#sum").innerHTML = `${n.hide || !n.applied ? `${fmt(n.all - n.keep)} to hide` : `${fmt(n.applied)} hidden`} · <b>${fmt(n.keep)}</b> kept`;
   for (const b of document.querySelectorAll("#seg button")) {
@@ -219,11 +255,12 @@ function paintBars() {
   fin.hidden = !(done || (ready && S.state !== "reverted") || (n.applied && !ready));
   fin.className = `fin${done ? " done" : ""}`;
   fin.innerHTML = done ? `<b>Done.</b> ${stands}. Committed ${day(S.done_at || "")}. To change or revert it, reopen it first.`
-    : ready ? `<b>Applied, not yet committed.</b> ${stands}. Look at the library; then <b>Commit</b> to finish, or <b>Revert</b> to show every photo again.`
+    : ready ? `<b>Applied, not yet committed.</b> ${stands}. Look at your library; then <b>Commit</b> to finish, or <b>Revert</b> to show every photo again.`
     : `<b>Partly applied.</b> ${stands} so far; ${todo.join(", ").toLowerCase()} still to apply.`;
   $("#main").classList.toggle("locked", done);
   $("#hint").textContent = done ? "This set is done. Nothing here can be changed until it is reopened."
-    : "Everything here will be hidden, except what you mark to keep.";
+    : `Everything here will be hidden from ${hidesFor() === "estate" ? "everyone" : "you"}, except what you mark to keep.`;
+  paintFor(n);
   const dock = $("#dock");
   dock.hidden = false;
   dock.innerHTML = `<span class="say num">${done ? `<b>Done</b> · ${fmt(n.applied)} hidden · ${fmt(n.keep)} kept`
@@ -265,6 +302,11 @@ async function reread() {
 async function setKeep(items, keep) {
   items = items.filter(it => kept(it) !== keep);
   if (!items.length) return;
+  if (IS_HELD) {                                     // marked here, and sent with "Reviewed up to here"
+    HELD.mark(items.map(it => it.sha), keep);
+    items.forEach(paintTile); paintBars(); paintZoom();
+    return;
+  }
   if (S.state === "done") return toast("This set is done. Reopen it to change it");
   const decision = keep ? "reject" : "accept", shas = items.map(it => it.sha);
   await changing.make(() => {
@@ -274,16 +316,21 @@ async function setKeep(items, keep) {
   }, () => api(`/api/changes/${S.id}/decide`, { shas, decision }));
 }
 
+const monthHead = m => { const label = new Date(m + "-15T12:00:00"); return `<div class="m">${isNaN(label) ? "No<br>date" : label.toLocaleDateString("en-US", { month: "short" }) + "<br>" + label.getFullYear()}</div>`; };
+const secHead = (key, n) => { const w = SECTION_WORDS[key] || { title: key, note: "" }; return `<div class="sec"><b>${esc(w.title)}</b><span class="num">${fmt(n)}</span><small>${esc(w.note)}</small></div>`; };
 function render() {
   shown = S.items.filter(it => filter === "all" || kept(it));
-  let month = null;
+  const per = {};
+  if (IS_HELD) for (const it of shown) per[it.section] = (per[it.section] || 0) + 1;
+  let group = null;
   const html = shown.map(it => {
-    const m = it.when.slice(0, 7), label = m !== month && new Date(m + "-15T12:00:00");
-    month = m;
-    return (label ? `<div class="m">${isNaN(label) ? "No<br>date" : label.toLocaleDateString("en-US", { month: "short" }) + "<br>" + label.getFullYear()}</div>` : "")
-      + `<div class="t${kept(it) ? " keep" : ""}${it.applied ? " gone" : ""}" id="t${it.sha}" data-sha="${it.sha}" style="--ar:${it.ar}"><img loading="lazy" src="/thumb/${it.sha}" alt=""><span class="b">Keep</span></div>`;
+    const g = IS_HELD ? it.section : it.when.slice(0, 7), head = g !== group ? (IS_HELD ? secHead(g, per[g]) : monthHead(g)) : "";
+    group = g;
+    return head + `<div class="t${kept(it) ? " keep" : ""}${it.applied ? " gone" : ""}" id="t${it.sha}" data-sha="${it.sha}" style="--ar:${it.ar || 1.5}"${IS_HELD ? ` title="${esc(whyHeld(it, HELD.prompts))}"` : ""}><img loading="lazy" src="/thumb/${it.sha}" alt="">${it.hidden ? `<span class="hid">Hidden</span>` : ""}<span class="b">${IS_HELD ? "Release" : "Keep"}</span></div>`;
   }).join("");
-  $("#grid").innerHTML = html || `<div class="blank" style="flex:1">${MARK}<h3>None kept</h3><p>Photos you mark to keep are listed here.</p></div>`;
+  $("#grid").innerHTML = html || (IS_HELD && filter === "all" ? `<div class="blank" style="flex:1 1 100%">${MARK}<h3>Nothing to look over</h3><p>Every photo held for you has been looked over. What you kept is still private to you: Search for <i>is:held</i> lists it.</p><a class="btn" href="/?q=is:held">Your held photos</a></div>`
+    : IS_HELD ? `<div class="blank" style="flex:1 1 100%">${MARK}<h3>None marked</h3><p>Photos you mark to release are listed here.</p></div>`
+    : `<div class="blank" style="flex:1">${MARK}<h3>None kept</h3><p>Photos you mark to keep are listed here.</p></div>`);
   if (!shown.some(it => it.sha === cur)) cur = shown[0]?.sha ?? null;
   tile(cur)?.classList.add("on");
   paintBars();
@@ -303,6 +350,7 @@ function setCursor(sha, scroll = true) {
   el?.classList.add("on");
   if (scroll) el?.scrollIntoView({ block: "nearest" });
   if (lb) zoom();
+  if (IS_HELD) paintBars();              // the dock says what "Reviewed up to here" would do, from this photo
 }
 // The photo to the left or right is the one before or after; up and down find the nearest in the next row.
 function neighbour(dx, dy) {
@@ -322,20 +370,17 @@ function neighbour(dx, dy) {
   return best ?? cur;
 }
 
-async function openSet(id) {
-  S = await api(`/api/changes/${id}`);
-  changing = edits(S, () => api(`/api/changes/${S.id}`), reconciled);
-  document.title = `${S.title} — Changes — Photo Estate`;
-  $("#back").href = "/changes";
-  $("#crumb").innerHTML = `<a href="/changes">Changes</a><i>›</i><span>${esc(S.title)}</span>`;
+// The wall: the tools over it (the filter, the size, what the keys do), and the photos; one way to move through
+// it and mark the exceptions, for a change set and for the held review.
+function wall({ marked, mark, upto, why }) {
   $("#main").className = "review";
   $("#main").innerHTML = `<div class="tools">
-      <div class="seg" id="seg"><button data-f="all">All<span></span></button><button data-f="keep">Kept<span></span></button></div>
+      <div class="seg" id="seg"><button data-f="all">All<span></span></button><button data-f="keep">${marked}<span></span></button></div>
       <span class="size"><button class="round" data-size="-1" aria-label="Smaller photos">−</button><button class="round" data-size="1" aria-label="Bigger photos">+</button></span>
-      <span id="hint"></span>
-      <span class="keys"><span><b>Click</b> or <kbd>K</kbd> keep</span><span><kbd>Space</kbd> zoom</span><span><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move</span><span><kbd>−</kbd><kbd>+</kbd> size</span><span><kbd>U</kbd> apply up to here</span></span></div>
+      <span id="hint"></span><span class="for" id="for"></span>
+      <span class="keys"><span><b>Click</b> or <kbd>${mark[0]}</kbd> ${mark[1]}</span><span><kbd>Space</kbd> zoom</span><span><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move</span><span><kbd>−</kbd><kbd>+</kbd> size</span><span><kbd>U</kbd> ${upto}</span></span></div>
     <div class="fin" id="fin" hidden></div>
-    <div class="why" id="why">${esc(S.prompt || "")}</div>
+    <div class="why" id="why">${esc(why || "")}</div>
     <div class="grid" id="grid" style="--h:${SIZES[size]}px"></div>`;
   $("#seg").onclick = e => { const b = e.target.closest("button"); if (b) { filter = b.dataset.f; render(); scrollTo(0, 0); } };
   $(".size").onclick = e => { const b = e.target.closest("button"); if (b) setSize(size + +b.dataset.size); };
@@ -356,10 +401,54 @@ async function openSet(id) {
     const t = e.target.closest(".t");
     if (t && Date.now() - moved < 200) setCursor(t.dataset.sha, false);
   };
+}
+async function openSet(id) {
+  [S, LENSES] = await Promise.all([api(`/api/changes/${id}`), api("/api/lenses").catch(() => null)]);
+  changing = edits(S, () => api(`/api/changes/${S.id}`), reconciled);
+  document.title = `${S.title} — Changes — Photo Estate`;
+  $("#back").href = "/changes";
+  $("#crumb").innerHTML = `<a href="/changes">Changes</a><i>›</i><span>${esc(S.title)}</span>`;
+  wall({ marked: "Kept", mark: ["K", "keep"], upto: "apply up to here", why: S.prompt });
   cur = store.get("at." + id, null);
   render();
   tile(cur)?.scrollIntoView({ block: "center" });
   if (S.busy) watchSettle(); else if (S.applied) check();
+}
+
+// ── whom a set hides from: the lens it is applied to ───────────────────────────────────────────
+// A set hides from the members who see through its lens: by default the owner's own filter (from them alone);
+// a sysadmin may hide from everyone (the estate defaults, which a member may opt out of). The choice is made
+// before the set hides anything, and sent with its first apply; after that the set keeps its lens, and the
+// page says which, until it hides nothing again (reverted).
+let LENSES = null, FOR = null;   // GET /api/lenses (null if it could not be read); the choice, once one is made
+const lensNow = () => S.lens != null ? LENSES?.lenses.find(x => x.id === S.lens) || null : null;
+function choices() {
+  if (!LENSES) return [];
+  const own = LENSES.lenses.filter(x => x.kind === "filter" && x.mine && !x.estate_default);
+  const out = own.length ? own.map(x => ({ v: x.id, label: x.id === LENSES.mine ? "You" : x.title })) : [{ v: "mine", label: "You" }];
+  if (LENSES.sysadmin) out.push({ v: "estate", label: "Everyone" });
+  return out;
+}
+const choosing = () => S.state !== "done" && tally().applied === 0 && choices().length > 1;
+function hidesFor() {                    // what the next first apply names: the choice made, else the set's own lens, else "mine"
+  const cs = choices(), now = lensNow();
+  const own = now?.estate_default ? "estate" : now?.id;
+  return [FOR, own].find(v => v != null && cs.some(c => c.v === v)) ?? cs[0]?.v ?? "mine";
+}
+function paintFor(n) {
+  const el = $("#for");
+  if (!el) return;
+  if (choosing()) {
+    const v = hidesFor();
+    el.innerHTML = `Hide from <span class="seg" id="forSeg">${choices().map(c => `<button data-for="${esc(c.v)}" class="${c.v === v ? "on" : ""}">${esc(c.label)}</button>`).join("")}</span>`
+      + `<span>${v === "estate" ? "Every member, unless they opt out of the estate defaults." : "You only: nobody else’s view changes."}</span>`;
+    $("#forSeg").onclick = e => { const b = e.target.closest("[data-for]"); if (!b) return; FOR = /^\d+$/.test(b.dataset.for) ? +b.dataset.for : b.dataset.for; paintBars(); };
+    return;
+  }
+  const lens = lensNow();
+  el.innerHTML = !n.applied && !lens ? ""
+    : lens ? `${n.applied ? "Hidden" : "Hides"} from <b>${lens.estate_default ? "everyone" : lens.mine ? "you" : "its subscribers"}</b> through ${lensName(lens)}${lens.estate_default ? " (a member may opt out)" : lens.published ? ", and from whoever subscribes to it" : ""}`
+    : S.lens == null ? "Hidden from <b>everyone</b>: a set from before lenses" : "";
 }
 
 // ── one photo, as big as the window ─────────────────────────────────────────────────────────
@@ -386,9 +475,11 @@ function paintZoom() {
   const it = lb && item(cur);
   if (!it) return;
   lb.className = `lb${kept(it) ? " keep" : ""}`;
-  const facts = [it.when ? day(it.when) : "No date", it.place, it.people.length && it.people.join(", ")].filter(Boolean).map(esc).join(" · ");
-  $(".t2", lb).innerHTML = `<b>${fmt(shown.indexOf(it) + 1)} of ${fmt(shown.length)} · ${facts}</b>${it.reason ? `<br>${esc(it.reason)}` : ""}`;
-  $(".state", lb).innerHTML = `${kept(it) ? "Keeping" : it.applied ? "Hidden" : "Will be hidden"} &nbsp;<kbd>K</kbd>`;
+  const facts = [it.when ? day(it.when) : "No date", it.place, it.people?.length && it.people.join(", ")].filter(Boolean).map(esc).join(" · ");
+  const reason = IS_HELD ? whyHeld(it, HELD.prompts) + (it.hidden ? ". You hide it from your library" : "") : it.reason;
+  $(".t2", lb).innerHTML = `<b>${fmt(shown.indexOf(it) + 1)} of ${fmt(shown.length)} · ${facts}</b>${reason ? `<br>${esc(reason)}` : ""}`;
+  $(".state", lb).innerHTML = IS_HELD ? `${kept(it) ? "To release" : "Stays private"} &nbsp;<kbd>R</kbd>`
+    : `${kept(it) ? "Keeping" : it.applied ? "Hidden" : "Will be hidden"} &nbsp;<kbd>K</kbd>`;
 }
 function unzoom() { lb?.remove(); lb = null; tile(cur)?.scrollIntoView({ block: "nearest" }); }
 
@@ -396,13 +487,13 @@ addEventListener("keydown", e => {
   if (!S || e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, textarea")) return;
   const k = e.key.toLowerCase(), move = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] }[k];
   if (move) setCursor(neighbour(...move));
-  else if (k === "k" || k === "x") { const it = item(cur); if (it) setKeep([it], !kept(it)); }
+  else if (k === (IS_HELD ? "r" : "k") || k === "x") { const it = item(cur); if (it) setKeep([it], !kept(it)); }
   else if (k === " " || k === "enter") lb ? unzoom() : zoom();
   else if (k === "escape") unzoom();
   else if (k === "-" || k === "_") setSize(size - 1);
   else if (k === "=" || k === "+") setSize(size + 1);
-  else if (k === "a" && $("#apply") && !$("#apply").disabled) apply();
-  else if (k === "u" && $("#upto") && !$("#upto").disabled) apply(cur);
+  else if (k === "a" && $("#apply") && !$("#apply").disabled) IS_HELD ? reviewed(null) : apply();
+  else if (k === "u" && $("#upto") && !$("#upto").disabled) IS_HELD ? reviewed(cur) : apply(cur);
   else return;
   e.preventDefault();
 });
@@ -412,9 +503,11 @@ addEventListener("keydown", e => {
 // rest waits, so a long set can be looked over and applied a stretch at a time.
 async function apply(through) {
   for (const b of [$("#apply"), $("#upto")]) if (b) b.disabled = true;
-  const r = await changing.make(null, () => api(`/api/changes/${S.id}/apply`, through ? { through } : {}));
+  const lens = choosing() ? { lens: hidesFor() } : {};   // the first apply says whom the set hides from; after that it keeps its lens
+  const r = await changing.make(null, () => api(`/api/changes/${S.id}/apply`, { ...(through ? { through } : {}), ...lens }));
   if (!r.ok) return;                                 // reconciled() has redrawn the set and said why
-  S.state = r.value.state;
+  S.state = r.value.state; S.lens = r.value.lens;
+  if (S.lens != null && !lensNow()) api("/api/lenses").then(l => { LENSES = l; paintBars(); }).catch(() => {});   // made on first use: its name
   const end = through ? S.items.findIndex(it => it.sha === through) + 1 : S.items.length;
   S.items.slice(0, end).forEach(it => { it.applied = !kept(it); paintTile(it); });
   paintBars(); paintZoom();
@@ -469,18 +562,95 @@ function showCheck(r) {
   const c = r.state === "done" ? r.value : null;
   if (!c || c.busy) return again(`<span class="bad">Still updating.</span> The app has not finished taking this change in${r.state === "timeout" ? " after two minutes" : ""}. The change itself is saved.`);
   unsettled = false;
-  const parts = [c.hidden && `${plural(c.hidden, "hidden photo")} ${c.hidden === 1 ? "is" : "are"} in no view and not on phones`,
-    c.visible && `${plural(c.visible, "other photo")} of this set ${c.visible === 1 ? "is" : "are"} in the library`].filter(Boolean);
+  const parts = [c.hidden && `${plural(c.hidden, "hidden photo")} ${c.hidden === 1 ? "is" : "are"} in none of your views and not on your phones`,
+    c.visible && `${plural(c.visible, "other photo")} of this set ${c.visible === 1 ? "is" : "are"} in your library`].filter(Boolean);
   $("#why").innerHTML = c.wrong.length
     ? `<span class="bad">${plural(c.wrong.length, "photo")} not where ${c.wrong.length === 1 ? "it" : "they"} should be.</span> ${c.wrong.slice(0, 5).map(w => `${w.sha.slice(0, 10)} should be ${w.should_be}`).join("; ")}`
     : `<span class="ok">Checked.</span> ${parts.join("; ") || "This set has no photos"}.`;
 }
 
+// ── the review of held photos (/held) ──────────────────────────────────────────────────────────
+// Every held photo of the member's that waits to be looked over (GET /api/held), likeliest mistakes first, in
+// sections. A mark (release this one) is kept in this browser until it is sent; "Reviewed up to here" sends
+// the photos up to the one the member is on: those marked are released, the rest stay private and leave the
+// review. What comes after waits, as on a change set.
+function paintHeld() {
+  const d = HELD.review.data, busy = HELD.busy, w = heldSays({ ...d, items: HELD.items, marks: d.marks || new Set() }, cur);
+  const n = HELD.items.length;
+  $("#sum").innerHTML = w.sum;
+  for (const b of document.querySelectorAll("#seg button")) {
+    b.classList.toggle("on", b.dataset.f === filter);
+    $("span", b).textContent = fmt(b.dataset.f === "all" ? n : HELD.marked);
+  }
+  $("#hint").textContent = w.hint;
+  const fin = $("#fin");
+  fin.hidden = !w.fin;
+  fin.className = "fin";
+  fin.innerHTML = w.fin + (w.fin && d.waiting > n ? ` <button class="link" id="again">Read the list again</button>` : "");
+  if ($("#again")) $("#again").onclick = () => openHeld().catch(failed);
+  const dock = $("#dock");
+  dock.hidden = !n;                                  // (nothing to look over: the page says so, and where the rest is)
+  dock.innerHTML = `<span class="say num">${w.say}</span>` + (n ? `
+    <button class="btn" id="upto" ${cur && !busy ? "" : "disabled"} title="Release what you marked up to the photo you are on, and keep the rest up to it private: they leave this review. The rest waits">Reviewed up to here <kbd>U</kbd></button>
+    <button class="btn pri" id="apply" ${busy ? "disabled" : ""} title="Release what you marked, and keep every other photo here private">Done: keep the rest private <kbd>A</kbd></button>`
+    : "");
+  if ($("#upto")) $("#upto").onclick = () => reviewed(cur);
+  if ($("#apply")) $("#apply").onclick = () => reviewed(null);
+}
+async function reviewed(through) {
+  if (!HELD.items.length) return;
+  if (through == null) {
+    const n = HELD.items.length, m = HELD.marked;
+    if (!confirm(`${m ? `Release the ${plural(m, "photo")} you marked, and keep` : "Keep"} ${n - m === n ? "all " : "the other "}${plural(n - m, "photo")} private? `
+      + "They leave this review; Search for is:held still lists what you keep, and each can be released from its photo.")) return;
+  }
+  const r = await HELD.upTo(through);
+  if (!r.ok) { paintBars(); return toast(`Could not save that: ${r.error.message}`, { ms: 5000 }); }
+  const { released, kept: keptN, waiting } = r.value;
+  render(); paintZoom();
+  scrollTo(0, 0);
+  toast([released && `${plural(released, "photo")} released: the family sees ${released === 1 ? "it" : "them"} now`,
+    keptN && `${fmt(keptN)} kept private`, waiting ? `${fmt(waiting)} still to look over` : "nothing left to look over"].filter(Boolean).join(" · "));
+}
+async function openHeld() {
+  document.title = "Held as private — Photo Estate";
+  $("#back").href = "/";
+  $("#crumb").innerHTML = `<a href="/?q=is:held">Held as private</a><i>›</i><span>To look over</span>`;
+  if (!HELD) {
+    const marks = member => `held.marks.${member}`;
+    HELD = heldReview({
+      load: () => api("/api/held"),
+      send: c => api("/api/held/review", c),
+      remember: {   // the marks, in this browser, until they are sent
+        get: m => { try { return JSON.parse(store.get(marks(m), "[]")); } catch { return []; } },
+        set: (m, shas) => store.set(marks(m), JSON.stringify(shas)),
+      },
+      onChange: () => { if (S && $("#dock")) paintBars(); },
+    });
+    wall({ marked: "To release", mark: ["R", "release"], upto: "reviewed up to here",
+      why: "Photos held as private when they came in, because they look like a receipt, a screenshot or a document. The likeliest mistakes come first. Mark what the family should see; “Reviewed up to here” releases that and keeps the rest so far private." });
+    $("#grid").innerHTML = `<p class="sub">Reading the photos held for you…</p>`;
+  }
+  const r = await HELD.open();
+  if (!r.ok) throw r.error;
+  S = { id: "held", get items() { return HELD.items; } };
+  if (!cur) cur = store.get("at.held", null);
+  render();
+  tile(cur)?.scrollIntoView({ block: "center" });
+}
+
 function failed(e) {
-  $("#main").innerHTML = `<div class="blank">${MARK}<h3>Could not open this</h3><p>${esc(e.message)}</p><a class="btn" href="/changes">All changes</a></div>`;
+  if (IS_HELD) {
+    $("#main").innerHTML = `<div class="blank">${MARK}<h3>Could not read the photos held for you</h3><p>${esc(e?.message || "")}</p><button class="btn" id="retry">Try again</button></div>`;
+    $("#retry").onclick = () => { HELD = null; openHeld().catch(failed); };
+    return;
+  }
+  $("#main").innerHTML = e?.status === 404    // someone else's, or put away: the server says there is none
+    ? `<div class="blank">${MARK}<h3>This change set is not here</h3><p>It may be someone else’s: each member sees only their own. Or it was put away.</p><a class="btn" href="/changes">Your changes</a></div>`
+    : `<div class="blank">${MARK}<h3>Could not open this</h3><p>${esc(e.message)}</p><a class="btn" href="/changes">All changes</a></div>`;
 }
 const id = location.pathname.match(/^\/changes\/(\d+)/)?.[1];
-if (id) openSet(id).catch(failed); else watching.start();
+if (IS_HELD) openHeld().catch(failed); else if (id) openSet(id).catch(failed); else watching.start();
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { watching.pause(); if (settling.busy) settling.cancel(); }
   else { watching.resume(); if (S && unsettled && !settling.busy) watchSettle(); }

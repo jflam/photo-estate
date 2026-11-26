@@ -26,6 +26,7 @@ struct ViewerScreen: View {
     @State private var saving: Set<String> = []
     @State private var note: String?          // why a favourite (or a video's file) could not be had
     @State private var playback = Playback()  // the video that is up, for its controls; not observed here, only by them
+    @State private var priv: PrivateLine?     // whether the photo is private to this member, or theirs to withdraw (Private.swift)
 
     private var isFav: Bool { favs[tile.sha] ?? tile.fav }
 
@@ -58,8 +59,14 @@ struct ViewerScreen: View {
             }
         }
         .task(id: picked?.sha) { photo = await lookup(tile.sha) }
+        .task(id: tile.sha) {
+            priv = nil
+            guard !tile.isLocal else { return }
+            let sha = tile.sha, got = await PrivateLine.load(sha)
+            if !Task.isCancelled, tile.sha == sha { priv = got }
+        }
         .sheet(item: $info) { shown in
-            InfoView(photo: shown, reason: reason(shown.sha)) { q in
+            InfoView(photo: shown, reason: reason(shown.sha), priv: $priv) { q in
                 info = nil
                 session.close()
                 route(q)
@@ -85,6 +92,13 @@ struct ViewerScreen: View {
                         .filter { !$0.isEmpty }.joined(separator: "  ·  "))
                     .font(.caption).opacity(0.75)
                 if let note { Text(note).font(.caption.weight(.medium)).foregroundStyle(Color.sunLit) }
+                if priv?.isPrivate == true {
+                    Label("Private to you", systemImage: "lock.fill")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(.black.opacity(0.35), in: Capsule())
+                        .padding(.top, 3)
+                }
                 if tile.live && !tile.video {
                     Label("LIVE", systemImage: "livephoto")
                         .font(.caption2.weight(.semibold)).kerning(1)
@@ -251,6 +265,7 @@ extension UIApplication {
 struct InfoView: View {
     let photo: Photo
     var reason: String? = nil       // why it is in the album it was opened from
+    @Binding var priv: PrivateLine?  // private to this member, or theirs to withdraw
     var go: (Query) -> Void
 
     var body: some View {
@@ -270,6 +285,7 @@ struct InfoView: View {
                             .font(.footnote).foregroundStyle(.secondary).padding(.top, 6)
                     }
                 }
+                PrivateRow(sha: photo.sha, line: $priv)
                 if photo.video {
                     fact("play.rectangle", "Video", photo.dur.map { Tile.clock(Float($0)) } ?? "")
                 } else if photo.live != nil {
@@ -294,6 +310,7 @@ struct InfoView: View {
                 }
                 if !photo.people.isEmpty { chips("With", photo.people, .person) }
                 if !photo.albums.isEmpty { chips("In", photo.albums, .album) }
+                if LocalPhotos.id(photo.sha) == nil { StoriesSection(sha: photo.sha) }
                 if photo.camera != nil || !exposure.isEmpty { camera }
                 Text([photo.filename, photo.w.flatMap { w in photo.h.map { "\(w) × \($0)" } } ?? ""].filter { !$0.isEmpty }.joined(separator: "  ·  "))
                     .font(.caption).foregroundStyle(.tertiary).textSelection(.enabled)
@@ -303,6 +320,7 @@ struct InfoView: View {
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollDismissesKeyboard(.interactively)
         .environment(\.colorScheme, .dark)
         .tint(.sunLit)
     }
@@ -889,5 +907,67 @@ final class PhotoPage: UIViewController, UIScrollViewDelegate {
             let w = scroll.bounds.width / s, h = scroll.bounds.height / s
             scroll.zoom(to: CGRect(x: p.x - w / 2, y: p.y - h / 2, width: w, height: h), animated: true)
         }
+    }
+}
+
+// MARK: stories
+
+/// The stories told about a photo (`GET /api/photos/<sha>/stories`): who told each and when, the words or the
+/// transcript, the recording to play; and one quiet row, "Tell a story", which opens the teller (Teller.swift). A
+/// photo with no story shows only the row.
+struct StoriesSection: View {
+    let sha: String
+    @State private var stories: [Story] = []
+    @State private var telling = false
+    @StateObject private var teller: Teller
+
+    init(sha: String) {
+        self.sha = sha
+        _teller = StateObject(wrappedValue: Teller { what in
+            guard let s = Story(try await API.json(what.request(base: Server.baseURL, question: nil, photo: sha))) else {
+                throw APIError(code: 0, description: "The server’s answer could not be read.")
+            }
+            return s
+        })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !stories.isEmpty {
+                Text("STORIES").font(.caption2.weight(.semibold)).kerning(1.2).foregroundStyle(.secondary)
+                ForEach(stories) { s in
+                    StoryRow(story: s).task(id: s.id) { await StoryFollow.until(s) { got in update(got) } }
+                }
+            }
+            if telling {
+                TellView(teller: teller, prompt: "What do you remember about it? Type it, or record it", sendLabel: "Tell it",
+                         dismiss: "Cancel") { teller.cancel(); teller.discard(); telling = false }
+                    .padding(14)
+                    .background(Color.well, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            } else {
+                Button { Haptics.tick(); teller.again(); telling = true } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "text.bubble").font(.system(size: 17)).foregroundStyle(Color.sunLit).frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(stories.isEmpty ? "Tell a story" : "Tell another story").font(.title(17)).foregroundStyle(.primary)
+                            Text("Typed or spoken: kept with your name and the day").font(.footnote).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(14)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(Color.well, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+        }
+        .task(id: sha) {
+            if let j = try? await API.get("api/photos/\(sha)/stories") { stories = (j["stories"] as? [Any] ?? []).compactMap(Story.init) }
+        }
+        .onAppear { teller.onSent = { s in update(s); telling = false } }
+    }
+
+    private func update(_ s: Story) {
+        if let i = stories.firstIndex(where: { $0.id == s.id }) { stories[i] = s } else { stories.append(s) }
     }
 }

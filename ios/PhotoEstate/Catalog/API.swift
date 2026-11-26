@@ -36,6 +36,18 @@ enum API {
         return try await send(req)
     }
 
+    /// A request made elsewhere (a story's: StorySend), answered as JSON.
+    static func json(_ req: URLRequest) async throws -> [String: Any] { try await send(req) }
+
+    /// The bytes at a path (a story's recording, to play), or what the server said if it would not give them.
+    static func data(_ path: String) async throws -> Data {
+        let rel = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let (data, resp) = try await session.data(for: URLRequest(url: url(rel)))
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard code / 100 == 2 else { throw APIError(code: code, description: "The server said \(code).") }
+        return data
+    }
+
     private static func send(_ req: URLRequest) async throws -> [String: Any] {
         let data: Data, resp: URLResponse
         do {

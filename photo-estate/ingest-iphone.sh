@@ -44,7 +44,9 @@ top() { sqlite3 "$DB" "SELECT coalesce(max(rowid), 0) FROM assets" 2>/dev/null |
 before=$(count)
 top_before=$(top)
 echo "== $(date +%T) ingest $INBOX"
-run estate.py ingest --store "$STORE" --force --facts "$INBOX.partial/facts" "$INBOX"   # facts: see upload.py
+# --uploads: m<member id>/ says who shared each file, and a new photo is private to its sharer from the moment
+# ingest records it, until `private.py check` below has scored it (private.py)
+run estate.py ingest --store "$STORE" --force --uploads --facts "$INBOX.partial/facts" "$INBOX"   # facts: see upload.py
 after=$(count)
 event new_assets "\"count\":$((after - before))"
 if [[ $before == "$after" ]]; then
@@ -67,6 +69,11 @@ else
 fi
 run places.py run
 if [[ -z ${SKIP_MODELS:-} ]]; then run embed.py run --store "$STORE" --after-rowid "$since"; fi
+# The hold at ingestion: each new phone upload with a vector (the app embeds uploads as they arrive, so even
+# with SKIP_MODELS) is held as private to its sharer if it looks like a receipt, a screenshot or a document, and
+# shared if not. Before catalog_ready, so the app's reload finds it decided; but it is private until then
+# whatever the order (ingest wrote its row), and if this fails the run stops here and it stays private.
+run private.py check
 # The photo app reloads its catalog at this event: the new photos are searchable now, and faces (slow,
 # and only the People page needs them) carry on while it does.
 echo "== $(date +%T) catalog ready"

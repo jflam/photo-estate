@@ -1,6 +1,5 @@
 """/compare in process (photo_app.PhotoApp on the demo library, start() not called: no search model), so it
-runs in CI's fast tier: the routes exist only with vectors, a vote takes the write rule (--upload-user or
-this computer), bad numbers are a 400, and a search answers 503 while the second model is not loaded
+runs in CI's fast tier: the routes exist only with vectors, a vote takes a member (or this computer), bad numbers are a 400, and a search answers 503 while the second model is not loaded
 instead of waiting with the catalog gate held. tests/test_compare.py runs the real thing with the model.
   uv run pytest tests/test_compare_app.py
 """
@@ -18,7 +17,7 @@ from photo_app import PhotoApp  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL = "google/siglip2-base-patch16-256"
-WRITER, VIEWER = {"Tailscale-User-Login": "writer@example.com"}, {"Tailscale-User-Login": "viewer@example.com"}
+WRITER, VIEWER = {"X-Demo-Member": "ben"}, {"X-Demo-Member": "stranger"}   # a demo member, and a login nobody let in
 
 
 def vectors(folder: Path) -> Path:
@@ -179,8 +178,7 @@ def test_search_while_loading_and_bad_input(app):
     assert app.request("GET", "/api/compare?q=").status == 400            # no words to rank by
 
 
-def test_vote_takes_the_write_rule(app, monkeypatch):
-    monkeypatch.setattr(app.a, "upload_user", ["writer@example.com"])
+def test_vote_takes_a_member(app):
     vote = {"q": "a dog", "winner": "b", "left": "a", "k": 48}
     assert app.request("POST", "/api/compare/vote", VIEWER, body=vote, local=False).status == 403
     r = app.request("POST", "/api/compare/vote", WRITER, body=vote, local=False)
@@ -188,4 +186,4 @@ def test_vote_takes_the_write_rule(app, monkeypatch):
     assert app.request("POST", "/api/compare/vote", WRITER, body={"q": "x", "winner": "left"}, local=False).status == 400
     assert app.request("POST", "/api/compare/vote", WRITER, body=b"{not json", local=False).status == 400
     rec = [json.loads(line) for line in Path(app.compare.votes).read_text().splitlines()]
-    assert rec[-1]["winner"] == "b" and rec[-1]["who"] == "writer@example.com"
+    assert rec[-1]["winner"] == "b" and rec[-1]["who"] == "ben"

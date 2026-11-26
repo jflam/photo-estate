@@ -113,9 +113,56 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
   background: rgba(0,0,0,.55); font-size: 12.5px; font-weight: 600; }
 .head .why { margin-top: 8px; max-width: 70ch; font-style: italic; color: var(--ink-2); font-size: 15px; }
 .head .why:empty { display: none; }
+/* a series (an album that grows from a search): the new photos waiting for its owner, and the stories told about it */
+.cands { margin: 12px var(--pad) 8px; padding: 18px; border-radius: var(--r); background: var(--sun-wash); }
+.cands h2 { font-size: 19px; font-weight: 700; letter-spacing: -.015em; }
+.cands p { margin-top: 3px; color: var(--ink-2); font-size: 14px; }
+.cands .ctiles { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.cands .ct { position: relative; width: 96px; height: 96px; border-radius: 10px; overflow: hidden; background: var(--tile); transition: opacity .15s, transform .2s var(--ease); }
+.cands .ct img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cands .ct:not(.on) { opacity: .4; }
+.cands .ct .ck { position: absolute; right: 5px; bottom: 5px; width: 22px; height: 22px; padding: 3px; border-radius: 50%; background: var(--sun-lit); color: var(--on-sun); }
+.cands .ct:not(.on) .ck { display: none; }
+.cands .acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 14px; }
+.cands.busy { opacity: .6; pointer-events: none; }
+.sstories { margin: 12px var(--pad) 10px; }
+.sstories h2 { font-size: 19px; font-weight: 700; letter-spacing: -.015em; margin-bottom: 10px; }
+.sstories .list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
+.sstories .one { display: flex; gap: 12px; padding: 12px; border-radius: 18px; background: var(--well); }
+.sstories .one .story { flex: 1; min-width: 0; padding: 0; background: none; }
+.sstories .one img { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; flex: none; background: var(--tile); }
+.menu .mk label.grow { display: flex; gap: 10px; align-items: flex-start; padding: 4px 6px; font-size: 14px; cursor: pointer; }
+.menu .mk label.grow input { width: auto; flex: none; margin-top: 3px; accent-color: var(--sun); }
+.menu .mk label.grow small { display: block; color: var(--muted); font-size: 12.5px; }
 .srcs { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 var(--cpad); }
 .periods .bt { margin-top: 34px; }
 .t .hid { position: absolute; left: 6px; bottom: 6px; padding: 1px 8px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; font-weight: 600; }
+/* a photo private to the member: a lock where the favourite's heart sits (beside it, when it is one too) */
+.t .prv { position: absolute; top: 5px; right: 6px; display: flex; color: #fff; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); pointer-events: none; }
+.t:has(.fv) .prv { right: 24px; }
+/* the held view: choosing photos to release (a tile tapped is chosen, not opened) */
+.t.chosen::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 3px var(--sun); background: var(--sun-wash); pointer-events: none; }
+.heldbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 14px; max-width: 80ch; color: var(--ink-2); font-size: 15px; }
+.heldbar:empty { display: none; }
+.heldbar span { flex: 1 1 28ch; }
+.heldbar .btn { flex: none; }
+/* lenses, under the albums: filters (always on) and series (opened), each a row with what can be done with it */
+.lnote { margin: -4px calc(var(--cpad) + 2px) 6px; max-width: 72ch; color: var(--muted); font-size: 14px; }
+.lnote:empty { display: none; }
+.lh { margin: 20px calc(var(--cpad) + 2px) 8px; }
+.lens { display: flex; align-items: center; gap: 14px; margin: 0 var(--cpad) 8px; padding: 14px 16px; border-radius: 20px; background: var(--well); transition: opacity .15s; }
+.lens.busy { opacity: .5; pointer-events: none; }
+.lens > svg { color: var(--sun); width: 22px; height: 22px; }
+.lens > img, .lens .open img { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; background: var(--tile); flex: none; }
+.lens .what { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; text-align: left; }
+.lens .what span { min-width: 0; }
+.lens b { display: block; font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+.lens small { display: block; margin-top: 1px; color: var(--muted); font-size: 13px; }
+.lens .acts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.lens .acts .btn { height: 32px; padding: 0 14px; font-size: 13.5px; }
+.lens .acts a.link { font-size: 13.5px; align-self: center; margin-right: 4px; }
+.lens.none { display: block; color: var(--muted); font-size: 14px; text-align: left; }
+@media (max-width: 760px) { .lens { flex-wrap: wrap; } .lens .acts { width: 100%; justify-content: flex-start; } }
 .monnav { display: flex; gap: 12px; padding: 30px max(var(--gpad), 14px) 0; }
 .monnav span { flex: 1; }
 .monnav button { height: 44px; padding: 0 18px; border-radius: 999px; background: var(--well); display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
@@ -249,6 +296,10 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 .mi .sw::after { width: 18px; height: 18px; }
 .mi .sw.on::after { transform: translateX(14px); }
 .mi.ln > svg:first-child { visibility: visible; color: var(--ink-2); }
+.mi .cnt, #libMore .cnt { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--sun-lit); color: var(--on-sun);
+  font-size: 11px; font-weight: 700; font-style: normal; display: inline-grid; place-items: center; font-variant-numeric: tabular-nums; }
+#libMore { position: relative; }
+#libMore .cnt { position: absolute; top: 1px; right: 1px; min-width: 16px; height: 16px; padding: 0 4px; font-size: 10px; box-shadow: 0 0 0 2px var(--raised); }
 .menu .mk { padding: 0 6px 6px; display: grid; gap: 10px; }
 .menu .mk h5 { margin: 8px 6px -4px; }
 .menu .mk input { width: 100%; }
@@ -340,6 +391,19 @@ main { padding: 0 0 calc(var(--tabs) + 40px); overflow-x: clip; }
 @keyframes pulse { 50% { opacity: .35; } }
 .v-note { position: absolute; left: 50%; bottom: calc(74px + env(safe-area-inset-bottom)); transform: translateX(-50%); font-size: 13px; color: rgba(255,255,255,.75); white-space: nowrap; }
 .v-note:empty { display: none; }
+/* why a photo the member's filters hide is showing, under the caption: with "Show it anyway", or taking that back;
+   and under it, for a photo private to the member, the private line (release it, or on a day) */
+.v-lines { position: absolute; left: 50%; top: calc(64px + env(safe-area-inset-top)); transform: translateX(-50%); display: flex; flex-direction: column;
+  align-items: center; gap: 8px; width: max-content; max-width: calc(100% - 24px); transition: left .3s var(--ease), opacity .2s; pointer-events: none; }
+.v-why { display: flex; align-items: center; gap: 12px; pointer-events: auto;
+  width: max-content; max-width: 100%; padding: 5px 5px 5px 16px; border-radius: 22px; font-size: 13.5px; line-height: 1.3; color: #f4f2ee; }
+.v-why i { font-style: italic; color: #fff; }
+.v-why button { flex: none; height: 32px; padding: 0 14px; border-radius: 999px; background: rgba(255,255,255,.12); color: #ffb061; font-size: 13.5px; font-weight: 600; transition: background .15s, opacity .15s; }
+.v-why button:hover { background: rgba(255,255,255,.2); }
+.v-why button:disabled { opacity: .5; pointer-events: none; }
+.v.info .v-lines { left: calc(50% - 180px); max-width: calc(100% - 384px); }
+.v.bare .v-lines { opacity: 0; }
+.v.bare .v-why { pointer-events: none; }
 /* the stack the photo is on top of: its shots as a row of small prints over the bar */
 .v-strip { position: absolute; left: 50%; bottom: calc(68px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; align-items: center; gap: 5px;
   max-width: calc(100% - 28px); height: 58px; padding: 0 3px; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; transition: left .3s var(--ease), opacity .2s; }
@@ -380,6 +444,8 @@ button.vcard:hover { background: var(--vwell-2); }
 .vrow > svg:last-child { width: 14px; color: #6b6964; flex: none; }
 button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
 .vcard > .vrow { position: relative; }
+.vrow .vact { display: block; margin-top: 8px; font-style: normal; color: #ffb061; font-size: 13.5px; font-weight: 600; }   /* what the row does (withdraw), under its words */
+.vrow[disabled] { opacity: .5; pointer-events: none; }
 .vcard > .vrow + .vrow::before { content: ""; position: absolute; top: 0; right: 0; left: 50px; height: 1px; background: rgba(255,255,255,.08); }
 .v-info h4 { margin: 22px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--vmuted); }
 .tags { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -395,6 +461,18 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
 .exp b { display: block; font: 500 15px var(--mono); color: #fff; }
 .exp small { display: block; margin-top: 3px; font-size: 9px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--vmuted); }
 .v-info .file { margin: 22px 2px 0; font-size: 12px; line-height: 1.5; color: #6f6c66; overflow-wrap: anywhere; }
+/* the photo's stories, and telling one (app/story-flow.js; estate.css has their look, here in the dark room) */
+.v-info .story { background: var(--vwell); color: #f4f2ee; }
+.v-info .story .told, .v-info .story .asked, .v-info .story .said.pending, .v-info .tell .clock, .v-info .story .clock { color: var(--vmuted); }
+.v-info audio { color-scheme: dark; }
+.v-info .tell { margin-top: 22px; padding: 14px; border-radius: 18px; background: var(--vwell); }
+.v-info .tell textarea { background: rgba(255,255,255,.08); color: #f4f2ee; }
+.v-info .tell textarea:focus { background: rgba(255,255,255,.12); box-shadow: 0 0 0 3px rgba(255,176,97,.22); }
+.v-info .tell textarea::placeholder { color: var(--vmuted); }
+.v-info .tell .btn { background: rgba(255,255,255,.1); color: #f4f2ee; }
+.v-info .tell .btn:hover { background: rgba(255,255,255,.16); }
+.v-info .tell .btn.pri { background: #ffb061; color: #2b1904; }
+.v-info .tell .err { color: #ff7a63; }
 
 @media (pointer: coarse) {
   #vPrev, #vNext { display: none; }                 /* swipe instead */
@@ -406,6 +484,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
     transform: translateY(100%); }
   .v-info::before { content: ""; display: block; width: 36px; height: 5px; margin: 0 auto 18px; border-radius: 3px; background: rgba(255,255,255,.25); }
   .v.info .v-title { right: 74px; }
+  .v.info .v-lines { left: 50%; max-width: calc(100% - 24px); }
   .v.info .v-bar, .v.info .v-note, .v.info .v-strip { opacity: 0; pointer-events: none; }
   .v.info .v-strip { left: 50%; max-width: calc(100% - 28px); }
   .head h1 { font-size: 28px; }
@@ -425,7 +504,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
     <div class="sp"></div>
     <div class="caps glass">
       <button class="round" id="libView" aria-label="View options: photo size, and what is left out"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.5 9h7M8 13h2"/></svg></button>
-      <button class="round" id="libMore" aria-label="More of your library"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="14" cy="9" r="1.5"/></svg></button>
+      <button class="round" id="libMore" aria-label="More of your library"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="14" cy="9" r="1.5"/></svg><i class="cnt" id="libCnt" hidden></i></button>
     </div>
   </div>
   <main id="libAll">
@@ -450,12 +529,13 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
     <div class="sp"></div>
     <div class="caps glass" id="albCaps" hidden>
       <button class="round" id="albView" aria-label="View options: photo size, and what is left out"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h12M5.5 9h7M8 13h2"/></svg></button>
-      <button class="round" id="albMore" aria-label="More: rename, favourite, download, hide or delete this album"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="14" cy="9" r="1.5"/></svg></button>
+      <button class="round" id="albMore" aria-label="More: rename, favourite, download, publish, hide or delete this album"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="14" cy="9" r="1.5"/></svg></button>
     </div>
   </div>
   <div class="periods" id="albList"></div>
   <main id="albOne" hidden>
     <div class="head" id="albHead"><h1>&nbsp;</h1><p class="num">&nbsp;</p><p class="why"></p></div>
+    <div id="albCands"></div><div id="albStories"></div>
     <div class="grid" id="albGrid"></div>
     <div class="sentinel" id="albDown"></div>
   </main>
@@ -481,7 +561,7 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
   <div class="sugs" id="sugs" hidden></div>
   <div class="browse" id="browse" hidden></div>
   <main id="results" hidden>
-    <div class="head" id="sHead"><h1>&nbsp;</h1><p class="num">&nbsp;</p></div>
+    <div class="head" id="sHead"><h1>&nbsp;</h1><p class="num">&nbsp;</p><div class="heldbar" id="sHeld"></div></div>
     <div class="grid" id="sGrid"></div>
     <div class="sentinel" id="sDown"></div>
   </main>
@@ -496,6 +576,10 @@ button.vrow:hover, .vcard > button.vrow:hover { background: var(--vwell-2); }
     <button class="v-btn vglass" id="vPrev" aria-label="Previous photo (←)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
     <button class="v-btn vglass" id="vNext" aria-label="Next photo (→)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 5 5-5 5"/></svg></button>
     <div class="v-note" id="vNote"></div>
+    <div class="v-lines">
+      <div class="v-why vglass" id="vWhy" role="status" hidden><span></span><button type="button"></button></div>
+      <div class="v-why vglass" id="vPriv" role="status" hidden><span></span></div>
+    </div>
     <div class="v-strip" id="vStrip" role="group" aria-label="The shots in this stack" hidden></div>
     <div class="v-bar vglass" id="vBar">
       <button id="vShare" aria-label="Share this photo"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 12.5V2.5M6.5 5.8 10 2.500l3.500 3.300M7 8.500H5.500a1.300 1.300 0 0 0-1.300 1.300v6.400a1.300 1.300 0 0 0 1.300 1.300h9a1.300 1.300 0 0 0 1.300-1.300V9.800A1.300 1.300 0 0 0 14.500 8.500H13"/></svg></button>
@@ -526,10 +610,15 @@ import { KEYS, FIELD_STEPS, blank, copy, toParams, fromParams, filtered as filte
 import { clampShape, shapeFromByte, packRows } from "/app/layout.js";
 import { gridFlow } from "/app/grid-flow.js";
 import { libraryFlow, SCALES } from "/app/library-flow.js";
-import { albumsFlow, albumMaker } from "/app/albums-flow.js";
+import { albumsFlow, albumMaker, candidatesFlow } from "/app/albums-flow.js";
 import { viewerFlow, GESTURE_STEPS } from "/app/viewer-flow.js";
 import { favourites } from "/app/favourite.js";
 import { videoFlow } from "/app/video-flow.js";
+import { lensesFlow, whyFlow, offers, says, said } from "/app/lens-flow.js";
+import { badge as inboxBadge } from "/app/inbox-flow.js";
+import { privateLine, heldView, barSays } from "/app/private-flow.js";
+import { photoStories, mountTeller, storyHtml, follow, spoken } from "/app/story-flow.js";
+import { growsFrom } from "/app/query.js";
 
 const EASE = "cubic-bezier(.2,.7,.2,1)";
 const svg = (d, w = 16, extra = "") => `<svg width="${w}" height="${w}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
@@ -558,7 +647,26 @@ const I = {
   liveBig: svg('<circle cx="8" cy="8" r="1.700" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="3.900" stroke-width="1.300"/><circle cx="8" cy="8" r="6.300" stroke-width="1.300" stroke-dasharray="1.200 1.500"/>', 20),
   video: svg('<rect x="1.800" y="3.500" width="9" height="9" rx="2"/><path d="m10.800 7 3.400-2v6l-3.400-2"/>', 20),
   compare: svg('<rect x="2.500" y="3" width="4.500" height="10" rx="1"/><rect x="9" y="3" width="4.500" height="10" rx="1"/>', 18),
+  members: svg('<circle cx="6" cy="5.600" r="2.200"/><path d="M1.800 13c.5-2.200 2.200-3.400 4.200-3.400s3.700 1.200 4.200 3.400"/><circle cx="11.300" cy="6.300" r="1.700"/><path d="M11.200 9.700c1.600.1 2.700 1.100 3.100 2.800"/>', 18),
+  filter: svg('<path d="M2.500 3.500h11l-4.200 5v4l-2.600 1.300V8.500Z"/>', 22),
+  lock: svg('<rect x="3.500" y="7" width="9" height="6.500" rx="1.600"/><path d="M5.500 7V5.200a2.500 2.500 0 0 1 5 0V7"/>', 13, 'stroke-width="1.8"'),
+  lockBig: svg('<rect x="3.500" y="7" width="9" height="6.500" rx="1.600"/><path d="M5.500 7V5.200a2.500 2.500 0 0 1 5 0V7"/>', 20),
+  story: svg('<path d="M3 3.500h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.200L5 14v-2.500H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z"/><path d="M5 6.500h6M5 8.800h4"/>', 20),
+  agent: svg('<path d="M6 2v3M10 2v3"/><path d="M4 5h8v2.500a4 4 0 0 1-8 0Z"/><path d="M8 11.500V14"/>', 18),   // a plug: Connect your agent
+  inbox: svg('<path d="M2.500 9.500 4.300 3.800a1 1 0 0 1 1-.7h5.400a1 1 0 0 1 1 .7l1.800 5.700v3a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z"/><path d="M2.500 9.500h3.200l.8 1.600h3l.8-1.600h3.200"/>', 18),
 };
+// Photos private to this member (app/private-flow.js; private.py): the viewer's private line, beside the why line,
+// and the details' row that withdraws a photo they shared; the held view (a search for is:held), whose bar says how
+// many it shows of how many are held, leads to the review of every one (/held), and releases those chosen. What the
+// member sees changes with each: the lists behind are asked for again.
+const PRIV = privateLine({
+  send: (sha, body) => api("/api/private", { shas: [sha], ...body }),
+  onChange: () => privDraw(),
+});
+const HELD = heldView({
+  release: what => api("/api/private", { private: false, ...what }),   // ({shas}: exactly those chosen)
+  onChange: () => heldDraw(),
+});
 const DEBUG = (() => { try { return localStorage.getItem("estate.debug") === "1"; } catch (e) { return false; } })();   // set on the Library info page
 const IDEAS = ["sunset over water", "dog on the beach", "birthday cake", "snowy mountains", "city at night", "a child laughing"];
 const DEMO_IDEAS = ["latte art", "kitten", "waterfall in autumn", "dog in the snow", "city at night"];   // searches that find a group in the demo
@@ -632,6 +740,12 @@ const viewing = () => VW.is("open");
 const VO = () => VW.open;
 const narrow = matchMedia("(max-width: 760px)"), coarse = matchMedia("(pointer: coarse)"), standalone = matchMedia("(display-mode: standalone)");
 let INFO = null;                                    // the library's facts (/api/info)
+let ME = null;                                      // the member this page is for (/api/me): their name, their role
+let INBOX = 0;                                      // how many things wait in their inbox (/api/inbox): the Library's menu says so
+function inboxCount() {                             // asked on load, on coming back to the page, and after a lens is decided
+  api("/api/inbox").then(d => { INBOX = d.open; const c = $("#libCnt"); c.textContent = inboxBadge(INBOX); c.hidden = !INBOX;
+    $("#libMore").setAttribute("aria-label", INBOX ? `More of your library: ${plural(INBOX, "thing")} in your inbox` : "More of your library"); }).catch(() => {});
+}
 
 /* ── the justified grid: rows as wide as the screen, every photo at its own shape (chapter 13). One per tab.
       `items` is indexed by position in the whole list, so a grid can start part way down (the Library, opened
@@ -779,8 +893,8 @@ class Grid {
       for (let k = 0; k < row.n; k++) {
         const r = sec.items[row.start + k];
         if (r.ghost) { html += `<div class="t" data-i="${sec.base + row.start + k}" style="width:${row.widths[k]}px"></div>`; continue; }
-        html += `<div class="t" tabindex="0" data-i="${sec.base + row.start + k}" style="width:${row.widths[k]}px"><img decoding="async" alt="" data-src="/thumb/${r.sha}" onload="this.classList.add('in')">`
-          + (r.fav ? I.heartFill : "") + (r.stack && this.stacks() ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (r.hidden ? `<span class="hid">Hidden</span>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + badge(r, this.stacks()) + `</div>`;
+        html += `<div class="t${HELD.chosen(r.sha) ? " chosen" : ""}" tabindex="0" data-i="${sec.base + row.start + k}" style="width:${row.widths[k]}px"><img decoding="async" alt="" data-src="/thumb/${r.sha}" onload="this.classList.add('in')">`
+          + (r.fav ? I.heartFill : "") + (r.private ? `<span class="prv" title="Private to you" aria-label="Private to you">${I.lock}</span>` : "") + (r.stack && this.stacks() ? `<button class="stk" data-stack="${r.sha}" title="${r.stack} near-identical shots: see them all" aria-label="Stack of ${r.stack}: see them all">${I.stack}${r.stack}</button>` : "") + (r.hidden ? `<span class="hid">${esc(this.hid?.() || "Hidden")}</span>` : "") + (this.ranked && when(r) ? `<span class="cap">${esc(caption(r))}</span>` : "") + badge(r, this.stacks()) + `</div>`;
       }
       html += "</div>";
       sec.rows.push({ start: row.start, n: row.n, full: row.full });
@@ -871,7 +985,7 @@ function setTab(t, how = "push", arrive = false) {    // how: push, replace, or 
   if (how !== "init") nav(how);
   if (t === "library") libShow(arrive);
   else if (t === "albums") albShow();
-  else if (Q?.key !== sKey()) refreshSearch();
+  else if (Q?.key !== sKey() || searchStale) refreshSearch();
   else { searchShow(); scrollTo(0, L.y.search || 0); }
   titleDoc();
 }
@@ -1118,16 +1232,26 @@ addEventListener("scroll", () => {
 // of the album showing (its title, its note, its sections) came with the first page of its photos, and is
 // owned by that list's `ready` state: album() is it, or null.
 const ALB = albumsFlow({ list: signal => api("/api/albums", undefined, { signal }) });
+// Under the albums, the lenses (app/lens-flow.js): filters, which are always on and leave photos out of everything
+// this member sees, and the series others have published, which are opened like an album. LENS owns them as the
+// server last gave them, and one change to them at a time (the row being changed shows as busy meanwhile).
+const LENS = lensesFlow({ list: signal => api("/api/lenses", undefined, { signal }),
+  onChange: () => { albDraw(); if (ALB.id != null && album()) { albHead(agrid.data.matching); if (album().op === "hide" && LENS.listing) agrid.relayout(); } } });   // (a series' owner, and whom a hiding set hides from, once known)
+const lensOf = id => LENS.listing?.lenses.find(x => x.id === id) || null;
 const agrid = new Grid({
   grid: "#albGrid", down: "#albDown", ranked: true,  // no dates to head it by: its own sections, or one run
   fetch: (c, n, signal, id) => api(`/api/albums/${id}/photos?limit=${n}&cursor=${c}`, undefined, { signal }),
   grain: () => 0,
   keyOf: r => r.section || "", titleOf: key => key,
   count: sec => agrid.data?.counts.get(sec.key),
+  // a hiding set's photo hidden: from whom, as the review page says it (its lens: an estate default is everyone's)
+  hid: () => album()?.op === "hide" ? `Hidden from ${album()?.lens != null && lensOf(album().lens)?.estate_default ? "everyone" : "you"}` : "",
   stacks: () => false,
   onData: d => { d.counts = new Map(d.sections.map(s => [s.title, s.n])); albHead(d.matching); },
   onGrow: () => { if (VO()?.list === agrid) { arrange(); vChrome(); } },
-  onError: e => { agrid.wipe(); agrid.el.innerHTML = `<div class="blank">${MARK}<h3>Couldn’t open this album</h3><p>${esc(e.message)}</p><button class="btn" id="albRetry">Try again</button></div>`; },
+  onError: e => { agrid.wipe(); agrid.el.innerHTML = e.status === 404   // someone else's, not published (or put away): the server says none
+    ? `<div class="blank">${MARK}<h3>This album is not here</h3><p>It may be someone else’s that they have not published, or it was put away. Each member sees their own albums and the series others publish.</p></div>`
+    : `<div class="blank">${MARK}<h3>Couldn’t open this album</h3><p>${esc(e.message)}</p><button class="btn" id="albRetry">Try again</button></div>`; },
 });
 const album = () => agrid.data?.album ?? null;
 function albGo(id, how = "push") {                    // an album, or (null) the list of them
@@ -1144,43 +1268,154 @@ function albShow() {
   const id = ALB.id, one = id != null;
   $("#albList").hidden = one; $("#albOne").hidden = !one;
   $("#albBack").hidden = !one || coarse.matches; $("#albCaps").hidden = !one;
-  if (!one) return albList();
+  if (!one) { seriesOff(); return albList(); }
+  if (LENS.page.is("idle", "failed")) LENS.load();     // whose a series is, and subscribing to it
   if (agrid.of === id && agrid.phase.is("loading", "ready")) return scrollTo(0, L.y[yKey()] || 0);   // still showing, or on its way: where it was left
   $("#albHead h1").innerHTML = "&nbsp;"; $("#albHead p").innerHTML = "&nbsp;"; $(".why", $("#albHead")).textContent = "";
+  seriesOff();
   agrid.clear(); scrollTo(0, 0);
   agrid.load(0, null, id).then(d => { if (d && !d.results.length) agrid.el.innerHTML = `<div class="blank">${MARK}<h3>Nothing in it yet</h3><p>${
     d.album.kind === "live" ? "Its search finds no photos now." : "Photos are added to an album by asking for them in a chat connected to this library, or from a search."}</p></div>`; });
 }
 function albHead(n) {
   const a = album();
+  if (!a) return;
+  const owner = !a.mine ? lensOf(a.series)?.owner.name : null;
   $("#albHead h1").textContent = a.title;
   $("#albHead p").textContent = [photos(n), a.kind === "live" ? "Live: whatever its search finds" : "",
-    a.op === "hide" ? (a.applied ? `Hiding ${photos(a.applied)}` : a.state === "done" ? "Hidden" : "Up for hiding") : ""].filter(Boolean).join("  ·  ");
+    a.maintained_by != null ? "A family series: the estate’s agent adds new photos that belong"
+      : a.grows_from && a.mine ? "A series: new photos its search finds are offered to you" : "",
+    !a.mine ? a.maintained_by != null ? "" : `${owner || "Someone else"}’s series` : a.published ? "Published: the family can subscribe to it" : "",
+    a.op === "hide" ? (a.applied ? `Hiding ${photos(a.applied)} from ${a.lens != null && lensOf(a.lens)?.estate_default ? "everyone" : "you"}` : a.state === "done" ? "Hidden" : "Up for hiding") : ""].filter(Boolean).join("  ·  ");
   $(".why", $("#albHead")).textContent = a.prompt || "";
   titleDoc();
+  seriesOn(a);
+}
+// A series (app/albums-flow.js, listeners.py): for its owner, the new photos its search found that wait to be added
+// (all chosen at first: a tap leaves one out), added or none, which closes the series_update inbox item; and for
+// anyone who sees it, the stories told about its photos (app/story-flow.js), newest first.
+const CANDS = candidatesFlow({
+  list: (id, signal) => api(`/api/albums/${id}/candidates`, undefined, { signal }),
+  add: (id, shas) => api(`/api/albums/${id}/candidates`, { add: shas }),
+  onChange: () => candsDraw(),
+});
+const SSTORIES = photoStories({ read: (key, signal) => api(`/api/albums/${key.slice(6)}/stories`, undefined, { signal }), onChange: () => sstoriesDraw() });
+let candsOf = null;                                  // the album whose candidates were asked for
+const isSeries = a => a.grows_from != null || a.series != null || a.maintained_by != null;
+function seriesOn(a) {
+  if (a.op === "hide" || !isSeries(a)) return seriesOff();
+  if (a.mine && a.grows_from && candsOf !== a.id) { candsOf = a.id; CANDS.load(a.id); }
+  SSTORIES.look(`album:${a.id}`);
+}
+function seriesOff() {
+  candsOf = null; CANDS.clear(); SSTORIES.clear();
+  $("#albCands").innerHTML = ""; $("#albStories").innerHTML = "";
+}
+function candsDraw() {
+  const p = CANDS.page, el = $("#albCands");
+  if (!p.is("ready", "saving") || p.data.album !== ALB.id) { el.innerHTML = ""; return; }
+  const d = p.data, n = d.chosen.size;
+  el.innerHTML = `<div class="cands${p.is("saving") ? " busy" : ""}"><h2>${plural(d.results.length, "new photo")} for this series</h2>
+    <p>${d.results.length === 1 ? "It was found" : "They were found"} by the series’ search as ${d.results.length === 1 ? "it" : "they"} came in. Those chosen are added; tap one to leave it out.</p>
+    <div class="ctiles">${d.results.map(r => `<button class="ct${d.chosen.has(r.sha) ? " on" : ""}" data-cand="${esc(r.sha)}" aria-pressed="${d.chosen.has(r.sha)}" aria-label="Add this photo"><img alt="" src="/thumb/${esc(r.sha)}">${I.check}</button>`).join("")}</div>
+    <div class="acts"><button class="btn" data-cands="none">None of these</button><button class="btn pri" data-cands="add"${n ? "" : " disabled"}>Add ${n === d.results.length && n > 1 ? `all ${fmt(n)}` : plural(n, "photo")}</button></div></div>`;
+}
+$("#albCands").addEventListener("click", async e => {
+  const t = e.target.closest("[data-cand]");
+  if (t) return CANDS.toggle(t.dataset.cand);
+  const b = e.target.closest("[data-cands]"); if (!b) return;
+  const id = ALB.id, got = await (b.dataset.cands === "add" ? CANDS.add() : CANDS.none());
+  if (!got.ok) return toast(`Couldn’t do that: ${got.error.message}`);
+  toast(got.added ? `Added ${plural(got.added, "photo")} to the series` : "None added: they stay out of the series");
+  inboxCount();                                      // (its series_update item is done)
+  if (got.added && ALB.id === id) { agrid.clear(); agrid.load(0, null, id); }
+});
+function sstoriesDraw() {
+  const p = SSTORIES.page, el = $("#albStories");
+  if (!p.is("known") || p.data.sha !== `album:${ALB.id}` || !p.data.stories.length) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="sstories"><h2>Stories</h2><div class="list">${p.data.stories.map(x =>
+    `<div class="one">${x.photos[0] ? `<img alt="" loading="lazy" src="/thumb/${esc(x.photos[0])}">` : ""}${storyHtml(x)}</div>`).join("")}</div></div>`;
 }
 async function albList() {
   const el = $("#albList");
   if (!el.childElementCount) el.innerHTML = `<div class="head"><h1>Albums</h1><p class="num">&nbsp;</p></div>`;
   scrollTo(0, L.y.albums || 0);
-  const how = await ALB.load();                      // (asked again before this answer came: that asking draws)
+  const [how] = await Promise.all([ALB.load(), LENS.load()]);   // (asked again before this answer came: that asking draws)
   if (how === STALE) return;
   if (how === "failed") { el.innerHTML = `<div class="head"><h1>Albums</h1></div><div class="blank">${MARK}<h3>Couldn’t load the albums</h3><p>${esc(ALB.listing.data.error.message)}</p><button class="btn" id="albRetry">Try again</button></div>`; return; }
-  if (TAB !== "albums" || ALB.id != null) return;
-  const d = ALB.listing.data;
+  albDraw();
+  scrollTo(0, L.y.albums || 0);
+}
+// The list: the albums of this member's own and the series they subscribe to, as cards; then the lenses, a row
+// each: filters (theirs, any waiting for a sysadmin to decide, the estate defaults, those others have published)
+// and the series others have published. Drawn again whenever either list changes.
+function albDraw() {
+  const el = $("#albList");
+  if (TAB !== "albums" || ALB.id != null || !ALB.listing.is("ready")) return;
+  const d = ALB.listing.data, ls = LENS.listing, all = ls?.lenses || [];
+  const series = s => s.series != null ? lensOf(s.series) : null;
+  const cards = d.sets.filter(s => s.mine || series(s)?.subscription === "live");
+  const own = cards.filter(s => s.mine).length, subs = cards.length - own;
   const from = INFO?.facets.album || [];
-  const badge = s => s.op !== "hide" ? (s.kind === "live" ? "Live" : "") : s.applied ? `Hiding ${fmt(s.applied)}` : s.state === "done" ? "Hidden" : s.state === "reverted" ? "" : "Up for hiding";
+  const badge = s => !s.mine ? `${esc(series(s)?.owner.name || "Someone")}’s`
+    : s.op !== "hide" ? [s.published ? "Published" : "", s.kind === "live" ? "Live" : ""].filter(Boolean).join(" · ")
+    : s.applied ? `Hiding ${fmt(s.applied)}` : s.state === "done" ? "Hidden" : s.state === "reverted" ? "" : "Up for hiding";
   const card = s => `<button class="card" data-album="${s.id}" aria-label="${esc(s.title)}">${s.cover[0] ? `<img alt="" loading="lazy" src="/thumb/${s.cover[0]}" onload="this.classList.add('in')"><img alt="" loading="lazy" src="/preview/${s.cover[0]}" onload="this.classList.add('in')">` : ""}
     <span class="ct"><b>${esc(s.title)}</b><small>${photos(s.n)}</small></span>${badge(s) ? `<span class="badge">${badge(s)}</span>` : ""}</button>`;
-  el.innerHTML = `<div class="head"><h1>Albums</h1><p class="num">${d.sets.length ? `${fmt(d.sets.length)} made here` : "None made here yet"}${from.length ? `  ·  ${fmt(from.length)} from your sources` : ""}</p></div>`
-    + (d.sets.length ? `<div class="cards months">${d.sets.map(card).join("")}</div>`
+  const busy = x => LENS.page.is("saving") && LENS.page.data.key === `lens:${x.id}`;
+  const row = x => {
+    const set = x.kind === "series" ? d.sets.find(s => s.id === x.set_id) : null;
+    const what = x.kind === "series" ? `<button class="what open" data-album="${x.set_id}">${set?.cover[0] ? `<img alt="" loading="lazy" src="/thumb/${set.cover[0]}">` : I.album}<span><b>${esc(x.title)}</b><small>${[set ? photos(set.n) : "", ...says(x, ls)].filter(Boolean).map(esc).join("  ·  ")}</small></span></button>`
+      : `<div class="what">${I.filter}<span><b>${esc(x.title)}</b><small>${says(x, ls).map(esc).join("  ·  ")}</small></span></div>`;
+    const look = x.kind === "filter" && x.mine && x.sets?.length ? `<a class="link" href="/changes${x.sets.length === 1 ? "/" + x.sets[0] : ""}">What it hides</a>` : "";
+    return `<div class="lens${busy(x) ? " busy" : ""}" data-lens="${x.id}">${what}<div class="acts">${look}${offers(x, ls).map((o, i) =>
+      `<button class="btn${o.primary ? " pri" : ""}" data-offer="${i}">${esc(o.label)}</button>`).join("")}</div></div>`;
+  };
+  const group = (title, xs, none = "") => xs.length ? `<h3 class="label lh">${title}</h3>${xs.map(row).join("")}`
+    : none ? `<h3 class="label lh">${title}</h3><div class="lens none">${none}</div>` : "";
+  const filters = all.filter(x => x.kind === "filter");
+  const asked = ls?.sysadmin ? filters.filter(x => x.proposed) : [];
+  const theirs = all.filter(x => x.kind === "series" && !x.mine);
+  const lensHtml = !ls ? (LENS.page.is("failed") ? `<p class="lnote">Couldn’t load the filters: ${esc(LENS.page.data.error?.message || "")} <button class="link" id="lensRetry">Try again</button></p>` : "")
+    : `<div class="bt"><h2>Filters</h2></div><p class="lnote">A filter is always on: it leaves photos out of everything you see, here and on your phone. ${d.hidden
+        ? `Those on for you hide ${photos(d.hidden)}. <button class="link" data-hidden>See them</button>` : "None hides anything from you now."}</p>`
+      + group("Waiting for you to decide", asked)
+      + group("Yours", filters.filter(x => x.mine && !x.estate_default && !asked.includes(x)),
+        "None yet. Put an album up for hiding and apply it, and its photos are hidden from you, not from the rest of the family.")
+      + group("Estate defaults", filters.filter(x => x.estate_default))
+      + group("Published by others", filters.filter(x => !x.mine && !x.estate_default && !asked.includes(x)))
+      + (theirs.length ? `<div class="bt"><h2>Series published by others</h2></div><p class="lnote">A series is opened, like an album, and changes nothing else.</p>${theirs.map(row).join("")}` : "");
+  el.innerHTML = `<div class="head"><h1>Albums</h1><p class="num">${[own ? `${fmt(own)} made here` : "None made here yet", subs ? `${fmt(subs)} subscribed` : "",
+      from.length ? `${fmt(from.length)} from your sources` : ""].filter(Boolean).join("  ·  ")}</p></div>`
+    + (cards.length ? `<div class="cards months">${cards.map(card).join("")}</div>`
       : `<div class="blank">${MARK}<h3>No albums yet</h3><p>Search for some photos and make an album of what it finds, or ask for one in a chat connected to this library: “the best five pictures of Ben for every year”, “our trips to the coast”. It appears here when it is made.</p></div>`)
+    + lensHtml
     + (from.length ? `<div class="bt"><h2>From your sources</h2></div><div class="srcs">${from.map(([v, n]) =>
         `<button class="th" data-src="${esc(v)}">${esc(v)}<small>${fmt(n)}</small></button>`).join("")}</div>` : "");
-  scrollTo(0, L.y.albums || 0);
+}
+// A lens's offer, done (app/lens-flow.js: one at a time, and the lenses asked for again after it). What the member
+// sees changes with a filter: the Library and Search are asked for again, and the albums with a series or a copy.
+async function lensAct(x, o) {
+  const got = await LENS.change(`lens:${x.id}`, () => api(`/api/lenses/${x.id}/${o.what}`, o.body || {}));
+  if (!got.ok) return toast(got.error.message === "not allowed" ? "Lenses can’t be changed from this account." : got.error.message);
+  toast(said(x, o, got.answer), { ms: 4000 });
+  if (x.kind === "series" || o.body?.mode === "snapshot") await ALB.load();
+  albDraw();
+  if (x.kind === "filter" && o.what !== "propose") seenChanged();
+  if (o.what === "decide" || o.what === "unsubscribe" || o.body?.mode === "snapshot") inboxCount();   // (it may have closed an item)
+}
+// What this member sees has changed (a filter on or off, a photo shown anyway): what the page holds of it is asked for again.
+function seenChanged() {
+  api("/api/info").then(i => { INFO = i; buildVocab(); $("#browse").innerHTML = ""; }).catch(() => {});
+  libLoad();
+  searchStale = true; refreshSearch();                       // (not showing: Search asks again when it is next shown)
 }
 $("#albList").onclick = e => {
   if (e.target.closest("#albRetry")) return albList();
+  if (e.target.closest("#lensRetry")) return LENS.load();
+  const o = e.target.closest("[data-offer]"), r = e.target.closest("[data-lens]");
+  if (o && r) { const x = lensOf(+r.dataset.lens); if (x) lensAct(x, offers(x, LENS.listing)[+o.dataset.offer]); return; }
+  if (e.target.closest("[data-hidden]")) { const x = blank(); x.hidden = true; return find(x); }   // "show hidden": what this member's filters hide
   const c = e.target.closest("[data-album]"), s = e.target.closest("[data-src]");
   if (c) albGo(+c.dataset.album);
   else if (s) { const x = blank(); x.f.album = [s.dataset.src]; find(x); }   // an album that came with the photos: those photos, in Search
@@ -1199,12 +1434,32 @@ $("#albMore").onclick = e => openMenu(e.currentTarget, el => {
   const heart = svg('<path d="M8 13.6S2.4 10.2 2.4 6.3A3 3 0 0 1 8 4.8a3 3 0 0 1 5.6 1.5c0 3.900-5.600 7.300-5.600 7.300Z"/>', 18);
   const down = svg('<path d="M8 2.500v8M4.800 7.500 8 10.700l3.200-3.200M3 13.500h10"/>', 18), eye = svg('<path d="M2 8s2.200-4 6-4 6 4 6 4-2.200 4-6 4-6-4-6-4Z"/><path d="m3 13 10-10"/>', 18), bin = svg('<path d="M3.500 4.500h9M6.500 4.500V3h3v1.500M4.800 4.500l.5 8.500h5.400l.5-8.500"/>', 18);
   const pen = svg('<path d="M3 13l.6-2.900 7-7 2.300 2.300-7 7ZM9.300 4.400l2.300 2.300"/>', 18);
-  el.innerHTML = row("data-edit", pen, "Edit the title and note…") + "<hr>" + row('data-fav="1"', heart, "Make all favourites") + row('data-fav="0"', heart, "Take all out of favourites")
-    + row(`href="/api/albums/${a.id}/download" download`, down, "Download the originals", "a") + "<hr>"
-    + (a.op === "hide" ? row(`href="/changes/${a.id}"`, eye, "Review what it hides", "a") : row("data-hide", eye, "Hide these photos…"))
-    + (a.applied ? "" : row("data-drop", bin, "Delete this album"));
+  const share = svg('<circle cx="4.500" cy="8" r="1.800"/><circle cx="11.500" cy="4" r="1.800"/><circle cx="11.500" cy="12" r="1.800"/><path d="m6.100 7.100 3.800-2.200M6.100 8.900l3.800 2.200"/>', 18);
+  // Someone else's series: it is theirs to change; this member can subscribe to it (or keep a copy), and make its photos their own favourites.
+  const lens = !a.mine ? lensOf(a.series) : null, theirs = lens ? offers(lens, LENS.listing) : [];
+  el.innerHTML = a.mine
+    ? row("data-edit", pen, "Edit the title and note…") + "<hr>" + row('data-fav="1"', heart, "Make all favourites") + row('data-fav="0"', heart, "Take all out of favourites")
+      + row(`href="/api/albums/${a.id}/download" download`, down, "Download the originals", "a") + "<hr>"
+      + (a.op === "hide" ? "" : row(`data-publish="${a.published ? 0 : 1}"`, share, a.published ? "Stop publishing it" : "Publish it as a series"))
+      + (a.op === "hide" ? row(`href="/changes/${a.id}"`, eye, "Review what it hides", "a") : row("data-hide", eye, "Hide these photos…"))
+      + (a.applied ? "" : row("data-drop", bin, "Delete this album"))
+    : (lens ? `<h5>${esc(lens.owner.name || "Someone")}’s series. ${lens.subscription === "live" ? "It is in your Albums." : "Subscribing adds it to your Albums."}</h5>` : "")
+      + theirs.map((o, i) => row(`data-offer="${i}"`, share, o.label)).join("") + (theirs.length ? "<hr>" : "")
+      + row('data-fav="1"', heart, "Make all favourites") + row('data-fav="0"', heart, "Take all out of favourites")
+      + row(`href="/api/albums/${a.id}/download" download`, down, "Download the originals", "a");
   el.onclick = async e => {
     const b = e.target.closest("button.mi"); if (!b) return;
+    if (b.dataset.offer) { closeMenus(); await lensAct(lens, theirs[+b.dataset.offer]); if (album()?.id === a.id) albHead(agrid.data.matching); return; }
+    if (b.dataset.publish) {                           // an album of this member's, as a series others can subscribe to (or no longer)
+      closeMenus();
+      try {
+        const got = await api(`/api/albums/${a.id}/publish`, { on: b.dataset.publish === "1" });
+        if (album()?.id === a.id) { agrid.data.album = { ...album(), published: got.published, series: got.lens }; albHead(agrid.data.matching ?? a.n); }
+        toast(got.published ? `Published: the family can subscribe to “${a.title}”` : `“${a.title}” is only yours again`, { ms: 4000 });
+        LENS.load();
+      } catch (err) { toast(err.message); }
+      return;
+    }
     if (b.hasAttribute("data-edit")) {                 // the menu becomes the two fields: the words under the title can be changed, or taken away
       const mine = menu, field = (label, v, hint = "") => `<h5>${label}</h5><input type="text" aria-label="${label}" autocomplete="off" placeholder="${hint}" value="${esc(v || "")}">`;
       return menuForm(el, field("Title", a.title).replace("<input", '<input maxlength="200"') + field("Note", a.prompt, "What this album is, if you like"),
@@ -1251,6 +1506,7 @@ function closeMenus() {                               // (onClose: what a menu h
 function openMenu(anchor, draw) {
   const again = menu?.anchor === anchor; closeMenus(); if (again) return;
   const el = document.createElement("div"); el.className = "menu"; document.body.append(el);
+  if (anchor.closest(".v")) el.style.zIndex = "60";   // opened from the viewer (a photo's release day): above it
   menu = { el, anchor, draw }; anchor.classList.add("open");
   draw(el);
   const r = anchor.getBoundingClientRect();
@@ -1324,9 +1580,14 @@ $("#libView").onclick = e => viewMenu(e.currentTarget, "library");
 $("#sView").onclick = e => viewMenu(e.currentTarget, "search");
 $("#libMore").onclick = e => openMenu(e.currentTarget, el => {
   const ln = (href, icon, label) => `<a class="mi ln" href="${href}">${icon}<span>${label}</span></a>`;
-  el.innerHTML = (INFO?.faces ? ln("/people", I.people, "Name people") : "") + (INFO && !INFO.demo ? ln("/setup", I.plus, "Add photos") : "")
-    + ln("/changes", I.changes, "Changes") + ln("/stats", I.stats, "Library info")
-    + (INFO?.compare ? ln("/compare", I.compare, "Compare models") : "");   // the experiment, when the app has a second model's vectors
+  el.innerHTML = (ME?.name ? `<h5>You are ${esc(ME.name)}</h5>` : "")          // who this page is for (/api/me)
+    + `<a class="mi ln" href="/inbox">${I.inbox}<span>Inbox</span>${INBOX ? `<i class="cnt">${inboxBadge(INBOX)}</i>` : ""}</a>`   // what waits for this member to decide
+    + (INFO?.faces ? ln("/people", I.people, "Name people") : "") + (INFO && !INFO.demo ? ln("/setup", I.plus, "Add photos") : "")
+    + ln("/changes", I.changes, "Changes") + ln("/agents", I.agent, "Connect your agent")   // a member's own agent, and the devices it is allowed on
+    + (ME?.role === "sysadmin" ? ln("/stats", I.stats, "Library info") : "")   // the machine's figures: whoever looks after it
+    + (INFO?.compare ? ln("/compare", I.compare, "Compare models") : "")   // the experiment, when the app has a second model's vectors
+    + (ME?.role === "sysadmin" ? ln("/members", I.members, "Members") : "")    // letting people in: whoever looks after the library
+    + (INFO?.demo ? ln("/request-access", I.members, "Be another member") : "");   // the demo's members, each a link
 });
 // Pinch a grid to make the photos bigger or smaller, a step at a time, as on the iPhone.
 let pinch = null;
@@ -1350,7 +1611,7 @@ document.addEventListener("touchend", e => { if (e.touches.length < 2) pinch = n
 // sent); everything drawn from an answer goes by Q, so a question changed while its answer is on its way, or
 // while Search is not showing, never mixes with the old one. How far along the answer is, is the grid's own
 // state (sgrid.phase: empty for no question, loading, ready, failed); D is the answer and F the counts beside it.
-let Q = null, D = null, F = null, sug = [], sugCur = -1;
+let Q = null, D = null, F = null, sug = [], sugCur = -1, searchStale = false;   // searchStale: what the member sees changed since Q was answered
 // The field is resting or being typed in. Typing starts with a tap in it and ends in stopTyping, however it ends.
 const FIELD = machine("field", FIELD_STEPS, "resting", { strict: true });   // app/query.js
 const typing = () => FIELD.is("typing");
@@ -1378,6 +1639,7 @@ function loadF() {                                    // the counts beside the q
 }
 async function refreshSearch() {                      // S is asked: it becomes Q
   if (TAB !== "search") return;                     // asked when Search shows again (setTab sees that Q is not what S now says)
+  searchStale = false;
   MAKER.cancel();                                   // an album still being made from the question before is not made
   Q = { s: copy(S), key: sKey() };
   loadF();
@@ -1425,19 +1687,23 @@ function searchHead() {                               // what the answer is, in 
   else if (D.scope) { title = tripTitle(D.scope); parts = [span(D.scope.start, D.scope.end), n]; }
   else {
     const bits = filterBits(s);
-    title = bits.join(" · ") || (s.fav && s.video ? "Favourite videos" : s.fav ? "Favourites" : s.video ? "Videos" : "Photos");
-    parts = [s.video ? plural(D.matching, "video") : n, s.fav && bits.length ? "favourites" : ""];
+    title = bits.join(" · ") || (s.hidden ? "Hidden from you" : s.fav && s.video ? "Favourite videos" : s.fav ? "Favourites" : s.video ? "Videos" : "Photos");
+    parts = [s.video ? plural(D.matching, "video") : n, s.fav && bits.length ? "favourites" : "",
+      s.hidden ? (bits.length ? "hidden from you" : "what your filters leave out: open one to see why") : ""];
   }
-  parts.push(...(D.filters || []));
+  const mineOnly = (D.filters || []).find(f => /^is:(private|held|withdrawn)$/.test(f));   // the member's own private photos (private.py)
+  if (mineOnly && !D.text && !reading) title = mineOnly === "is:held" ? "Held as private" : mineOnly === "is:withdrawn" ? "Withdrawn" : "Private to you";
+  parts.push(...(D.filters || []).filter(f => f !== mineOnly || D.text || reading));
   if (DEBUG) parts.push(`${D.ms} ms`);
   $("#sHead h1").textContent = title; $("#sHead p").textContent = parts.filter(Boolean).join("  ·  ");
+  if (mineOnly === "is:held" && !D.text && !reading) { HELD.open(D.matching); heldCount(); } else HELD.close();
   titleDoc();
 }
 // An album from the answer showing: every photo the search finds (not only those loaded so far), fixed as they
 // are now and in this order. Asked for from the bar, when there is an answer with photos in it ("More like this"
 // has no end: it is every photo, by likeness). The title offered is the question, in words.
 const albumable = () => !!D && Q?.key === sKey() && sgrid.phase.is("ready") && !Q.s.sha && D.matching > 0;
-const albumTitle = () => [Q.s.q, ...filterBits(Q.s), D.scope ? tripTitle(D.scope) : "", Q.s.fav ? "Favourites" : "", Q.s.video ? "Videos" : ""].filter(Boolean).join(" · ") || $("#sHead h1").textContent;
+const albumTitle = () => [Q.s.q, ...filterBits(Q.s), D.scope ? tripTitle(D.scope) : "", Q.s.fav ? "Favourites" : "", Q.s.video ? "Videos" : "", Q.s.hidden ? "Hidden" : ""].filter(Boolean).join(" · ") || $("#sHead h1").textContent;
 // It is made by app/albums-flow.js: every page of the search is read, then one request makes the album. The
 // question, the title and the note ("From the search …") are those of the moment it is asked for. Until the
 // last page is in, moving on (another question, another place, the menu put away) stops it: no further page
@@ -1450,10 +1716,14 @@ function albumOpen(id) { ALB.go(id); if (TAB === "albums") { nav(); albShow(); }
 $("#sAlbum").onclick = e => openMenu(e.currentTarget, el => {
   if (!albumable()) return closeMenus();
   const mine = menu, key = Q.key, heading = $("#sHead h1").textContent;   // the answer showing now: what the album is made from
+  const grows = growsFrom(Q.s);                      // a series grows from it: new photos it finds later are offered (listeners.py)
   mine.onClose = () => MAKER.cancel();
-  menuForm(el, `<h5>New album from ${photos(D.matching)}</h5><input type="text" aria-label="Album title" maxlength="200" autocomplete="off" value="${esc(albumTitle())}">`,
+  menuForm(el, `<h5>New album from ${photos(D.matching)}</h5><input type="text" aria-label="Album title" maxlength="200" autocomplete="off" value="${esc(albumTitle())}">`
+    + (grows ? `<label class="grow"><input type="checkbox" data-series><span>Keep it growing<small>A series: new photos this search finds are offered to you as they come in</small></span></label>` : ""),
     "Create album", "Creating…", "Couldn’t make the album", async title => {   // if it fails the search stays as it was; the menu says why, and can be tried again
-      const a = await MAKER.make({ key, title, prompt: `From the search ${heading}` });
+      const a = grows && $("[data-series]", el)?.checked
+        ? await api("/api/albums", { title, prompt: `Grows from the search ${heading}`, grows_from: grows })   // the server finds its photos now
+        : await MAKER.make({ key, title, prompt: `From the search ${heading}` });
       if (a === STALE) { if (menu === mine) closeMenus(); return; }   // stopped before it was made: nothing is left saying "Creating…"
       if (menu === mine) { closeMenus(); albumOpen(a.id); }
       else toast(`Made the album “${title}”`, { action: { label: "Open", fn: () => albumOpen(a.id) } });   // made after the person had moved on: said, not gone to
@@ -1497,7 +1767,8 @@ const scopeBar = () => !INFO?.videos && scopeOf() === "all" ? "" : `<div class="
     `<button role="radio" aria-checked="${scopeOf() === k}" data-scope="${k}">${label}</button>`).join("")}</div>`;
 function drawChips(empty) {
   const order = empty ? [] : [...PILLS].sort((a, b) => (pillValue(a) ? 0 : 1) - (pillValue(b) ? 0 : 1));
-  $("#chips").innerHTML = scopeBar() + order.map(p => {
+  const hid = S.hidden ? `<button class="chip on" data-pill="hidden" aria-pressed="true"><span>Hidden from you</span><i class="x" data-x aria-label="Show what you see instead">${I.x}</i></button>` : "";   // "show hidden": on until cleared
+  $("#chips").innerHTML = scopeBar() + hid + order.map(p => {
     const v = pillValue(p);
     return `<button class="chip${v ? " on" : ""}" data-pill="${p.id}"${toggles[p.id] ? ` aria-pressed="${!!v}"` : ""}>${toggles[p.id] || ""}<span>${esc(v || p.label)}</span>${v && !toggles[p.id] ? `<i class="x" data-x aria-label="Clear ${p.label}">${I.x}</i>` : ""}</button>`;
   }).join("");
@@ -1506,6 +1777,7 @@ $("#chips").onclick = e => {
   const sc = e.target.closest("[data-scope]");
   if (sc) { S.video = sc.dataset.scope === "video"; S.photo = sc.dataset.scope === "photo"; return refine(); }
   const b = e.target.closest(".chip"); if (!b) return;
+  if (b.dataset.pill === "hidden") { S.hidden = false; return refine(); }
   const p = PILLS.find(p => p.id === b.dataset.pill);
   if (e.target.closest("[data-x]")) { clearPill(p); return refine(); }
   if (p.id === "fav") { S.fav = !S.fav; return refine(); }
@@ -1842,7 +2114,89 @@ function vChrome() {                                 // what and when, as a capt
   $("#vFavBtn").classList.toggle("on", !!r.fav); $("#vFavBtn").setAttribute("aria-pressed", !!r.fav);
   $("#vInfoBtn").classList.toggle("on", infoOn());
   $("#vNote").textContent = note;
+  WHY.look(r.sha);                                   // (the same photo again asks nothing)
+  whyDraw(); privDraw();
+  if (infoOn()) STORIES.look(r.sha);                 // its stories, once its details show (the same photo again asks nothing)
 }
+// Why the photo showing is left out of what this member sees, when it is (app/lens-flow.js): a photo their filters
+// hide shows in a hiding set's review, in "show hidden" (hidden=1), and wherever else it is opened. Each photo that
+// stays on screen a moment is asked about; the line shows only for one that is hidden, or shown anyway, and offers
+// to show it anyway or take that back. What the member sees has then changed: the page asks again once the viewer closes.
+const WHY = whyFlow({
+  ask: (sha, signal) => api(`/api/photos/${sha}/why`, undefined, { signal }),
+  show: (sha, on) => api(`/api/photos/${sha}/show`, { on }),
+  onChange: () => whyDraw(),
+});
+let whyChanged = false, whyFed = null;
+function whyDraw() {
+  const el = $("#vWhy"), w = viewing() && WHY.sha === shown()?.sha ? WHY.says : null;
+  if (WHY.line.is("known") && WHY.line.data !== whyFed && WHY.sha === shown()?.sha) {   // the private line is told what the why answer says
+    whyFed = WHY.line.data;
+    PRIV.look(WHY.sha, WHY.line.data.why.private);
+  }
+  el.hidden = !w;
+  if (!w) return;
+  $("span", el).innerHTML = w.html;
+  const b = $("button", el); b.textContent = w.action; b.disabled = w.busy;
+}
+function privDraw() {                                // the private line, and the details' row that withdraws
+  const el = $("#vPriv"), on = viewing() && PRIV.sha === shown()?.sha, w = on ? PRIV.says : null, row = on ? PRIV.row : null;
+  el.hidden = !w;
+  if (w) el.innerHTML = `<span>${w.html}</span>` + w.offers.map((o, k) => `<button type="button" data-priv="${k}"${w.busy ? " disabled" : ""}>${esc(o.label)}</button>`).join("");
+  const slot = $("#vPrivRow");
+  if (slot) {
+    slot.hidden = !row;
+    slot.innerHTML = row ? `<button class="vrow" data-withdraw${row.busy ? " disabled" : ""}>${I.lockBig}<span><b>${esc(row.title)}</b><small>${esc(row.detail)}</small><i class="vact">${esc(row.label)}</i></span></button>` : "";
+  }
+}
+let privChanged = false;
+async function privAct(body, done) {
+  const got = await PRIV.act(body);
+  if (!got.ok) return toast(got.error.message === "not allowed" ? "This can’t be changed from this account." : `Couldn’t change that: ${got.error.message}`);
+  privChanged = true;
+  toast(done);
+}
+$("#vPriv").addEventListener("click", e => {
+  const b = e.target.closest("[data-priv]"), w = PRIV.says;
+  if (!b || !w) return;
+  const o = w.offers[+b.dataset.priv];
+  if (o.body !== "day") return privAct(o.body, o.body.private ? "It stays private: no release day" : "Released: the family sees it again");
+  const today = new Date().toLocaleDateString("en-CA");          // (YYYY-MM-DD, in this computer's time)
+  openMenu(b, el => menuForm(el, `<h5>Release it by itself on</h5><input type="date" min="${today}" aria-label="The day it is released on">`,
+    "Keep it private until then", "Saving…", "Couldn’t set the day", async until => {
+      await privAct({ private: true, until }, `Private until ${new Date(until + "T12:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}: then it is released by itself`);
+      closeMenus();
+    }));
+});
+$("#vInfo").addEventListener("click", e => {
+  if (e.target.closest("[data-withdraw]")) privAct({ private: true }, "Withdrawn: only you see it now. Release it from the line above at any time");
+});
+function heldDraw() {                                // the held view's bar, under the search's heading
+  const b = barSays(HELD.view), el = $("#sHeld");
+  el.innerHTML = b ? `<span>${esc(b.text)}</span>` + b.offers.map(o => o.href ? `<a class="btn${o.primary ? " pri" : ""}" href="${esc(o.href)}">${esc(o.label)}</a>`
+    : `<button class="btn${o.primary ? " pri" : ""}" data-held="${o.what}">${esc(o.label)}</button>`).join("") : "";
+  for (const t of $$("#sGrid .t[data-i]")) { const r = sgrid.items[+t.dataset.i]; if (r && !r.ghost) t.classList.toggle("chosen", HELD.chosen(r.sha)); }
+}
+// How many are held for the member and how many wait to be looked over, for the bar: a search shows only what the
+// view options and their hides let it (GET /api/held?count=1). A failure leaves the bar without them.
+function heldCount() { api("/api/held?count=1").then(c => HELD.counted(c), () => {}); }
+$("#sHeld").addEventListener("click", async e => {
+  const what = e.target.closest("[data-held]")?.dataset.held;
+  if (what === "choose") return HELD.choose();
+  if (what === "cancel") return HELD.cancel();
+  if (what !== "chosen") return;
+  const got = await HELD.releaseChosen();
+  if (!got.ok) return toast(`Couldn’t release them: ${got.error.message}`);
+  toast(`Released ${plural(got.released, "photo")}: the family sees ${got.released === 1 ? "it" : "them"} now`);
+  heldCount();
+  seenChanged();
+});
+$("#vWhy button").onclick = async () => {
+  const got = await WHY.toggle();
+  if (!got.ok) return toast(got.error.message === "not allowed" ? "This can’t be changed from this account." : `Couldn’t change that: ${got.error.message}`);
+  whyChanged = true;
+  if (got.why) toast(got.why.shown_anyway ? "Shown anyway: it is in your library again" : "Hidden from you again");
+};
 // Opening or sharing a photo says a search found something; the server keeps these with the searches.
 const logEvent = (ev, list, r, i) => { if (!r) return;
   const p = list === sgrid ? new URLSearchParams((sgrid.of || Q).key) : libParams(); p.set("ev", ev); p.set("sha", r.sha); p.set("pos", i);
@@ -1879,6 +2233,9 @@ function closeViewer(entry = "back", instant = false) {
   // Closed, or leaving until the browser says the entry has gone (or a second passes without it saying so):
   // either way what the viewer knew of the photo goes with the step, and `o` is the last of it.
   VW.close(entry);
+  WHY.clear(); whyDraw(); PRIV.clear(); privDraw(); whyFed = null;
+  STORIES.clear(); untell(); for (const [, c] of following) c.abort(); following.clear();
+  if (whyChanged || privChanged) { whyChanged = privChanged = false; seenChanged(); }   // a photo shown anyway, hidden again, withdrawn or released: the lists behind the viewer are asked for again
   const done = () => { if (!viewing()) { v.classList.remove("on"); document.documentElement.style.overflow = ""; } };
   if (instant) return done();
   const el = o.list.tile(i);
@@ -2047,6 +2404,7 @@ function drawInfo(r) {                               // what is known about it, 
   if (r.stack) h += `<div class="vcard">${row(`data-k="stack" data-v="${r.sha}"`, I.stack.replace(/1[3]"/g, '20"'), `Stack of ${r.stack}`, "Near-identical shots taken together")}</div>`;
   if (r.people?.length) h += `<h4>With</h4><div class="tags">${r.people.map(p => `<button class="tag" data-k="person" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
   if (r.albums?.length) h += `<h4>In</h4><div class="tags">${r.albums.map(p => `<button class="tag" data-k="album" data-v="${esc(p)}">${esc(p)}</button>`).join("")}</div>`;
+  h += `<div id="vStories"></div>`;                  // its stories, and telling one (storiesDraw)
   const n = x => +(+x).toFixed(1);
   const cells = [
     (r.focal35 || r.focal) && [`${n(r.focal35 || r.focal)} mm`, "Focal"],
@@ -2060,10 +2418,54 @@ function drawInfo(r) {                               // what is known about it, 
     if (cells.length) h += `<div class="exp">${cells.map(([a, b]) => `<div><b>${a}</b><small>${b}</small></div>`).join("")}</div>`;
     h += `</div>`;
   }
+  h += `<div class="vcard" id="vPrivRow" hidden></div>`;   // a photo this member shared: withdraw it (privDraw)
   const name = (r.path || "").split("/").pop();
   h += `<div class="file num">${esc([name, r.w && r.h ? `${r.w} × ${r.h}` : ""].filter(Boolean).join("  ·  "))}</div>`;
+  untell();                                          // a teller open on the photo before goes with it
   const el = $("#vInfo"); el.innerHTML = h; el.scrollTop = 0;
+  privDraw(); storiesDraw();
 }
+// The stories told about the photo showing (app/story-flow.js; stories.py), in its details: who told each and when,
+// the words or the transcript, the recording to play; and one quiet row to tell a story, typed or spoken, which opens
+// the teller. A photo with no story shows only that row. A spoken story says it is being written down until the mini
+// has, asked again now and then while the viewer is open.
+const STORIES = photoStories({ read: (sha, signal) => api(`/api/photos/${sha}/stories`, undefined, { signal }), onChange: () => storiesDraw() });
+let telling = null;                                  // { el, mount }: the teller open in the details
+const following = new Map();                         // story id -> AbortController
+function untell() { if (telling) { telling.mount.unmount(); telling = null; } }
+function storiesDraw() {
+  const slot = $("#vStories"), p = STORIES.page, r = shown();
+  if (!slot) return;
+  if (!viewing() || !p.is("known") || p.data.sha !== r?.sha) { untell(); slot.innerHTML = ""; return; }
+  const d = p.data;
+  if (!$(".vstories", slot)) slot.innerHTML = `<div class="vstories"></div><div class="vtell"></div>`;
+  $(".vstories", slot).innerHTML = d.stories.length ? `<h4>Stories</h4>${d.stories.map(x => storyHtml(x)).join("")}` : "";
+  const el = $(".vtell", slot);
+  if (!d.telling) {
+    untell();
+    el.innerHTML = `<div class="vcard"><button class="vrow" data-tell-open>${I.story}<span><b>${d.stories.length ? "Tell another story" : "Tell a story about this photo"}</b><small>Typed or spoken: kept with your name and the day</small></span></button></div>`;
+    return;
+  }
+  if (telling?.el === el) return;
+  untell();
+  const sha = d.sha;
+  telling = { el, mount: mountTeller(el, {
+    dismiss: "Cancel", placeholder: "What do you remember about it? Type it, or record it", sendLabel: "Tell it",
+    send: what => "text" in what ? api("/api/stories", { photos: [sha], text: what.text }) : api(spoken(`/api/stories?photos=${sha}`, what), what.blob),
+    onSent: story => { STORIES.told(story); storyFollow(story); toast("Told: it is kept with this photo"); },
+    onDismiss: () => STORIES.tell(false),
+  }) };
+  setTimeout(() => $("textarea", el)?.focus());
+}
+function storyFollow(story) {                        // a spoken story: ask again, gently, until it is written down
+  if (!story.recording || story.transcript_state !== "waiting" || following.has(story.id)) return;
+  const ctl = new AbortController(), sha = story.photos[0];
+  following.set(story.id, ctl);
+  follow(async signal => (await api(`/api/photos/${sha}/stories`, undefined, { signal })).stories.find(x => x.id === story.id) || null, { signal: ctl.signal })
+    .then(x => { if (x) STORIES.told(x); }, () => {})
+    .finally(() => { if (following.get(story.id) === ctl) following.delete(story.id); });
+}
+$("#vInfo").addEventListener("click", e => { if (e.target.closest("[data-tell-open]")) STORIES.tell(true); });
 $("#vInfo").addEventListener("click", e => {
   const t = e.target.closest("[data-k]"); if (!t) return;
   const k = t.dataset.k, val = t.dataset.v, s = blank();
@@ -2299,13 +2701,16 @@ $("#albGrid").addEventListener("click", e => { const t = e.target.closest(".t");
 $("#monGrid").addEventListener("click", e => { if (e.target.closest("#libRetry")) return libRetry(mgrid); if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(mgrid, +t.dataset.i); });
 $("#libGrid").addEventListener("click", e => { if (e.target.closest("#libRetry")) return libRetry(lgrid); if (openStack(e)) return; const t = e.target.closest(".t"); if (t) openViewer(lgrid, +t.dataset.i); });
 $("#sGrid").addEventListener("click", e => {
+  const t = e.target.closest(".t");
+  if (t && HELD.choosing) { const r = sgrid.items[+t.dataset.i]; if (r && !r.ghost) t.classList.toggle("chosen", HELD.toggle(r.sha)); return; }   // the held view: chosen, not opened
   if (openStack(e)) return;
-  const t = e.target.closest(".t"); if (t) return openViewer(sgrid, +t.dataset.i);
+  if (t) return openViewer(sgrid, +t.dataset.i);
   if (e.target.closest("#again")) { q.value = ""; go(blank()); }
 });
 document.addEventListener("keydown", e => {
   const inField = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
   if (viewing()) {
+    if (inField) { if (e.key === "Escape") document.activeElement.blur(); return; }   // typing a story: the keys are the field's
     if (e.key === "Escape") closeViewer();
     else if (e.key === " " && VIDEO.is("video", "failed")) { if (e.target !== vid) { e.preventDefault(); VIDEO.toggle(); } }   // a video showing: Space plays and pauses it (the video's own controls do, when it has the focus)
     else if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
@@ -2352,7 +2757,11 @@ new ResizeObserver(() => { const w = document.documentElement.clientWidth; if (w
 history.scrollRestoration = "manual";               // the page puts you back where you were, card or month, itself
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});   // the "can't reach" page
 (async function init() {
+  const me = api("/api/me").catch(() => null);    // (said in the menu; the page works without it)
   INFO = await api("/api/info");                // the library's facts; its facet counts double as the first ones
+  ME = await me;
+  inboxCount();
+  addEventListener("pageshow", e => { if (e.persisted) inboxCount(); });   // back from the inbox, or a page it opened
   if (INFO.demo) q.placeholder = "Try: latte art, kitten, waterfall in autumn";
   buildVocab();
   const params = new URLSearchParams(location.search);

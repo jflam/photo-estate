@@ -47,7 +47,7 @@ Working notes, kept as they were written; the book is the current description.
 | [notes/PERFORMANCE.md](notes/PERFORMANCE.md) | Where the app's time and memory go, measured, and the open performance tasks |
 | [notes/BENCHMARK.md](notes/BENCHMARK.md) | Library statistics and the benchmark album used to compare models |
 | [notes/VIDEO-PLAN.md](notes/VIDEO-PLAN.md) | Videos and Live Photos: what the library holds, how clips are told, best frame against mean, which frames to keep, what is left |
-| [notes/MULTIPLAYER-PLAN.md](notes/MULTIPLAYER-PLAN.md) | The family as users: members from the tailnet, lenses, private photos, the phone gate, append-only, the journal, the inbox, agents as members (not built yet) |
+| [notes/MULTIPLAYER-PLAN.md](notes/MULTIPLAYER-PLAN.md) | The family as users: members from the tailnet, lenses, private photos, the phone gate, append-only, the journal, the inbox, agents as members (phases 1 to 5 are built: members and identity, the journal and append-only, lenses, the inbox, private photos and the hold at ingestion) |
 
 ## Where documents live
 

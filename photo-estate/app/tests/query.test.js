@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { KEYS, blank, copy, toParams, fromParams, filtered, isEmpty } from "../query.js";
+import { KEYS, blank, copy, toParams, fromParams, filtered, isEmpty, growsFrom } from "../query.js";
 
 test("the empty question: no address, nothing asked", () => {
   const s = blank();
@@ -23,7 +23,7 @@ test("words alone: asked, not filtered", () => {
 
 test("every part of a question survives the address and back", () => {
   const s = blank();
-  Object.assign(s, { q: "kids at the lake & more", plain: true, event: "e12", stack: "abc", fav: true, from: "2015-06", to: "2016-08", sort: "best", video: true });
+  Object.assign(s, { q: "kids at the lake & more", plain: true, event: "e12", stack: "abc", fav: true, from: "2015-06", to: "2016-08", sort: "best", video: true, hidden: true });
   s.f.person = ["Ada O'Neil", "Ben"];
   s.f.city = ["Paris, Île-de-France, France"];
   s.f.trip = ["7"];
@@ -56,7 +56,7 @@ test("more like this photo: asked, by sha", () => {
 });
 
 test("anything but the words and the photo is a filter", () => {
-  for (const address of ["person=Ada", "country=France", "event=e1", "stack=abc", "fav=1", "from=2015-06", "to=2015-06", "lens=50mm"]) {
+  for (const address of ["person=Ada", "country=France", "event=e1", "stack=abc", "fav=1", "from=2015-06", "to=2015-06", "lens=50mm", "hidden=1"]) {
     const s = fromParams(new URLSearchParams(address));
     assert.equal(filtered(s), true, address);
     assert.equal(isEmpty(s), false, address);
@@ -103,4 +103,16 @@ test("videos only: kind=video in the address, and a filter", () => {
   assert.equal(fromParams(new URLSearchParams("kind=video")).photo, false);
   const c = copy(s); c.video = false;
   assert.equal(s.video, true);
+});
+
+test("growsFrom: the question as search_photos takes it, for a series; null when a series can't grow from it", () => {
+  const p = (/** @type {string} */ q) => fromParams(new URLSearchParams(q));
+  assert.deepEqual(growsFrom(p("q=kitten")), { query: "kitten" });
+  assert.deepEqual(growsFrom(p("q=beach&person=Ben&person=Cleo&city=Pokolbin&from=2017-01&to=2018-12&fav=1&kind=photo")),
+    { query: "beach", people: ["Ben", "Cleo"], place: "Pokolbin", date_from: "2017-01", date_to: "2018-12", favorite: true, kind: "photo" });
+  assert.deepEqual(growsFrom(p("album=Summer&camera=X100&trip=12&event=99&kind=video")), { album: "Summer", camera: "X100", trip: 12, event: 99, kind: "video" });
+  assert.deepEqual(growsFrom(p("country=Australia")), { place: "Australia" });
+  for (const q of ["", "sha=ab", "stack=ab", "q=x&hidden=1", "q=x&sort=name", "lens=50mm", "city=A&city=B", "city=A&country=B", "album=A&album=B"]) {
+    assert.equal(growsFrom(p(q)), null, q);
+  }
 });

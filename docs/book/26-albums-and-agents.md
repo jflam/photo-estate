@@ -6,7 +6,7 @@ wrong ones. This chapter is both, and how the same two ideas let an agent work o
 being trusted with it.
 
 The code is [changes.py](../../photo-estate/changes.py) (albums and change sets),
-[changes.html](../../photo-estate/changes.html) (the review page),
+[changes.html](../../photo-estate/changes.html) (the review page, which is also the review of held photos at `/held`),
 [estate_mcp.py](../../photo-estate/estate_mcp.py) (the library as tools for an agent) and
 [tasks.py](../../photo-estate/tasks.py) (an agent that runs on the library's computer). On the phone it is
 [Albums.swift](../../ios/PhotoEstate/Library/Albums.swift) and
@@ -40,6 +40,14 @@ Albums are made in three places:
 
 An album's cover is a favourite from it, if it has one, as a month's is ([chapter 25](25-best-photos.md)).
 
+**Whose it is.** Every album and change set is its owner's (`change_sets.owner`; those from before members
+are the first sysadmin's). A member lists and opens their own, and the albums others have **published**
+as a **series** (`POST /api/albums/<id>/publish`, which gives it a row in `lenses`); only the owner changes
+one. Inside any album or series, whoever made it, a member sees only the photos their own filters let
+through: someone else's series never shows them what they hid ([chapter 11](11-server.md#what-each-member-sees-lenses)).
+Subscribing to a series puts it in the member's Albums, live, or as a snapshot copied into an album of
+their own.
+
 ## Change sets: proposed, looked at, applied
 
 ```mermaid
@@ -52,7 +60,7 @@ stateDiagram-v2
     applied --> proposed: revert (as one unit)
     applied --> done: commit
     done --> applied: reopen
-    proposed --> [*]: discard (only if it hides nothing)
+    proposed --> [*]: discard (only if it hides nothing: marked, never deleted)
 ```
 
 The rules that make this safe:
@@ -66,6 +74,12 @@ The rules that make this safe:
    the whole set or `through` the last photo you have looked at. Apply as you go.
 4. **A set is undone as one unit.** `revert` takes back everything it did, and keeps your marks.
    `commit` says it is finished; nothing about it changes until it is `reopen`ed.
+5. **Nothing is deleted, and every step is in the journal.** Discarding a set (or an album) that hides
+   nothing marks it `discarded`: its rows stay in the catalog, and it is in no listing and answers no
+   request, as if it were gone (its id is never given to another). Each step that changes something
+   (made, photos added or taken out, marks, applied, reverted, committed, reopened, put up for hiding,
+   renamed, discarded) is one journal entry naming the set and the member it was done for, never one per
+   photo ([chapter 11](11-server.md#the-journal)).
 
 The page keeps itself honest about what the server has
 ([app/changes-flow.js](../../photo-estate/app/changes-flow.js), issue #80). A mark shows at once and is
@@ -78,34 +92,148 @@ until it has; after two minutes it stops, says "Still updating" (the change itse
 **Check again**, instead of asking for ever.
 
 The first (and so far only) operation is **hide**: the photo stays in the store and the catalog and is
-left out of every view (search, the Library, People, and the copy a phone keeps). Files are never
-touched. The `hidden` table is keyed by photo *and* set, so a photo two sets hide stays hidden until
-both are undone, and hiding for one person only, once the app has users, is one more column
-([issue 47](https://github.com/jflam/photo-estate/issues/47)).
+left out of every view (search, the Library, People's lists, and the copy a phone keeps) of the members
+who see through the set's **lens**. Files are never touched. The `hidden` table is keyed by photo *and*
+set, so a photo two sets hide stays hidden until both are undone. A set's lens is chosen when it is first
+applied (`change_sets.lens_id`): by default the owner's own filter ("Hidden photos", made then),
+so one member's hides hide nothing for anyone else; a sysadmin may apply to the Estate defaults instead,
+which every member sees through unless they opt out ([chapter 11](11-server.md#what-each-member-sees-lenses),
+[issue 47](https://github.com/jflam/photo-estate/issues/47)).
 
 ![A change set to review: six photos an agent proposed hiding](../screenshots/changes-review.jpg)
+
+## Lenses on the pages
+
+Phase 3 of the multiplayer plan made hiding personal ([chapter 11](11-server.md#what-each-member-sees-lenses));
+these are the places a member meets it. The machines and the words are
+[app/lens-flow.js](../../photo-estate/app/lens-flow.js), unit-tested in `app/tests/lens-flow.test.js`.
+
+- **The Albums tab** shows, as cards, the member's own albums and the series they subscribe to (badged
+  with the owner's name; a published album of their own says *Published*). Under them, **Filters**, a row
+  each: theirs (*Yours: always on*, how many photos it hides, *What it hides* to its sets on `/changes`,
+  **Publish** or **Stop publishing**, **Propose as an estate default**); for a sysadmin, those *waiting to
+  decide* (**Make it an estate default**, **Decline**); the **estate defaults** (**Opt out**, **Opt back
+  in**, **Keep a copy instead**); and those **published by others** (**Subscribe**, **Keep a copy**,
+  **Unsubscribe**). A filter is not opened: its row says what it hides and whether it is on, and the line
+  over them says what a filter is and how many photos those on hide, with **See them**: Search with
+  `hidden=1`, under a *Hidden from you* chip. Last, the **series published by others**: opened like an
+  album, with **Subscribe** and **Keep a copy**. Beside each Subscribe the page says what it does, in the
+  plan's words: a filter's "changes what you see everywhere", a series' "adds it to your Albums". One change
+  at a time; the lenses are asked for again after each, and the Library and Search after a filter changed.
+  A snapshot ("keep a copy") ends a live subscription: the server keeps one mode per member and lens.
+- **An album's ⋯ menu**: an album of one's own can be **published as a series** (or no longer); someone
+  else's series offers subscribing, a copy, favourites and the download, and nothing that changes it.
+- **The review page** (`/changes/<id>`) says whom the set hides from. Before it hides anything, a sysadmin
+  chooses **Hide from You | Everyone** (the Estate defaults); a member has one choice and is told *hidden
+  from you*. The choice goes with the first apply (`{lens}`); after that the page names the lens, "Hidden
+  from you through your lens *Hidden photos*", until the set is reverted. A set or album that is not the
+  member's answers 404, and the page says so plainly: *This change set is not here*, *This album is not here*.
+  In the Albums tab, a hiding set's photos are badged *Hidden from you* or, when the set hides for the estate
+  defaults, *Hidden from everyone*, as the review page says it.
+- **The viewer's why line.** Each photo that stays on screen a quarter of a second is asked about
+  (`GET /api/photos/<sha>/why`); for one the member's filters hide (in a hiding set's review, in **See
+  them**, wherever else it is opened) a line under the caption says why, "Hidden by your lens *Hidden
+  photos* on Nov 23", with **Show it anyway**, and once shown, **Hide it again**. The page words the line
+  itself from the answer's `reasons`, and says the day in the viewer's own time zone (the server's `text`
+  says it in UTC). The lists behind the viewer are asked for again when it closes.
+- **The Library's ⋯ menu** names the member (*You are Ada*, from `GET /api/me`), offers **Inbox** with how
+  many things wait there (below), **Members** and **Library info** (`/stats`) to a sysadmin, and on the demo,
+  **Be another member**.
+
+## Private photos on the pages
+
+Phase 5 of the multiplayer plan lets a member keep a photo they shared to themselves ([chapter
+11](11-server.md#private-photos) has the rule and the API). The machines and the words are
+[app/private-flow.js](../../photo-estate/app/private-flow.js), unit-tested in `app/tests/private-flow.test.js`.
+
+- **The viewer's private line**, under the why line (the same answer feeds both: the why answer's `private`):
+  for a photo private to the member, "*Private to you* since Nov 22: held: it looks like a receipt, a
+  screenshot or a document", or "you withdrew it", with "It is released by itself on Dec 26" once a day is
+  set, and when someone else shares it too, that the family still sees it. It offers **Release** and
+  **Release on a day…** (a menu over the viewer with a date; once set, **No release day** instead).
+- **Withdraw**: a photo the member shared and the family is shown has a row in the viewer's details,
+  *Shared by you*, **Withdraw from the family**; withdrawn, the line takes its place. The lists behind the
+  viewer are asked for again when it closes.
+- **A mark in the grid**: a small lock on each photo private to the member, wherever their own lists show it.
+- **The held view** is Search for `is:held`: *Held as private*, and a bar. Being a search, it obeys the view
+  options and the member's hides, so its bar says so ("This search shows 4,439 of the 7,992 photos held for you:
+  your view options (screenshots, stacks) and what you hide leave the rest out", from `GET /api/held?count=1`),
+  says how many wait to be looked over, and leads to the review of every one (**Look over all N**, `/held`,
+  below). **Choose…** remains: a tile tapped is then chosen (outlined), not opened, and **Release N** releases
+  exactly those (**Cancel** stops choosing). There is no "Release all": it released every held photo, those the
+  search never showed included. `is:private` lists everything private to the member, held or withdrawn;
+  `is:withdrawn` only what they withdrew.
+
+### Looking held photos over
+
+The `held` inbox item opens **`/held`**: the change-set review page in its held mode, the same wall with the
+roles swapped. On a change set every photo will be hidden unless it is marked to keep; here every photo stays
+private unless it is marked to **release**. It lists every held photo of the member's that waits to be looked
+over, whatever the view options, stacks or hides ([chapter 11](11-server.md#private-photos) has the order and
+the API), under headings: *Someone is named in them* (the likeliest mistakes), *Just over the line*, *Receipts
+and documents*, *Screenshots, and the surest*, and last *Already hidden from you* (each tile there says
+*Hidden*). Each tile's tooltip, and the zoomed photo's line, say why it was held ("Looks like a receipt
+(0.112)", "The phone marked it a screenshot").
+
+Everything the change-set page does with the wall it does here, with the same code: the tile sizes (− and +),
+moving with the arrow keys or the pointer, Space to zoom, a click (or **R**) to mark, shift-click for a run,
+and the filter (*All*, *To release*). The dock says what **Reviewed up to here** (**U**) would do from the
+photo the member is on ("Up to here: release 2, keep 3 private · 7 after it"): the marked photos up to it are
+released, the rest up to it stay private and leave the review, and what comes after waits, so 8,000 are looked
+over a stretch at a time. **Done: keep the rest private** (**A**, after a confirm) does the same for the whole
+list. Marks are kept in the browser (per member) until they are sent, so a reload keeps them; the request
+names every photo it covers, so nothing is released that was not marked, and a photo held after the page read
+the list is not touched (the page says when more have been held since, and offers to read the list again). A
+photo kept is still private, and still found by `is:held`. The machine and the words are
+[app/held-flow.js](../../photo-estate/app/held-flow.js) (a strict `flow()`: loading, reviewing, sending,
+failed), unit-tested in `app/tests/held-flow.test.js`; tests/test_held_browser.py drives the page.
+
+## The inbox
+
+Whatever waits for a member's decision is in their **inbox** (phase 4 of the multiplayer plan; the items,
+what makes and closes each, and the API are [chapter 11](11-server.md#the-inbox)). The page is
+**`/inbox`** (inbox.html; its machine in [app/inbox-flow.js](../../photo-estate/app/inbox-flow.js),
+unit-tested in `app/tests/inbox-flow.test.js`): a card per open item, newest first, with what kind it is
+(*Asking to be let in*, *To look over*, *Proposed estate default*, *A lens you follow*, *Kept private to
+you*), what it is about and the day, a button that opens the screen that decides it (**Open Members**, **Look
+it over**, **Decide in Albums**, **See it in Albums**, **Open the series** or **Look them over**: the review
+of held photos, `/held`) and **Dismiss**. Deciding where it opens takes the
+item out of the inbox; nothing is decided on the inbox itself. A lens that changed asks for no decision,
+so opening it puts it away. The Library's ⋯ button carries a small count when anything is open, and its
+menu's **Inbox** row the same; the count is asked for when the page loads, when it is come back to, and
+after a lens is decided in Albums. No push notifications: the inbox is read when the app is opened. The
+request-access page tells someone who has asked that the sysadmin has been told, in their inbox.
 
 ## The library as tools: MCP
 
 The running app is also an [MCP](https://modelcontextprotocol.io/) server at `/mcp`, so any MCP client
-(Claude Code, Claude Desktop, or anything else) can search the library with the same models you do.
+(Claude Code, or another harness on a computer on the tailnet: [your own agent](#your-own-agent)) can search the library with the same models you do.
 The transport is the simplest form of MCP's streamable HTTP: one JSON-RPC message per POST, answered with
 JSON, no stream and no session. The tools:
 
 | To... | Tools |
 |---|---|
-| Find photos | `library_overview`, `search_photos`, `similar_photos`, `get_photos` |
-| Keep them | `list_albums`, `get_album`, `create_album`, `amend_album` |
+| Find photos | `library_overview`, `search_photos`, `similar_photos`, `get_photos` (with the stories told about each) |
+| Keep them | `list_albums`, `get_album`, `create_album` (with `search` and `grow`, a series), `amend_album` |
 | Propose a change | `propose_hiding`, `list_change_sets`, `get_change_set`, `create_change_set`, `amend_change_set` |
-| Hand over a big job | `submit_task`, `get_task`, `cancel_task` |
+| Ask the family | `ask_member` |
+| Hand over a big job | `submit_task`, `get_task`, `cancel_task` (not for a member's own agent) |
+| Catch up (a member's own agent) | `journal_since`; `amend_album`'s `request_done` |
 
 Two rules are built into the tools, not left to the agent's good behaviour:
 
 - **The agent never sees a photo.** Every tool answers with ids, scores, dates, places, the names of
   people in it, albums and file paths. Nothing of what a photo shows leaves the computer, whichever model
   the agent is.
-- **The agent cannot change the library.** It can make albums, which change nothing else, and propose
-  change sets. No tool applies one.
+- **The agent cannot change the library.** It can make albums, which change nothing else, propose
+  change sets and ask questions. No tool applies anything.
+- **The agent sees what its member sees.** Every tool answers as one member sees the library: the caller's
+  login, or the member a run of the estate's agent acts for; acting for no one (the family archivist), only
+  what the whole family may see. A photo private to someone else is not there for it at all.
+
+The server's instructions text (`INSTRUCTIONS` in estate_mcp.py) says the same to any client: whose eyes it
+answers with, that hiding is the member's own, that private photos are never shown, how and when to ask a
+question, and that stories are what people said, attributed and never edited.
 
 Since the agent cannot look, `search_photos` tells it how to read a ranking: each answer carries a
 `summary` (how many match, the score at several ranks, the years they come from, how many have a named
@@ -120,6 +248,34 @@ Live Photo's still. The agent still sees no frame.
 
 And because a person reviews a change set, `get_change_set` reports which photos they kept: those are
 the agent's mistakes, and the best guide it has to doing better next time.
+
+## Your own agent
+
+A member can bring their own agent: Claude Code on their laptop, on their own account, added with one command
+that **Connect your agent** (`/agents`, in the Library's menu) shows with this app's own address:
+
+    claude mcp add --transport http photo-estate https://<the mini>.ts.net:8766/mcp
+
+It calls `/mcp` through `tailscale serve`, which says whose login it is, so there is no key to copy. The estate
+takes it for *that member's agent on that device* (a binding, [chapter 11](11-server.md#a-members-own-agent)), and
+the member is asked, in their inbox, "An agent connected as you from alice-macbook. Allow it?". Until they allow it,
+**from another device** (their phone: anything on the agent's own device could be the agent), it can look but not
+change anything; every tool that would says so. Allowed, it works as the member, and the journal says it was their
+agent. Turned off, it is refused. The page lists the member's agents with each state and offers what can be done,
+and asks again every few seconds while it is open, so an agent that has just connected shows up as it happens.
+
+It gets the estate's agent's tools acting for its member, except the task tools: its work runs in the member's own
+harness, never on the owner's subscription. And it gets `journal_since`: what changed in what its member may know
+of, since the cursor it kept. When new photos may belong in one of the member's series, the series listener asks
+*their* agent rather than the estate's (it may know things the estate's agent does not): the entry
+`series.update_requested` comes through `journal_since`; the agent looks at the photos, adds those that belong
+with `amend_album`, and says it is done with `request_done`, which closes the member's inbox item.
+
+**Where it can run.** Only on a device on the tailnet: Claude Code, or a desktop app whose MCP configuration runs
+on that computer. A connector added in claude.ai, Claude Desktop's connectors or the Claude phone app is called
+from Anthropic's servers ([Anthropic's help](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp):
+"Claude connects to your remote MCP server from Anthropic's cloud infrastructure"), which are not on the tailnet,
+and the tailnet stays closed (no Funnel, no public `/mcp`). That is from the documentation, not tried here.
 
 ## An agent on the library's computer: tasks
 
@@ -144,8 +300,16 @@ photo with a click, but never sees one left out), leave the family's named peopl
 plainly covers them, and end with a plain report of what it did and what it is least sure of.
 
 Each task's progress is kept as a list of events, so the Changes page can show it working and keep what
-it did afterwards. The change sets it makes carry the task's name; the agent is told apart by a header
-honoured only from this computer, and is not offered the task tools itself. It signs in with a
+it did afterwards. The change sets it makes carry the task's name; the agent is told apart by its run's
+token (a random capability minted for the run, honoured only from this computer while the run lasts:
+[chapter 11](11-server.md#the-estates-agent-listeners-questions-and-stories)), and is not offered the task tools
+itself. It is a member, the estate's agent, and **acts for** the member who submitted the task
+(`agent_tasks.acting_for`, fixed by the token): every tool answers as that member sees the library, what it
+makes is theirs, and its writes are journaled by the agent, acting for them. With `family: true` a run acts for
+no one, as the family archivist; and the estate starts runs itself, when new photos match a family series or
+someone answers a question the agent wanted answered (below). Every run, those too, is a row with who or what
+started it (`started_by`). A task Ben
+submits searches as Ben, not as the sysadmin the agent calls as. It signs in with a
 long-lived token from `claude setup-token`, kept in `~/.config/photo-estate/agent.env` and put in the
 agent's environment and nowhere else. The model runs in the cloud; what reaches it is the request and
 what the tools return.
@@ -159,6 +323,61 @@ stop the agent with SIGTERM and then SIGKILL ten seconds later, and a failed tas
 last of what the agent wrote to stderr, read to the end. `Tasks.update` writes only the task's own
 columns, and never its status.
 
+## Series that grow
+
+A **series** is a list album with a search it grows from (`grows_from`): made with `POST /api/albums {title,
+grows_from}` or the MCP's `create_album` with `search` and `grow`, it starts as what the search finds and is
+added to as photos arrive, never worked out again, so what its owner took out stays out. (A live album is its
+search, and needs no one to keep it.) When an ingest has added photos, the series listener runs each series'
+search over them as its owner: for a **family series** (one the family archivist made and keeps) the estate's
+agent looks at the matches and adds those that belong; for a member's own, the matches wait in their inbox, and
+they add them, or none, from there (`/api/albums/<id>/candidates`). Their own agent picking that up is phase 8.
+
+On the pages: the album menu of a search (the button beside the field) has **Keep it growing** when the
+question is one a series can grow from (`query.js`'s `growsFrom`: the words, people, one place, album, camera,
+trip or event, dates, favourites, photos or videos; not "like this", a stack, a lens or two places at once), and
+makes the album with `grows_from` instead of collecting the photos itself. A series' heading says what it is ("A
+series: new photos its search finds are offered to you", or for a family series that the estate's agent adds
+them). For its owner, the new photos waiting for it are a panel above the photos (`candidatesFlow` in
+`albums-flow.js`): all chosen at first, a tap leaves one out, **Add** or **None of these**, which closes the
+`series_update` inbox item (its link, `/?album=<id>&candidates=1`, opens the album). Under the heading, the
+stories told about the series' photos, newest first, each with its first photo.
+
+**Asking the archivist.** The Ask box on `/changes` (`POST /api/tasks`) has a plain choice under it: **For me** (it
+sees what you see, your private photos too; what it makes is yours to look over) or **For the family** (`family:
+true`: it sees only what everyone can see; what it makes is published as a family series). A task the archivist
+works on says "For the family" in the list. `/members` lists the estate's agent as itself, with nothing to change.
+
+## Questions and stories
+
+Some things only people know. The agent asks with `ask_member`: one member, or the whole family, about photos
+they can see, a few plain questions grouped by event. The **inbox decides how many** each member sees: three
+items a week (or their own number), photos nobody has told a story about first, then gaps in a series, then the
+agent's priority; "three questions about Thanksgiving 1998" is one item. A member answers in the inbox, typed or
+spoken (`POST /api/questions/<id>/answer`), or says "I don't know", which puts the question away for good. An
+answer is a **story**, attributed and dated; a second member's answer is a second story, never a correction, and
+a story can be told about any photo with no question (`POST /api/stories`). A spoken one is uploaded as the
+request's body (the iPhone's `.m4a`, a browser's `audio/mp4` or `audio/webm`), kept in the store with no photo
+row, and transcribed on the mini, later, by Parakeet (`transcribe.py`). The viewer shows a photo's stories
+(`GET /api/photos/<sha>/stories`: who told each, when, the text or the recording and its transcript), a series
+the stories told about its photos (`GET /api/albums/<id>/stories`), and plays a recording
+(`GET /api/stories/<id>/recording`, with Range). If the agent wanted the answer (`follow_up`), the story wakes
+a new run with the question and the answer. Appendix B has the requests exactly.
+
+**On the pages.** A `question` item in the inbox says *Answer* and opens `/inbox?ask=<group>` (the same page,
+`ask-flow.js`): the item's questions, each with who asks and for whom ("The estate’s agent asks you, for the
+family"), why, and its photos (a tap shows one bigger), and a **teller** (`story-flow.js`, shared with the viewer):
+a field to type in, *Record*, *I don’t know*, *Send answer*. The microphone is asked for only when Record is
+pressed. Recording shows its clock and stops by itself at fifteen minutes; the clip can be listened to, redone or
+thrown away before it is sent. The browser's own `MediaRecorder` makes it, asked for AAC in MP4 first
+(`audio/mp4;codecs=mp4a.40.2`: Safari, and Chrome makes it too, so the iPhone plays every story), then any MP4,
+WebM or Ogg; it is sent as the request's whole body with its type (`api.js` posts a `Blob` as it is). An answered
+question stays on the page with the story under it: "Being written down…" until the mini has written it out, the
+page asking again every few seconds (and less often as it goes on) and when it is shown again, never holding a
+connection open. In the viewer, the details have the photo's stories (who, when, the words or the transcript, the
+recording to play) and one quiet row, **Tell a story about this photo**, which opens the same teller; a photo with
+no story shows only that row. While a field has the focus, the viewer's keys are the field's.
+
 ## On the phone
 
 The iPhone app's Albums tab asks the server for its albums and keeps the last answer, so it still shows
@@ -167,8 +386,10 @@ phone's own copy of the catalog. An album opens as a grid; a search becomes a ne
 and an album can be made favourites, put up for hiding or discarded. Because the phone never writes its
 copy of the catalog ([chapter 19](19-iphone-app.md)), each of those is a request to the server
 (`API.swift`), and what it changed arrives with the next sync. Reviewing a change set opens the server's
-own review page inside the app (`WebView.swift`); a native one is
-[issue 49](https://github.com/jflam/photo-estate/issues/49).
+own review page inside the app (`WebView.swift`, which hides the page's own tab bar under the app's); a native
+one is [issue 49](https://github.com/jflam/photo-estate/issues/49). Questions and stories are native
+([chapter 19](19-iphone-app.md#starting-up)): a question item opens `QuestionsView`, and the viewer's details
+show the photo's stories and **Tell a story**.
 
 ## Where to look
 
@@ -176,8 +397,15 @@ own review page inside the app (`WebView.swift`); a native one is
 |---|---|
 | Albums, change sets, the `hidden` table | [changes.py](../../photo-estate/changes.py) `Changes` |
 | The review page | [changes.html](../../photo-estate/changes.html) |
+| Looking held photos over (`/held`) | [changes.html](../../photo-estate/changes.html) in its held mode, [app/held-flow.js](../../photo-estate/app/held-flow.js); [private.py](../../photo-estate/private.py) `review_list`, `review`; [test_held_browser.py](../../photo-estate/tests/test_held_browser.py) |
 | The MCP tools and their descriptions | [estate_mcp.py](../../photo-estate/estate_mcp.py) `Tools` |
-| Running the agent, its brief, its events | [tasks.py](../../photo-estate/tasks.py) `Tasks`, `BRIEF` |
+| Running the agent, its briefs, its token, its events | [tasks.py](../../photo-estate/tasks.py) `Tasks`, `BRIEF`, `WORK_BRIEF`, `mint` |
+| A member's own agent: bindings, what it may read of the journal, Connect your agent | [members.py](../../photo-estate/members.py) `bind`, `decide_binding`; [journal.py](../../photo-estate/journal.py) `for_member`; [agents.html](../../photo-estate/agents.html), [app/agents-flow.js](../../photo-estate/app/agents-flow.js) |
+| Listeners: series kept up to date, an answer that wakes the agent | [listeners.py](../../photo-estate/listeners.py) |
+| Questions, the inbox's allowance, stories, recordings | [stories.py](../../photo-estate/stories.py) |
+| Transcribing a recording (Parakeet on MLX) | [transcribe.py](../../photo-estate/transcribe.py) |
+| Answering and telling on the pages | [inbox.html](../../photo-estate/inbox.html), [app/ask-flow.js](../../photo-estate/app/ask-flow.js), [app/story-flow.js](../../photo-estate/app/story-flow.js); the viewer and series in [search.html](../../photo-estate/search.html), [app/albums-flow.js](../../photo-estate/app/albums-flow.js) `candidatesFlow` |
+| Answering and telling on the phone | [QuestionsView.swift](../../ios/PhotoEstate/Gate/QuestionsView.swift), [Teller.swift](../../ios/PhotoEstate/Gate/Teller.swift), [StoryModel.swift](../../ios/PhotoEstate/Gate/StoryModel.swift) |
 | Albums on the phone | [Albums.swift](../../ios/PhotoEstate/Library/Albums.swift), [API.swift](../../ios/PhotoEstate/Catalog/API.swift) |
-| Tests | [test_albums.py](../../photo-estate/tests/test_albums.py), [test_changes.py](../../photo-estate/tests/test_changes.py), [test_mcp.py](../../photo-estate/tests/test_mcp.py), [test_tasks.py](../../photo-estate/tests/test_tasks.py) |
+| Tests | [test_albums.py](../../photo-estate/tests/test_albums.py), [test_changes.py](../../photo-estate/tests/test_changes.py), [test_mcp.py](../../photo-estate/tests/test_mcp.py), [test_tasks.py](../../photo-estate/tests/test_tasks.py), [test_agent.py](../../photo-estate/tests/test_agent.py), [test_personal_agents.py](../../photo-estate/tests/test_personal_agents.py), [test_agents_browser.py](../../photo-estate/tests/test_agents_browser.py), [test_listeners.py](../../photo-estate/tests/test_listeners.py), [test_stories.py](../../photo-estate/tests/test_stories.py), [test_stories_browser.py](../../photo-estate/tests/test_stories_browser.py) |
 | The HTTP API | [Appendix B](appendix-b-http-api.md#albums-and-change-sets) |

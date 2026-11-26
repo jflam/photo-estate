@@ -11,7 +11,7 @@ uv run estate.py [--db estate.db] <command> [options]
 
 | Command | Arguments and options | Purpose | Chapter |
 |---|---|---|---|
-| `ingest` | `sources...` (zips or folders); `--store DIR` (**required**); `--force` re-scan sources already ingested; `--delete-after` delete each zip once ingested | Hash and store media; record occurrences, sidecars, XMP, Flickr JSON | [4](04-store-and-ingest.md) |
+| `ingest` | `sources...` (zips or folders); `--store DIR` (**required**); `--force` re-scan sources already ingested; `--delete-after` delete each zip once ingested; `--uploads` the phone's inbox: `m<member id>/` says who shared each file, and a new photo is private to its sharer until `private.py check` has scored it | Hash and store media; record occurrences, sidecars, XMP, Flickr JSON, and who shared each file (`sharers`: the first sysadmin, or with `--uploads` the inbox folder's member). Refuses a purged photo; in a store whose root holds `.immutable`, sets `chflags uchg` on each file it writes | [4](04-store-and-ingest.md#who-shared-it) |
 | `link` | `--source NAME` (repeatable): only the photos those sources brought in, and every other copy of them; the name is the folder or zip `ingest` read | Match sidecars to media; merge dates, GPS, people, favourites, albums; rebuild the text index (only the touched photos' rows with `--source`); prints `progress N of M: what` (progress events instead with `PHOTO_ESTATE_EVENTS=1`, [16](16-operations.md)) | [6](06-linking.md) |
 | `exif` | `--store DIR` (**required**); `--workers N` (default: half the CPUs); `--batch 200`; `--limit 0` (all); `--force` | Read all metadata with `exiftool`; promote camera, lens, exposure; then pair Live Photo clips with their stills, as `live` does | [7](07-places-events-trips.md) |
 | `live` | `--redo` forget every pair and work them all out again | Pair Live Photo clips with their stills (`live_pairs`); prints how many it paired, how many videos are clips and how many stand on their own. Safe to run again | [6](06-linking.md#step-2-live-photos-and-motion-photos) |
@@ -20,6 +20,8 @@ uv run estate.py [--db estate.db] <command> [options]
 | `tag` | `--store DIR` (**required**); `--model NAME` (**required**); `--endpoint http://127.0.0.1:8080/v1`; `--limit 0`; `--max-side 768`; `--timeout 300`; `--no-json-mode` | Caption and tag images with a local OpenAI-compatible vision model | [9](09-text-search-and-tags.md) |
 | `search` | `query` (FTS5 syntax); `--limit 20`; `--store DIR` (also print blob paths) | Full-text search | [9](09-text-search-and-tags.md) |
 | `stats` | none | Summary of the estate | |
+| `purge` | `sha` (the photo's sha256); `--reason "..."` (**required**, kept in the journal); `--store DIR` (**required**); `--cache DIR` (repeatable: the app's `--cache` and `--fast-cache`); `--backup-dir DIR` (default: beside the catalog) | Remove one photo for good, by hand (the sysadmin, on the Mac; never from a page, a phone or an agent): a catalog backup checked with `quick_check`, a `photo.purged` journal entry, a tombstone for everyone so no source brings it back, its rows, its file (the immutable flag cleared first) and cached copies. Lists the sources that still have it. Run again, it says it was purged already | [4](04-store-and-ingest.md#append-only-sources-only-add) |
+| `migrate` | none | The one-off multiplayer migration, run once by hand after a catalog backup, then restart the app (it keeps who sees what in memory). Two halves, each one transaction and one journal entry: every photo with no sharer gets the first active sysadmin (`sharers`, `sharers.migrated`); and the hiding from before lenses becomes the lens **Estate defaults** (the sysadmin's, published, an estate default: every member sees through it unless they opt out) given to every hiding set with no lens, every album and set with no owner becomes the sysadmin's, and the old `favorites` rows are copied to the sysadmin's own (`member_favorites`) (`lenses.migrated`). Safe to run again (it then changes nothing and journals nothing). Until it runs, the app shows what it showed before (a set with no lens hides for everyone) | [4](04-store-and-ingest.md#append-only-sources-only-add), [11](11-server.md#what-each-member-sees-lenses) |
 
 Examples:
 
@@ -47,6 +49,7 @@ uv run embed.py [--db estate.db] [--model google/siglip2-base-patch16-256] [--th
 | `run` | `--store DIR` (**required**); `--workers 3` decoder processes; `--batch 16`; `--limit 0`; `--after-rowid N` only assets added after it; `--no-videos` photos only, leave the videos for a later run | Embed every image with no embedding for this model, then every video that is not a Live Photo's clip: its kept frames into `video_frames`, their mean into `embeddings` (resumable; a video is committed whole) | [10](10-embeddings.md#videos) |
 | `search` | `query`; `--limit 15` | Command-line semantic search | [10](10-embeddings.md) |
 | `stats` | none | Images and videos in the catalog (how many videos are Live Photo clips), and per model how many are embedded, undecodable, and the video frames kept | |
+| `hold-prompts` | none | Write `hold-prompts.json`: the text vectors of private.py's `PROMPTS` for `--model` (on the CPU; other models' vectors in the file are kept). Run again when the prompts or the model change; the hold at ingestion reads the file and never loads the model | [11](11-server.md#private-photos) |
 | `serve` | `--root DIR` (the library: `estate.db` and `store/` inside; default: the one chosen on the setup page, saved in `~/.config/photo-estate/library.json`); `--store DIR` (default `<root>/store`); `--demo`; `--sandbox` (a scratch library with practice sources, port 8769); `--port` (default 8766, or 8767 with `--demo`). With no photos in the library yet, `serve` shows the setup page (`/setup`) instead of the app, and becomes the app once the first photos are searchable; `--cache DIR` (default `<db dir>/review`); `--fast-cache DIR`; `--no-pregenerate`; `--match-floor 0.085` (`-1` = no floor); `--match-window 0.04` (`2` = show every photo, ranked); `--query-log FILE` (default `<db dir>/query-log.jsonl`) | The photo app | [11](11-server.md) |
 
 ```bash
@@ -67,11 +70,50 @@ uv run embed.py serve --demo
 | `--ingest-script FILE` | `ingest-iphone.sh` | What the Library info page and automatic runs execute |
 | `--ingest-quiet SECONDS` | 60 | Quiet time after an upload before a run starts (0 turns automatic runs off) |
 | `--ingest-max-wait SECONDS` | 600 | The latest a run starts after the first upload of a burst |
-| `--upload-user LOGIN` (repeatable) | any | Only these Tailscale users (and requests from this computer) may change the library: upload, ingest, favourites, albums, People, intake ([chapter 11](11-server.md)) |
+| `--upload-user LOGIN` (repeatable) | none | On the first start of a catalog with no members, these Tailscale logins become active members, the first the sysadmin; not read once there are members, who are kept on `/members` ([chapter 11](11-server.md)). Requests from this computer are always the sysadmin |
+| `--sysadmin LOGIN` | the first `--upload-user` | The login that becomes the sysadmin on that first start |
 | `--backup-dir DIR` | off | Copy the catalog and `face-labels.jsonl` here ([16](16-operations.md)) |
 | `--backup-every HOURS` / `--backup-keep N` | 24 / 7 | How often, and how many copies to keep |
 
 The change feed (`sync-feed.db`) is created next to the catalog by `serve` ([20](20-sync.md)).
+
+## private.py: private photos and the hold
+
+```bash
+uv run private.py [--db estate.db] [--model google/siglip2-base-patch16-256] <command>
+```
+
+| Command | Options | Purpose | Chapter |
+|---|---|---|---|
+| `check` | none | The hold at ingestion (ingest-iphone.sh runs it after the embeddings, before `catalog_ready`): every new phone upload with a vector (a `new` row of `private`) is held as private to its sharer if any prompt scores it at or over `HOLD_AT`, or it is a screenshot (`photo.held`, a `held` inbox item per member), and shared if not. A photo with no vector yet waits for the next run. Exits non-zero, changing nothing, without the prompts' vectors | [11](11-server.md#private-photos) |
+| `library` | `--member ID` (**required**: the owner is the first sysadmin); `--dry-run`; `--json` also print the report | The one-off run over the library: every image the member shared (the first sysadmin: and every image with no sharer) that has no private row of theirs is scored as `check` scores an upload, and what crosses is held as theirs, in one transaction (one `photo.held` entry with the count, one inbox item). `--dry-run` changes nothing and prints how many each prompt would hold, the best scores near the threshold in steps of 0.005, and a sample of ids held and just below, never a file name. Safe to run twice; never holds a photo the member released. Restart the app after the real run (it reads who is private when something changes) | [11](11-server.md#private-photos) |
+
+```bash
+uv run private.py --db ~/estate/estate.db library --member 1 --dry-run
+uv run private.py --db ~/estate/estate.db library --member 1
+```
+
+## transcribe.py: the recordings of stories
+
+```bash
+uv run transcribe.py [--db estate.db] [--store STORE] <command>
+```
+
+A uv script with its own environment (`parakeet-mlx`, `av`, `numpy`): NVIDIA Parakeet TDT 0.6B v2 through its MLX
+port, on Apple silicon only. It reads the audio with PyAV, which carries its own FFmpeg, so no system `ffmpeg` is
+needed.
+
+| Command | Options | Purpose | Chapter |
+|---|---|---|---|
+| `fetch` | none | By hand, once, with the network: the model (`mlx-community/parakeet-tdt-0.6b-v2`, its `config.json` and a 2.3 GB `model.safetensors`) into the Hugging Face cache of the user who runs the app; the first run also builds the script's environment (MLX, librosa). Nothing else ever downloads it: the app runs with `HF_HUB_OFFLINE=1` | [11](11-server.md#the-estates-agent-listeners-questions-and-stories) |
+| `run` | `--store DIR` (**required**: where the recordings are, the estate's store) | What the app runs as a queued job (`transcribe.Job`) when a recording is uploaded, and at start: every story whose recording has no transcript (a failed one again), each written once (`story.transcribed`). Without the model in the cache, each waiting story says how to fetch it, and it exits `2` | [11](11-server.md#the-estates-agent-listeners-questions-and-stories) |
+| `file` | `path` | Transcribe one audio file and print it: to try the model | |
+
+```bash
+uv run transcribe.py fetch
+uv run transcribe.py file story.m4a
+uv run transcribe.py --db ~/estate/estate.db --store /Volumes/estate/store run
+```
 
 ## faces.py: faces and people
 
@@ -128,7 +170,9 @@ Needs `rclone`, `sqlite3`, `uv`, bash 4 and GNU `df`. See [chapter 3](03-repatri
 | `PHOTO_ESTATE_EVENTS=1` | off | Also print the event lines the app reads (`new_assets`, `catalog_ready`, and the steps' progress; [16](16-operations.md)); the app sets it |
 
 Only new photos are touched by each stage; safe to run while the app is up and to overlap (a second run
-exits at once). The app runs it itself after uploads ([24](24-uploading.md)).
+exits at once). The app runs it itself after uploads ([24](24-uploading.md)). It ingests the inbox with
+`--uploads` (who shared each file, from its member folder) and runs `private.py check` (the hold) after the
+embeddings, before `catalog_ready` ([11](11-server.md#private-photos)).
 
 ### pull-icloud.sh
 
@@ -154,6 +198,7 @@ Needs `icloudpd`, `sqlite3`, `uv`. First run `icloudpd --username "$ICLOUD_USER"
 | `uv run tools/make_icons.py` | Redraw the home-screen icons into `app/` |
 | `T=8 uv run tools/sigbench.py STORE [MODEL]` | Time SigLIP 2 image embedding on CPU |
 | `uv run tools/bench_server.py URL [--h2] [--quick] [--store DIR]` | Endpoint latency |
+| `uv run tools/bench_views.py --work DIR [--photos 121000] [--default 5000] [--mine 2000]` | What the per-member views cost on a synthetic library of the real size (`bench_ingest.py`'s, built once in `DIR`), in process: the start, a member's view after a change, a search, a member's sync feed made and kept up to date. Never writes to `DIR`'s catalog |
 | `uv run tools/thumb_burst.py URL DB` | Cold thumbnail bursts |
 | `uv run tools/thumb_formats.py --db DB --store STORE [--sample 300] [--side 360] [--try WEBP:78,AVIF:70] [--cache DIR] [--out DIR]` | What a thumbnail (or, with `--side 1600`, a preview) costs in each image format on a sample of the library: bytes, encode and decode time, SSIM against the uncompressed image; and how long a first open waits to decode an original. Read-only |
 | `nice -n 10 uv run tools/export_squares.py --db DB --store STORE [--out DIR] [--side 512] [--sample N] [--with-stacked] [--count]` | Every photo the Library shows as a square JPEG (preprocessed as `embed.py` does), in resumable tar shards of 2,000 with a `manifest.csv` |

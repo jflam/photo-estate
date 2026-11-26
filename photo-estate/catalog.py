@@ -4,17 +4,26 @@ facets, read from the catalog into NumPy arrays. The route modules (browse.py, i
 and embed.py's own routes all answer from one `Catalog`.
 
   load(con, ...)      read the catalog (all of it, or only what changed since `prev`) -> Catalog
-  Catalog             a dataclass: the arrays and per-photo dicts, every field typed, with the questions
-                      every route asks of them: combine, facet_counts, take, periods, browse_order, ...
-  PhotoMeta           one photo's facts (Catalog.meta[sha]): a TypedDict, so a plain dict on the wire
+  Catalog             a dataclass: the arrays and per-photo dicts, every field typed, the same for every
+                      member: browse_order, shapes, sims, periods' keys ...
+  View                what one member sees of a Catalog (Catalog.view): the mask, and what is worked out from
+                      it for that member (which photo of a stack is on top and how many it holds, the trip
+                      cards and their covers, the counts in `info`, the favourites), with the questions every
+                      route asks of them: combine, facet_counts, take, periods, feed_row, row ...
+  PhotoMeta           one photo's facts (Catalog.meta[sha]): a TypedDict, so a plain dict on the wire. It has
+                      no favourite: whose favourite it is depends on who asks (View.fav fills `fav` in a row)
   Catalog.scored()    (best, rank, score) when the catalog has scorers; ValueError when it has none
   STATE               the names of the fields load() works out (differences() compares them)
-  Live                the Catalog being served, swapped for a new one after an ingest (install), changed in
-                      place for a favourite (update); `generation` counts both
+  Live                the Catalog being served, swapped for a new one after an ingest (install); a member's
+                      View of it (visible_for), worked out once and kept until the catalog, or what anyone
+                      hides, changes (relook); changed in place for a favourite (update); `generation`
+                      counts all three
   Gate                requests share it; a swap takes it alone (not re-entrant: swap() inside it raises)
 
-A Catalog is never changed after it is built, with one exception: a favourite set in the app is shown
-in the installed one at once (photo_app.py's set_favorites, through Live.update), rather than waiting for a reload.
+Every route asks Live.visible_for(member) what a member sees, and Live.shared_for(member) what a member may
+ever be shown (every photo but those private to their sharers: private.py): nothing reads a mask of its own.
+A Catalog is never changed after it is built; a View only to show a favourite at once (View.show_favorites,
+through Live.update), rather than waiting for the next one.
 """
 from __future__ import annotations
 
@@ -25,12 +34,11 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Mapping, TypedDict
+from typing import Any, Callable, Mapping, TypedDict
 
 import numpy as np
 from numpy.typing import NDArray
 
-from changes import hidden_shas
 from core import schema
 from scores import best as best_score, best_first, load as load_scorers
 from stacks import group as stack_group, seconds as stack_seconds, tops as stack_tops
@@ -113,7 +121,6 @@ class PhotoFacts(TypedDict):
     desc: str | None
     people: list[str]                    # tagged by the source, then the faces named on the People page
     albums: list[str]
-    fav: bool
     w: int | None
     h: int | None
     path: str | None                     # where it was first seen: dir/filename
@@ -169,7 +176,7 @@ class Trip(TypedDict):
 
 
 class TripCard(TypedDict):
-    """A trip as /api/info lists it: visible photos only, and its cover."""
+    """A trip as /api/info lists it: the photos a member sees only, and its cover."""
     id: int
     title: str | None
     start: str | None
@@ -215,12 +222,14 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     def where_in(q, shas):     # q's rows for these photos (q ends in "sha256 IN")
         return [r for c in chunks(shas) for r in con.execute(f"{q} ({','.join('?' * len(c))})", c)]
 
-    def read_meta(want) -> tuple[dict[str, PhotoMeta], dict[str, list[str]]]:
-        """Per-photo dicts from assets, occurrences and exif. `want` None: every photo and video, by scanning
-        the tables in order (startup: on a hard disk, walking an index turns each row into a seek,
-        ~18 s on the Mac mini); else just those photos, by key."""
+    def read_meta(want) -> tuple[dict[str, PhotoMeta], dict[str, list[str]], dict[str, bool]]:
+        """Per-photo dicts from assets, occurrences and exif, the people the source tagged, and whether the
+        source said the photo is a favourite. `want` None: every photo and video, by scanning the tables in
+        order (startup: on a hard disk, walking an index turns each row into a seek, ~18 s on the Mac mini);
+        else just those photos, by key."""
         got: dict[str, PhotoMeta] = {}
         tagged: dict[str, list[str]] = {}
+        said: dict[str, bool] = {}
         q_assets = "SELECT sha256, ext, taken_at, lat, lon, description, people, favorited, width, height, kind FROM assets"
         q_occ = "SELECT sha256, dir || '/' || filename, album FROM occurrences"
         q_exif = "SELECT sha256, camera, lens, focal, focal35, fnumber, exposure, iso FROM exif"
@@ -229,8 +238,9 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
                 con.execute(q_assets) if want is None else where_in(q_assets + " WHERE sha256 IN", want)):
             if sha in index_of:
                 tagged[sha] = [p.strip() for p in (people or "").split(",") if p.strip()]
+                said[sha] = bool(fav)
                 got[sha] = {"ext": ext, "taken": taken, "lat": lat, "lon": lon, "desc": desc,
-                            "people": list(tagged[sha]), "albums": [], "fav": bool(fav), "w": w, "h": h, "path": None}
+                            "people": list(tagged[sha]), "albums": [], "w": w, "h": h, "path": None}
                 if kind == "video":
                     got[sha]["kind"] = "video"
                     got[sha]["dur"] = None
@@ -259,7 +269,7 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
             if sha in got:
                 got[sha].update(camera=camera, lens=lens, focal=focal, focal35=focal35, fnumber=fnum,
                                 exposure=expo, iso=iso)
-        return got, tagged
+        return got, tagged, said
 
     q_emb = "SELECT rowid, sha256, vec FROM embeddings WHERE model=? AND vec IS NOT NULL"
     marks = {k: con.execute(q).fetchone()[0] or 0 for k, q in (
@@ -270,8 +280,10 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     pairs = sorted(optional("SELECT l.still, a.ext != '.mp4', l.clip, a.ext FROM live_pairs l JOIN assets a ON a.sha256 = l.clip"))
     clips: dict[str, str] = {clip: ext for _, _, clip, ext in pairs}
     live: dict[str, str] = {}
+    stills: dict[str, tuple[str, ...]] = {}     # a clip -> every still it is paired with (who may be shown it)
     for still, _, clip, _ in pairs:
         live.setdefault(still, clip)
+        stills[clip] = stills.get(clip, ()) + (still,)
     if prev is not None and clips.keys() & prev["index"].keys():
         prev = None    # a video the app was showing has been found to be a clip (its still came later): read everything again
     if prev is None:
@@ -285,7 +297,7 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
         index_of = {s: i for i, s in enumerate(shas)}
         M = np.frombuffer(b"".join(r[1] for r in rows), dtype=np.float16).reshape(len(shas), -1).astype(np.float32)
         del rows
-        meta, tagged = read_meta(None)
+        meta, tagged, said = read_meta(None)
         fresh = set(meta)
     else:
         old = prev["index"]
@@ -312,11 +324,13 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
         else:
             shas, index_of, M = prev["shas"], old, prev["M"]
         fresh = {sha for sha in touched | set(added) if sha in index_of}
-        got, tagged_new = read_meta(fresh)
+        got, tagged_new, said_new = read_meta(fresh)
         meta: dict[str, PhotoMeta] = dict(prev["meta"])
         meta.update(got)
         tagged = dict(prev["tagged"])
         tagged.update(tagged_new)
+        said = dict(prev["said"])
+        said.update(said_new)
     N, index = len(shas), index_of
 
     events: dict[int, Event] = {eid: {"title": t, "start": s0, "end": s1, "n": n, "trip": tid}
@@ -383,14 +397,19 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
         F = np.frombuffer(b"".join(r[2] for r in rows), dtype=np.float16).reshape(len(rows), -1).astype(np.float32) \
             if rows else np.zeros((0, M.shape[1]), np.float32)
         del rows
-    # A favourite set in the app (embed.py's set_favorite) takes the place of what the photo's source said.
-    for sha, on in optional("SELECT sha256, fav FROM favorites"):
-        if sha in meta and meta[sha]["fav"] != bool(on):
-            own(sha)["fav"] = bool(on)
-    hidden = hidden_shas(con)   # photos a change set hides (changes.py): in the catalog, in no view
+    # What a photo's source said (assets.favorited) is a favourite of the photo's sharers only (the
+    # multiplayer plan): read who they are for those photos, by key. A photo with no sharer yet (a catalog
+    # `estate.py migrate` has not been run on) counts as the first sysadmin's (lenses.py).
+    said_shas = [s for s in shas if said.get(s)]
+    try:
+        fav_sharers: dict[str, tuple[int, ...]] = {}
+        for sha, mid in where_in("SELECT sha256, member_id FROM sharers WHERE sha256 IN", said_shas):
+            fav_sharers[sha] = fav_sharers.get(sha, ()) + (mid,)
+    except sqlite3.OperationalError:     # a catalog from before the sharers table
+        fav_sharers = {}
     scorers = load_scorers(con, model)   # what "Best first" goes by (scores.py); none in a catalog without them
     con.close()
-    raw = {"shas": shas, "index": index, "M": M, "meta": meta, "tagged": tagged, "orphans": orphans,
+    raw = {"shas": shas, "index": index, "M": M, "meta": meta, "tagged": tagged, "said": said, "orphans": orphans,
            "marks": marks, "place_key": place_key, "face_names": face_names, "live": live,
            "frames": (frames_mark, frame_shas, frame_t, F)}
     # A frame whose video is not in this catalog (embedded, then found to be a clip) belongs to nothing.
@@ -453,9 +472,8 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     }
     event_of = col(lambda m: m.get("event"))
     trip_of = col(lambda m: m.get("trip"))
-    fav = np.array([meta[s]["fav"] for s in shas])
+    said_fav = np.array([said.get(s, False) for s in shas], bool)
     shot = np.array([is_screenshot(meta[s]) for s in shas], bool)
-    visible = np.array([s not in hidden for s in shas], bool)
     video = np.array([meta[s].get("kind") == "video" for s in shas], bool)
     ars = np.array([meta[s]["ar"] for s in shas], np.float32)   # pyright: ignore[reportTypedDictNotRequiredAccess]  (set above)
     oldest = np.argsort(when, kind="stable")
@@ -467,21 +485,10 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
     if best is not None:
         rank = np.empty(len(shas), np.int64)
         rank[best] = np.arange(len(shas))
-    # Near-identical shots taken together are one stack (stacks.py): the best one shows, the rest are behind it.
+    # When each photo was taken, as the stacks go by it (View: stacks are of the photos a member sees).
     # By the instant it was taken (`taken`), not the local time a view sorts by: two shots a second apart
     # must not come out hours apart because only one of them has a place, and so a time zone.
-    # Photos only: a video is not another shot of the photo taken beside it.
-    stack_of = stack_group(np.array([stack_seconds(meta[x]["taken"]) for x in shas]), M, visible & ~video)
-    top, stack_n = stack_tops(stack_of, rank)
-    dup = ~top                      # behind another photo of its stack
-    # A stack is a Live Photo if any of its shots is: the clip a held stack plays is its best such shot's.
-    stack_live: dict[int, str] = {}
-    held: dict[int, int] = {}
-    for sha, its_clip in live.items():
-        if (i := index.get(sha)) is not None and stack_of[i] >= 0:
-            g, r = int(stack_of[i]), (int(rank[i]) if rank is not None else i)
-            if g not in held or r < held[g]:
-                held[g], stack_live[g] = r, its_clip
+    secs = np.array([stack_seconds(meta[x]["taken"]) for x in shas])
 
     # Facets. `single`: one value per photo, choosing several means any of them. `multi`: a photo can
     # have several (albums: any of the chosen; people: all of the chosen, i.e. photos of them together).
@@ -500,16 +507,6 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
                       "rows": np.array([i for i, s in enumerate(shas) for _ in meta[s][part]], np.int64),
                       "codes": np.array([ix[v] for s in shas for v in meta[s][part]], np.int64)}
 
-    trip_list: list[TripCard] = []
-    for tid, t in sorted(trips.items(), key=lambda kv: kv[1]["start"] or "", reverse=True):
-        ids = np.flatnonzero((trip_of == tid) & visible)
-        if len(ids):
-            ids = ids[np.argsort(when[ids], kind="stable")]
-            favs = ids[fav[ids]]
-            pick = favs if len(favs) else ids   # a favourite if there is one: the best of them, or the middle one
-            cover = int(pick[np.argmin(rank[pick])]) if rank is not None else int(pick[len(pick) // 2])
-            trip_list.append({"id": tid, "title": t["title"], "start": t["start"], "end": t["end"],
-                              "n": int(len(ids)), "cover": shas[cover]})
     # Words in a typed search that name a person or a place (browse.py's read_words)
     people_ix = multi["person"]["ix"]
     firsts = {}
@@ -539,21 +536,22 @@ def load(con: sqlite3.Connection, model: str, cache: Path, seed: Path, prev: dic
                          r"))(['’]s)?(?![\w'’])", re.I)
     return Catalog(
         shas=shas, N=N, index=index, M=M, meta=meta, events=events, trips=trips, has_faces=has_faces, when=when,
-        year=year, ym=ym, m0=m0, nmonths=nmonths, cols=cols, event_of=event_of, trip_of=trip_of, fav=fav, shot=shot,
-        ars=ars, oldest=oldest, newest=newest, single=single, multi=multi, trip_list=trip_list, people_ix=people_ix,
-        who=who, where=where, cities=cities, common_place=common_place, word_re=word_re, visible=visible,
-        video=video, clips=clips, F=F, frame_of=frame_of, frame_t=frame_t, best=best,
-        rank=rank, stack_of=stack_of, stack_n=stack_n, stack_live=stack_live, dup=dup, score=score, raw=raw, model=model, demo=demo)
+        year=year, ym=ym, m0=m0, nmonths=nmonths, cols=cols, event_of=event_of, trip_of=trip_of, said_fav=said_fav,
+        fav_sharers=fav_sharers, shot=shot, ars=ars, oldest=oldest, newest=newest, single=single, multi=multi,
+        people_ix=people_ix, who=who, where=where, cities=cities, common_place=common_place, word_re=word_re,
+        video=video, clips=clips, live=live, stills=stills, F=F, frame_of=frame_of, frame_t=frame_t, best=best,
+        rank=rank, secs=secs, score=score, raw=raw, model=model, demo=demo)
 
 
 @dataclass(slots=True, eq=False, repr=False)
 class Catalog:
-    """The library as the app holds it in memory, as load() builds it. A photo is a place `i` in the
-    catalog (0..N-1): `shas[i]` names it, row `i` of `M` is its vector, and every array below has one
-    entry per photo in that order. The fields up to `score` are what load() works out (STATE names
-    them, and differences() compares them); `raw` is what the next incremental load() starts from, and
-    `info` is what /api/info answers. `best`, `rank` and `score` are None in a catalog with no scorers
-    (scores.py); the dicts and sets are empty when their optional table is (events, trips, faces)."""
+    """The library as the app holds it in memory, as load() builds it: the same for every member. A photo
+    is a place `i` in the catalog (0..N-1): `shas[i]` names it, row `i` of `M` is its vector, and every
+    array below has one entry per photo in that order. The fields up to `score` are what load() works out
+    (STATE names them, and differences() compares them); `raw` is what the next incremental load() starts
+    from. `best`, `rank` and `score` are None in a catalog with no scorers (scores.py); the dicts and sets
+    are empty when their optional table is (events, trips, faces). What a member sees of it (which photos,
+    their stacks, trips, counts and favourites) is a View: Catalog.view, through Live.visible_for."""
     shas: list[str]                      # every photo in the catalog, sorted
     N: int                               # len(shas)
     index: dict[str, int]                # sha -> its place
@@ -570,43 +568,65 @@ class Catalog:
     cols: dict[str, NDArray[np.object_]]   # lower-cased text for the `key:value` filters: place, camera, album, person
     event_of: NDArray[np.object_]        # event id or None
     trip_of: NDArray[np.object_]         # trip id or None
-    fav: NDArray[np.bool_]
+    said_fav: NDArray[np.bool_]          # the photo's source said it is a favourite (assets.favorited)
+    fav_sharers: dict[str, tuple[int, ...]]   # a photo of said_fav -> its sharers (members.id), whose favourite that is
     shot: NDArray[np.bool_]              # a screenshot
     ars: NDArray[np.float32]             # aspect ratio of the thumbnail
     oldest: NDArray[np.intp]             # every photo, oldest first, undated last
     newest: NDArray[np.intp]             # newest first, undated last
     single: dict[str, Facet]             # country, region, city, camera, lens, trip
     multi: dict[str, MultiFacet]         # album, person
-    trip_list: list[TripCard]            # trips with a visible photo, newest first
     people_ix: dict[str, int]            # person name -> its code in multi["person"]
     who: dict[str, str]                  # a word in a typed search -> the person it names
     where: dict[str, str]                # a word -> the place it names
     cities: set[str]
     common_place: set[str]               # places that are also everyday words: only when capitalized
     word_re: re.Pattern[str]             # finds `who` and `where` words in a search
-    visible: NDArray[np.bool_]           # in no change set that hides it
     video: NDArray[np.bool_]             # a video (never a Live Photo's clip: those are in `clips`, not in the catalog)
     clips: dict[str, str]                # a Live Photo clip's sha -> its extension (images.py serves it at /video/)
+    live: dict[str, str]                 # a still's sha -> the sha of its Live Photo clip
+    stills: dict[str, tuple[str, ...]]   # a Live Photo clip's sha -> the stills it is paired with: whoever may be
+                                         #   shown one of them may be shown the clip (images.py)
     F: NDArray[np.float32]               # the videos' frame vectors, one row per frame kept (embed.py video_rows)
     frame_of: NDArray[np.int64]          # the place in the catalog of the video each row of F is from
     frame_t: NDArray[np.float32]         # seconds into its video
     best: NDArray[np.intp] | None        # every photo, best first; None with no scorers
     rank: NDArray[np.int64] | None       # each photo's place in `best` (0 is the best); None with no scorers
-    stack_of: NDArray[np.int64]          # the stack a photo is in (its earliest member's place); -1 on its own
-    stack_n: NDArray[np.int64]           # how many photos its stack holds (1 on its own)
-    stack_live: dict[int, str]           # a stack with a Live Photo in it (named as stack_of does) -> the clip of its best such shot
-    dup: NDArray[np.bool_]               # behind another photo of its stack
+    secs: NDArray[np.float64]            # when it was taken, in seconds (nan: undated), as stacks.py groups by
     score: NDArray[np.float64] | None    # what "Best first" sorts by, larger is better; None with no scorers
     raw: dict[str, Any]                  # for the next incremental load()
     model: str
     demo: bool
-    info: dict[str, Any] = field(init=False)
 
-    def __post_init__(self) -> None:
-        self.info = {"total": int(self.visible.sum()), "videos": int((self.visible & self.video).sum()),
-                     "model": self.model, "m0": self.m0, "months": self.nmonths,
-                     "trips": self.trip_list, "demo": bool(self.demo), "faces": self.has_faces, "best": self.best is not None,
-                     **self.facet_counts({})}
+    def view(self, member: int | None, hide, fav, shared=None, mine=None) -> View:
+        """What `member` sees: every photo `shared` lets them be shown (all, by default) that `hide` (a bool
+        per photo) does not leave out, with `fav` (a bool per photo) their favourites, and `mine` their own
+        private photos (sha -> {why, since, until}: private.py). Its stacks, trip cards and counts are worked
+        out here, over just those photos. Live.visible_for keeps it."""
+        shared = np.ones(self.N, bool) if shared is None else shared
+        visible = shared & ~np.asarray(hide, bool)
+        # Near-identical shots taken together are one stack (stacks.py): the best one shows, the rest are behind
+        # it. Over the photos this member sees, so a stack whose best shot they hid shows them the next best.
+        # Photos only: a video is not another shot of the photo taken beside it.
+        stack_of = stack_group(self.secs, self.M, visible & ~self.video)
+        top, stack_n = stack_tops(stack_of, self.rank)
+        # A stack is a Live Photo if any of its shots is: the clip a held stack plays is its best such shot's.
+        stack_live: dict[int, str] = {}
+        held: dict[int, int] = {}
+        for sha, its_clip in self.live.items():
+            if (i := self.index.get(sha)) is not None and stack_of[i] >= 0:
+                g, r = int(stack_of[i]), (int(self.rank[i]) if self.rank is not None else i)
+                if g not in held or r < held[g]:
+                    held[g], stack_live[g] = r, its_clip
+        v = View(cat=self, member=member, shared=shared, visible=visible, fav=np.asarray(fav, bool).copy(),
+                 stack_of=stack_of, stack_n=stack_n, dup=~top, stack_live=stack_live, trip_list=[],
+                 mine={s: x for s, x in (mine or {}).items() if s in self.index})
+        v.trip_list = v.trip_cards()
+        v.info = {"total": int(visible.sum()), "videos": int((visible & self.video).sum()),
+                  "model": self.model, "m0": self.m0, "months": self.nmonths,
+                  "trips": v.trip_list, "demo": bool(self.demo), "faces": self.has_faces, "best": self.best is not None,
+                  **v.facet_counts({})}
+        return v
 
     def scored(self) -> tuple[NDArray[np.intp], NDArray[np.int64], NDArray[np.float64]]:
         """(best, rank, score), for a catalog that has scorers; ValueError for one that has none (callers
@@ -628,30 +648,6 @@ class Catalog:
         rows = np.flatnonzero(self.frame_of == self.index[sha]) if sha in self.index else []
         return round(float(self.frame_t[rows[np.argmax(self.F[rows] @ vec)]]), 1) if len(rows) else None
 
-    def combine(self, masks: dict, skip: str | None = None):
-        # Hidden photos are in no view, unless the hidden ones are what was asked for (`hidden=1`).
-        out = np.ones(self.N, bool) if "hidden" in masks else self.visible.copy()
-        for k, m in masks.items():
-            if k != skip:
-                out &= m
-        return out
-
-    def facet_counts(self, masks: dict) -> dict:
-        """Counts per facet value under the current filters; each facet ignores its own selection."""
-        ranked = lambda labels, c: sorted(((labels[j], int(n)) for j, n in enumerate(c) if n),
-                                          key=lambda x: (-x[1], x[0]))
-        out = {}
-        for k, f in self.single.items():
-            base = self.combine(masks, skip=k)
-            out[k] = ranked(f["labels"], np.bincount(f["codes"][base & (f["codes"] >= 0)],
-                                                     minlength=len(f["labels"])))
-        for k, f in self.multi.items():
-            base = self.combine(masks, skip=None if k == "person" else k)
-            out[k] = ranked(f["labels"], np.bincount(f["codes"][base[f["rows"]]], minlength=len(f["labels"])))
-        base = self.combine(masks, skip="date")
-        return {"facets": out, "months": np.bincount(self.ym[base & (self.ym >= 0)], minlength=self.nmonths).tolist(),
-                "fav": int((self.combine(masks, skip="fav") & self.fav).sum()), "matching": int(self.combine(masks).sum())}
-
     def scope_of(self, kind: str, ident: int):
         got = (self.events if kind == "event" else self.trips).get(ident)
         return {"kind": kind, "id": ident, **got} if got else None
@@ -670,68 +666,6 @@ class Catalog:
         m[self.multi["person"]["rows"][self.multi["person"]["codes"] == self.people_ix[name]]] = True
         return m
 
-    def feed_extra(self, i: int) -> dict:
-        """What a device needs to order and stack a photo as the app does, and cannot work out without the
-        vectors: `dup` for a shot behind another in its stack, `stack_of` naming the stack (its earliest
-        photo), and `best`, what "Best first" sorts by (larger is better). The score, not the photo's
-        place in the order: a place changes for every photo whenever one arrives, a score does not."""
-        out = {}
-        if self.dup[i]:
-            out["dup"] = True
-        if self.stack_of[i] >= 0:
-            out["stack_of"] = self.shas[self.stack_of[i]]
-        if self.score is not None:
-            out["best"] = round(float(self.score[i]), 3)
-        return out
-
-    def feed_row(self, sha: str) -> dict:
-        """A photo as the sync feed (sync.py) and /api/sync carry it: its search result plus feed_extra."""
-        return dict(self.meta[sha], **self.feed_extra(self.index[sha]))
-
-    def cover_of(self, run, fallback=None) -> int:
-        """The photo to put on the front of a set of photos (`run`: their places in the catalog): a
-        favourite if it has one, a landscape one if not; among those, the best photo (scores.py), or with
-        no scorers the one `fallback` ranks first (default: nearest the middle)."""
-        rank, fav, ars = self.rank, self.fav, self.ars
-        order = rank[run] if rank is not None else fallback if fallback is not None else np.abs(np.arange(len(run)) - len(run) // 2)
-        score = fav[run] * 4_000_000 + ((ars[run] >= 1.2) & (ars[run] <= 1.9)) * 2_000_000 - order
-        return int(run[int(np.argmax(score))])
-
-    def album_cover(self, ids):
-        """An album's front: chosen as a month's is, and with no scorers the earliest in the album's order."""
-        run = np.array([self.index[s] for s in ids if s in self.index], np.int64)
-        return self.shas[self.cover_of(run, np.arange(len(run)))] if len(run) else None
-
-    def periods(self, order) -> dict:
-        """The photos in `order` (by time), as a card a year and a card a month, as the iPhone's Library
-        has them: each with its key ("2019", "2019-07"), how many, where it starts in `order`, the photo on
-        the front and its places. The front is a favourite if there is one, a landscape one if not; among
-        those, the best photo (scores.py), or the one nearest the middle in a catalog with no scorers."""
-        out = {}
-        city, ym, m0 = self.single["city"], self.ym, self.m0
-        for name, key_of, top in (("years", lambda m: m // 12, 3), ("months", lambda m: m, 2)):
-            k = np.where(ym[order] >= 0, key_of(ym[order] + m0), -1)
-            cuts = np.flatnonzero(np.diff(k)) + 1
-            starts, ends = np.concatenate([[0], cuts]), np.concatenate([cuts, [len(order)]])
-            cards = []
-            for a0, b0 in zip(starts.tolist(), ends.tolist()):
-                if not len(order) or k[a0] < 0:   # undated photos have no year or month
-                    continue
-                run = order[a0:b0]
-                cover = self.cover_of(run)
-                codes = city["codes"][run]
-                codes = codes[codes >= 0]
-                names = {}
-                for c, n in zip(*np.unique(codes, return_counts=True)):
-                    nm = city["labels"][c].split(",")[0].strip()
-                    names[nm] = names.get(nm, 0) + int(n)
-                v = int(k[a0])
-                cards.append({"key": str(v) if name == "years" else f"{v // 12}-{v % 12 + 1:02d}", "n": b0 - a0, "at": a0,
-                              "cover": self.shas[cover], "ar": round(float(self.ars[cover]), 4),
-                              "places": [x for x, _ in sorted(names.items(), key=lambda kv: (-kv[1], kv[0]))[:top]]})
-            out[name] = cards
-        return out
-
     def browse_order(self, mask, sort: str):
         """The photos `mask` selects with nothing to rank them by: by time, or the best first."""
         by = self.scored()[0] if sort == "best" else self.oldest if sort == "old" else self.newest
@@ -746,34 +680,6 @@ class Catalog:
         month out before it has been told which photos are in it. The byte is the aspect ratio between
         0.5 and 2.6 (the grid shows nothing narrower or wider) in 255 steps; search.html reads it back."""
         return np.round((np.clip(self.ars[order], 0.5, 2.6) - 0.5) * (255 / 2.1)).astype(np.uint8).tobytes()
-
-    def take(self, order, start: int, limit: int, dedupe: bool):
-        """One page from a ranked list, skipping copies of a shot just shown (Google + iCloud, bursts)."""
-        M, shas, meta, stack_n, stack_of = self.M, self.shas, self.meta, self.stack_n, self.stack_of
-        kept, hidden, pos = [], 0, start
-        while pos < len(order) and len(kept) < limit:
-            i = int(order[pos])
-            pos += 1
-            if dedupe and kept and not self.video[i] and float(np.max(M[kept[-8:]] @ M[i])) > 0.97:   # a video is no photo's copy
-                hidden += 1
-                continue
-            kept.append(i)
-        rows = [dict(sha=shas[i], **meta[shas[i]], **({"stack": int(stack_n[i]), "stack_of": shas[stack_of[i]]} if stack_n[i] > 1 else {})) for i in kept]
-        for i, r in zip(kept, rows):        # a stack with a Live Photo in it: the clip holding it plays (its own, if it is one)
-            if stack_n[i] > 1 and (clip := r.get("live") or self.stack_live.get(int(stack_of[i]))):
-                r["stack_live"] = clip
-        return rows, hidden, pos if pos < len(order) else None
-
-    def show_favorites(self, pairs) -> None:
-        """Show favourites set since this catalog was read: in the photo's row, the mask and the count."""
-        for sha, on in pairs:
-            i = self.index.get(sha)
-            if i is not None and bool(self.fav[i]) != on:
-                m = self.meta[sha].copy()   # never changed in place: a request may be reading the old one
-                m["fav"] = on
-                self.meta[sha] = m
-                self.fav[i] = on
-        self.info["fav"] = int((self.combine({}) & self.fav).sum())
 
     def differences(self, want: Catalog) -> str:
         """What an incremental load got wrong, compared with a full one ('' if nothing)."""
@@ -794,8 +700,174 @@ class Catalog:
         return ", ".join(bad)
 
 
-# What load() works out: a Catalog's fields but the bookkeeping (raw, model, demo, info).
-STATE = tuple(f.name for f in fields(Catalog) if f.name not in ("raw", "model", "demo", "info"))
+@dataclass(slots=True, eq=False, repr=False)
+class View:
+    """What one member sees of a Catalog (Catalog.view builds it; Live.visible_for keeps one per member).
+    Every array has one entry per photo of `cat`. `visible` is the mask every view starts from: `shared`
+    (what the member may ever be shown) less what their filter lenses hide (lenses.py). The stacks, the
+    trip cards and their covers, and the counts in `info` are worked out over `visible`; `fav` is the
+    member's own favourites. A View is never changed, but by show_favorites (in the gate's write side)."""
+    cat: Catalog
+    member: int | None                   # members.id; None: nobody (a catalog with no members yet)
+    shared: NDArray[np.bool_]            # what the member may ever be shown (lenses.shared_for)
+    visible: NDArray[np.bool_]           # shared, less what the member's filters hide: what every view shows
+    fav: NDArray[np.bool_]               # the member's favourites
+    stack_of: NDArray[np.int64]          # the stack a photo is in (its earliest member's place); -1 on its own
+    stack_n: NDArray[np.int64]           # how many photos its stack holds (1 on its own)
+    dup: NDArray[np.bool_]               # behind another photo of its stack
+    stack_live: dict[int, str]           # a stack with a Live Photo in it (named as stack_of does) -> the clip of its best such shot
+    trip_list: list[TripCard]            # trips with a visible photo, newest first
+    info: dict[str, Any] = field(default_factory=dict)   # what /api/info answers
+    mine: dict[str, dict] = field(default_factory=dict)  # the member's own private photos: sha -> {why, since, until}
+
+    def private_mask(self, why: str | None = None):
+        """The member's own private photos (`why`: only those held, or withdrawn), a bool per photo."""
+        out = np.zeros(self.cat.N, bool)
+        out[[self.cat.index[s] for s, x in self.mine.items() if why is None or x["why"] == why]] = True
+        return out
+
+    def trip_cards(self) -> list[TripCard]:
+        c, visible, fav, rank = self.cat, self.visible, self.fav, self.cat.rank
+        out: list[TripCard] = []
+        for tid, t in sorted(c.trips.items(), key=lambda kv: kv[1]["start"] or "", reverse=True):
+            ids = np.flatnonzero((c.trip_of == tid) & visible)
+            if len(ids):
+                ids = ids[np.argsort(c.when[ids], kind="stable")]
+                favs = ids[fav[ids]]
+                pick = favs if len(favs) else ids   # a favourite if there is one: the best of them, or the middle one
+                cover = int(pick[np.argmin(rank[pick])]) if rank is not None else int(pick[len(pick) // 2])
+                out.append({"id": tid, "title": t["title"], "start": t["start"], "end": t["end"],
+                            "n": int(len(ids)), "cover": c.shas[cover]})
+        return out
+
+    def combine(self, masks: dict, skip: str | None = None):
+        # Hidden photos are in no view, unless the hidden ones are what was asked for (`hidden=1`): then what
+        # the member may be shown (`shared`), of which the mask picks those their filters hide.
+        out = self.shared.copy() if "hidden" in masks else self.visible.copy()
+        for k, m in masks.items():
+            if k != skip:
+                out &= m
+        return out
+
+    def facet_counts(self, masks: dict) -> dict:
+        """Counts per facet value under the current filters; each facet ignores its own selection."""
+        c = self.cat
+        ranked = lambda labels, n: sorted(((labels[j], int(k)) for j, k in enumerate(n) if k),
+                                          key=lambda x: (-x[1], x[0]))
+        out = {}
+        for k, f in c.single.items():
+            base = self.combine(masks, skip=k)
+            out[k] = ranked(f["labels"], np.bincount(f["codes"][base & (f["codes"] >= 0)],
+                                                     minlength=len(f["labels"])))
+        for k, f in c.multi.items():
+            base = self.combine(masks, skip=None if k == "person" else k)
+            out[k] = ranked(f["labels"], np.bincount(f["codes"][base[f["rows"]]], minlength=len(f["labels"])))
+        base = self.combine(masks, skip="date")
+        return {"facets": out, "months": np.bincount(c.ym[base & (c.ym >= 0)], minlength=c.nmonths).tolist(),
+                "fav": int((self.combine(masks, skip="fav") & self.fav).sum()), "matching": int(self.combine(masks).sum())}
+
+    def row(self, sha: str) -> dict:
+        """A photo as a result list sends it: its facts, `fav`, whether it is this member's favourite, and for one
+        private to them, `private`: why (held, withdrawn, or new: not checked yet)."""
+        out = dict(sha=sha, **self.cat.meta[sha], fav=bool(self.fav[self.cat.index[sha]]))
+        if sha in self.mine:
+            out["private"] = self.mine[sha]["why"]
+        return out
+
+    def feed_extra(self, i: int) -> dict:
+        """What a device needs to order and stack a photo as the app does, and cannot work out without the
+        vectors: `dup` for a shot behind another in its stack, `stack_of` naming the stack (its earliest
+        photo), and `best`, what "Best first" sorts by (larger is better). The score, not the photo's
+        place in the order: a place changes for every photo whenever one arrives, a score does not."""
+        out = {}
+        if self.dup[i]:
+            out["dup"] = True
+        if self.stack_of[i] >= 0:
+            out["stack_of"] = self.cat.shas[self.stack_of[i]]
+        if self.cat.score is not None:
+            out["best"] = round(float(self.cat.score[i]), 3)
+        return out
+
+    def feed_row(self, sha: str) -> dict:
+        """A photo as the sync feed (sync.py) and /api/sync carry it: its search result plus feed_extra."""
+        i = self.cat.index[sha]
+        return dict(self.cat.meta[sha], fav=bool(self.fav[i]), **self.feed_extra(i))
+
+    def cover_of(self, run, fallback=None) -> int:
+        """The photo to put on the front of a set of photos (`run`: their places in the catalog): a
+        favourite if it has one, a landscape one if not; among those, the best photo (scores.py), or with
+        no scorers the one `fallback` ranks first (default: nearest the middle)."""
+        rank, fav, ars = self.cat.rank, self.fav, self.cat.ars
+        order = rank[run] if rank is not None else fallback if fallback is not None else np.abs(np.arange(len(run)) - len(run) // 2)
+        score = fav[run] * 4_000_000 + ((ars[run] >= 1.2) & (ars[run] <= 1.9)) * 2_000_000 - order
+        return int(run[int(np.argmax(score))])
+
+    def album_cover(self, ids):
+        """An album's front: chosen as a month's is, and with no scorers the earliest in the album's order."""
+        run = np.array([self.cat.index[s] for s in ids if s in self.cat.index], np.int64)
+        return self.cat.shas[self.cover_of(run, np.arange(len(run)))] if len(run) else None
+
+    def periods(self, order) -> dict:
+        """The photos in `order` (by time), as a card a year and a card a month, as the iPhone's Library
+        has them: each with its key ("2019", "2019-07"), how many, where it starts in `order`, the photo on
+        the front and its places. The front is a favourite if there is one, a landscape one if not; among
+        those, the best photo (scores.py), or the one nearest the middle in a catalog with no scorers."""
+        out = {}
+        c = self.cat
+        city, ym, m0 = c.single["city"], c.ym, c.m0
+        for name, key_of, top in (("years", lambda m: m // 12, 3), ("months", lambda m: m, 2)):
+            k = np.where(ym[order] >= 0, key_of(ym[order] + m0), -1)
+            cuts = np.flatnonzero(np.diff(k)) + 1
+            starts, ends = np.concatenate([[0], cuts]), np.concatenate([cuts, [len(order)]])
+            cards = []
+            for a0, b0 in zip(starts.tolist(), ends.tolist()):
+                if not len(order) or k[a0] < 0:   # undated photos have no year or month
+                    continue
+                run = order[a0:b0]
+                cover = self.cover_of(run)
+                codes = city["codes"][run]
+                codes = codes[codes >= 0]
+                names = {}
+                for code, n in zip(*np.unique(codes, return_counts=True)):
+                    nm = city["labels"][code].split(",")[0].strip()
+                    names[nm] = names.get(nm, 0) + int(n)
+                v = int(k[a0])
+                cards.append({"key": str(v) if name == "years" else f"{v // 12}-{v % 12 + 1:02d}", "n": b0 - a0, "at": a0,
+                              "cover": c.shas[cover], "ar": round(float(c.ars[cover]), 4),
+                              "places": [x for x, _ in sorted(names.items(), key=lambda kv: (-kv[1], kv[0]))[:top]]})
+            out[name] = cards
+        return out
+
+    def take(self, order, start: int, limit: int, dedupe: bool):
+        """One page from a ranked list, skipping copies of a shot just shown (Google + iCloud, bursts)."""
+        c = self.cat
+        M, shas, stack_n, stack_of = c.M, c.shas, self.stack_n, self.stack_of
+        kept, hidden, pos = [], 0, start
+        while pos < len(order) and len(kept) < limit:
+            i = int(order[pos])
+            pos += 1
+            if dedupe and kept and not c.video[i] and float(np.max(M[kept[-8:]] @ M[i])) > 0.97:   # a video is no photo's copy
+                hidden += 1
+                continue
+            kept.append(i)
+        rows = [dict(self.row(shas[i]), **({"stack": int(stack_n[i]), "stack_of": shas[stack_of[i]]} if stack_n[i] > 1 else {}))
+                for i in kept]
+        for i, r in zip(kept, rows):        # a stack with a Live Photo in it: the clip holding it plays (its own, if it is one)
+            if stack_n[i] > 1 and (clip := r.get("live") or self.stack_live.get(int(stack_of[i]))):
+                r["stack_live"] = clip
+        return rows, hidden, pos if pos < len(order) else None
+
+    def show_favorites(self, pairs) -> None:
+        """Show favourites set since this view was worked out: in the mask and the count."""
+        for sha, on in pairs:
+            i = self.cat.index.get(sha)
+            if i is not None:
+                self.fav[i] = on
+        self.info["fav"] = int((self.combine({}) & self.fav).sum())
+
+
+# What load() works out: a Catalog's fields but the bookkeeping (raw, model, demo).
+STATE = tuple(f.name for f in fields(Catalog) if f.name not in ("raw", "model", "demo"))
 
 
 class Gate:
@@ -840,23 +912,97 @@ class Gate:
                 self.cv.notify_all()
 
 
+# How a member sees the catalog: (shared, hide, fav) for them, a bool per photo each (lenses.Looks.masks).
+Looks = Callable[[Catalog, "int | None"], "tuple[NDArray[np.bool_], NDArray[np.bool_], NDArray[np.bool_]]"]
+
+
+def everything(cat: Catalog, member: int | None):
+    """The Looks of a catalog nobody curates: every photo shared, none hidden, the source's favourites."""
+    return np.ones(cat.N, bool), np.zeros(cat.N, bool), cat.said_fav
+
+
 class Live:
-    """The catalog the app is serving (`cat`), shared by every route module. A request reads `cat` inside
-    the gate (photo_app.py's handle() holds it for every request but slow ones), so it sees one catalog from
-    start to finish; install() swaps a new one in, and update() changes this one, only while no request is
-    being served. `generation` counts those changes: anything worked out from the catalog (Browse's cache)
-    belongs to the generation it was made in, and is never used in a later one."""
+    """The catalog the app is serving (`cat`), shared by every route module, and what each member sees of it.
+    A request reads `cat` inside the gate (photo_app.py's handle() holds it for every request but slow ones), so
+    it sees one catalog from start to finish; install() swaps a new one in, relook() takes in a change to what
+    members hide (lenses.py), and update() changes a member's View in place (a favourite), each only while no
+    request is being served. `generation` counts those changes: anything worked out from the catalog (Browse's
+    cache) belongs to the generation it was made in, and is never used in a later one.
 
-    def __init__(self, cat: Catalog):
+    visible_for(member) is the one way any route asks what a member sees: that member's View, worked out from
+    `looks` the first time it is asked for and kept until the catalog or the looks change. shared_for(member)
+    is what they may ever be shown (the pages that show hidden photos, and the pixel routes, go by it)."""
+
+    def __init__(self, cat: Catalog, looks: Looks | None = None):
         self.cat, self.gate, self.generation = cat, Gate(), 0
+        self.looks: Looks = looks or everything
+        self.views: dict[int | None, View] = {}     # member -> their View of `cat`, from `looks`
+        self.shares: dict[int | None, Any] = {}     # member -> what they may be shown, when no View is kept yet
+        self.views_lock = threading.Lock()          # one View worked out at a time (taken inside the gate)
 
-    def install(self, cat: Catalog, then=None) -> None:
-        """Serve `cat` from now on; then(cat) runs in the same swap, before any request sees it."""
+    def visible_for(self, member: int | None) -> View:
+        """What `member` (members.id, or None when there are no members) sees: worked out once per catalog and
+        looks. A View worked out while they were being replaced (by a caller outside the gate) is not kept."""
+        with self.views_lock:
+            v = self.views.get(member)
+            if v is not None and v.cat is self.cat:
+                return v
+            cat, looks = self.cat, self.looks
+        shared, hide, fav = looks(cat, member)
+        mine = getattr(looks, "mine", None)
+        v = cat.view(member, hide, fav, shared, mine(member) if mine else None)
+        with self.views_lock:
+            if self.cat is cat and self.looks is looks:
+                v = self.views.setdefault(member, v)
+            return v
+
+    def shared_for(self, member: int | None):
+        """What `member` may ever be shown, a bool per photo: every photo but those private to their sharers when
+        they are not one (private.py). Asked of the looks (lenses.State.shared) without working a whole View out,
+        for the pixel routes."""
+        with self.views_lock:
+            if (v := self.views.get(member)) is not None and v.cat is self.cat:
+                return v.shared
+            got = self.shares.get(member)
+            if got is not None and got[0] is self.cat and got[1] is self.looks:
+                return got[2]
+            cat, looks = self.cat, self.looks
+        fn = getattr(looks, "shared", None)
+        shared = fn(cat, member) if fn else looks(cat, member)[0]
+        with self.views_lock:
+            if self.cat is cat and self.looks is looks:
+                self.shares[member] = (cat, looks, shared)
+        return shared
+
+    def forget_views(self) -> None:
+        with self.views_lock:
+            self.views.clear()
+            self.shares.clear()
+
+    def install(self, cat: Catalog, then=None, looks: Callable[[Any], Looks] | None = None) -> None:
+        """Serve `cat` from now on; with `looks`, see it through looks(the looks now), worked out in the same swap
+        (PhotoApp.with_private: the photos private to a sharer, read after `cat` was); then(cat) runs in the
+        same swap too, before any request sees it."""
         def swap_in():
-            self.cat = cat
+            fresh = looks(self.looks) if looks is not None else None
+            with self.views_lock:
+                self.cat = cat
+                if fresh is not None:
+                    self.looks = fresh
+            self.forget_views()
             self.generation += 1
             if then:
                 then(cat)
+        self.gate.swap(swap_in)
+
+    def relook(self, looks: Looks | None = None) -> None:
+        """What members hide has changed (lenses.py): every View is worked out again, from `looks` if given."""
+        def swap_in():
+            if looks is not None:
+                with self.views_lock:
+                    self.looks = looks
+            self.forget_views()
+            self.generation += 1
         self.gate.swap(swap_in)
 
     def update(self, fn):

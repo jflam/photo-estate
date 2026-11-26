@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inbox — Photo Estate</title>
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="theme-color" content="#f8f6f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#09090a" media="(prefers-color-scheme: dark)">
+<style>
+/*@estate.css*/
+main { padding: 12px calc(var(--pad) + env(safe-area-inset-right)) 120px calc(var(--pad) + env(safe-area-inset-left)); max-width: 980px; margin: 0 auto; }
+.sub { margin: 8px 0 0; max-width: 72ch; }
+.pill { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: var(--sun-wash); color: var(--sun); letter-spacing: 0; white-space: nowrap; }
+.pill.lens_changed { background: var(--well-2); color: var(--ink-2); }
+.list { display: grid; gap: 10px; margin-top: 26px; }
+.item { display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap; padding: 18px 20px; border-radius: var(--r); background: var(--well); transition: opacity .15s; }
+.item.busy { opacity: .5; pointer-events: none; }
+.item .what { flex: 1; min-width: 0; }
+.item h3 { margin-top: 6px; font-size: 18px; font-weight: 600; letter-spacing: -.012em; overflow-wrap: anywhere; }
+.item .when { margin-top: 2px; color: var(--muted); font-size: 13.5px; }
+.item .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.item .acts .btn { height: 32px; padding: 0 14px; font-size: 13.5px; }
+@media (max-width: 760px) { .item .acts { width: 100%; } }
+/* a question item, opened (/inbox?ask=<group>): its questions, each answered here, typed or spoken */
+.q { padding: 20px; border-radius: var(--r); background: var(--well); display: grid; gap: 12px; transition: opacity .15s; }
+.q.busy { opacity: .5; pointer-events: none; }
+.q .by { color: var(--muted); font-size: 13.5px; }
+.q h3 { font-size: 21px; font-weight: 700; letter-spacing: -.018em; overflow-wrap: anywhere; }
+.q .why { color: var(--ink-2); font-size: 14px; margin-top: -6px; }
+.q .photos { display: flex; gap: 6px; flex-wrap: wrap; }
+.q .photos button { width: 112px; height: 112px; border-radius: 12px; overflow: hidden; background: var(--tile); transition: transform .2s var(--ease); }
+.q .photos button:active { transform: scale(.97); }
+.q .photos img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.q.done .tell { display: none; }
+.q .yours { margin-top: 4px; }
+.q .story { background: var(--well-2); }
+.after { margin-top: 26px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+dialog.look { padding: 0; border: 0; background: transparent; max-width: 100vw; max-height: 100dvh; }
+dialog.look::backdrop { background: rgba(0,0,0,.86); }
+dialog.look img { display: block; max-width: min(1100px, 96vw); max-height: 84dvh; border-radius: 10px; }
+dialog.look p { margin-top: 10px; text-align: center; color: #f4f2ee; font-weight: 600; }
+@media (max-width: 760px) { .q { padding: 16px; } .q .photos button { width: calc(33.3% - 4px); height: auto; aspect-ratio: 1; } }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="round" href="/" aria-label="Back"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></a>
+  <div class="crumb">Inbox</div>
+  <div class="end num" id="sum"></div>
+</header>
+<main id="main"></main>
+<dialog class="look" id="look" aria-label="Photo"><img alt=""><p></p></dialog>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { $, esc, MARK } from "/app/dom.js";
+import { plural } from "/app/format.js";
+import { api, isAbort } from "/app/api.js";
+import { inboxFlow, act, KIND } from "/app/inbox-flow.js";
+import { day } from "/app/lens-flow.js";
+import { toast } from "/app/toast.js";
+import { askFlow, askedBy, heading } from "/app/ask-flow.js";
+import { mountTeller, storyHtml, follow, spoken } from "/app/story-flow.js";
+
+// /inbox?ask=<group> is a question item opened: its questions, answered here (below). Anything else is the list.
+const ASKED = new URLSearchParams(location.search).get("ask");
+
+const inbox = inboxFlow({
+  list: signal => api("/api/inbox", undefined, { signal }),
+  dismiss: id => api(`/api/inbox/${id}/dismiss`, {}),
+  onChange: () => draw(),
+});
+
+function card(x) {
+  const p = inbox.page, busy = p.is("dismissing") && p.data.id === x.id, a = act(x);
+  return `<div class="item${busy ? " busy" : ""}" data-id="${x.id}">
+    <div class="what"><span class="pill ${esc(x.kind)}">${esc(KIND[x.kind] || x.kind)}</span><h3>${esc(x.title)}</h3>
+      <p class="when">${esc(day(x.updated_at || x.created_at))}</p></div>
+    <div class="acts">${x.opens ? `<a class="btn pri" href="${esc(x.opens)}" data-open="${a.notice ? 1 : 0}">${esc(a.label)}</a>` : ""}
+      <button class="btn" data-dismiss>Dismiss</button></div></div>`;
+}
+
+function draw() {
+  const p = inbox.page;
+  if (p.is("idle", "loading") && !$("#main").childElementCount) {
+    $("#main").innerHTML = `<div class="blank">${MARK}<h3>Looking</h3></div>`;
+    return;
+  }
+  if (p.is("failed")) {
+    $("#main").innerHTML = `<div class="blank">${MARK}<h3>The inbox could not be read</h3><p>${esc(p.data.error?.message || "")}</p>
+      <button class="btn" id="again">Try again</button></div>`;
+    return;
+  }
+  if (!p.is("ready", "dismissing")) return;
+  const d = p.data;
+  $("#sum").innerHTML = d.open ? `<b>${plural(d.open, "thing")} to decide</b>` : "";
+  $("#main").innerHTML = `<h1 class="display">Inbox</h1>
+    <p class="sub">What waits for you. Each opens the page where it is decided, and deciding it there takes it out of here.</p>`
+    + (d.items.length ? `<div class="list" id="list">${d.items.map(card).join("")}</div>`
+      : `<div class="blank">${MARK}<h3>Nothing to decide</h3><p>Someone asking to be let in, a filter proposed as an estate default, a lens you follow that changes, photos an agent proposes for you to look over, photos of yours kept private when they came in, a question about some photos, an agent connecting as you: each comes here.</p></div>`);
+}
+
+/* ── a question item, opened: its questions (app/ask-flow.js), each with a teller (app/story-flow.js) that answers it
+      typed or spoken, and "I don't know". A question answered moves under its answer; a spoken one says it is being
+      written down until the mini has (asked again now and then, and on coming back to the page: no connection held). ── */
+const ask = askFlow({
+  list: signal => api("/api/questions", undefined, { signal }),
+  dismiss: qid => api(`/api/questions/${qid}/dismiss`, {}),
+  onChange: () => drawAsk(),
+});
+const cards = new Map();           // question id -> { el, teller }: a card is made once, so a teller keeps its state
+const following = new Map();       // story id -> AbortController: a transcript being waited for
+const shot = r => `<button type="button" data-photo="${esc(r.sha)}" data-when="${esc(day(r.local || r.taken || ""))}" aria-label="Look at this photo"><img loading="lazy" alt="" src="/thumb/${esc(r.sha)}"></button>`;
+function qcard(q) {
+  const el = document.createElement("div");
+  el.className = "q"; el.dataset.q = q.id;
+  el.innerHTML = `<p class="by">${esc(askedBy(q))} · ${esc(day(q.asked_at))}</p><h3>${esc(q.text)}</h3>${q.why ? `<p class="why">${esc(q.why)}</p>` : ""}
+    <div class="photos">${q.photos.map(shot).join("")}</div><div class="yours"></div><div></div>`;
+  const tell = mountTeller(el.lastElementChild, {
+    dismiss: "I don’t know", placeholder: "Your answer: type it, or record it", sendLabel: "Send answer",
+    send: what => "text" in what ? api(`/api/questions/${q.id}/answer`, { text: what.text }) : api(spoken(`/api/questions/${q.id}/answer`, what), what.blob),
+    onSent: story => { ask.answered(q.id, story); watch(story); toast("Thank you: it is kept as your story about these photos"); },
+    onDismiss: async () => {
+      const got = await ask.dismiss(q.id);
+      toast(got.ok ? "Put away: you won’t be asked it again" : got.error.message);
+    },
+  });
+  return { el, tell };
+}
+function watch(story) {                              // a spoken answer: ask again, gently, until it is written down
+  if (!story.recording || story.transcript_state !== "waiting" || following.has(story.id)) return;
+  const ctl = new AbortController(), sha = story.photos[0];
+  following.set(story.id, ctl);
+  follow(async signal => (await api(`/api/photos/${sha}/stories`, undefined, { signal })).stories.find(s => s.id === story.id) || null, { signal: ctl.signal })
+    .then(s => { if (s) ask.told(s); }, e => { if (!isAbort(e)) console.warn("transcript:", e.message); })
+    .finally(() => { if (following.get(story.id) === ctl) following.delete(story.id); });
+}
+function drawAsk() {
+  const p = ask.page, main = $("#main");
+  if (p.is("idle", "loading") && !main.childElementCount) { main.innerHTML = `<div class="blank">${MARK}<h3>Looking</h3></div>`; return; }
+  if (p.is("failed")) {
+    main.innerHTML = `<div class="blank">${MARK}<h3>The questions could not be read</h3><p>${esc(p.data.error?.message || "")}</p><button class="btn" id="again">Try again</button></div>`;
+    return;
+  }
+  if (!p.is("ready", "dismissing")) return;
+  const d = p.data;
+  if (!main.querySelector("#asks")) {
+    main.innerHTML = `<h1 class="display" id="askTitle"></h1>
+      <p class="sub">Answer in your own words, typed or spoken. Your answer is kept as a story about these photos, with your name and the day; whoever may see the photos may read it.</p>
+      <div class="list" id="asks"></div><div class="after" id="after"></div>`;
+  }
+  $("#askTitle").textContent = heading(d.item || (d.answered.length ? { group_key: null, questions: d.answered.map(a => a.question) } : null), d.questions.length);
+  document.title = `${heading(d.item, d.questions.length)} — Photo Estate`;
+  const list = $("#asks"), keep = new Set();
+  for (const q of d.questions) {                     // waiting: each card made once
+    keep.add(q.id);
+    if (!cards.has(q.id)) { cards.set(q.id, qcard(q)); }
+    const c = cards.get(q.id);
+    c.el.classList.toggle("busy", p.is("dismissing") && d.id === q.id);
+    if (c.el.parentNode !== list) list.append(c.el);
+  }
+  for (const a of d.answered) {                      // answered here: the card stays, with the answer under it
+    keep.add(a.question.id);
+    if (!cards.has(a.question.id)) { const c = qcard(a.question); cards.set(a.question.id, c); list.append(c.el); }
+    const c = cards.get(a.question.id);
+    c.el.classList.add("done");
+    $(".yours", c.el).innerHTML = `<h4 class="label">Your answer</h4>${storyHtml(a.story, { question: false })}`;
+  }
+  for (const [id, c] of cards) if (!keep.has(id)) { c.tell.unmount(); c.el.remove(); cards.delete(id); }
+  $("#after").innerHTML = !d.questions.length
+    ? `${d.item || d.answered.length ? `<p class="sub">${d.answered.length ? "That is all of them. Thank you." : "Nothing left to answer here."}</p>` : `<p class="sub">These questions are not waiting for you: answered, put away, or not yours.</p>`}<a class="btn" href="/inbox">Back to the inbox</a>`
+    : "";
+}
+
+$("#main").addEventListener("click", e => {
+  const ph = e.target.closest("[data-photo]");
+  if (!ph) return;
+  const dlg = $("#look");
+  $("img", dlg).src = `/preview/${ph.dataset.photo}`;
+  $("p", dlg).textContent = ph.dataset.when || "";
+  dlg.showModal();
+});
+$("#look").addEventListener("click", () => $("#look").close());
+addEventListener("visibilitychange", () => {         // back to the page: the questions again, and the transcripts
+  if (document.visibilityState !== "visible" || !ASKED || !ask.page.is("ready")) return;
+  for (const [id, ctl] of following) { ctl.abort(); following.delete(id); }
+  ask.load(ASKED).then(() => { if (ask.page.is("ready")) for (const a of ask.page.data.answered) watch(a.story); });
+});
+addEventListener("pagehide", () => { for (const [, ctl] of following) ctl.abort(); });
+
+$("#main").addEventListener("click", async e => {
+  if (e.target.closest("#again")) return ASKED ? ask.load(ASKED) : inbox.load();
+  if (ASKED) return;
+  const card = e.target.closest("[data-id]");
+  if (!card || !inbox.page.is("ready")) return;
+  const id = +card.dataset.id, open = e.target.closest("[data-open]");
+  if (open) {
+    if (open.dataset.open !== "1") return;            // decided where it opens: it stays here until then
+    e.preventDefault();                               // a notice: seeing it is all it asks, so it is put away first
+    await inbox.dismiss(id);
+    location.href = open.getAttribute("href");
+    return;
+  }
+  if (!e.target.closest("[data-dismiss]")) return;
+  const got = await inbox.dismiss(id);
+  toast(got.ok ? "Put away" : got.error.message);
+});
+
+if (ASKED) {
+  $(".crumb").innerHTML = `<a href="/inbox">Inbox</a><i>/</i>Questions`;
+  $(".topbar a.round").href = "/inbox";
+  drawAsk();
+  ask.load(ASKED);
+} else {
+  draw();
+  inbox.load();
+}
+</script>
+</body>
+</html>

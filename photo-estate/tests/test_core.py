@@ -138,7 +138,7 @@ def every_open_path(td: Path) -> dict:
     scores.save(con, "quality", "m", [1.0])          # scorers are made when a scorer is installed
     con.execute("DELETE FROM scorers")
     con.commit()
-    schema.ensure(con, "favorites")                   # what PhotoApp runs when it opens the catalog
+    schema.ensure(con, "favorites", "members", "lenses", "stories")   # what PhotoApp runs when it opens the catalog
     con.close()
     sync.Feed(td / "sync-feed.db")
     Store(td / "intake.db")
@@ -147,7 +147,14 @@ def every_open_path(td: Path) -> dict:
 
 def test_fresh_databases_match_what_the_old_code_made(tmp_path):
     """schema_baseline.json is sqlite_master as the code before #85 left it, captured from that code's own
-    open paths (estate/embed/faces.connect, Changes, Tasks, scores.SCHEMA, set_favorites' CREATE, Feed, Store)."""
+    open paths (estate/embed/faces.connect, Changes, Tasks, scores.SCHEMA, set_favorites' CREATE, Feed, Store),
+    and what has been added to it since in the fixture itself: the members area (members, member_logins,
+    journal), agent_tasks.acting_for, the lenses area (lenses, subscriptions, shown, member_favorites),
+    change_sets.owner and lens_id, as ALTER TABLE ... ADD COLUMN writes them into the table's SQL, the
+    inbox (inbox_items and its index, in the members area), `private` (multiplayer phase 5, in the catalog area),
+    and phase 7's: the stories area (questions, asked, stories, story_photos and their triggers, listener_cursors),
+    change_sets.grows_from, agent_tasks.started_by and members.questions_per_week; and phase 8's agent_bindings (and
+    its index, in the members area) and stories.seconds; and private.reviewed_at (the review of held photos)."""
     baseline = json.loads((FIXTURES / "schema_baseline.json").read_text())
     # Tables newer than the baseline: only ever added (the video area: live_pairs and video_frames). They
     # must be there, and everything else must be as the old code made it.
@@ -182,7 +189,8 @@ def test_old_change_tables_are_migrated_with_their_data(tmp_path):
     changes.Changes(str(db), facts=lambda s: None, shown=lambda s: {})     # twice: nothing more to do
     con = sqlite3.connect(db)
     cols = lambda t: [r[1] for r in con.execute(f"PRAGMA table_info({t})")]
-    assert cols("change_sets")[-4:] == ["reverted_at", "done_at", "kind", "query"]
+    assert cols("change_sets")[-7:] == ["reverted_at", "done_at", "kind", "query", "owner", "lens_id",   # (lenses: phase 3)
+                                        "grows_from"]                                             # (series: phase 7)
     assert cols("change_items")[-2:] == ["section", "position"]
     assert con.execute("SELECT id, title, status, done_at, kind, query FROM change_sets").fetchall() == \
         [(7, "old set", "done", None, "list", None)]

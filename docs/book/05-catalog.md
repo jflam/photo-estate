@@ -285,11 +285,17 @@ USB hard disk, reading the `exif` table was 8.7 s of startup, a correlated subqu
 
 Every table of every database (the catalog, `sync-feed.db` beside it, the setup page's `intake.db`) is
 defined in [core/schema.py](../../photo-estate/core/schema.py), as areas: `catalog`, `embeddings`, `video`,
-`faces`, `changes`, `tasks`, `scores`, `favorites`, `sync`, `intake`. Each owner calls `schema.ensure(con, area)`
+`faces`, `changes`, `tasks`, `scores`, `favorites`, `members`, `lenses`, `sync`, `intake`. Each owner calls `schema.ensure(con, area)`
 when it opens its database (`estate.connect` and `embed.connect`, which both open `video`, `faces.connect`, `Changes`, `Tasks`,
-`PhotoApp` for `favorites`, `Feed`, the intake `Store`), never per request. `ensure` runs the area's
+`PhotoApp` for `favorites`, `Feed`, the intake `Store`), never per request. The `members` area (members,
+their logins and the journal) is opened by `PhotoApp` and by everything that appends to the journal
+(`estate.connect`, `faces.connect`, `Changes`, `Tasks`). The `lenses` area (`lenses`, `subscriptions`,
+`shown`, `member_favorites`: what each member sees, [chapter 11](11-server.md#what-each-member-sees-lenses))
+is opened by `Changes`, `PhotoApp` and `estate.py migrate`. `ensure` runs the area's
 `CREATE ... IF NOT EXISTS` statements and then adds any column listed in `ADDED` that an older table lacks
-(`change_sets.done_at`, `kind`, `query`; `change_items.section`, `position`).
+(`change_sets.done_at`, `kind`, `query`, `owner`, `lens_id`; `change_items.section`, `position`;
+`agent_tasks.acting_for`). The old `favorites` table is still made and read (as the first sysadmin's
+favourites, until `estate.py migrate` copies it), but no longer written.
 
 The Mac mini's catalog was made by older code, so the rules are: additive only (nothing is dropped,
 renamed or rewritten; only `places.py` rebuilds the three tables it derives), idempotent, and no table
@@ -300,6 +306,30 @@ scans on open. The DDL is the text the owners ran before, character for characte
 as the old code made it. There is no
 `PRAGMA user_version`: every change so far has been an added table or column, which `ensure` detects
 directly.
+
+### Protected tables
+
+The estate is append-only ([chapter 4](04-store-and-ingest.md#append-only-sources-only-add)), and the
+catalog says so itself: triggers in the `catalog` and `members` areas raise on
+
+| | Refused | Still updatable |
+|---|---|---|
+| `assets` | `DELETE`; a change of `sha256` | every other column (`link`, `exif` and `embed` correct dates, places, sizes, favourites) |
+| `occurrences` | `DELETE`; a change of `id` or `sha256` | `sidecar_id`, `album` (`link`) and the rest |
+| `sharers` (who shared a photo: `sha256, member_id, shared_at`) | `DELETE`; a change of `sha256` or `member_id` | `shared_at` |
+| `tombstones` (a photo refused: `sha256, member_id, why, at, lifted_at`) | `DELETE`; a change of anything but `lifted_at`, and lifting a purge's (member 0) | `lifted_at` of an opt-out (taken back) |
+| `members`, `member_logins` | `DELETE` (a member is revoked); a change of `members.id`, or of a login or the member it is | name, role, status, upload policy, person |
+| `journal` | any `UPDATE` or `DELETE` | nothing: undoing something is a new entry |
+
+They are rows of `sqlite_master` like the tables, so the baseline fixture holds them, and `ensure` adds
+them to a catalog made before them (`CREATE TRIGGER IF NOT EXISTS`, no scan). `estate.py purge` is the one
+thing that deletes from these tables: it drops the three `*_no_delete` triggers it needs inside its own
+transaction and makes them again before it commits. An insert never replaces a protected row either (an
+`INSERT OR REPLACE` deletes the row it collides with and fires no delete trigger): a `BEFORE INSERT`
+trigger raises on a key that is already there in `journal`, `members` and `member_logins`, and skips the
+row (`RAISE(IGNORE)`) in `assets`, `occurrences` (the same id, or the same source and path), `sharers`
+and `tombstones`, so `INSERT OR IGNORE` works as before and a `REPLACE` changes nothing. The triggers
+guard against accidents, not intent: they do not stop `DROP TABLE` or `DROP TRIGGER`.
 
 A reader that opens a database it may not have made (`catalog.load` on the demo or an old catalog,
 `stats.py`, `scores.load`, `changes.hidden_shas`, `places.py`'s reading of its last run, `browse.faces`)

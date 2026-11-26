@@ -9,6 +9,7 @@
 //   fromParams(p)        <- URLSearchParams (what toParams wrote, or an address typed by hand)
 //   filtered(s)          whether it is narrowed by anything but its words
 //   isEmpty(s)           whether it asks nothing at all
+//   growsFrom(s)         the question as a series grows from it (search_photos' arguments), or null if it can't
 //   FIELD_STEPS          the field the words are typed in: resting or typing
 
 /** @typedef {"country" | "region" | "city" | "person" | "album" | "camera" | "lens" | "trip"} Facet */
@@ -23,6 +24,7 @@
  * @property {boolean} fav     favourites only
  * @property {boolean} video   videos only (kind=video)
  * @property {boolean} photo   photos only (kind=photo); never with `video`: the scope control sets one, the other or neither
+ * @property {boolean} hidden  only what the member's filters hide (hidden=1): "show hidden"
  * @property {string} from     the first month, "YYYY-MM"
  * @property {string} to       the last month
  * @property {string} sort     "" (the server's choice), or an order by name
@@ -46,7 +48,7 @@ function facets(of) {
 }
 
 /** @returns {Query} */
-export const blank = () => ({ q: "", plain: false, sha: "", event: "", stack: "", fav: false, from: "", to: "", sort: "", video: false, photo: false, f: facets(() => []) });
+export const blank = () => ({ q: "", plain: false, sha: "", event: "", stack: "", fav: false, from: "", to: "", sort: "", video: false, photo: false, hidden: false, f: facets(() => []) });
 
 /**
  * @param {Query} s
@@ -66,6 +68,7 @@ export function toParams(s) {
   for (const k of KEYS) for (const v of s.f[k]) p.append(k, v);
   for (const k of TEXT) if (s[k]) p.set(k, s[k]);
   if (s.fav) p.set("fav", "1");
+  if (s.hidden) p.set("hidden", "1");
   if (s.video) p.set("kind", "video");
   else if (s.photo) p.set("kind", "photo");
   return p;
@@ -82,6 +85,7 @@ export function fromParams(p) {
   for (const k of TEXT) s[k] = p.get(k) || "";
   for (const k of KEYS) s.f[k] = p.getAll(k);
   s.fav = p.get("fav") === "1";
+  s.hidden = p.get("hidden") === "1";
   s.video = p.get("kind") === "video";
   s.photo = p.get("kind") === "photo";
   s.plain = p.get("names") === "0";
@@ -90,11 +94,11 @@ export function fromParams(p) {
 
 /**
  * Whether the question is narrowed by anything but its words: a facet, an event, a stack, favourites,
- * videos, dates.
+ * videos, dates, what the member's filters hide.
  * @param {Query} s
  * @returns {boolean}
  */
-export const filtered = s => KEYS.some(k => s.f[k].length > 0) || !!(s.event || s.stack || s.fav || s.video || s.photo || s.from || s.to);
+export const filtered = s => KEYS.some(k => s.f[k].length > 0) || !!(s.event || s.stack || s.fav || s.video || s.photo || s.from || s.to || s.hidden);
 
 /**
  * Whether the question asks nothing: no words, no photo to be like, no filter.
@@ -102,6 +106,35 @@ export const filtered = s => KEYS.some(k => s.f[k].length > 0) || !!(s.event || 
  * @returns {boolean}
  */
 export const isEmpty = s => !s.q && !s.sha && !filtered(s);
+
+/**
+ * The question as a series (an album that grows from a search: POST /api/albums {grows_from}) is given it: the
+ * arguments search_photos takes (browse.find). null for a question a series cannot grow from: nothing asked, a
+ * photo to be like, a stack, what the member's filters hide, a lens, an order, or more than one value where
+ * search_photos takes one (two places, two albums...). The words are taken as words (names in them are not read
+ * as people, as the search box does).
+ * @param {Query} s
+ * @returns {Record<string, any> | null}
+ */
+export function growsFrom(s) {
+  if (isEmpty(s) || s.sha || s.stack || s.hidden || s.sort || s.f.lens.length) return null;
+  const places = [...s.f.city, ...s.f.region, ...s.f.country];
+  if (places.length > 1 || s.f.album.length > 1 || s.f.camera.length > 1 || s.f.trip.length > 1) return null;
+  /** @type {Record<string, any>} */ const g = {};
+  if (s.q) g.query = s.q;
+  if (s.f.person.length) g.people = [...s.f.person];
+  if (places.length) g.place = places[0];
+  if (s.f.album.length) g.album = s.f.album[0];
+  if (s.f.camera.length) g.camera = s.f.camera[0];
+  if (s.f.trip.length) g.trip = +s.f.trip[0];
+  if (s.event) g.event = +s.event;
+  if (s.from) g.date_from = s.from;
+  if (s.to) g.date_to = s.to;
+  if (s.fav) g.favorite = true;
+  if (s.video) g.kind = "video";
+  else if (s.photo) g.kind = "photo";
+  return g;
+}
 
 /** @typedef {"resting" | "typing"} FieldState */
 

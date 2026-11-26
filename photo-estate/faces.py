@@ -27,7 +27,9 @@ Names come from three places, kept in `faces.source`:
   you     you said so on the naming page; these and `google` are what faces are compared with
   auto    close enough to a person's named faces of that time that it isn't worth asking
 Everything you decide is also appended to face-labels.jsonl next to the catalog, keyed by photo
-and box, so the work survives a rescan with a better model.
+and box, so the work survives a rescan with a better model. Each change is also one entry in the
+estate's journal (journal.py: faces.labeled, person.changed), in the same transaction: who did it and
+what, in counts and names, beside the per-face lines of face-labels.jsonl rather than instead of them.
 
 Models: InsightFace buffalo_l (SCRFD-10G detector, ArcFace R50 embeddings), run with onnxruntime.
 The weights are for non-commercial use only.
@@ -49,6 +51,7 @@ from multiprocessing import Pool
 from pathlib import Path
 from typing import Literal
 
+import journal
 import pages   # the pages, with the shared stylesheet put in
 from core import config, events, schema
 from core.media import FACES_SKIP_EXT as SKIP_EXT   # RAW and GIF (core/media.py says why)
@@ -78,7 +81,7 @@ def connect(db: str) -> sqlite3.Connection:
     con = sqlite3.connect(db, timeout=60)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
-    schema.ensure(con, "faces")
+    schema.ensure(con, "faces", "members")   # members: the journal
     return con
 
 
@@ -308,16 +311,36 @@ SRC = {None: NONE, "auto": AUTO_SRC, "google": GOOGLE, "you": YOU}
 SRC_NAME = {v: k for k, v in SRC.items()}
 
 
+def default_hidden(con) -> set[str]:
+    """The photos no face of is on People: what the estate defaults hide (lenses.py), the hiding sets from
+    before lenses, which hide for everyone, and every photo private to anyone (private.py: its faces are in
+    People for no one, its sharer included, until it is released). People is built once, for every member, so
+    a member's own filters are not here: they apply as a person's faces are listed (People.handle's `keep`)."""
+    out: set[str] = set()
+    for q in ("SELECT DISTINCT h.sha256 FROM hidden h JOIN change_sets s ON s.id = h.set_id"
+              " LEFT JOIN lenses l ON l.id = s.lens_id WHERE s.lens_id IS NULL OR l.estate_default = 1",
+              "SELECT sha256 FROM hidden"):         # (a catalog from before lenses: every hiding set is for everyone)
+        try:
+            out = {s for s, in con.execute(q)}
+            break
+        except sqlite3.OperationalError:
+            continue
+    try:
+        out |= {s for s, in con.execute("SELECT sha256 FROM private WHERE released_at IS NULL")}
+    except sqlite3.OperationalError:        # a catalog from before private photos
+        pass
+    return out
+
+
 def face_rows(con) -> list[tuple]:
     """Every face of MODEL with its photo's date, people tags and extension, in id order:
     (id, sha256, idx, x, y, w, h, score, px, vec, person_id, source, taken_at, people, ext).
-    Faces in photos a change set hides (changes.py) are left out: nobody is asked who they are.
+    Faces in photos the estate defaults hide (default_hidden) are left out: nobody is asked who they are.
 
     Each table is read once, front to back, and they are put together here. Asked of SQLite as one join,
     every face is a lookup of its photo by sha256, somewhere else in `assets` each time: 120,000 of them
     took 38 s of a 41 s start on a catalog on a USB disk, where the three passes take under 4 s."""
-    hidden = ({s for s, in con.execute("SELECT sha256 FROM hidden")}
-              if con.execute("SELECT 1 FROM sqlite_master WHERE name='hidden'").fetchone() else set())
+    hidden = default_hidden(con)
     photo = {s: (t, p, e) for s, t, p, e in con.execute("SELECT sha256, taken_at, people, ext FROM assets")}
     return [r + photo[r[1]] for r in con.execute(
         "SELECT id, sha256, idx, x, y, w, h, score, px, vec, person_id, source FROM faces WHERE model=? ORDER BY id", (MODEL,))
@@ -611,7 +634,9 @@ class People:
                 "person": int(self.pid[k]), "sug": int(self.sug[k]), "far": bool(self.sug_far[k]),
                 "box": [round(float(v), 4) for v in self.box[k]]}
 
-    def overview(self) -> dict:
+    def overview(self, keep=None) -> dict:
+        """Everyone on the page, with their counts (over every face People holds) and a cover: with `keep`
+        (sha -> bool), a face in a photo it keeps, when the person has one."""
         np = self.np
         with self.lock:
             people = []
@@ -628,6 +653,12 @@ class People:
                 best = np.flatnonzero(mine & (self.src >= GOOGLE))
                 if not len(best):
                     best = np.flatnonzero(mine | pend | later)
+                if keep is not None:
+                    best = np.array([k for k in best if keep(self.sha[k])], np.int64) if len(best) else best
+                    if not len(best):
+                        best = np.array([k for k in np.flatnonzero(mine | pend | later) if keep(self.sha[k])], np.int64)
+                    if not len(best):
+                        continue            # every face of them is in a photo this member does not see
                 recent = best[self.year[best] >= self.year[best].max() - 1]
                 cover = recent[np.argmax(self.px[recent] * self.score[recent])]
                 people.append({"id": p, "name": info["name"], "born": info.get("born"),
@@ -766,25 +797,35 @@ class People:
     # happens under self.lock, so changes reach SQLite in the order they reach memory and the two never
     # disagree; if SQLite raises (locked, disk full), memory is as it was and the connection is closed.
 
+    @staticmethod
+    def journaled(con, d: Draft, actor: int | None, kind: str, subject: str) -> None:
+        """The one journal entry for a change (journal.py), in its transaction: what face-labels.jsonl
+        gets, in counts and names. Nothing when it changed nothing."""
+        ops = [{"op": op, **({"faces": len(rows)} if rows else {}), **extra} for op, rows, extra in d.logs]
+        if ops:
+            journal.append(con, actor, kind, subject, {"ops": ops})
+
     def commit(self, d: Draft) -> None:
         """Swap in a draft whose transaction committed, and journal what it did. Under self.lock."""
         self.pid, self.src, self.nots, self.later, self.persons = d.pid, d.src, d.nots, d.later, d.persons
         for op, rows, extra in d.logs:
             self.log(op, rows, **extra)
 
-    def label_many(self, body: dict) -> dict:
-        """{items: [label bodies]}: a page of decisions, applied in order in one transaction, then one rescore."""
+    def label_many(self, body: dict, actor: int | None = None) -> dict:
+        """{items: [label bodies]}: a page of decisions, applied in order in one transaction, then one rescore.
+        `actor` (members.id) is who the journal names."""
         with self.lock:
             d = Draft(self)
             with closing(connect(self.db)) as con, con:
                 for item in body.get("items") or []:
                     if isinstance(item, dict):
                         self.decide(item, d, con)
+                self.journaled(con, d, actor, "faces.labeled", "people")
             self.commit(d)
             self.rescore()
             return {"ok": True, "pending": int(self.pending().sum())}
 
-    def label(self, body: dict) -> dict:
+    def label(self, body: dict, actor: int | None = None) -> dict:
         """{faces: [ids], person: id | "name" | 0 (don't name) | null (forget), cluster: n, not: [ids], not_person: id}.
         {pending: {person: id, year: y | null}} in place of faces: every face waiting for that person (in that
         year), less the ones in `not`, so you can say yes to all of them and find the mistakes afterwards.
@@ -795,6 +836,7 @@ class People:
             d = Draft(self)
             with closing(connect(self.db)) as con, con:
                 self.decide(body, d, con)
+                self.journaled(con, d, actor, "faces.labeled", "people")
             self.commit(d)
             self.rescore()
             return {"ok": True, "pending": int(self.pending().sum())}
@@ -859,7 +901,7 @@ class People:
             con.executemany("INSERT OR IGNORE INTO face_not VALUES (?,?)", [(int(self.ids[k]), np_) for k in wrong])
             d.logs.append(("not", wrong, {"person": d.persons[np_]["name"]}))
 
-    def edit_person(self, body: dict) -> dict:
+    def edit_person(self, body: dict, actor: int | None = None) -> dict:
         """{id, name?, born?}: rename (onto an existing name = merge the two) or set when they were born.
         A merge moves everything of p's to the other person: their faces, and p's face_not and face_later
         rows (a face already ruled out or put aside for both keeps one row), in SQLite and in memory, and
@@ -895,6 +937,7 @@ class People:
                                 sets.setdefault(other, set()).update(moved)
                         d.logs.append(("merge", [], {"person": d.persons.pop(p)["name"], "into": d.persons[other]["name"]}))
                         p = other
+                self.journaled(con, d, actor, "person.changed", f"person:{body['id']}")
             self.commit(d)
             self.rescore()
             return {"ok": True, "id": p}
@@ -922,20 +965,41 @@ class People:
         except Exception:
             return None
 
-    def handle(self, method: str, path: str, qs: dict, body: dict | None):
-        """One request -> (status, body bytes, content type, Cache-Control), or None if it isn't ours."""
+    @staticmethod
+    def only(o, keep):
+        """A GET's answer with the faces in photos `keep` (sha -> bool) does not keep left out: `faces` lists,
+        a timeline's `years`, the unnamed `groups`; a `face` that is not kept is not there at all (None)."""
+        if keep is None or not isinstance(o, dict):
+            return o
+        if isinstance(o.get("face"), dict) and not keep(o["face"]["sha"]):
+            return None
+        out = dict(o)
+        if isinstance(o.get("faces"), list):
+            out["faces"] = [f for f in o["faces"] if keep(f["sha"])]
+        if isinstance(o.get("years"), dict) and all(isinstance(v, list) for v in o["years"].values()):
+            out["years"] = {y: kept for y, fs in o["years"].items() if (kept := [f for f in fs if keep(f["sha"])])}
+        if isinstance(o.get("groups"), list):
+            out["groups"] = [g for g in (People.only(g, keep) for g in o["groups"]) if g and g.get("faces")]
+        return out
+
+    def handle(self, method: str, path: str, qs: dict, body: dict | None, actor: int | None = None, keep=None, see=None):
+        """One request -> (status, body bytes, content type, Cache-Control), or None if it isn't ours. `actor`:
+        the member a write is for (members.id), for the journal. `keep` (sha -> bool): the photos the member
+        asking sees (photo_app.py); the faces of any other are left out of what a GET lists (only). `see` (sha ->
+        bool): the photos they may be shown at all; a face crop of any other is a 404, as one that does not exist."""
         one = lambda k, d="": (qs.get(k) or [d])[0]
         num = lambda k: int(one(k)) if one(k).lstrip("-").isdigit() else None
         js = lambda o, code=200: (code, json.dumps(o, separators=(",", ":")).encode(), "application/json", "no-store")
-        found = lambda o: None if o is None else js(o)   # None: no such person or face (looked up under the lock)
+        found = lambda o: None if (o := self.only(o, keep)) is None else js(o)   # None: no such person or face (or not theirs to see)
         if method == "GET":
             if path in ("/people", "/people/"):
                 return 200, pages.page("people.html"), "text/html; charset=utf-8", "no-cache"
-            if path.startswith("/face/"):
-                body_ = self.crop(int(path[6:])) if path[6:].isdigit() else None
+            if path.startswith("/face/"):   # (a face in a photo the member may not be shown is not there: `see`)
+                k = self.row.get(int(path[6:])) if path[6:].isdigit() else None
+                body_ = self.crop(int(path[6:])) if k is not None and (see is None or see(self.sha[k])) else None
                 return (200, body_, "image/jpeg", "public, max-age=86400") if body_ else (404, b"", "text/plain", "no-store")
             if path == "/api/people":
-                return js(self.overview())
+                return js(self.overview(keep))
             person, face = num("person"), num("face")
             if path == "/api/people/review" and person is not None:
                 return found(self.review(person, num("year"), min(num("limit") or 60, 400), one("skipped") == "1"))
@@ -944,16 +1008,16 @@ class People:
             if path == "/api/people/odd" and person is not None:
                 return found(self.odd(person, num("year"), max(num("offset") or 0, 0), min(num("limit") or 60, 400)))
             if path == "/api/people/unknown":
-                return js(self.unknown(min(num("limit") or 12, 100)))
+                return js(self.only(self.unknown(min(num("limit") or 12, 100)), keep))
             if path == "/api/people/photo" and face is not None:
                 return found(self.photo(face))
         elif method == "POST" and body is not None:
             if path == "/api/people/label":
-                return js(self.label(body))
+                return js(self.label(body, actor))
             if path == "/api/people/label-many":
-                return js(self.label_many(body))
+                return js(self.label_many(body, actor))
             if path == "/api/people/person":
-                return js(self.edit_person(body))
+                return js(self.edit_person(body, actor))
         return None
 
 

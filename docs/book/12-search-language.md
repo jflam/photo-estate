@@ -66,7 +66,7 @@ of the query first:
 | `year:` | A year or a range | `year:2010`, `year:2010-2012` |
 | `date:` | A prefix of the local time | `date:2010-07`, `date:2010-07-14` |
 | `event:` / `trip:` | A numeric event or trip id (also scopes the page, see below) | `trip:1594243200` |
-| `is:` | `fav`, `favorite` or `favourite`; `video` or `videos` (only videos); `photo` or `photos` (no videos) | `is:fav`, `is:video` |
+| `is:` | `fav`, `favorite` or `favourite`; `video` or `videos` (only videos); `photo` or `photos` (no videos); `private` (the member's own private photos), `held` (those held at ingestion), `withdrawn` (those they withdrew) | `is:fav`, `is:video`, `is:held` |
 
 Rules:
 

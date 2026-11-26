@@ -1,6 +1,6 @@
 """The catalog being served, raced on purpose (issue #83): Browse's cache across a reload or a favourite
-(Live.generation), a favourite set while the catalog is re-read (PhotoApp.set_favorites, reload_catalog
-and fav_log), a favourite shown only with no request reading (the gate's write side), and which requests
+(Live.generation), a favourite set while the catalog, or what anyone hides, is re-read (PhotoApp.set_favorites,
+reload_catalog, relook), a favourite shown only with no request reading (the gate's write side), and which requests
 hold the gate (PhotoApp.gated, with a query string). The demo library, in process, no model; the
 interleavings are forced with threading.Event, never with sleeps. A wait's timeout only stops a
 regression from hanging the run.
@@ -20,7 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import catalog  # noqa: E402
 import embed  # noqa: E402
-import photo_app  # noqa: E402
+import lenses  # noqa: E402
 from browse import Browse  # noqa: E402
 from catalog import Gate, Live  # noqa: E402
 from photo_app import PhotoApp  # noqa: E402
@@ -57,12 +57,18 @@ def app():
 
 
 def plain_photo(app) -> str:
-    c = app.live.cat
-    return next(s for s in c.shas if not c.fav[c.index[s]])
+    v = seen(app)
+    return next(s for s in v.cat.shas if not v.fav[v.cat.index[s]])
 
 
-def is_fav(c, sha) -> bool:
-    return bool(c.fav[c.index[sha]]) and c.meta[sha]["fav"] is True
+def seen(app) -> catalog.View:
+    """What the demo's sysadmin (whom a request from this computer is) sees now."""
+    with app.live.gate:
+        return app.live.visible_for(app.sysadmin.id)
+
+
+def is_fav(v: catalog.View, sha) -> bool:
+    return bool(v.fav[v.cat.index[sha]]) and v.row(sha)["fav"] is True
 
 
 # -- (a) Browse's cache and the catalog generation ---------------------------------------------------
@@ -101,11 +107,12 @@ def test_nothing_cached_is_found_once_a_new_catalog_is_in():
     assert b.remember("key", lambda: "again") == "newer"
 
 
-# -- (b) a favourite set while the catalog is re-read ------------------------------------------------
+# -- (b) a favourite set while the catalog, or what anyone hides, is re-read ------------------------
+# (Multiplayer phase 3: a favourite is the member's, kept in the looks (lenses.State) that every View is worked
+# out from, and the catalog no longer reads favourites at all, so a reload cannot miss one.)
 
 def test_a_favourite_set_while_a_reload_reads_reaches_the_new_catalog(app, monkeypatch):
-    """The reload read the table before the favourite: it is shown to the new catalog as it is swapped in."""
-    old, sha = app.live.cat, plain_photo(app)
+    old, sha = seen(app), plain_photo(app)
     read, go = threading.Event(), threading.Event()
     load = app.load_catalog
 
@@ -116,85 +123,99 @@ def test_a_favourite_set_while_a_reload_reads_reaches_the_new_catalog(app, monke
         return c
     monkeypatch.setattr(app, "load_catalog", paused)
     t, box = in_thread(app.reload_catalog)
-    assert read.wait(GUARD)                      # the new catalog is read, without the favourite
-    assert app.set_favorites([sha], True, "") == 1
-    assert is_fav(old, sha)                      # shown at once in the one being served
+    assert read.wait(GUARD)                      # the new catalog is read...
+    assert app.set_favorites([sha], True, "", app.sysadmin.id) == 1
+    assert is_fav(old, sha)                      # shown at once in the view being served
     go.set()
     finish(t, box)
-    new = app.live.cat
-    assert new is not old and is_fav(new, sha), "the favourite was lost by the reload"
-    assert not app.fav_log, f"fav_log kept what the new catalog already shows: {app.fav_log}"
-    assert app.set_favorites([sha], False, "") == 1
-    assert not is_fav(new, sha) and is_fav(old, sha), "the replaced catalog was changed after the swap"
+    new = seen(app)
+    assert new.cat is not old.cat and is_fav(new, sha), "the favourite was lost by the reload"
+    assert app.set_favorites([sha], False, "", app.sysadmin.id) == 1
+    assert not is_fav(new, sha) and is_fav(old, sha), "the replaced catalog's view was changed after the swap"
     assert new.info["fav"] == old.info["fav"] - 1
 
 
 def test_a_favourite_recorded_after_the_swap_goes_to_the_new_catalog(app, monkeypatch):
-    """The favourite began before the reload but reaches the table after the reload read it, and the
-    catalog after the swap: it must be shown to the catalog now served, not to the one it began with."""
-    old, sha = app.live.cat, plain_photo(app)
+    """The favourite began before the reload but reaches the table after the reload, and the catalog after
+    the swap: it must be shown in the view now served, not in the one it began with."""
+    old, sha = seen(app), plain_photo(app)
     at_table, go = threading.Event(), threading.Event()
-    now = photo_app.now
+    now = lenses.now
 
     def paused_now():                            # set_favorites asks the time just before it writes the table
         if not at_table.is_set():
             at_table.set()
             assert go.wait(GUARD)
         return now()
-    monkeypatch.setattr(photo_app, "now", paused_now)
-    t, box = in_thread(app.set_favorites, [sha], True, "")
+    monkeypatch.setattr(lenses, "now", paused_now)
+    t, box = in_thread(app.set_favorites, [sha], True, "", app.sysadmin.id)
     assert at_table.wait(GUARD)
-    done, rbox = in_thread(app.reload_catalog)   # reads the table without it, and swaps the new catalog in
+    done, rbox = in_thread(app.reload_catalog)   # swaps the new catalog in
     finish(done, rbox)
-    new = app.live.cat
-    assert new is not old and not is_fav(new, sha)
+    new = seen(app)
+    assert new.cat is not old.cat and not is_fav(new, sha)
     go.set()
     assert finish(t, box) == 1
-    assert is_fav(new, sha), "the favourite went to the catalog it began with, not the one served"
-    assert not is_fav(old, sha), "the replaced catalog was changed after the swap"
-    assert not app.fav_log
+    assert is_fav(seen(app), sha), "the favourite went to the catalog it began with, not the one served"
+    assert not is_fav(old, sha), "the replaced catalog's view was changed after the swap"
 
 
-def test_the_log_is_only_kept_while_a_reload_reads(app):
+def test_a_favourite_is_not_lost_by_reading_the_looks_again(app, monkeypatch):
+    """What anyone hides changed (relook reads lenses.State again) while a favourite was being set: the two
+    take turns (PhotoApp.fav_write), so the looks read afterwards have the favourite, and so does every view."""
     sha = plain_photo(app)
-    app.set_favorites([sha], True, "")
-    assert app.fav_log is None                   # no reload: nothing to replay, nothing kept
-    app.reload_catalog()
-    assert is_fav(app.live.cat, sha) and app.fav_log is None
+    at_table, go = threading.Event(), threading.Event()
+    now = lenses.now
+
+    def paused_now():
+        if not at_table.is_set():
+            at_table.set()
+            assert go.wait(GUARD)
+        return now()
+    monkeypatch.setattr(lenses, "now", paused_now)
+    t, box = in_thread(app.set_favorites, [sha], True, "", app.sysadmin.id)
+    assert at_table.wait(GUARD)
+    r, rbox = in_thread(app.relook)
+    r.join(0.2)
+    assert r.is_alive(), "the looks were read again while a favourite was half set"
+    go.set()
+    assert finish(t, box) == 1
+    finish(r, rbox)
+    assert is_fav(seen(app), sha), "the favourite was lost when the looks were read again"
 
 
 # -- (c) a favourite is shown with no request reading ------------------------------------------------
 
 def test_show_favorites_runs_on_the_gates_write_side(app, monkeypatch):
-    seen = []
-    show = catalog.Catalog.show_favorites
+    seen_at = []
+    show = catalog.View.show_favorites
 
     def spy(self, pairs):
         g = app.live.gate
-        seen.append((g.writing, g.readers))
+        seen_at.append((g.writing, g.readers))
         return show(self, pairs)
-    monkeypatch.setattr(catalog.Catalog, "show_favorites", spy)
+    monkeypatch.setattr(catalog.View, "show_favorites", spy)
     sha = plain_photo(app)
     r = app.request("POST", "/api/favorite", body={"sha": sha, "fav": True}, local=True)
-    assert r.status == 200 and r.json()["fav"] is True and r.json()["favourites"] == app.live.cat.info["fav"]
+    assert r.status == 200 and r.json()["fav"] is True and r.json()["favourites"] == seen(app).info["fav"]
     aid = app.request("POST", "/api/albums", body={"title": "races", "items": [sha, app.live.cat.shas[1]]},
                       local=True).json()["id"]
     r = app.request("POST", f"/api/albums/{aid}/favorite", body={"fav": False}, local=True)
     assert r.status == 200 and r.json()["changed"] >= 1, r.json()
     app.reload_catalog()
-    assert seen and all(s == (True, 0) for s in seen), f"(writing, readers) while shown: {seen}"
+    assert seen_at and all(x == (True, 0) for x in seen_at), f"(writing, readers) while shown: {seen_at}"
 
 
 def test_a_favourite_waits_for_the_requests_reading(app, monkeypatch):
-    c, sha = app.live.cat, plain_photo(app)
+    v, sha = seen(app), plain_photo(app)
     gate, asked = app.live.gate, threading.Event()
     swap = gate.swap
     monkeypatch.setattr(gate, "swap", lambda fn: (asked.set(), swap(fn))[1])
     with gate:                                   # a request reading the catalog
         t, box = in_thread(lambda: app.request("POST", "/api/favorite", body={"sha": sha, "fav": True}, local=True))
         assert asked.wait(GUARD), "the favourite did not ask for the gate's write side"
-        assert not c.fav[c.index[sha]] and not c.meta[sha]["fav"], "shown while a request was reading"
-    assert finish(t, box).status == 200 and is_fav(c, sha)
+        assert not v.fav[v.cat.index[sha]], "shown while a request was reading"
+    assert finish(t, box).status == 200 and is_fav(v, sha)
 
 
 def test_a_swap_from_inside_the_gate_raises():

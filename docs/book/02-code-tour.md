@@ -8,26 +8,26 @@ leaving out the checked-in demo library and every Markdown file:
 
 | | Files | Code lines |
 |---|---:|---:|
-| **Server** (Python: `photo-estate/*.py`, `intake/` and `core/`) | 39 | 9,691 |
+| **Server** (Python: `photo-estate/*.py`, `intake/` and `core/`) | 41 | 10,672 |
 | **Web pages** (seven pages, the shared stylesheet, the service worker) | 9 | 4,664 |
 | **The pages' script modules** (`app/*.js`, without their tests) | 21 | 1,132 |
-| **iPhone app** (Swift, plus `deploy.sh`) | 30 | 5,751 |
+| **iPhone app** (Swift, plus `deploy.sh`) | 34 | 6,705 |
 | Shell scripts the pipeline runs (`pull-drive.sh`, `pull-icloud.sh`, `ingest-iphone.sh`) | 3 | 130 |
-| Tests (`tests/`: 16 self-running scripts, 17 pytest files, `conftest.py`) | 34 | 6,847 |
+| Tests (`tests/`: 16 self-running scripts, 20 pytest files, `conftest.py`) | 37 | 7,741 |
 | The script modules' unit tests (`app/tests/`) | 22 | 2,619 |
 | Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts, square export and embedding, the video demo) | 27 | 3,506 |
 | The cloud preview on the Mac mini (`deploy/*.sh`) | 4 | 330 |
-| **Total** | **189** | **34,670** |
+| **Total** | **198** | **37,499** |
 
 The web pages' 4,664 lines are 3,085 of JavaScript, 950 of CSS and 629 of HTML markup (tokei counts
 the script of `setup.html`, a module it does not parse, as markup). What you run (the server, its pages
-and their modules, the iPhone app and the three pipeline scripts) is **21,368 lines of code**:
+and their modules, the iPhone app and the three pipeline scripts) is **23,303 lines of code**:
 
 ```mermaid
-pie showData title "What you run, by part (21,368 lines)"
-    "Server: Python (9,691)" : 9691
+pie showData title "What you run, by part (23,303 lines)"
+    "Server: Python (10,672)" : 10672
     "Web pages and their modules (5,796)" : 5796
-    "iPhone app: Swift (5,734)" : 5734
+    "iPhone app: Swift (6,688)" : 6688
     "Shell (147)" : 147
 ```
 
@@ -52,8 +52,8 @@ is 5,734. A few things stand out:
   Videos (2026-11-21) followed the rule: `video.py` is new, and the rest is a few dozen lines in each
   module that a video passes through.
 - **The tests are about a quarter of the code.** Sixteen scripts, each run with `uv run tests/<file>`,
-  seventeen ordinary pytest files, and a small harness that runs them all with one command and in CI;
-  6,847 lines, and 2,619 more of unit tests for the pages' script modules
+  twenty ordinary pytest files, and a small harness that runs them all with one command and in CI;
+  7,741 lines, and 2,619 more of unit tests for the pages' script modules
   ([chapter 17](17-testing-and-demo.md)).
 - **The documentation is a third as large as the code.** The Markdown in the repository is about
   11,200 lines, 8,900 of them this book.
@@ -65,37 +65,71 @@ Code lines, measured as above (a script module's JSDoc comments are not counted)
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
   embed.py             351  image and video embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
-  photo_app.py         631  the photo app as an object: PhotoApp (wiring, who may write, favourites, reloads) and its HTTP
+  photo_app.py         813  the photo app as an object: PhotoApp (wiring, who a request is for and what it may do, the
+                            request-access page and /members' routes, favourites, reloads) and its HTTP
                             handler, which streams uploads, album downloads and videos (/video/, with Range)
-  http_util.py         177  what the servers share: Response, bounded JSON bodies, int_param (400s), byte_range, the Auth rules
-  catalog.py           749  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
-                            clips), Live (chapter 11)
+  http_util.py         186  what the servers share: Response, bounded JSON bodies, int_param (400s), byte_range, the Auth rules
+  members.py           180  who the estate knows: members, their Tailscale logins, roles and upload policies; the first
+                            start from --upload-user, the demo's members; every change journaled; a member's own
+                            agents, one per device (agent_bindings: pending, approved, revoked) (chapter 11)
+  journal.py            63  the estate's append-only log: append(con, actor, kind, subject, data) in the caller's
+                            transaction, since(con, id); the kinds, where each is appended and who may read it;
+                            by_agent (a member's own agent's writes) and for_member (journal_since) (chapter 11)
+  lenses.py            360  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
+                            out of an estate default), "show it anyway", each member's favourites, why a photo is
+                            hidden; State, the looks every member view is worked out from (chapter 11)
+  private.py           609  photos private to their sharer (chapter 11): who may be shown a photo, the sharer ingest
+                            records from the inbox's member folder, withdrawing and releasing (now, or on a day:
+                            the app's timer), the hold at ingestion (PROMPTS and HOLD_AT, in one place, and the
+                            phone's screenshot mark), the one-off run over the library (`private.py library
+                            --dry-run`) and looking held photos over (/held: review_list, its order and sections,
+                            and review, "Reviewed up to here"); the phone gate's tombstones (a member's opt-outs)
+  hold-prompts.json         the hold's prompts as SigLIP text vectors, made once by `embed.py hold-prompts`
+  member_inbox.py      169  each member's inbox (inbox_items; not the upload folder): put, close and retitle, called by the
+                            code that makes and decides each kind, what an item opens, the member's list,
+                            dismissing; a lens that changed tells its live subscribers once (chapter 11)
+  stories.py           486  questions and stories (chapter 11): ask (only photos the recipient may be shown), the
+                            inbox's weekly allowance, ranking and grouping (deal), answering typed or spoken,
+                            telling a story, who may read one, a recording into the store with no assets row
+  listeners.py         211  what the estate does by itself: listeners reading the journal from their cursors, at
+                            least once; series kept up to date as photos arrive, an answer that wakes the agent
+  transcribe.py        210  a story's recording written out on the mini (Parakeet TDT 0.6B v2 on MLX; PyAV reads
+                            the audio, no ffmpeg); `fetch` the model by hand; the app's queued job (chapter 11)
+  catalog.py           840  the photo app's library in memory: load(), Catalog (videos, their frames, Live Photo
+                            clips, the same for every member), View (what one member sees: mask, stacks, trip
+                            cards, counts, favourites), Live and visible_for, the one way to ask (chapter 11)
   browse.py            389  search, similar, facets, Years and Months, layout; an agent's searches; kind and is:video
   images.py            251  thumbnails (WebP), previews, large images and originals, a video's from its poster;
                             making them in the background; which file /video/ sends
   video.py             112  still frames out of a video with PyAV: when to look, frames, the poster, which to keep (chapter 10); a heavy video's copy to play from (chapter 11)
-  admin.py             276  phone uploads, the ingest, restart, /stats, backups
+  admin.py             326  phone uploads (a tombstoned one refused, before its body when its hash is sent), the
+                            ingest, restart, /stats, backups
   encoder.py           174  SigLIP's text (and image) side, for the photo app: loaded when asked for, let go when idle
   compare.py           340  an experiment: a fixed list of searches ranked by a second model beside the app's own, voted on, and a report, at /compare (chapter 10)
   compare-terms.txt     30  the searches a comparison asks, one a line
-  estate.py          1,046  ingest, link, exif, live (Live Photo pairs), dupes, review, tag, search, stats
-  faces.py             964  faces: run, serve, and the People class (who is who)
-  changes.py           439  albums and change sets: proposed, reviewed, applied, reverted (chapter 26)
+  estate.py          1,219  ingest, link, exif, live (Live Photo pairs), dupes, review, tag, search, stats; purge (one
+                            photo for good, by hand) and migrate (every photo's first sharer, the Estate defaults lens,
+                            owners and favourites); the immutable flag (chapter 4)
+  faces.py             979  faces: run, serve, and the People class (who is who)
+  changes.py           473  albums and change sets: proposed, reviewed, applied, reverted, discarded as a mark (chapter 26)
   places.py            388  place names, local time, events, trips
-  estate_mcp.py        417  the library as MCP tools for an agent, at /mcp (chapter 26)
+  estate_mcp.py        423  the library as MCP tools for an agent, at /mcp: who a call is for (a login, a run's
+                            token), ask_member, stories in get_photos (chapter 26)
   upload.py            340  receives phone uploads into an inbox (chapter 24)
-  tasks.py             299  a request in words, worked on by Claude Code on the library's computer (chapter 26)
+  tasks.py             317  a request in words, worked on by Claude Code on the library's computer: the estate's
+                            agent, a token per run, who started each run (chapter 26)
   stats.py             181  the numbers behind the /stats page
   sync.py               98  the change feed a phone syncs from (chapter 20)
   scores.py             88  which photos are best: the two scorers (chapter 25)
   stacks.py             74  near-identical shots as one stack (chapter 25)
-  pages.py              64  puts the shared stylesheet into each page as it is sent, and says which
-                            script modules (app/*.js) a server sends at /app/<name>.js
+  pages.py              82  puts the shared stylesheet into each page as it is sent, and says which
+                            script modules (app/*.js) a server sends at /app/<name>.js; the request-access page
   intake/            1,235  the setup page's engine: sources, jobs, the pipeline every source feeds (chapter 16)
   core/                     what several parts must agree on, standard library only (issue #85):
     media.py                  file types: extension -> MIME, the image/video/RAW/upload sets, what each decoder skips,
                               what /video/ sends each video as (VIDEO_TYPES)
-    schema.py                 every SQLite table of every database, and the additive migrations: ensure(con, area)
+    schema.py                 every SQLite table of every database, and the additive migrations: ensure(con, area);
+                              the protected tables' triggers (chapter 5)
     config.py                 the default ports (8766 real, 8767 demo, 8768 preview, 8769 sandbox, 8765 review, 8764 faces)
     states.py                 the finite string domains as StrEnums (change set op/status/state, decisions, task,
                               ingest, intake job and stage, clustering), each value the string already stored (issue #90)
@@ -110,9 +144,14 @@ photo-estate/                  the server and the web app (Python run with uv; n
 
   search.html        2,092  the photo app: Library, Albums and Search (HTML + CSS + its own script, a module)
   people.html          796  the People page
-  changes.html         449  reviewing an album or change set, at /changes
+  changes.html         601  reviewing an album or change set, at /changes; and in its held mode, looking held
+                              photos over, at /held (the same wall: mark to release, "Reviewed up to here")
   setup.html           429  bringing photos in, at /setup
   stats.html           282  library info, at /stats
+  members.html         128  the sysadmin's members: let in, turn off, role, upload policy, person, at /members
+  inbox.html           102  a member's inbox: what waits for them, each opening the page that decides it, at /inbox
+  agents.html          143  Connect your agent, at /agents: the command and a configuration with this app's address,
+                            where an agent can run, and the member's own agents, allowed or turned off (chapter 11)
   review.html          255  the near-duplicate review page
   compare.html         226  a run of the model comparison: two unlabelled columns a search, a vote, and the report, at /compare
   app/estate.css        97  the stylesheet every page shares
@@ -151,9 +190,29 @@ photo-estate/                  the server and the web app (Python run with uv; n
     people-flow.js      21    people.html: unknownFaces(), the bounded wait for the groups of unnamed faces
     stats-watch.js      50    stats.html's one loop for the figures and the uploads
     setup-flow.js       45    setup.html's two strict state machines (the page, the source panel) and their tables
+    members-flow.js     51    members.html's strict machine (loading, ready, saving one change at a time, failed)
+                              and what each member's row offers
+    lens-flow.js       165    lenses on the pages: search.html's Albums tab (the lenses, one change at a time;
+                              what each row says and offers), the viewer's "why" line (asked once a photo
+                              stays, "show it anyway"), and the words for a lens that changes.html shares
+    inbox-flow.js       60    inbox.html's strict machine (loading, ready, dismissing one item at a time, failed),
+                              what each kind's button says, and the count the Library's menu shows
+    agents-flow.js     173    agents.html's strict machine (loading, ready, deciding one agent at a time, failed; a
+                              refresh that fails keeps the page), how each agent is said, the command and configuration
+    private-flow.js    133    private photos on search.html: the viewer's private line (withdraw, release, a release
+                              day) and the held view (`is:held`: what it shows of what is held, the way to /held,
+                              and releasing those chosen)
+    held-flow.js       113    changes.html's held mode (/held): its strict machine (loading, reviewing, sending,
+                              failed), what "Reviewed up to here" covers, why a photo is held, the page's words
+    story-flow.js      266    telling a story, typed or spoken (the teller: its strict machine, the browser's
+                              MediaRecorder and microphone, the component's HTML, mountTeller), a story's words and
+                              HTML, follow() (a transcript asked for again until it is written), and the viewer's
+                              stories of the photo showing; inbox.html and search.html share it
+    ask-flow.js         70    inbox.html's questions view (/inbox?ask=<group>): an item's questions, answered or put
+                              away one at a time, and who asks
     video-flow.js       63    what plays in search.html's viewer: still, video, failed, live; every step out of
                               video or live lets the element's stream go (chapter 13)
-    tests/           2,619    their unit tests (video-flow.test.js among them), run by Node's own runner: `npm test` (chapter 17)
+    tests/           2,800    their unit tests (video-flow.test.js, lens-flow.test.js among them), run by Node's own runner: `npm test` (chapter 17)
     package.json              TypeScript, pinned, to check the modules' types (`npm run typecheck`); with
     package-lock.json         tsconfig.json and .npmrc (the lockfile names no registry). Nothing here is
                               shipped: the browser loads the modules as they are
@@ -161,9 +220,34 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      49  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             6,847  16 self-running test scripts and 17 pytest files; conftest.py runs the scripts under pytest,
+  tests/             7,741  16 self-running test scripts and 21 pytest files; conftest.py runs the scripts under pytest,
                             test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
+                            test_members.py checks members.py and its journal entries on a scratch catalog;
+                            test_journal.py checks journal.py and the one entry each write appends;
+                            test_lenses.py checks lenses.py's rules and writes on a scratch catalog;
+                            test_member_inbox.py checks member_inbox.py and each kind's making and closing there;
+                            test_agent.py checks the estate's agent: a run's token (from this computer only, while
+                            the run lasts, for its member; X-Estate-Task refused) and each kind of MCP caller;
+                            test_personal_agents.py checks a member's own agent: every kind of /mcp caller, binding
+                            (never from the agent's own device), no task tools, journal_since kind by kind and its
+                            cursors, privacy, a series kept up to date end to end;
+                            test_listeners.py checks listeners.py with a stand-in app, then end to end with a
+                            stand-in agent: a family series and a member's own kept up to date, an answer waking a run;
+                            test_stories.py checks questions and stories: nothing private through a question, a story
+                            or a recording; the allowance, ranking and grouping on a fake clock; a spoken answer
+                            through upload, the queue and a stand-in transcriber; the triggers; a purge;
+                            test_tombstones.py checks the phone gate's tombstones: the endpoints, an upload refused
+                            before its body and dropped from staging, one member's opt-out against another's copy,
+                            a purge, the phone's screenshot mark reaching the hold;
+                            test_private.py checks private photos: who may be shown one with one to three sharers,
+                            every way a photo leaves the app (over real HTTP too), People, release on a day, an
+                            agent, ingest's sharers and the hold before any reload, the one-off run, and the
+                            review of held photos (its order, up to here, the inbox item, every caller refused alike);
+                            test_multiplayer.py checks, as the demo's three members, what each sees everywhere, and
+                            that no route asks it any way but Live.visible_for (it reads the code);
+                            test_append_only.py checks the protected tables, the sources only adding, the
+                            immutable flag, purge and migrate on scratch catalogs and stores;
                             test_core.py checks core/ against what the code before it did;
                             test_types.py checks the typed contracts (Catalog's fields, the enums) and runs pyright;
                             test_lifecycle.py makes the background loaders fail and race on purpose (issue #82);
@@ -179,12 +263,22 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             and that the servers send the modules as JavaScript (issue #89);
                             test_pages_browser.py (734 lines, slow tier) drives the secondary pages in a real
                             browser with Playwright and makes their requests fail or never end (issue #80);
-                            test_video_browser.py (slow tier) plays videos and Live Photos in search.html, in Chrome
-  tests/fixtures/           schema_baseline.json (sqlite_master as older code made it), screenshot_rules.json
+                            test_video_browser.py (slow tier) plays videos and Live Photos in search.html, in Chrome;
+                            test_lenses_browser.py (slow tier) uses the lenses on the pages as Ada, Ben and Cleo;
+                            test_inbox_browser.py (slow tier) uses the inbox as them, and a stranger asking in;
+                            test_agents_browser.py (slow tier) connects Ben's and Cleo's agents and allows and turns
+                            them off from the inbox and /agents;
+                            test_private_browser.py (slow tier) withdraws, releases and reviews held photos as Ben and Cleo;
+                            test_held_browser.py (slow tier) looks Ben's held photos over on /held a stretch at a time;
+                            test_stories_browser.py (slow tier) answers questions typed and spoken, tells stories,
+                            grows a series and asks the agent for the family, as them
+  tests/fixtures/           schema_baseline.json (sqlite_master as older code made it, and the tables and columns
+                            added since), screenshot_rules.json
                             (which photos are screenshots, for the server's and the iPhone app's tests)
   pyproject.toml            dependency groups (core, ml, faces, places, tools, dev), pytest, ruff and pyright settings (chapter 17)
   uv.lock                   every dependency of those groups, pinned; CI installs from it (chapter 17)
-  tools/             3,506  demo builder, screenshots, icons, benchmarks, book site, aesthetics/, cloud-*.sh,
+  tools/             3,506  demo builder, screenshots, icons, benchmarks (bench_views.py: the member views on a
+                            library of the real size), book site, aesthetics/, cloud-*.sh,
                             video_demo.py (a copy of the demo library with videos and Live Photos, chapter 17),
                             export_squares.py (the Library as square JPEGs in tar shards, for embedding experiments),
                             embed_squares.py (a second model's vectors for those shards, for /compare),
@@ -192,14 +286,22 @@ photo-estate/                  the server and the web app (Python run with uv; n
   deploy/              330  launchd plists, the cloud preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
   demo/                     104 CC0 photos, their catalog, and credits
 
-ios/                 5,751  the iPhone app (chapters 19-24, 26)
-  PhotoEstate/Library/   3,887  grid, viewer, Library and Search tabs, albums, filter sheets, the phone's own photos,
-                                Movie.swift (178: a video and a Live Photo's clip in the viewer, its bar)
-  PhotoEstate/Catalog/     959  the replica of the catalog, reading a search, the server's JSON API
+ios/                 6,705  the iPhone app (chapters 19-24, 26)
+  PhotoEstate/Library/   4,066  grid, viewer, Library and Search tabs, albums, filter sheets, the phone's own photos,
+                                Movie.swift (178: a video and a Live Photo's clip in the viewer, its bar),
+                                Private.swift (71: the viewer's private mark, withdraw and release)
+  PhotoEstate/Catalog/     985  the replica of the catalog, reading a search, the server's JSON API
   PhotoEstate/Images/      306  thumbnails and kept photos
-  PhotoEstate/*.swift      398  the tab bar, the look, This iPhone, uploads, the in-app web view
-  UploadExtension/          94  the background upload extension
-  Shared/                   90  the server's address, the upload request, the extension's log
+  PhotoEstate/Gate/      1,044  the Inbox tab and the phone gate's half in the app: who I am, batches to look over,
+                                older photos by chunk, kept back and "share after all" (chapter 24); a question
+                                answered natively, typed or spoken (QuestionsView.swift, Teller.swift: the recorder,
+                                a story's row and its player), StoryModel.swift (plain values and functions, checked on the Mac)
+  PhotoEstate/*.swift      432  the tab bar, the look, This iPhone, uploads, the in-app web view
+  UploadExtension/         106  the background upload extension (jobs, or candidates for the Inbox)
+  Shared/                  347  the server's address (and a debug build's demo member), the upload request, the
+                                extension's log, PhoneGate.swift (217: the gate's rules and state, in the app group)
+  Tests/                   220  the phone's unit tests (the gate, the upload request, questions and stories): run.sh
+                                compiles them with Shared/ and StoryModel.swift for the Mac and runs them
   project.yml, project-sim.yml, deploy.sh, build-number   XcodeGen specs; build and install on the phone
 ```
 
@@ -249,7 +351,7 @@ reading one shared state object instead of closing over variables.
 
 | Module | What it holds |
 |---|---|
-| `catalog.py` | `load()`: the catalog read into a `Catalog`, a slotted dataclass with every field typed (vectors, per-photo `PhotoMeta` dicts, columns, facets, stacks, the name and place vocabulary), its shared questions (`combine`, `facet_counts`, `take`, `periods`, `scored`, ...), and `Live`, the catalog being served, swapped under a gate after an ingest and changed under it for a favourite, with a `generation` that counts both |
+| `catalog.py` | `load()`: the catalog read into a `Catalog`, a slotted dataclass with every field typed (vectors, per-photo `PhotoMeta` dicts, columns, facets, the name and place vocabulary), the same for every member; a `View` of it per member (`Catalog.view`: the mask, stacks, trip cards, counts and favourites, with the questions every route asks: `combine`, `facet_counts`, `take`, `periods`, `row`, `feed_row`, ...); and `Live`, the catalog being served, swapped under a gate after an ingest, with `visible_for(member)`, the one way a route asks what a member sees, and a `generation` that counts every change |
 | `browse.py` | `Browse`: the search language and `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log`, plus the same searches for an agent (`/mcp`) |
 | `images.py` | `Images`: `/thumb/` (WebP), `/preview/`, `/large/`, `/original/`, and pre-generating thumbnails and previews; a video's are made from its poster frame, and `video_file` says which file `/video/` streams |
 | `admin.py` | `Admin`: phone uploads, the ingest, restart, the `/stats` page, preparing arrivals; catalog backups |
@@ -279,7 +381,7 @@ everything on each run, in seconds.
 
 ### The web pages
 
-Each page (`search.html`, `people.html`, `changes.html`, `setup.html`, `stats.html`, `review.html`, `compare.html`) is one HTML file with its CSS and its own JavaScript inline: no build step, no
+Each page (`search.html`, `people.html`, `changes.html`, `setup.html`, `stats.html`, `review.html`, `compare.html`, `members.html`, `inbox.html`, `agents.html`) is one HTML file with its CSS and its own JavaScript inline: no build step, no
 framework, no dependencies, no bundler. The server reads the file from disk on every request for `/`
 (with an ETag), so editing a page and reloading shows the change at once.
 
@@ -301,10 +403,10 @@ import { toast } from "/app/toast.js";
 | [app/toast.js](../../photo-estate/app/toast.js) | `toast(message, { action })` |
 | [app/format.js](../../photo-estate/app/format.js) | `fmt`, `plural`, `dateParts`, `duration` |
 | [app/query.js](../../photo-estate/app/query.js), [app/layout.js](../../photo-estate/app/layout.js) | The parts of `search.html` that are pure functions: the question and its address, and the justified grid's rows |
-| [app/grid-flow.js](../../photo-estate/app/grid-flow.js), [app/library-flow.js](../../photo-estate/app/library-flow.js), [app/albums-flow.js](../../photo-estate/app/albums-flow.js), [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js), [app/video-flow.js](../../photo-estate/app/video-flow.js), [app/favourite.js](../../photo-estate/app/favourite.js) | `search.html`'s state over time: its machines, their tables, what each state owns, and the requests they make and cancel ([chapter 13](13-photo-app.md#the-machines), [issue #81](https://github.com/jflam/photo-estate/issues/81)). The page gives them its `fetch`es and is told what to draw |
+| [app/grid-flow.js](../../photo-estate/app/grid-flow.js), [app/library-flow.js](../../photo-estate/app/library-flow.js), [app/albums-flow.js](../../photo-estate/app/albums-flow.js), [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js), [app/video-flow.js](../../photo-estate/app/video-flow.js), [app/favourite.js](../../photo-estate/app/favourite.js), [app/lens-flow.js](../../photo-estate/app/lens-flow.js) | `search.html`'s state over time: its machines, their tables, what each state owns, and the requests they make and cancel ([chapter 13](13-photo-app.md#the-machines), [issue #81](https://github.com/jflam/photo-estate/issues/81)). The page gives them its `fetch`es and is told what to draw |
 | [app/loop.js](../../photo-estate/app/loop.js) | `loop(step)`: asking the server again and again for as long as a page is open. One step at a time (a timer and a click can never both start one), the step says how long to wait, a failing step does not end it, `pause()`/`resume()` for a hidden page, `stop()` aborts the step under way. `until(step, options)`: `poll()` that resolves to `{ state: "done" \| "timeout" \| "error" }` for a page that shows how the wait ended |
 | [app/work.js](../../photo-estate/app/work.js) | `single()`: work that must not overlap itself, not busy any more when it fails; `batch(items, step)`: several requests in a row, and which were done when one failed; `serial({ settle })`: requests one at a time in the order asked, and one call to put the page right after a failure |
-| [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |
+| [app/save-queue.js](../../photo-estate/app/save-queue.js), [app/changes-flow.js](../../photo-estate/app/changes-flow.js), [app/people-flow.js](../../photo-estate/app/people-flow.js), [app/stats-watch.js](../../photo-estate/app/stats-watch.js), [app/setup-flow.js](../../photo-estate/app/setup-flow.js), [app/members-flow.js](../../photo-estate/app/members-flow.js), [app/inbox-flow.js](../../photo-estate/app/inbox-flow.js), [app/ask-flow.js](../../photo-estate/app/ask-flow.js), [app/story-flow.js](../../photo-estate/app/story-flow.js) | One page's behaviour over time each, kept out of the page so it can be unit-tested: see below |
 
 The browser fetches each module as it is, from `/app/<name>.js`: [pages.py](../../photo-estate/pages.py)'s
 `module()` says which files those are (the modules, not their tests or `package.json`), and every server
@@ -332,6 +434,10 @@ that behaviour in the modules above, where each rule is a unit test, and ask the
 | `people.html` | Saving a page of faces is one request under `single()`: when it fails the toast says why, the choices stay and Save works again. Taking faces off a person is several requests under `batch()`: the ones that were done leave the page, the rest keep their marks, and the button sends only what is left. Every other change (naming a group, renaming, the photo's buttons) says so in a toast when it fails. A view that can not be loaded says so, with **Try again** | the wait for the groups of unnamed faces (`unknownFaces`): asked after 1.5 s, then half as long again each time up to 10 s, for at most 10 minutes; ends on `ready` or `failed`; cancelled when the view changes |
 | `changes.html` | Marks, apply, revert, commit and reopen go one at a time in the order made (`edits`, over `serial()`). If one fails, the set is read again from the server once nothing more is on its way and the page shows that; if it can not be read either, the page says it may be wrong, with **Read it again**. After apply or revert, `settle` asks the set's check until the app has taken the change in | `settle`: every 700 ms for at most 2 minutes, then "Still updating" with **Check again**; cancelled by a newer change, by leaving, and while the page is hidden |
 | `stats.html` | `statsWatch`: one `loop()` asks for the uploads and the figures in turn, so two requests are never in flight. A failed `/api/stats` is "Couldn't take stock" or "Can't reach the library" with **Try again**; a catalogue run or a restart that can not be started says why in the uploads panel | figures every 1.5 s while the server is measuring; uploads every 2 s during a run, else every 15 s; after a restart `/api/info` every 4 s for at most 5 minutes; paused while the page is hidden |
+| `members.html` | One strict machine from `members-flow.js`: `idle`, `loading`, `ready` (owning the server's answer), `saving` (that, and the member being changed: the page takes no other change until the server answers), `failed`. A change the server refuses (the last sysadmin turned off) goes back to `ready` with the members as they were, and the toast says why | none: it asks once, and again only when told to |
+| `inbox.html` | One strict machine from `inbox-flow.js`: `idle`, `loading`, `ready` (owning the server's answer), `dismissing` (that, and the item being put away: one at a time), `failed`. A dismissal the server refuses goes back to `ready` with the items as they were, and the toast says why. Opening a lens that changed puts it away first, then goes there | none: it asks once, and again only when told to |
+| `agents.html` | One strict machine from `agents-flow.js`: `idle`, `loading` (keeping what was shown), `ready` (owning the server's answer), `deciding` (that, and the agent being allowed or turned off: one at a time), `failed` (only when nothing was shown yet). A refusal (allowing it from its own device) goes back to `ready` and the toast says why | a gentle refresh: every 4 s for two minutes, then every 20 s, only while the page is visible; drawn again only when something changed |
+| `inbox.html?ask=<group>` | `ask-flow.js`'s strict machine: `idle`, `loading`, `ready` (owning the item's questions still waiting and those answered here, each with its story; a step `ready` to `ready` for an answer, or a transcript written down), `dismissing` ("I don't know", one at a time), `failed`. Each question has a teller (`story-flow.js`): `idle`, `asking` (the microphone, only when Record is pressed), `refused`, `recording` (owning the recorder and when it started), `recorded` (owning the clip: listened to, redone, or sent), `sending`, `sent`, `failed` (owning what to send again) | a spoken answer's transcript: `follow()`, every 3 s growing to 20 s, at most ten minutes, cancelled on leaving; asked again when the page is shown again |
 | `setup.html` | Two strict machines from `setup-flow.js`, each state owning its data. The page: `loading`, `place`, `idle`, `watching`, `answering` (the states in which `/api/intake` is asked), `opening` (waiting for the photo app), `stuck`, `app`. The source panel: `closed`, `open`, `checking`, `checked`, `starting`, with `{ id, config, preview }` handed from state to state, so a preview never outlives the text it was made for and an answer for a panel that has moved on is dropped | asked every 1.2 s while a job is live, else every 8 s; `opening` asks `/api/info` every 1.5 s for at most 10 minutes, then "Still not open" with **Try again** |
 
 `compare.html` is a run of the model comparison, held by one strict machine from

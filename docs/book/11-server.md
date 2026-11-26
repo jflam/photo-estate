@@ -34,11 +34,14 @@ content type, Cache-Control[, headers])` or `None` when the path is not its own.
 | [changes.py](../../photo-estate/changes.py), [tasks.py](../../photo-estate/tasks.py) | `Changes`, `Tasks` | `/changes`, `/api/changes*`, `/api/albums*`, `/api/tasks*` |
 | [estate_mcp.py](../../photo-estate/estate_mcp.py) | `Server` | `/mcp` |
 | [intake/api.py](../../photo-estate/intake/api.py) | `IntakeAPI` | `/setup`, `/api/intake*` |
+| [members.py](../../photo-estate/members.py) | (functions) | Who the estate knows: members, their logins, roles and upload policies, and the journal entries each change appends; `PhotoApp` answers `/request-access`, `/api/request-access`, `/api/me`, `/members` and `/api/members*` with it (below) |
+| [journal.py](../../photo-estate/journal.py) | (functions) | No routes: `append` one entry to the journal in the caller's transaction, `since` to read it ([below](#the-journal)) |
+| [member_inbox.py](../../photo-estate/member_inbox.py) | (functions) | Each member's inbox: `put` and `close`, called by the code that makes and decides each item; `PhotoApp` answers `/inbox`, `/api/inbox` and `/api/inbox/<id>/dismiss` with it ([below](#the-inbox)) |
 | [compare.py](../../photo-estate/compare.py) | `Compare` | `/compare`, `/api/compare*`, only with `--compare-vectors`: a second model's ranking beside the app's own ([chapter 10](10-embeddings.md)) |
 
 What ties the modules together is `PhotoApp` (photo_app.py, about 500 lines): setting up the demo, the
-page and the home-screen app files, `/api/info`, `/api/sync`, favourites, album downloads, who may
-write, and re-reading the catalog after an ingest or a change set. `cmd_serve` in embed.py is now
+page and the home-screen app files, `/api/info`, `/api/sync`, favourites, album downloads, who a
+request is for and what it may do, the members' routes, and re-reading the catalog after an ingest or a change set. `cmd_serve` in embed.py is now
 four lines: find the library (or serve the setup page), build a `PhotoApp`, `start()` it, `serve()` it.
 
 **The app is an object you can call.** Building a `PhotoApp` reads the catalog and starts no thread;
@@ -53,28 +56,445 @@ zip written as it is read) and videos (`/video/`, read from the disk as they are
 headers`); the extra headers it carries (`Retry-After`, `Content-Disposition`, `ETag`) replaced the
 handler's old mutable `extra_headers`.
 
-### Who may write
+### Members, and who may do what
 
-`--upload-user` names the Tailscale logins that may change the library; with none named, everyone who
-can reach the app may (the demo, and a library only you use). The app listens on `127.0.0.1` only, so
-a request reaches it either through `tailscale serve`, which adds `Tailscale-User-Login`, or from a
-program on the Mac itself: the browser there, the headless agent that works on tasks (tasks.py) and
-an MCP client such as Claude Code. A request is **local** when it comes from `127.0.0.1` or `::1`
-with none of a proxy's headers (`Tailscale-User-Login`, `X-Forwarded-For`, `Forwarded`: `is_local` in
-intake/server.py).
+The family can use the estate, each person as a **member** ([members.py](../../photo-estate/members.py);
+the design is [notes/MULTIPLAYER-PLAN.md](../notes/MULTIPLAYER-PLAN.md), and this is its phase 1). Photo
+Estate never handles a password: identity comes from the tailnet. The app listens on `127.0.0.1` only, so
+a request reaches it either through `tailscale serve`, which adds `Tailscale-User-Login` (the login the
+person signed in to Tailscale with), or from a program on the Mac itself: the browser there, the
+headless agent that works on tasks (tasks.py), an MCP client such as Claude Code. A request is **local**
+when it comes from `127.0.0.1` or `::1` with none of a proxy's headers (`Tailscale-User-Login`,
+`X-Forwarded-For`, `Forwarded`: `is_local` in intake/server.py).
 
-Every request that changes the library takes one rule, `Auth.LOCAL_OR_WRITER`: a `--upload-user` login
-or a local request. That covers naming, merging and relabelling people (`POST /api/people/label`,
-`label-many`, `person`), favourites, albums and change sets, tasks, bringing photos in (`POST
-/api/intake/...`), the ingest, restarting, and uploads; and a vote on `/compare` (it writes only a
-file beside the second model's vectors, but it is a record kept of what you said). Reading is open to anyone who can reach the
-app (`Auth.PUBLIC`), and so is `/mcp`, whose write tools take the same rule. The rules are one table,
-`ROUTE_AUTH` in photo_app.py, checked before a request reaches its module; a refused request is `403
-{"error": "not allowed"}` (an upload's is admin.py's own `403 not allowed`). Until 2026-11-19 the People
-page's writes took no permission at all, and intake, the ingest, restart and uploads took a
-`--upload-user` login but refused this Mac's own browser and agent; the other writes already let
-local requests in. Local requests are let in because whoever runs a program on the Mac can already
-change the catalog's files.
+The catalog keeps its own table of members, and the logins that are them (`members`, `member_logins`,
+in core/schema.py's `members` area): the provider proves who someone is, the estate decides what they
+may do. A member has a **role** (`sysadmin` or `member`; more than one member may be a sysadmin), a
+**status** (`pending`, `active` or `revoked`: a member is never deleted), an **upload policy** that the
+iPhone app reads from `GET /api/me` (`everything`, `review`, `review_flagged`: the phone gate,
+[chapter 24](24-uploading.md#the-phone-gate-looking-before-sharing)), and may be linked to a
+person in People. A member is not a `persons` row: those are the people *in* the photos. Triggers refuse
+deleting a member or a login ([chapter 5](05-catalog.md#protected-tables)).
+
+`PhotoApp.who(headers, local)` says which member a request is for, from a copy of the members kept in
+memory (they change only through the app, which reads them again after each change). A local request
+is the sysadmin. Each request then takes one of the rules in `ROUTE_AUTH` (photo_app.py), checked
+before it reaches its module (`http_util.Auth`):
+
+- **`MEMBER`**, the default: an active member, whatever their role, or a local request. Every page, every
+  read and every write that is not below: searching, images and videos, the sync feed, People,
+  favourites, albums and change sets, tasks, `/mcp`, the ingest, uploads.
+- **`SYSADMIN`**: an active sysadmin, or a local request. `/members` and its API (letting people in),
+  `/setup` and `/api/intake/...` (a job reads any folder on this computer), restarting, and the machine's
+  figures: `/stats`, `/api/stats` and `GET /api/ingest` (they count every member's photos, private ones too,
+  and the ingest's log names files; phase 5).
+- **`PUBLIC`**: only what a browser needs to ask to be let in: `/request-access` and `POST
+  /api/request-access`, the home-screen app's files (manifest, icons, the service worker), and
+  `/api/info`, which tells someone who is not a member only `{"member": false}` (that the app is up:
+  the setup page waits on it), and a member the library's numbers.
+- **`LOCAL`**: this computer only; no route needs it yet.
+
+A refused browser opening a page is shown the **request-access page** with a 403: for a login nobody has
+let in, "Ask John to let you in" (the first active sysadmin's name), a name field and a button, which
+makes a `pending` member and puts the request in every sysadmin's inbox ([below](#the-inbox)); after that,
+that John has been told and will let them in; for a revoked member, that they are not let in. It is a page of a few words with no script, so it needs nothing that is not open. Anything
+else refused is `403 {"error": "not allowed"}`. The album download and `/video/` stream past `route()`
+in the HTTP handler, which asks `PhotoApp.refusal` first; an upload checks the same rule in admin.py.
+
+The sysadmin lets people in on **`/members`** (members.html, its state machine in
+`app/members-flow.js`): who has asked, who is in and who is turned off, each with their logins; let in,
+turn away, turn off, let in again; a role, an upload policy, a name, and the person in People they are.
+The estate always keeps an active sysadmin: a change that would leave none is refused. `GET /api/me`
+says who a request is for. A task records who asked for it (`agent_tasks.acting_for`), from the
+Changes page and from `/mcp`'s `submit_task`; the agent calls `/mcp` from this computer with its run's
+token, and is answered as that member sees the library (below, [What each member
+sees](#what-each-member-sees-lenses), and [the estate's agent](#the-estates-agent-listeners-questions-and-stories)).
+
+**The first start.** A catalog made before members has none. On the first start of the new code, the
+logins given by `--upload-user` become active members who may upload everything, the first of them the
+sysadmin (or the one `--sysadmin` names). After that the options are not read again: members are kept on
+`/members`. With no `--upload-user` and no members, only this computer can use the app until a sysadmin
+is let in from it. Existing `created_by` and `set_by` values are logins, so they already name these
+members; they are not rewritten.
+
+Until 2026-11-22 the rule was different: reading was open to anyone who could reach the app, and every
+write took a `--upload-user` login (anyone, when none was named) or a local request. Before 2026-11-19
+the People page's writes took no permission at all, and intake, the ingest, restart and uploads took a
+`--upload-user` login but refused this Mac's own browser and agent.
+
+### The journal
+
+Every write the app makes appends one entry to the **journal**, the estate's append-only log, in the
+same transaction as the change it records ([journal.py](../../photo-estate/journal.py):
+`append(con, actor, kind, subject, data, acting_for)`, and `since(con, id)` for the listeners of a later
+phase; nothing reads it yet). An entry is who did it (`actor`, the member the request was for: `who()`
+above, so a request from the Mac itself is the sysadmin), its `kind`, what it is about (`subject`:
+`album:12`, `member:3`, `task:5`, a sha) and a little JSON. It is one entry per action, never one per
+photo: applying a set that hides ten thousand photos is one `album.applied` naming the set, with counts.
+A write that changes nothing appends nothing. The kinds, listed in journal.py's docstring: `member.*`;
+`album.created`, `.items`, `.decided`, `.applied`, `.reverted`, `.committed`, `.reopened`, `.hidden`,
+`.viewed`, `.renamed`, `.query`, `.discarded` (changes.py, for albums and change sets alike);
+`favorite.set`; `faces.labeled` and `person.changed` (People, beside its own `face-labels.jsonl`, which
+stays as it was); `task.submitted` and `task.finished`; `ingest.finished`, `photo.purged` and
+`sharers.migrated` (estate.py). The state tables stay the truth for what the app shows; the journal is
+the history beside them, and triggers refuse any `UPDATE` or `DELETE` of it.
+
+The actor reaches each write as a member id beside the login the code already passed: `PhotoApp`
+gives `m.id` to `Changes.handle`, `Tasks.handle`, `People.handle`, `set_favorites` and `/mcp` (whose
+tools that write pass it on). A task's agent is no member yet, so what it does is journaled with no actor,
+acting for the member who submitted the task (`acting_for`; its change sets still carry `created_by`
+`task:<id>`), as is a run's own end, `task.finished`. Phase 3 added the lens kinds: `lens.created`,
+`lens.subscribed`, `lens.unsubscribed`, `lens.published`/`unpublished`, `lens.proposed`,
+`lens.accepted`/`declined`, `album.published`/`unpublished`, `photo.shown`/`unshown` and
+`lenses.migrated`; `album.applied` names the lens a set hides for. Phase 4 added `inbox.dismissed`
+(below): an inbox item made or closed is not journaled, because the entry of what made or decided it is.
+
+### What each member sees: lenses
+
+One member's hidden photos are not everyone's (phase 3 of the plan). What a member sees is worked out
+from a handful of state tables ([lenses.py](../../photo-estate/lenses.py), in core/schema.py's `lenses`
+area), and asked of **one function**, `Live.visible_for(member)` (catalog.py): every route that answers
+from the catalog (search, similar, facets, Years and Months, the layout, `/api/info`, the sync feed,
+albums, People's lists, `/stats`, `/compare`, the MCP tools) reads the **member view** it returns, never a
+mask of its own. A test reads the code to keep it so (tests/test_multiplayer.py,
+`test_no_route_reads_a_mask_but_through_visible_for`): the `Catalog` has no `visible`, `fav`, stacks,
+trip cards or `info` any more, so a route that reached for them would fail, and the test also refuses
+reading the `hidden` table, or a photo's facts for a favourite, outside the modules that own them.
+
+- **A lens** is a named view, a row of `lenses`, its owner's, private until published. A **filter** leaves
+  photos out: its photos are what the hiding change sets that name it hide (`change_sets.lens_id`;
+  `hidden(sha256, set_id)` is as it was), each reviewed batch its own set, applied and reverted on its own.
+  A **series** is an album (`lenses.set_id`), given its lens when its owner first publishes it.
+- **Which filters are on** for member M (`State.on`): M's own; every **estate default** (a published filter
+  every member sees through) unless M has opted out (`subscriptions.mode` `opted_out`, or `snapshot`); and
+  any other published filter M subscribes to `live`. A filter is always on, everywhere; the filters add
+  their hides together. A series is never on: subscribing to one puts it in M's Albums and changes
+  nothing else.
+- **What M sees**: what M may be shown (`shared_for`: every photo but those private to their sharers when M
+  is not one of them, [below](#private-photos)), less what M's filters hide, less nothing M has said to
+  **show anyway** (`shown`). A hiding set with no lens
+  (from before lenses) hides for everyone, as all hiding did before.
+- **A snapshot** subscription copies what the lens holds now into one of M's own (a filter: a new filter
+  lens of M's with one applied set; a series: a new album of M's with the photos M sees of it); it does
+  not follow later changes. A live subscription does, at once.
+- **Applying** a hiding set hides for a lens chosen at its first apply: the owner's own filter by default
+  (titled plainly "Hidden photos", made then), or the Estate defaults, for a sysadmin who asks (`{lens: "estate"}`).
+  A set that hides something keeps its lens until it is reverted.
+- **Proposing** a filter as an estate default publishes it and marks it (`lenses.proposed_at`); a
+  sysadmin accepts (it becomes one) or declines. Every other sysadmin is told in their inbox ([below](#the-inbox)).
+- **Favourites** are each member's own (`member_favorites`; the old `favorites` table is no longer
+  written). What a photo's source said (`assets.favorited`) is a favourite of its sharers only.
+
+**The member view** (`catalog.View`) is not a bare mask, because the catalog worked visibility into more
+than one thing: the mask; which photo of a stack is on top and how many it holds (stacks are grouped over
+the photos the member sees, so a stack whose best shot one member hid shows them its next best, while
+everyone else still sees the best); the trip cards and their covers; the counts in `info`; and the
+favourites. `Catalog.view` works all of it out in a few NumPy passes; `Live` keeps one per member until
+the catalog is replaced (`install`) or someone's hides change (`relook`, which reads the tables again:
+`lenses.read`), and a favourite is shown in the member's own view in place. `Browse.remember` has the
+member in its key. A row's `fav` is filled from the member's view as the row is sent (`View.row`,
+`View.feed_row`): a photo's facts (`Catalog.meta`) no longer carry one.
+
+The lens routes (`/api/lenses...`, `/api/albums/<id>/publish`, `/api/photos/<sha>/show`) are answered
+outside the gate, like a favourite: the change is in every view (`relook`, on the gate's write side)
+before the answer goes back, and the feeds and People follow in the background. An apply on the review
+page is taken in in the background as before (`busy` until it is). **Why** a member does not see a photo
+is `GET /api/photos/<sha>/why`, read from the state tables (the hidden rows, their sets, the sets' lenses
+and the lenses' owners), never the journal: "Hidden by Ada's lens “Estate defaults” on Nov 3" (`text`; the
+year only when it is not this one), "Hidden by your lens “Hidden photos” on Nov 23"; `reasons` carries the
+same, structured, for a page to word itself. The pages that use all of this are [chapter 26](26-albums-and-agents.md#lenses-on-the-pages).
+
+**Albums** are their owner's (`change_sets.owner`): a member lists and opens their own and the series
+others publish, and only the owner changes one. Inside any album or series, whoever made it, the photos are
+listed through the viewer's own view: a series never shows a member what their filters hide. A set up for
+hiding is its owner's review of what it hides, so it lists every photo of it (marked `hidden`).
+
+**People** stays built once, for everyone ([chapter 14](14-faces.md)): its faces leave out the photos the
+estate defaults hide and every photo private to anyone (`faces.default_hidden`), not any member's own hides. A member's own filters apply as
+faces are listed: a person's faces, the review queue, the unnamed groups and a person's cover leave out
+faces in photos the member does not see (`People.handle`'s `keep`); the counts stay People's own.
+
+**The agent answers for a member.** The MCP tools read the view of the login that called, and for a
+task, of the member it was submitted by (`agent_tasks.acting_for`, fixed by its run's token since phase 7): a
+task Ben submits searches as Ben, and the albums and change sets it makes are Ben's.
+
+**The sync feed** is one per member ([chapter 20](20-sync.md)).
+
+**Before `estate.py migrate`** (a catalog the phase-3 code opens before the migration has run, which is
+the Mac mini between the deploy and the migration): a hiding set with no lens hides for everyone; an album
+or set with no owner, a photo with no sharer, and a row of the old `favorites` table are the first
+sysadmin's. So the owner sees exactly what he saw before, and so does every member, with nothing to opt
+out of until the migration names the Estate defaults. The migration ([appendix A](appendix-a-commands.md))
+gives those sets the lens Estate defaults, those albums the sysadmin, and copies the old favourites to
+the sysadmin's own.
+
+### The inbox
+
+Every "propose" in the design ends with someone deciding, so each member has an **inbox**: what waits for
+them ([member_inbox.py](../../photo-estate/member_inbox.py), the table `inbox_items` in core/schema.py's
+`members` area; phase 4 of the plan). The word "inbox" is also the upload folder (`--inbox`), which this
+has nothing to do with: hence the module's and the table's names. An item is a member, a **kind**, a
+**ref** (what it is about, in the journal's words: `member:4`, `album:12`, `lens:3`), a title, and a state:
+`open`, `done` (decided, or no longer anyone's to decide) or `dismissed` (put away by its member).
+
+An item is made **by the code that needs the decision**, in the same transaction as what caused it, and
+closed by the decision itself wherever it is made. The inbox decides nothing: each kind opens the screen
+that already decides it.
+
+| Kind | For | Made by | Closed by | Opens |
+|---|---|---|---|---|
+| `member_request` | every active sysadmin | `members.request`: someone asked to be let in | letting them in or turning them away (`members.change`, from `/members`) | `/members` |
+| `review` | whom the task acted for | `Tasks.move`, when a task ends (done, failed or cancelled, and a run the app restarted under): each hiding set its agent made that has photos and hides none yet | applying the set in full, taking it down to an album, or discarding it (changes.py) | `/changes/<id>` |
+| `lens_proposed` | every other active sysadmin | `lenses.propose` | `lenses.decide` (accept or decline), or the owner taking the filter back (unpublishing) | the Albums tab, where "Waiting for you to decide" lists it |
+| `lens_changed` | each member subscribed to a published lens live (not its owner, nor whoever changed it) | changes.py, when a filter's hides change (an apply, a revert, a hidden photo taken out of a set) or a series' photos or search do | nothing waits on it: leaving the lens (unsubscribing, or keeping a copy instead) closes it; otherwise it is put away | the Albums tab (a filter), or the series |
+
+| `held` | the photos' sharer | private.py, when the hold at ingestion (or the one-off run over the library) keeps photos private to them: one open item per member, which a later hold brings up to date (its ref stays `held:<batch>` of the batch that opened it), saying how many wait to be looked over | none of their held photos waits to be looked over (each looked over on `/held`, or released any way), not when none is held | the review of held photos, `/held` |
+
+`lens_changed` is one open item per member and lens, brought up to date ("Ben's lens “Hidden photos”
+changed: it hides 4 photos now") and moved to the top, never one per change; the change itself applies at
+once. An estate default has no subscription rows (every member is in it unless they opt out), so it tells
+nobody: the sysadmin's everyday hiding would otherwise reach every member's inbox. The `review` trigger is
+the end of the task rather than the set being made, because an agent fills a set over many calls and a
+set looked at half-made would be reviewed again.
+
+`GET /api/inbox` is the member's open items, newest first, each with what it `opens`, and how many;
+`POST /api/inbox/<id>/dismiss` puts one away (`404` for any item that is not the member's own, `409` for one
+that is not open), journaled as `inbox.dismissed`, the one thing about an item that no other entry says.
+The page is **`/inbox`** ([chapter 26](26-albums-and-agents.md#the-inbox)); the Library's menu shows how many
+items are open. A later phase adds a kind with a row in `member_inbox.OPENS` (what its item opens) and a
+`put` and a `close` in the code that makes and decides it.
+
+### Private photos
+
+A photo can be **private to its sharer** (phase 5 of the plan; [private.py](../../photo-estate/private.py)). A
+**sharer** is a member who shared a photo: ingest records it in `sharers` ([chapter 4](04-store-and-ingest.md)),
+from the folder a phone's upload lands in (`<inbox>/m<member id>/YYYY/MM/DD/...`; admin.py chooses it from the
+member the request is for, and the phone's path is unchanged), and anything else (a bulk import from the setup
+page, a Takeout, an upload from before member folders) is the first sysadmin's. A copy a second member sends
+adds a sharer; it is not a new photo. A photo is private to a sharer while a row of `private` names them and is
+not released (`released_at`); its `why` is how it got there:
+
+- **`new`**: a phone upload not checked yet. Ingest writes the row in the transaction that adds the photo, for
+  an image nobody else is shown yet (a new photo, or one every sharer holds private).
+- **`held`**: the check found it looks like a receipt, a screenshot or a document, and kept it private.
+- **`withdrawn`**: its sharer took it back from the family, from the viewer.
+
+**Who may be shown it** (`lenses.State.shared`, from `private.Private`): everyone, unless every one of its
+sharers holds it private; then those sharers only. So a photo Ben and Cleo both shared, withdrawn by Ben, is
+still shown to everyone (Cleo shares it); withdrawn by both, to the two of them. A photo with no sharer row is
+the first sysadmin's. The estate's agent acting for nobody (a task with no `acting_for`) reads as member 0,
+`NOBODY`, and is shown only photos private to nobody. That one mask is `Live.shared_for`, and so everything
+goes by it: every view (`visible_for` builds on it), the counts, facets, trips, Years and Months, covers and
+"similar" neighbours of each view, `hidden=1`, the sync feeds, the MCP tools, albums, series and their zip,
+change sets' review pages, and every pixel route. A photo private to someone else **does not exist** for a
+member: every route that takes a sha answers it exactly as one the library does not have (`/thumb/`,
+`/preview/`, `/large/`, `/original/`, `/video/`: 404 with an empty body; `/api/photos/<sha>/why`: 404 "no such
+photo", never "it is private"; `/api/similar`: "unknown photo"; a stack named by it; the MCP's `get_photos`,
+`similar_photos`), and so does a Live Photo's clip whose stills are all private to others (`Catalog.stills`)
+and a face crop of a face in such a photo (`/face/<id>`, People's `see`). An event or trip only private photos
+are in has no title for them; a trip's count and dates are of the photos they may be shown; a person or place
+only such photos carry is a plain word in a typed search, and a name the MCP's search does not know. A task's
+record (its events, its report: what its agent saw, which is what its member sees) is for that member only:
+`/api/tasks` lists a member's own tasks, and another's is a 404. `/stats` and `GET /api/ingest` (the machine's
+figures, and the inbox's run log, which names files) are the sysadmin's ([below](#members-and-who-may-do-what)):
+its library figures are of the photos the first sysadmin may be shown; its disk figures are the machine's own,
+every file counted, with no file name of a private photo.
+
+**People** is built without every photo private to anyone, its sharer included, until it is released, as
+without what the estate defaults hide; a change to what is private reloads it, as a change to an estate
+default does (`PhotoApp.relook` says whether `State.people_out` changed).
+
+**The hold at ingestion.** ingest-iphone.sh runs `private.py check` after the embeddings and before it tells
+the app (`catalog_ready`): each `new` row whose photo has a vector is scored against three prompts ("a
+receipt", "a screenshot of a phone", "a document": `private.PROMPTS`) with its SigLIP 2 vector, plus
+`catalog.is_screenshot` and the phone's own mark (an upload's `X-Screenshot`, which upload.py writes into its
+sidecar as the keyword `screenshot`, read back from the `xmp` table); one at or over `private.HOLD_AT` (0.095) on
+any prompt, or a screenshot, is **held**
+(one `photo.held` journal entry per member and batch, and their `held` inbox item made or brought up to date), and the rest are let go (their
+row goes: the photo is shared). The prompts' vectors are a file (`hold-prompts.json`, made once by `embed.py
+hold-prompts`), so the check never loads the model and works whether the app runs or not; without them it
+stops, and the photos stay private. **Why no one else can see a new upload before it is scored**: the
+`new` row is written in the same transaction as the photo's `assets` row, and a photo is in a catalog only once
+it has an `assets` row and a vector. The app reads who is private after it reads a catalog and inside the swap
+that installs it (`PhotoApp.with_private`, `Live.install(looks=...)`), and at startup after the catalog too,
+so every photo a catalog holds has its row in the looks it is seen through, whichever reload (the ingest's,
+a setup job's, a restart) comes when. A photo with no vector is in no view at all (`catalog.load` reads only
+photos with one), so a failed embed leaves it unseen and its row waiting for the next check. What is held: phone
+uploads of every member, the owner's too; not bulk imports, and not a photo the family is already shown.
+
+**Withdraw and release.** `POST /api/private {shas, private: true | false, until?}`:
+a sharer withdraws photos (private, `withdrawn`), sets the day one is released on by itself (`until`,
+`YYYY-MM-DD`, the computer's own date), or releases them now, each named: there is no call that releases every
+photo at once (a `which: "held"` that did was taken out: the held view's "Release all" released photos its
+search never showed). A photo the member may not be shown is a 404, one they did not share a 403. It is answered outside the gate,
+like a lens: every view is worked out again (`relook`) before the answer, and the feeds and People follow.
+A timer in the app (`PhotoApp.release_timer`, a thread `start()` starts beside the others) asks every minute
+whether a day has come (`private.release_due`): those photos are released, journaled by no actor acting for
+their sharer. A release brings the member's `held` item up to date, and closes it once none waits. A released row
+stays (`released_at`), so the one-off run never holds again what its sharer let go. `GET
+/api/photos/<sha>/why` carries `private`: whether the member shared the photo, whether it is private to them
+(why, since, until), and how many other sharers still share it. Search's `is:private`, `is:held` and
+`is:withdrawn` find the member's own; a row of theirs says `private` ([chapter 26](26-albums-and-agents.md#private-photos-on-the-pages)).
+
+**Looking held photos over** (`/held`). A search for `is:held` obeys the view options and the member's hides, so it
+cannot be where thousands of held photos are looked over (on the owner's library it listed 4,439 of 7,992: no
+screenshots, no shots behind another in a stack, nothing he had hidden). The review lists **every** held photo of
+the member's that waits to be looked over: an open `held` row with no `reviewed_at` (`private.waiting`). `GET
+/api/held` (`private.review_list`) gives them in one order, the likeliest mistakes first, in sections
+(`private.SECTIONS`): a person named in it (`named`); then by its best score over the prompts, lowest first, those
+just over the line (under `HOLD_AT + CLOSE`, 0.105: `close`) and the rest (`documents`); then screenshots
+(`catalog.is_screenshot`, or the phone's mark) and anything at `SURE` (0.13) or over (`sure`); and last what the
+member hides (`hidden`). Within a section: best score, then id, so the order is the same every time. The scores are
+`private.judge`'s, from the stored vectors and `hold-prompts.json`: no model at request time. Each row has its
+section, why it is held now (`why`: the prompts over the line, `is_screenshot`, `phone_screenshot`) and its score
+for each prompt, with what the page shows (date, shape, place, people, `hidden`). `GET /api/held?count=1` is only
+`{held, waiting}`. `POST /api/held/review {release: [sha], keep: [sha]}` (`private.review`) is the page's "Reviewed
+up to here": those in `release` are released (`released_at`), those in `keep` stay private and are looked over
+(`reviewed_at`). The page names every photo it covers, so a photo held after it read the list is in neither list
+and is never released or looked over by mistake; a sha that does not wait (looked over already, released, someone
+else's, or none) is skipped and counted, each the same. One `photo.released` and one `photo.reviewed {photos}`
+entry per submit (the latter returned to no agent by journal_since: it is the review's bookkeeping). A photo looked
+over and kept is **private exactly as before**: `is:held` and `is:private` list it, the viewer's line releases it;
+it only leaves the review. A later hold of the same photo (its row made `held` again) clears `reviewed_at`. The
+page is the change-set review page in its held mode ([chapter 26](26-albums-and-agents.md#looking-held-photos-over)).
+
+**Tombstones: what a member keeps off the estate** (phase 6, the phone gate; [chapter 24](24-uploading.md#the-phone-gate-looking-before-sharing)).
+A photo a member opted out of on their phone is a row of `tombstones` with their member id and the SHA-256 of the
+file (`why` `opted_out`); a purge's is member 0's ([chapter 4](04-store-and-ingest.md)). `GET /api/tombstones`
+gives the member their own, not lifted (hashes only: a new phone reads them before it sends anything); `POST
+/api/tombstones {add?, lift?}` opts out of hashes or takes opt-outs back (`lifted_at`; opting out again clears
+it), the member's own only, one `tombstones.changed {opted_out, lifted}` journal entry a call
+(`private.change_tombstones`). An upload is refused when its bytes are tombstoned for the member sending them, or
+purged (`private.refused_upload`): with `X-Content-SHA256` before the body is read, without it once the bytes are
+in and hashed, from the staging file, so nothing reaches the inbox, the store, the catalog or a backup. The answer
+is a `200` with `X-Upload-Refused` ([chapter 24](24-uploading.md) says why). An opt-out refuses only that
+member's copy, and is no withdraw: a photo already in the estate, or shared by someone else, is untouched.
+
+**The one-off run over the library** (the plan's open question 3: nobody else is let in until it has run, as
+the owner's, and he has looked over what it held): `private.py library --member <id>` scores every image the
+member shared (for the first sysadmin, every image with no sharer too) the same way and holds what crosses as
+theirs: one `photo.held` entry with the count, and their `held` inbox item, which opens the review (`/held`). With `--dry-run` it changes nothing and prints,
+with no pixels and no file names, how many each prompt would hold, the best scores near the threshold, and a
+sample of ids. It is safe to run twice, and never holds a photo the member released ([appendix A](appendix-a-commands.md)).
+
+### The estate's agent, listeners, questions and stories
+
+*(Multiplayer phase 7, the server half: tasks.py, estate_mcp.py, listeners.py, stories.py, transcribe.py.)*
+
+**The estate's agent is a member**: kind `agent`, made the first time anything needs it (`members.agent`; the
+app makes it at start, before it reads who sees what), never deleted, with no login. A run of it gets a
+capability, not a task number: `Tasks.run` mints a random token (`secrets.token_urlsafe(32)`) for *this agent,
+acting for this member (or no one), for this task*, puts it in the agent's MCP config as `X-Estate-Agent`, and
+forgets it in the run's `finally`. Tokens are held in the app's memory only (`Tasks.runs`), never written down,
+so a restart ends them all, and the run that was going is marked failed by `Tasks()` as before. `/mcp` honours a
+token only from this computer (`is_local`) and only while its run lasts; one from elsewhere, one that is no
+running task's, or a request still carrying `X-Estate-Task` (the task number runs carried before) is refused
+`403`, never answered as this computer's sysadmin. A run's writes are journaled with the agent as the actor and
+its member as `acting_for`. Acting for a member, it sees what they see (`visible_for(acting_for)`) and writes
+their albums and change sets; acting for no one it is **the family archivist**, which reads as itself, and an
+agent is shown what `NOBODY` is (`private.Private.agents`): only photos private to nobody, with the estate
+defaults applied. An album the archivist makes is published at once as a series it keeps
+(`lenses.maintained_by`). No tool applies anything.
+
+**Every run is recorded**, the ones a listener starts too: an `agent_tasks` row with `started_by`
+(`member:<id>` for a person; `journal:<entry>/album:<id>` or `journal:<entry>/story:<id>` for a listener).
+Any member may start a run (open question 4), for themselves, or with `family: true` for the archivist. A
+person's request to hide photos gets the old brief (`BRIEF`); a family request or a listener's run gets
+`WORK_BRIEF`.
+
+**Listeners** (listeners.py) read the journal, each from its own cursor (`listener_cursors`), in one thread of
+the app (every 30 seconds, and at once after a reload or a story). A rule decides first, from the tables; only a
+yes wakes the model. Delivery is at least once: the cursor moves past an entry once its handler is done, and each
+handler looks for what it would make before making it. A listener new to a catalog starts at the journal's end.
+
+- **Series.** A series, in the data, is a list album with a search it grows from (`change_sets.grows_from`):
+  chosen photos, added to and never worked out again, so what its owner took out stays out. A live album is
+  not one: it is its search, and holds new photos as soon as they are in the catalog. On `ingest.finished`
+  (whose data now says which rowids the run added), the series listener waits until the catalog being served
+  was read after the entry, then runs each series' search as its owner over the whole library, as the app
+  ranks it (a search's floor is relative to its best match, so it cannot be run over the new photos alone),
+  and keeps the new photos it finds that the album does not hold. For a family series a run of the archivist
+  looks at them and adds those that belong; for a member's own, a `series.update_requested` entry names them
+  and a `series_update` item waits in the owner's inbox (`GET`/`POST /api/albums/<id>/candidates`).
+- **Stories.** On `story.told` (with text) or `story.transcribed`: if the story answers a question the
+  estate's agent asked with `follow_up`, and the member that run acted for may read it, a new run acting for
+  them gets the question, the answer and the photos.
+
+**Questions** (stories.py; the MCP tool `ask_member`) may name only photos the asker sees and the recipient may
+be shown, and for the whole family only photos private to nobody: anything else is refused, never trimmed.
+They are queued; **the inbox decides how many a member sees**, when it is read: at most `ALLOWANCE` (3) new items
+in any 7 days, or the member's `members.questions_per_week`, and none while that many are open. A `group_key` is
+one item ("3 questions about Thanksgiving 1998"), which a later question of the group joins for nothing. Groups
+are dealt naming a photo nobody has told a story about first, then a photo of a series, then by the asker's
+priority, then oldest first. "I don't know" (dismissing a question, or its item) puts it away for that member
+for good; it counts against the week it was dealt in and nothing after. A question naming a photo the member may
+not be shown now waits, and one already dealt is left out of their inbox, item and all.
+
+**Stories** are what a member said, attributed and dated: typed, or a recording uploaded as the body of the
+request (an iPhone's AAC `.m4a`, a browser's `audio/mp4` or `audio/webm`, `.wav`, up to 8 MiB), stored in the
+store content-addressed with `estate.store_blob` (immutable in a marked store) and **no `assets` row**, so it is
+in no photo view; with `--demo`, beside the scratch catalog, never in the checked-in store. A story is read by its
+teller and by whoever may be shown every one of its photos (a story naming one photo private to its teller is
+theirs alone), and its recording by the same rule. `stories` and `story_photos` are protected like the other
+append-only tables: no delete, no replacing insert, no update but the transcript, written once. `estate.py purge`
+takes the purged photo out of the stories about it (it drops `story_photos_no_delete` in its transaction, as the
+others) and keeps the stories: one about that photo alone is then its teller's only.
+
+**Transcription** is a queued job (`transcribe.Job`), run when a recording is uploaded and at start:
+`uv run transcribe.py run`, a uv script with its own environment, NVIDIA Parakeet TDT 0.6B v2 through
+`parakeet-mlx`. Its own audio loader calls a system `ffmpeg`, which the mini does not have on the app's PATH, so
+transcribe.py decodes with PyAV (16 kHz mono) and hands the samples to the model. The model is fetched by hand
+(`transcribe.py fetch`, deploy/MAC-MINI.md), never by a request: the app runs with `HF_HUB_OFFLINE=1`. Without
+it, each waiting story says how to fetch it (`transcript_error`), and a job that cannot run at all (no MLX: not a
+Mac) says so on each; both are tried again on the next run. It need not be real time.
+
+### A member's own agent
+
+*(Multiplayer phase 8: members.py's bindings, estate_mcp.py, journal.py's `for_member`, agents.html.)*
+
+A member brings their own agent: Claude Code (or another harness) on their own computer, on their own account,
+calling `/mcp` through `tailscale serve`. **A call on `/mcp` with a member's login is that member's agent**, never
+the member themselves; a call from this computer with no login, and a run of the estate's agent with its token,
+are as before. It is not a member row of its own: it is that member's agent *on one device*, an `agent_bindings`
+row (`members.bind`), and the device is the tailnet node the call came from.
+
+**What a device is.** `tailscale serve` adds the user's identity (`Tailscale-User-Login`, `Tailscale-User-Name`,
+`Tailscale-User-Profile-Pic`), and nothing that names the node; it also sets `X-Forwarded-For` to the tailnet
+address of the node that sent the request, replacing whatever the client sent. `PhotoApp.device` asks
+`tailscale whois --json <address>` (on PATH, or the macOS app's own CLI) for the node's `StableID` and name, kept
+ten minutes per address; when whois cannot say, the address is the device. With `--demo`, `X-Demo-Device` names
+it (the demo's stand-in, like `X-Demo-Member`), and a call with no forwarded address is "this computer".
+
+**The binding's states.** The first call from a device makes it `pending`, with a `binding.requested` entry and a
+`binding` item in the member's inbox ("An agent connected as you from alice-macbook. Allow it?"), once, not once a
+call. Pending, it may call every tool that only looks; every tool that writes answers that the member must allow
+it first, in their inbox, from another device. `approved`, it writes as the member: the journal names the member as
+the actor, and every entry it makes carries `{"binding": <id>}` in its data (`journal.by_agent`, around each tool
+call), which says "by Alice's agent on alice-macbook". `revoked`, every call is refused (403), reads too: turning it
+off means it no longer acts as the member at all. Only the member moves it, on the web (`POST /api/agents/<id>`),
+never through `/mcp`: pending → approved or revoked, approved → revoked, revoked → approved. **Allowing must come
+from another device than the agent's own** (403 otherwise): the agent holds the member's login on its device and
+could send any request a browser there could, so nothing that comes from that device is proof that the member said
+yes. Turning one off is allowed from anywhere. Another member's binding is a 404.
+
+**What it may call.** The estate's agent's tools acting for its member, less `submit_task`, `get_task` and
+`cancel_task` (its work runs in the member's harness, never on the owner's subscription; called anyway they answer
+so), and `ask_member`'s `follow_up` (which starts a run of the estate's agent). Only it is offered
+**`journal_since(cursor, limit)`**: what changed in what its member may know of, oldest first, at most `limit`
+(100, up to 500), looking at no more than 5,000 entries a call, with `next_cursor` and `more`. The journal is the
+whole estate's history, so `journal.for_member` returns only, by kind: entries about the member's own albums,
+lenses, favourites, "show it anyway", private photos, questions, inbox and agents; another member's album only while
+it is a published series (created, items, renamed, query, grows, published, with no data); a lens while it is the
+member's or published; an ingest with its photos replaced by those the member may be shown (and not before the
+served catalog was read after it); a story they may read, with its photos; `series.update_requested` for their own
+series, with its photos and whether their item is still open (`waiting`). Never: members, migrations, faces, tasks,
+purges, opt-outs. journal.py's docstring is the table, kind by kind. `amend_album`'s `request_done` closes the
+member's `series_update` item once their agent has looked at a series' new photos and added what belongs (it is
+the `candidates` write with nothing more to add: what was left out stays out).
+
+**Connect your agent** (`/agents`, in the Library's menu) shows the command with the address the page was reached
+at (`X-Forwarded-Host` through serve), a configuration for other harnesses, where an agent can run, and the
+member's agents with their state, asking again every few seconds while it is open.
 
 ### Malformed requests
 
@@ -544,7 +964,7 @@ All from measurements in [PERFORMANCE.md](../notes/PERFORMANCE.md):
 | gzip for JSON and `text/*` over 1 KB, level 5 | JSON and the page shrink 4-6×; JPEGs do not |
 | `ETag` and `no-cache` for `/` and PWA files | Browsers revalidate each load, so editing `search.html` shows at once; an unchanged page costs a 304 |
 | `request_queue_size = 256`, `daemon_threads` | The default listen backlog is 5; behind an HTTP/2 proxy a screenful of thumbnails arrives as dozens of simultaneous connections and overflowed it (502s) |
-| Listen on `127.0.0.1` only | The app has no sign-in of its own; `tailscale serve` in front says who is asking, and `--upload-user` who may write (above) |
+| Listen on `127.0.0.1` only | The app has no sign-in of its own; `tailscale serve` in front says who is asking, and the members table what they may do (above) |
 | JSON bodies up to 8 MB, read only after `Content-Length` is checked | A body that is too large is refused (413) before it is read, and the connection closed so it is not taken for the next request |
 
 ### When a client goes away
@@ -577,16 +997,18 @@ The server is multi-threaded but not multi-process. The relevant locks are small
 - `Live.gate` lets requests share the catalog and a reload swap it alone (writers first, so a stream
   of requests cannot starve a reload). It is not re-entrant: a thread inside it that asks for a swap
   would wait for itself once a writer waits, so `Gate.swap` raises `RuntimeError` instead.
-- `PhotoApp.fav_write` puts favourites one at a time; `PhotoApp.fav_lock` guards `fav_log`.
+- `PhotoApp.fav_write` puts favourites, and re-reading the looks (`relook`), one at a time.
+- `Live.views_lock` guards the member views being kept (catalog.py); a view worked out while the catalog or
+  the looks were being replaced is not kept.
 - `People` has its own `RLock`.
 
-**Lock order.** Take `live.gate` before any module's own lock (`Browse.lru_lock`, `PhotoApp.fav_lock`,
+**Lock order.** Take `live.gate` before any module's own lock (`Browse.lru_lock`, `Live.views_lock`,
 `Admin.st_lock`, ...), and never take the gate while holding one: a request holds the gate and then
 takes the others, so the opposite order could deadlock against it. The only lock taken before the gate
 is `fav_write` (below), and nothing that holds the gate takes it.
 
-**The catalog generation.** `Live.generation` counts every change to the catalog being served: an
-install and a favourite each add one, inside the gate's write side. `Browse.remember` keys its cache
+**The catalog generation.** `Live.generation` counts every change to the catalog being served, or to what
+anyone sees of it: an install, a relook and a favourite each add one, inside the gate's write side. `Browse.remember` keys its cache
 by the generation the entry was made in and keeps a value only if the generation is unchanged when it
 is done, so nothing worked out from an older catalog (a mask, a ranking sized to the old `N`) is ever
 used once a newer one is served, even in the moment between an install and `Browse.forget()`, which
@@ -595,19 +1017,16 @@ now only frees memory. (`Admin`'s `/stats` numbers keep their own counter, `st_g
 
 **Favourites and reloads.** `PhotoApp.set_favorites`, called outside the gate:
 
-1. takes `fav_write`, so two calls reach the table and the catalog in the same order;
-2. writes the `favorites` table, outside the gate (a slow SQLite write holds up no request);
-3. in `Live.update` (the gate's write side) resolves `live.cat` there and then, shows the favourites
-   in it (`Catalog.show_favorites`), and, if a reload is reading the catalog, appends them to
-   `fav_log` under `fav_lock`.
+1. takes `fav_write`, so two calls reach the table and the views in the same order;
+2. writes `member_favorites`, outside the gate (a slow SQLite write holds up no request);
+3. in `Live.update` (the gate's write side) tells the looks (`lenses.State.set_favorites`, which every
+   view is worked out from) and shows the favourites in the member's view (`View.show_favorites`).
 
-`reload_catalog` sets `fav_log = []` (under `fav_lock`) before it reads the catalog; in the swap that
-installs the new one (`PhotoApp.caught_up`, under the gate and then `fav_lock`) it shows the new
-catalog everything in `fav_log` and sets it back to `None`. So the log holds only the favourites set
-during one read, and is empty between reloads. A favourite is never lost and never lands on a replaced
-catalog: if its step 3 comes before the swap, it is in the log (the read had begun) or in the table the
-read saw (it had not); if after, it is shown to the new catalog directly. Its step 2 comes before step
-3, so a favourite missing from the log was in the table before the read began.
+The catalog no longer reads favourites at all, so a reload cannot miss one: the view of the new catalog is
+worked out from the looks, which have it. (Until 2026-11-22 the catalog read the `favorites` table, and a
+log of the favourites set while a reload read it, `fav_log`, was shown to the new catalog as it was
+swapped in.) `relook` takes `fav_write` too, so the looks it reads from the tables are never read between
+a favourite's table write and its step 3.
 
 NumPy releases the GIL during large array operations, so concurrent searches overlap usefully, and
 for one household a handful of simultaneous requests is the realistic load.
@@ -645,6 +1064,13 @@ from a result list, which is how "opened" events reach the log.
 2. Points `store` at `demo/store` (read-only use).
 3. Lets thumbnails be generated into the temp directory.
 4. Sends the query log to `/dev/null` and uses port 8767, so it can run beside a real library on 8766.
+5. Makes three members in its scratch catalog: Ada, the sysadmin, and Ben and Cleo, members. The
+   Tailscale header is not read: `X-Demo-Member: ben`, or a `demo_member` cookie, says who a request
+   is, so Playwright and the cloud preview can be each of them, and with neither a request is Ada. A
+   browser cannot add a header, so `/members` has a "Be Ben" button (`/members?be=ben` sets the cookie),
+   and a page Ben may not open links back to each of them. A name that is no member's is a login nobody
+   has let in, which is how the request-access page is tried. Neither the header nor the cookie is ever
+   honoured without `--demo`.
 
 ## Resource use
 

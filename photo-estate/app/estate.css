@@ -116,4 +116,31 @@ input::placeholder { color: var(--muted); }
 .toast.on { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
 .toast button { margin-left: 14px; font-weight: 700; color: var(--sun-lit); }
 
+/* a story, and the teller that tells one, typed or spoken (app/story-flow.js): the inbox's questions, the viewer */
+.tell { display: grid; gap: 10px; }
+.tell textarea { width: 100%; min-height: 84px; padding: 12px 14px; border: 0; outline: 0; border-radius: 16px; resize: vertical;
+  background: var(--well-2); color: var(--ink); font: 15px/1.45 var(--sans); transition: background .15s, box-shadow .15s; }
+.tell textarea:focus { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 4px var(--sun-wash); }
+.tell textarea::placeholder { color: var(--muted); }
+.tell .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tell .row .sp { flex: 1; }
+.tell .row .btn { height: 34px; padding: 0 15px; font-size: 13.5px; }
+.tell .state { display: flex; align-items: center; gap: 8px; min-height: 34px; font-weight: 600; }
+.tell .state .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--no); animation: beat 1.2s ease-in-out infinite; }
+.tell .err { color: var(--no); font-size: 13.5px; }
+.tell .clip { display: flex; align-items: center; gap: 12px; }
+.tell .clip audio { flex: 1; min-width: 0; height: 40px; }
+.tell .clock { color: var(--muted); font-size: 13.5px; font-weight: 600; }
+.story { padding: 14px 16px; border-radius: 16px; background: var(--well); }
+.story + .story { margin-top: 8px; }
+.story .told { font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--muted); }
+.story .asked { margin-top: 4px; font-size: 13.5px; color: var(--muted); }
+.story .said { margin-top: 6px; white-space: pre-line; overflow-wrap: anywhere; }
+.story .said.pending { color: var(--muted); font-style: italic; }
+.story audio { display: block; width: 100%; height: 40px; margin-top: 10px; }
+.story .clip { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.story .clip audio { flex: 1; min-width: 0; margin-top: 0; }
+.story .clip .clock { color: var(--muted); font-size: 13.5px; font-weight: 600; }
+@keyframes beat { 50% { opacity: .35; } }
+
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

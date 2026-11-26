@@ -535,7 +535,7 @@ def test_search_an_album_from_a_search_is_not_made_after_moving_on(page, demo_ap
     page.locator("#sGrid .t").first.wait_for()
     slow = Hold(page, "**/api/search?*", lambda r: "limit=500" in r.url)     # the pages the album is collected from
     page.locator("#sAlbum").click()
-    page.locator(".menu form input").fill("Kittens, never made")
+    page.locator(".menu form input[type=text]").fill("Kittens, never made")
     page.locator(".menu form button").click()
     slow.wait()
     if move == "navigation":
@@ -566,7 +566,7 @@ def test_search_an_album_from_a_search_takes_its_name_from_the_start(page, demo_
     page.locator("#sGrid .t").first.wait_for()
     slow = Hold(page, "**/api/search?*", lambda r: "limit=500" in r.url)
     page.locator("#sAlbum").click()
-    page.locator(".menu form input").fill("Kittens of #81")
+    page.locator(".menu form input[type=text]").fill("Kittens of #81")
     page.locator(".menu form button").click()
     slow.wait()
     page.evaluate("document.querySelector('#sHead h1').textContent = 'Something else'")    # the page changes under it

@@ -322,11 +322,14 @@ The photo app accepts `PUT /api/upload/<YYYY/MM/DD/name>` and saves files into `
 `pull-icloud.sh` does for iCloud, and only runs the slow stages (embeddings, faces) when something
 new arrived.
 
-To accept uploads only from your own login, add `--upload-user you@example.com` (repeatable) to the
-`serve` arguments in the plist. `tailscale serve` sets the `Tailscale-User-Login` header the app
-checks, and the app listens only on `127.0.0.1`, so nothing else can set it from the network. The same
-login list decides who else may change the library (favourites, albums, naming people, bringing
-photos in); programs on the mini itself, such as the task agent, always may (book chapter 11).
+Only members may use the app: upload, search, change the library (book chapter 11). `tailscale serve`
+sets the `Tailscale-User-Login` header the app reads, and the app listens only on `127.0.0.1`, so
+nothing else can set it from the network. The `--upload-user you@example.com` in the plist's `serve`
+arguments made that login the first member and the sysadmin on the first start after members came in
+(2026-11); after that members are kept on `/members` and the option is not read again (it stays in the
+plist so the app still starts, and can go once that start has happened). Programs on the mini itself,
+such as the task agent, are always the sysadmin. Someone new opens the app, asks to be let in, and waits
+on `/members` for the sysadmin.
 
 The **Library info** page (`/stats`, the bar-chart icon) shows what is waiting and has a
 **Catalogue new photos** button that runs the script and shows its output, then **Restart to show
@@ -341,3 +344,219 @@ RESTART=com.jflam.photo-search DB=~/estate/estate.db STORE=/Volumes/estate/store
 `RESTART` restarts the app at the end, because it reads the catalog at startup. A launchd timer
 (`StartInterval`, say 900 seconds) can run the same command; a second run while one is going exits at
 once. `SKIP_MODELS=1` catalogues without embedding.
+
+## Append-only: the one-off steps
+
+Since phase 2 of the multiplayer plan (`docs/notes/MULTIPLAYER-PLAN.md`, book chapter 4) the estate only
+grows: triggers in the catalog refuse deleting a photo, an occurrence, a member or the journal, and ingest
+sets the user-immutable flag (`chflags uchg`) on every file it writes to a store whose root holds a file
+named `.immutable`. It is deployed once, by hand, in this order: the backup comes first, because the
+app's first start on this code adds triggers to the catalog (on the journal and the members), and the
+first `estate.py` command adds `sharers`, `tombstones` and the rest of the triggers.
+
+```bash
+export PATH=/opt/homebrew/bin:$PATH
+DB=~/estate/estate.db STORE=/Volumes/estate/store
+cd ~/src/photo-estate
+
+# 1. A catalog backup, checked, before the code moves
+B=$HOME/photo-estate-lab/estate.db.before-append-only-$(date +%Y%m%d-%H%M)
+sqlite3 $DB ".backup $B" && sqlite3 $B "pragma quick_check"          # must print ok
+git fetch origin && git checkout <branch> && git pull --ff-only
+launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search             # then check /api/info and the log
+cd photo-estate
+
+# 2. Every existing photo gets the sysadmin as its sharer (safe to run again: it then adds nothing)
+uv run estate.py --db $DB migrate                                      # "N photos given john ...; N photos in all"
+sqlite3 $DB "select (select count(*) from assets), (select count(*) from sharers)"   # the two counts agree
+
+# 3. The immutable flag. First on one scratch file on the same volume: it must refuse to go
+f=$STORE/.tmp/uchg-test; touch $f && chflags uchg $f && ls -lO $f      # shows uchg
+rm -f $f; ls -lO $f                                                    # "Operation not permitted": still there
+chflags nouchg $f && rm $f                                             # and it goes once the flag is cleared
+#    Then mark the store (new files are flagged from here on), and flag the files already in it. Files only:
+#    a flagged directory could take no new photo.
+touch $STORE/.immutable
+find $STORE/?? -type f ! -flags +uchg -exec chflags uchg {} +          # minutes for 120k files on the USB disk
+find $STORE/?? -type f ! -flags +uchg | head                           # prints nothing
+```
+
+Cautions:
+
+- The disk ignores ownership, so any user of the mini can clear the flag (`chflags nouchg`), and `rm`
+  run as root clears a user flag by itself (BSD `rm` does). It guards against accidents (an `rm -rf` in
+  the wrong folder, as yourself), not against intent or `sudo`.
+- **Tell the backup plan.** A copy that keeps the flag (`cp -p`, Finder, `rsync --fileflags` where
+  rsync has one, Python's `copy2`) makes files that cannot be pruned or replaced until it is cleared.
+  Try the backup tool on one flagged file first.
+- To undo it: `rm $STORE/.immutable`, then `find $STORE/?? -type f -flags +uchg -exec chflags nouchg {} +`.
+- The one way a photo leaves the estate is `uv run estate.py --db $DB purge <sha> --reason "..." --store
+  $STORE --cache /Volumes/estate/review --cache ~/Library/Caches/photo-estate --backup-dir ~/photo-estate-lab`,
+  run here by the sysadmin: it backs the catalog up, journals it, leaves a tombstone so no source brings
+  it back, clears the flag and removes the file and its cached copies; then restart the app. The photo
+  stays in the catalog backups until they rotate out, and in the sources (it lists them).
+
+
+## Lenses: the one-off step (multiplayer phase 3)
+
+Since phase 3 what a photo hides is per member: a hiding set hides for the members who see through its
+lens (book chapter 11, "What each member sees"). The deploy needs nothing by hand until the migration:
+the app's first start on this code adds four tables (`lenses`, `subscriptions`, `shown`,
+`member_favorites`) and two columns (`change_sets.owner`, `lens_id`), and until the migration runs it
+shows exactly what it showed before (a set with no lens hides for everyone; an owner-less album, an old
+favourite and a photo with no sharer are the sysadmin's). Then, once, after a backup:
+
+```bash
+export PATH=/opt/homebrew/bin:$PATH
+DB=~/estate/estate.db
+cd ~/src/photo-estate/photo-estate
+
+# 1. A catalog backup, checked (the migration writes to the catalog)
+B=$HOME/photo-estate-lab/estate.db.before-lenses-$(date +%Y%m%d-%H%M)
+sqlite3 $DB ".backup $B" && sqlite3 $B "pragma quick_check"          # must print ok
+
+# 2. The hiding from before lenses becomes the lens "Estate defaults"; albums and sets become the sysadmin's;
+#    the old favourites are copied to the sysadmin's own. Safe to run again: it then changes nothing.
+uv run estate.py --db $DB migrate        # "sharers: 0 photos ..." then "lenses: N hiding sets put in the new lens ..."
+sqlite3 $DB "select id, title, owner, published, estate_default from lenses"                     # one row: Estate defaults
+sqlite3 $DB "select count(*) from change_sets where op='hide' and lens_id is null"               # 0
+sqlite3 $DB "select (select count(*) from favorites), (select count(*) from member_favorites)"   # the two agree
+
+# 3. The app keeps who sees what in memory: restart it, then check /api/info's total is what it was
+launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search
+```
+
+The owner's phone keeps `sync-feed.db`; another member's phone gets `sync-feed-<member id>.db` beside the
+catalog the first time it asks. Nothing else changes for the owner: his new hides go to his own filter
+lens ("Hidden photos") unless he applies a set to the Estate defaults, and only he uses the app
+until phase 5 (open question 3 of the plan).
+## Private photos and the hold: the by-hand steps (multiplayer phase 5)
+
+Since phase 5 a photo can be private to the member who shared it (book chapter 11, "Private photos"). The
+deploy itself needs nothing by hand: the app's first start on this code adds the `private` table, phone
+uploads land in `/Volumes/estate/iphone/m<member id>/...` from then on (the phone's app is unchanged; what
+is already in the inbox is the sysadmin's), and each new upload is scored by `private.py check` in
+ingest-iphone.sh before the app shows it: a receipt, a screenshot or a document stays private to whoever sent
+it, the owner included, and their inbox says so. Nobody but the owner is let in until the one-off run below
+has held what looks private in the existing library, as the owner's, and he has looked over what it held
+(open question 3 of the plan). In order:
+
+```bash
+export PATH=/opt/homebrew/bin:$PATH
+DB=~/estate/estate.db
+cd ~/src/photo-estate/photo-estate
+ME=$(sqlite3 $DB "select id from members where role='sysadmin' and status='active' order by id limit 1")
+
+# 1. After the deploy (the app restarted on this branch): the app made the table; check, and that the prompts'
+#    vectors are in the checkout (hold-prompts.json: without them the check stops and new uploads stay private)
+sqlite3 $DB "select count(*) from private"                    # 0
+uv run private.py --db $DB check                              # "hold: nothing new to check"
+
+# 2. The dry run over the owner's library: changes nothing; prints how many each prompt would hold, the best
+#    scores near the threshold (0.095), and ids (never a file name). Open a few of the ids in the app
+#    (/preview/<id>), those held and those just below, to judge whether the threshold is right. To move it,
+#    change HOLD_AT in private.py on a branch (it is the one place), and run the dry run again.
+uv run private.py --db $DB library --member $ME --dry-run
+
+# 3. A catalog backup, checked (the real run writes to the catalog)
+B=$HOME/photo-estate-lab/estate.db.before-hold-$(date +%Y%m%d-%H%M)
+sqlite3 $DB ".backup $B" && sqlite3 $B "pragma quick_check"          # must print ok
+
+# 4. The real run: one transaction, one photo.held journal entry, one inbox item. Safe to run again: it then
+#    holds nothing new, and never holds again a photo the owner released.
+uv run private.py --db $DB library --member $ME
+sqlite3 $DB "select why, count(*) from private where released_at is null group by why"     # held|N
+sqlite3 $DB "select kind, data from journal where kind='photo.held' order by id desc limit 1"
+
+# 5. The app reads who is private when something changes: restart it, then look the held photos over in the
+#    app: the Inbox item ("Look them over") opens the review, /held. It lists every held photo, likeliest
+#    mistakes first; mark what should be shared (click, or R), and "Reviewed up to here" (U) releases that
+#    and keeps the rest up to there private, a stretch at a time. Search for is:held is not the place: it
+#    leaves out screenshots, stacked shots and what you hide.
+launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search
+curl -s http://127.0.0.1:8766/api/info | head -c 200; echo
+sqlite3 $DB "select count(*), sum(reviewed_at is null) from private where why='held' and released_at is null"   # held|waiting
+```
+
+The review records what has been looked over in `private.reviewed_at`, a column the app adds to the catalog when it
+starts (an additive schema change: take the catalog backup CLAUDE.md gives before the first restart on code that
+has it). A photo looked over and kept is private exactly as before; it only leaves the review.
+
+Releasing a photo by hand, or on a day set in the viewer ("Release on a day…"), needs nothing on the mini: the
+app's timer releases what is due every minute, by the mini's own date. To undo the one-off run completely
+(nothing else depends on it): release everything it held by hand (the app has no "release all"),
+`sqlite3 $DB "update private set released_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') where why='held' and released_at is null"`
+then restart the app (the rows stay, released, so the run does not hold them again).
+
+## The estate's agent, questions and stories: the by-hand steps (multiplayer phase 7)
+
+Since phase 7 the estate's agent is a member (kind `agent`) whose runs carry a token instead of a task number,
+listeners keep series up to date as photos arrive, and members answer the agent's questions in their inbox, typed
+or spoken (book chapter 11, "The estate's agent, listeners, questions and stories"). The deploy is a schema change
+(the `stories` tables; `change_sets.grows_from`, `agent_tasks.started_by`, `members.questions_per_week`), so take
+the catalog backup CLAUDE.md gives first. The app makes the tables and the agent member on its first start. Two
+things by hand:
+
+- **A run in flight at the deploy.** A run carried `X-Estate-Task: <id>` before; `/mcp` now refuses that header
+  (403), and the restart marks the running task failed ("the app restarted while this was running"), as any
+  restart does. At most one task runs at a time, so at most one is lost: look first, and deploy between runs.
+- **The speech model, once.** Transcription runs on the mini as a queued job (`transcribe.py run`, started by the
+  app) with NVIDIA Parakeet TDT 0.6B v2 on MLX. The app runs with `HF_HUB_OFFLINE=1` and never downloads it: fetch
+  it by hand, as the user the app runs as, with the network. The first `uv run` also builds the script's own
+  environment (MLX, parakeet-mlx, librosa). No `ffmpeg` is needed: the audio is read with PyAV.
+
+```bash
+export PATH=/opt/homebrew/bin:$PATH
+DB=~/estate/estate.db
+cd ~/src/photo-estate/photo-estate
+B=$HOME/photo-estate-lab/estate.db.before-phase7-$(date +%Y%m%d-%H%M)
+sqlite3 $DB ".backup $B" && sqlite3 $B "pragma quick_check"            # must print ok
+sqlite3 $DB "select id, status from agent_tasks where status in ('queued','running')"   # deploy when nothing runs
+
+# after the deploy and restart
+sqlite3 $DB "select id, name, kind from members where kind='agent'"       # the estate's agent, made at start
+uv run transcribe.py fetch                                                 # once: ~2.3 GB into ~/.cache/huggingface
+# make the recording on another Mac and copy it over: `say` over ssh writes an empty file
+# (laptop) say -o story.m4a --data-format=aac "This is Grandma at Thanksgiving in 1998." && scp story.m4a mini:/tmp/
+HF_HUB_OFFLINE=1 uv run transcribe.py file /tmp/story.m4a                  # prints the sentence back
+```
+
+Without the model, a recording is kept and its story says how to fetch it (`transcript_error`); the next recording
+uploaded, or the next start of the app, tries every waiting one again. A transcription takes a few seconds once the
+model is loaded (about 5-20 seconds for a short recording on the laptop, most of it loading). The weekly allowance
+of questions is `ALLOWANCE` in stories.py (3); one member's own is a column:
+`sqlite3 $DB "update members set questions_per_week=5 where id=<member id>"` (NULL: the estate's).
+
+## A member's own agent: the by-hand steps (multiplayer phase 8)
+
+Since phase 8 a call on `/mcp` with a member's login is that member's **own agent** on the device it came from (an
+`agent_bindings` row: book chapter 11, "A member's own agent"), allowed by the member before it may write, and never
+offered the task tools. The deploy adds a table (`agent_bindings`) and a column (`stories.seconds`): take the catalog
+backup CLAUDE.md gives first. The app makes both on its first start. By hand:
+
+- **Which device a call came from** is `tailscale whois --json <address>` on the address `tailscale serve` forwards
+  (`X-Forwarded-For`). The app looks for `tailscale` on its PATH (the plist's `/opt/homebrew/bin:/usr/bin:/bin`),
+  then for the macOS app's own CLI (`/Applications/Tailscale.app/Contents/MacOS/Tailscale`). Check, as the user the
+  app runs as, that one of them answers; without either, the device is shown as its tailnet address, which works
+  but reads worse. The first line below prints the laptop's node; after the restart, the second shows what the
+  app made of it once the laptop's Claude Code has called `/mcp`.
+- **The owner's laptop.** Claude Code on the laptop is registered against this `/mcp` (user scope, `photo-estate`)
+  and used `submit_task`. From this deploy it is the owner's own agent like any other: its first call after the
+  restart puts "An agent connected as you from <the laptop>. Allow it?" in the owner's inbox. Until he allows it,
+  from **another device** (his phone: the iPhone app's Inbox, or Safari on `/agents`; the laptop's own browser is
+  refused, as anything on the laptop could be the agent), it can search and read but not make albums or change
+  sets or ask questions. It no longer has `submit_task`, `get_task` or `cancel_task` at all: a request for the
+  estate's agent is made on the Changes page's Ask box (`POST /api/tasks`), and personal work is done by Claude Code
+  itself with the other tools. Nothing to change in its MCP configuration.
+
+```bash
+export PATH=/opt/homebrew/bin:$PATH
+DB=~/estate/estate.db
+B=$HOME/photo-estate-lab/estate.db.before-phase8-$(date +%Y%m%d-%H%M)
+sqlite3 $DB ".backup $B" && sqlite3 $B "pragma quick_check"            # must print ok
+(command -v tailscale || ls /Applications/Tailscale.app/Contents/MacOS/Tailscale) && \
+  "$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)" whois --json <laptop's 100.x address> | head -20
+
+# after the deploy and restart, and one call from the laptop's Claude Code
+sqlite3 $DB "select id, member_id, node, device, status, seen_at from agent_bindings"
+```

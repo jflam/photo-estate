@@ -2,7 +2,9 @@
 admin.py — looking after the photo app (`embed.py serve`): photos arriving from the phone, the ingest
 that catalogues them, restarting, the Library info page, and the catalog's backups.
 
-  PUT|POST /api/upload/<YYYY/MM/DD/name.ext>   one file from the phone into the inbox (upload.py)
+  PUT|POST /api/upload/<YYYY/MM/DD/name.ext>   one file from the phone into the inbox (upload.py), in the folder
+                                               of the member it is for: <inbox>/m<member id>/YYYY/MM/DD/...; bytes
+                                               a tombstone refuses are not kept (200, X-Upload-Refused: Admin.upload)
   OPTIONS  /api/upload/...                     501: send each file in one request (no resumable uploads)
   GET      /api/ingest                         the ingest's state (upload.IngestJob)
   POST     /api/ingest                         run ingest-iphone.sh now
@@ -16,8 +18,8 @@ that catalogues them, restarting, the Library info page, and the catalog's backu
   Admin.forget_library()        the library numbers on /stats are out of date (a reload, a favourite)
   backups(...)                  --backup-dir: a copy of the catalog every --backup-every hours
 
-Writing (uploading, ingesting, restarting) takes the app's write rule: a --upload-user login or a request from
-this computer (photo_app.ROUTE_AUTH). `allowed` says whether the caller passes it.
+Writing (uploading, ingesting, restarting) takes the app's rule: an active member or a request from this
+computer, and restarting a sysadmin (photo_app.ROUTE_AUTH). `allowed` says whether the caller is a member.
 """
 from __future__ import annotations
 
@@ -36,11 +38,12 @@ from urllib.parse import unquote
 from PIL import Image, ImageOps
 
 import pages
+import private
 from core.media import DECODABLE_EXT
 from catalog import Live
 from estate import facts_of as estate_facts
 from images import THUMB_EXT, write_image
-from upload import save_upload, staging_dir
+from upload import clean_path, save_upload, staging_dir
 
 
 
@@ -77,8 +80,10 @@ class Admin:
 
     # -- http -----------------------------------------------------------------------------------
 
-    def handle(self, method: str, path: str, qs: dict, body, who: str = "", allowed: bool = True):
-        """One request -> (status, body bytes, content type, Cache-Control[, headers]), or None if it isn't ours."""
+    def handle(self, method: str, path: str, qs: dict, body, who: str = "", allowed: bool = True,
+               member: int | None = None):
+        """One request -> (status, body bytes, content type, Cache-Control[, headers]), or None if it isn't ours.
+        `member` (members.id): whose favourites /api/stats counts."""
         if method == "OPTIONS" and path.startswith("/api/upload"):
             # The phone's background uploader asks first whether the server can resume interrupted uploads.
             # It can't: 501 means "send each file in one request".
@@ -93,7 +98,7 @@ class Admin:
         if path == "/api/ingest":
             return js(self.ingest.status() | {"can_restart": self.under_launchd} if self.ingest else {"enabled": False})
         if path == "/api/stats":
-            return js(self.stats_payload((qs.get("refresh") or [""])[0] == "1"))
+            return js(self.stats_payload((qs.get("refresh") or [""])[0] == "1", member))
         return None
 
     def admin(self, path: str, who: str, allowed: bool):
@@ -111,9 +116,32 @@ class Admin:
         threading.Timer(0.5, os._exit, (0,)).start()   # KeepAlive starts it again
         return js({"restarting": True}, 202)
 
-    def upload(self, method: str, path: str, headers, rfile, who: str, allowed: bool):
-        """PUT or POST /api/upload/<YYYY/MM/DD/name.ext>: one file from the phone into the inbox (upload.py).
-        Returns the answer and whether to close the connection: every early answer leaves the body unread."""
+    def refused(self, sha: str, member: int | None) -> str | None:
+        """Why `member` may not upload these bytes (a tombstone: private.refused_upload), or None. A catalog that
+        cannot be read is an OSError (a 500, which a phone sends again later), never a yes."""
+        try:
+            con = sqlite3.connect(f"file:{self.db}?mode=ro", uri=True, timeout=10)
+            try:
+                return private.refused_upload(con, sha, member)
+            finally:
+                con.close()
+        except sqlite3.Error as e:
+            raise OSError(0, f"the catalog could not be read: {e}") from e
+
+    def upload(self, method: str, path: str, headers, rfile, who: str, allowed: bool, folder: tuple[str, bool] = ("", True),
+               member: int | None = None):
+        """PUT or POST /api/upload/<YYYY/MM/DD/name.ext>: one file from the phone into the inbox (upload.py), in
+        the folder of the member it is for (`folder`: ("m<id>", whether the inbox itself was theirs before member
+        folders), PhotoApp.folder_of), which is how ingest knows who shared it. The phone's path is unchanged.
+        Returns the answer and whether to close the connection: every early answer leaves the body unread.
+
+        A tombstone (`member`'s opt-out, or a purge) refuses the bytes: before the body is read when X-Content-SHA256
+        names them (the in-app uploader, which has the file), else once they are hashed, from the staging file (the
+        system uploader, whose extension never reads the file). Either way nothing reaches the inbox, and the answer is
+        200 {"status": "refused: opted_out" | "refused: purged"} with X-Upload-Refused: why. 200, not a 4xx: the
+        system uploader marks a job that got a 4xx as failed, and the extension retries a failed job, so the bytes
+        would cross again; an old build's in-app uploader counts a 200 as "already there" and anything else as a
+        failure it shows. A 200 is the one answer both take as done."""
         prefix = "/api/upload/"
         if not path.startswith(prefix) or self.inbox is None:
             return NOT_FOUND, True
@@ -126,21 +154,34 @@ class Admin:
         close = True
         try:
             h = headers
-            meta = {"taken": h.get("X-Taken"), "lat": h.get("X-Latitude"), "lon": h.get("X-Longitude"),
-                    "fav": h.get("X-Favorite")}
-            stored = {}
-            code, msg = save_upload(self.inbox, unquote(path[len(prefix):]), rfile, length,
-                                    h.get("X-Content-SHA256"), meta, stored)
-            if stored and stored["path"].suffix.lower() in DECODABLE_EXT:   # an upload's stills, less DNG
-                self.arrivals.put((stored["sha256"], stored["path"]))
-            close = code >= 400   # a refused body may still be on the wire
+            said = (h.get("X-Content-SHA256") or "").lower()
+            if private.SHA.fullmatch(said) and (why := self.refused(said, member)):
+                code, msg = 200, f"refused: {why}"         # the body stays unread: close (`close` is True)
+            else:
+                meta = {"taken": h.get("X-Taken"), "lat": h.get("X-Latitude"), "lon": h.get("X-Longitude"),
+                        "fav": h.get("X-Favorite"), "screenshot": h.get("X-Screenshot")}
+                stored = {}
+                rel, (sub, old) = unquote(path[len(prefix):]), folder
+                if sub and old and clean_path(rel) is not None and (self.inbox / rel.strip("/")).exists():
+                    sub = ""             # sent before member folders: it is there already (save_upload says 200, or 409)
+                code, msg = save_upload(self.inbox / sub if sub else self.inbox, rel, rfile, length,
+                                        h.get("X-Content-SHA256"), meta, stored, stage=staging_dir(self.inbox),
+                                        refuse=lambda sha: self.refused(sha, member))
+                if stored and stored["path"].suffix.lower() in DECODABLE_EXT:   # an upload's stills, less DNG
+                    self.arrivals.put((stored["sha256"], stored["path"]))
+                close = code >= 400   # a refused body may still be on the wire
         except OSError as e:
             code, msg = 500, f"could not write: {e.strerror}"
         if code == 201:
             print(f"upload: {method} {path[len(prefix):]} ({length / 1e6:.1f} MB) from {who or 'local'}", flush=True)
+        refusal = msg[len("refused: "):] if code == 200 and msg.startswith("refused: ") else None
+        if refusal:
+            print(f"upload: refused {path[len(prefix):]} from {who or 'local'}: {refusal}"
+                  + (" (before its body)" if close else ""), flush=True)
         if self.ingest and code in (200, 201):
             self.ingest.poke(headers.get("X-Batch"), path[len(prefix):], new=code == 201)
-        return js({"status": msg}, code), close
+        got = js({"status": msg}, code)
+        return (got + ({"X-Upload-Refused": refusal},) if refusal else got), close
 
     # -- photos arriving from the phone ---------------------------------------------------------
     # A photo that just arrived from the phone is prepared now, while the file is still in the page
@@ -205,11 +246,18 @@ class Admin:
             self.st["lib"], self.st_gen = None, self.st_gen + 1
 
     def library_stats(self):
-        """The library numbers, from the catalog being served. The caller holds the catalog gate (a request
-        does; stats_job takes it just for this)."""
+        """The library numbers, from the catalog being served: every photo the first sysadmin (who alone opens
+        /stats) may be shown, so none private to another member (shared_for); the favourites stats_payload counts
+        for the member asking. The caller holds the catalog gate (a request does; stats_job takes it just for this)."""
         import stats
-        c = self.live.cat
-        return stats.library_stats(c.meta, list(c.when), c.people_ix, c.trips, c.events)
+        c, shared = self.live.cat, self.live.shared_for(None)
+        if shared.all():
+            return stats.library_stats(c.meta, list(c.when), c.people_ix, c.trips, c.events)
+        keep = [s for s, ok in zip(c.shas, shared) if ok]
+        trips = {t: x for t, x in c.trips.items() if (shared & (c.trip_of == t)).any()}
+        events = {e: x for e, x in c.events.items() if (shared & (c.event_of == e)).any()}
+        trips = {t: {**x, "n": int((shared & (c.trip_of == t)).sum())} for t, x in trips.items()}
+        return stats.library_stats({s: c.meta[s] for s in keep}, list(c.when[shared]), c.people_ix, trips, events)
 
     def disk_stats(self):
         import stats
@@ -255,8 +303,9 @@ class Admin:
         except sqlite3.Error:
             return None
 
-    def stats_payload(self, refresh: bool):
-        """GET /api/stats, from a request (which holds the catalog gate). One reading of `st`, under st_lock."""
+    def stats_payload(self, refresh: bool, member: int | None = None):
+        """GET /api/stats for `member`, from a request (which holds the catalog gate). One reading of `st`, under
+        st_lock. The favourites are the member's own (catalog.View.fav), counted here."""
         st = self.st
         with self.st_lock:
             if st["lib"] is None:
@@ -265,6 +314,8 @@ class Admin:
                 st["running"] = True
                 threading.Thread(target=self.stats_job, daemon=True).start()
             snap = dict(st)
+        if isinstance(snap["lib"], dict) and "favourites" in snap["lib"]:
+            snap["lib"] = {**snap["lib"], "favourites": int(self.live.visible_for(member).fav.sum())}
         import stats
         qlines = qsize = None
         try:

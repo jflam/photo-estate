@@ -9,6 +9,7 @@ socket. tests/test_video_app.py does the same end to end with the model.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import shutil
@@ -566,13 +567,14 @@ def test_videos_load_like_photos(lib):
         assert c.video[c.index[v]]
     assert c.meta[V1]["path"] == "Videos/Beach day.mp4"
     assert all("kind" not in c.meta[s] and "dur" not in c.meta[s] and not c.video[c.index[s]] for s in lib.photos)
-    assert c.info["videos"] == 2 and c.info["total"] == len(lib.photos) + 2
+    v = catalog.Live(c).visible_for(None)     # what a member sees: nobody hides anything here
+    assert v.info["videos"] == 2 and v.info["total"] == len(lib.photos) + 2
     assert set(c.meta[s].get("live", "") for s in lib.photos) == {"", C2}
     assert c.meta[still]["live"] == C2, "a still with two clips carries the .mp4"                # pyright: ignore
     assert C1 not in c.index and C2 not in c.index and C1 not in c.meta and C2 not in c.meta
     assert c.clips == {C1: ".mov", C2: ".mp4"}
-    json.dumps(c.info)
-    json.dumps([c.feed_row(s) for s in c.shas])
+    json.dumps(v.info)
+    json.dumps([v.feed_row(s) for s in c.shas])
 
 
 def test_frames_are_loaded_and_strays_dropped(lib):
@@ -605,14 +607,16 @@ def test_a_video_is_never_in_a_stack(lib):
     p = lib.photos[10]
     lib.video(V3, vec=lib.vec_of(p), taken=lib.taken_of(p), kind="video")
     c = lib.load()
-    assert c.stack_of[c.index[V3]] == -1 and c.stack_n[c.index[V3]] <= 1 and not c.dup[c.index[V3]]
-    assert c.stack_of[c.index[p]] == -1 and c.stack_n[c.index[p]] <= 1
+    v = catalog.Live(c).visible_for(None)
+    assert v.stack_of[c.index[V3]] == -1 and v.stack_n[c.index[V3]] <= 1 and not v.dup[c.index[V3]]
+    assert v.stack_of[c.index[p]] == -1 and v.stack_n[c.index[p]] <= 1
     con = lib.con()
     con.execute("UPDATE assets SET kind='image', ext='.jpg' WHERE sha256=?", (V3,))
     con.commit()
     con.close()
     twin = lib.load()
-    assert twin.stack_of[twin.index[V3]] >= 0 and twin.stack_of[twin.index[V3]] == twin.stack_of[twin.index[p]]
+    tv = catalog.Live(twin).visible_for(None)
+    assert tv.stack_of[twin.index[V3]] >= 0 and tv.stack_of[twin.index[V3]] == tv.stack_of[twin.index[p]]
 
 
 def test_incremental_load_with_videos_matches_a_full_one(lib):
@@ -767,7 +771,7 @@ def test_video_file(clips, tmp_path):
     cat = SimpleNamespace(meta={vid: {"ext": ".mp4", "kind": "video", "path": "Videos 2026/Beach day.mp4"},
                                 gone: {"ext": ".mp4", "kind": "video", "path": "x/gone.mp4"},
                                 photo: {"ext": ".jpg", "path": "x/p.jpg"}},
-                          clips={clip: ".mov"})
+                          clips={clip: ".mov"}, stills={clip: (photo,)})     # (a clip is served to whoever may see its still)
     im = Images(SimpleNamespace(cat=cat), store, tmp_path / "cache", tmp_path / "cache")
     assert im.video_file(vid) == (src, "video/mp4", "Beach day.mp4")
     assert im.video_file(clip) == (csrc, "video/mp4", f"{clip[:12]}.mov")
@@ -809,6 +813,8 @@ def app(tmp_path_factory, clips):
     lib.pair(clip, still)
     a = PhotoApp(embed.parser().parse_args(["--db", str(lib.db), "serve", "--store", str(store), "--no-pregenerate"]))
     a.feed_update()
+    # Asked as this computer: a catalog with no members lets nothing else in (photo_app.py, members.py).
+    a.request = functools.partial(a.request, local=True)
     return SimpleNamespace(app=a, vid=vid, clip=clip, still=still, photo=lib.photos[0], size=len(vid_bytes),
                            bytes=vid_bytes, n=len(lib.photos) + 1)
 
@@ -843,9 +849,10 @@ def test_a_stack_with_a_live_photo_in_it_says_which_clip_it_plays(lib):
     lib.pair(C1, V3)
     lib.pair(C2, alone)
     c = lib.load()
-    g = int(c.stack_of[c.index[p]])
-    assert g >= 0 and g == c.stack_of[c.index[V3]] and c.stack_live == {g: C1}
-    rows, _, _ = c.take(np.array([c.index[p], c.index[V3], c.index[alone]]), 0, 10, False)
+    v = catalog.Live(c).visible_for(None)
+    g = int(v.stack_of[c.index[p]])
+    assert g >= 0 and g == v.stack_of[c.index[V3]] and v.stack_live == {g: C1}
+    rows, _, _ = v.take(np.array([c.index[p], c.index[V3], c.index[alone]]), 0, 10, False)
     assert [r.get("stack_live") for r in rows] == [C1, C1, None]
     assert [r.get("live") for r in rows] == [None, C1, C2]
 
