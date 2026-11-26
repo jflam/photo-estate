@@ -238,7 +238,9 @@ People lock, and the new groups are swapped in with it, so a reader sees the old
 never half of them. If the grouping raises, the state is `failed` with the error (`clusters_error`);
 `/api/people/unknown` reports both, and the page stops asking and says the unnamed faces
 could not be grouped, while naming everyone else still works (issue #82). The grouping runs once, when
-`People` is made, so only a restart runs it again; the page says that too. While the state is `waiting`
+`People` is made, so only the next load of People (an ingest's faces, a private photo, a restart) runs it
+again; the page says a restart. A group's number (`cluster`) is that `People`'s own: each one numbers its
+groups from its own multiple of 1000, from a random place in each run of the app. While the state is `waiting`
 or `working` the page asks again after 1.5 s, then half as long again each time up to 10 s, and for at
 most ten minutes, after which it says it is still grouping and offers **Check again**; the asking stops
 the moment you go to another view ([app/people-flow.js](../../photo-estate/app/people-flow.js), issue #80).
@@ -255,7 +257,7 @@ endpoint, `POST /api/people/label`, implements them all.
 | **"That's not them"** | `{faces, person: null}` | The face's previous person gets a `face_not` row; `pid = -1`; it will never be suggested as them again |
 | **Not sure** | `{later: [ids], later_person: id}` | A `face_later` row: still unnamed, but moved to the Skipped list for that person |
 | **Rule out only** | `{not: [ids], not_person: id}` | `face_not` rows without renaming |
-| **Name a whole group** | `{cluster: n, person: ...}` | Applies to every still-unsettled face in the group, not only the ones shown |
+| **Name a whole group** | `{cluster: n, person: ...}` | Applies to every still-unsettled face in the group, not only the ones shown; a number that is not one of the answering `People`'s groups (shown before it was loaded again) names nothing and is a 409 |
 | **Yes to everything waiting** | `{pending: {person, year}, person, not: [...]}` | Every pending face for that person (in that year), less the excluded ones |
 | **Take it back** | `{undo: [ids], undo_person?}` | Removes the name, and the `not` / `later` rows (for that person, or all if omitted) |
 | **Rename or merge a person** | `POST /api/people/person {id, name}` | A new name renames; an existing person's name (any case) merges the two: their faces, `face_not` and `face_later` rows move to the person who keeps the name (a face ruled out or put aside for both keeps one row), in SQLite and in memory, and nothing naming the merged person is left |
@@ -287,6 +289,35 @@ saving a page of 60 decisions costs one rescore, not sixty.
 Requests that read one person or one face (`review`, `person`, `odd`, `photo`) look it up *under* the
 lock and answer 404 when it is not there, so a request for a person a merge has just deleted gets a 404,
 not an error.
+
+### Loading People again while it answers
+
+The app loads a new `People` beside the one answering (`PhotoApp.load_people`, one load at a time): after an
+ingest's faces, when what People is built without changes (a photo made private or released, an estate default's
+hides), and at start. A load reads the catalog, names faces from Google's tags (`seed`) and works out the automatic
+names (`rescore`), writing both, and takes up to a minute; the old one keeps answering, and keeps taking names,
+until the new one is swapped in. [specs/People.tla](../../photo-estate/specs/People.tla) is a model of that, checked
+by TLC, and it holds the code to these rules (`tests/test_people_states.py` replays each way it found them broken):
+
+- **A member's word stays in the catalog.** `seed` and `rescore` write a name only where the catalog has none of a
+  member's or Google's (`source` NULL or `auto`), and `seed` names no face to a person it was said not to be: a
+  load that read before Ada named a face once wrote its own guess over her word.
+- **The People answering has every name the catalog has.** `load_people` notes how many changes the old one has
+  taken (`People.writes`) before the new one reads; if it took any meanwhile, the new one reads the names again
+  (`People.refresh`, then a rescore) under the old one's lock, before it is swapped in (`People.replaced_by`); from
+  then on a change that reaches the old one, from a request that took it just before the swap, is passed on to the
+  new one (`People.successor`). Before, such a name was in the catalog and not on the page until the next load.
+- **A group is named as shown, or not at all.** A group named from a page that showed the People before is refused
+  (409, and the page says so); it used to name whatever group had that place in the new one, faces nobody had
+  seen, or nothing while answering that it had.
+- **People is built without what the looks say.** A reload of the catalog whose swap takes in a private change
+  (`with_private`) loads People again: the member's own relook then finds nothing changed. A face of a photo private
+  to someone is never shown to anyone else meanwhile, by any People route: each request's `keep` and `see` are the
+  looks', not People's. A load that fails is not tried again until the next reason to load (a question for the
+  owner).
+
+A person a member makes while a load is under way, with the name one of Google's tags gives, is the tag's person
+too (`seed` takes it rather than making a second, which SQLite refused: the load failed).
 
 ### The journal
 

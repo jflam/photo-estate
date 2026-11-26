@@ -1101,7 +1101,8 @@ The server is multi-threaded but not multi-process. The relevant locks are small
   installing a reloaded catalog one at a time.
 - `Live.views_lock` guards the member views being kept (catalog.py); a view worked out while the catalog or
   the looks were being replaced is not kept.
-- `People` has its own `RLock`.
+- `People` has its own `RLock`: each one, the People answering and the one being loaded beside it
+  (`specs/People.tla`).
 
 **Lock order.** Take `live.gate` before any module's own lock (`Browse.lru_lock`, `Live.views_lock`,
 `Admin.st_lock`, ...), and never take the gate while holding one: a request holds the gate and then
@@ -1117,8 +1118,12 @@ is `fav_write` (below), and nothing that holds the gate takes it. In full, where
    then SQLite's write lock: the routes inside the gate that write take the write lock there
    (`BEGIN IMMEDIATE` in members.py, changes.py, member_inbox.py, stories.py; a tombstone or an agent's
    binding at its first write). The lens and private routes write outside the gate.
-5. Held alone, with nothing taken inside them: `reload_lock`, `settling_lock`, `Browse.lru_lock`,
-   `people_loading` (across a whole People load, outside the gate).
+5. `people_loading` (across a whole People load, outside the gate), then the old `People`'s lock, then the
+   new one's, then SQLite's write lock: `load_people` noting the old one's changes, and `People.replaced_by`
+   reading the names again into the new one. A change that reaches a `People` already replaced holds its lock,
+   then the new one's (`People.successor`); a request inside the gate takes one `People`'s lock, then SQLite's
+   write lock. Never a newer `People`'s lock before an older one's, and none while asking for the gate.
+6. Held alone, with nothing taken inside them: `reload_lock`, `settling_lock`, `Browse.lru_lock`.
 
 A read of SQLite never waits for its write lock (the catalog is in WAL mode), so nothing a swap does
 inside the gate waits for SQLite. `specs/ReloadLocks.tla` checks these with TLC and finds no deadlock.
