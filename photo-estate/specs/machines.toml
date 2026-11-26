@@ -92,16 +92,21 @@ name = "a member"
 tables = ["members"]
 columns = ["members.status"]
 writers = ["members.py"]
-checked = "unmodelled"
-note = "survey: change() writes every field from a copy read earlier; any status may follow any other"
+checked = "model"
+model = "Member.tla"
+# (and where a member is read to let a request through: the roster PhotoApp keeps, the gate, a run's token)
+code = { "members.py" = ["_begin", "_add", "add", "request", "change", "first_start", "demo", "agent", "lookup", "get", "by_login", "sysadmin"], "photo_app.py" = ["PhotoApp.load_members", "PhotoApp.who", "PhotoApp.refusal", "PhotoApp.change_member", "PhotoApp.ask_in"], "http_util.py" = ["Auth.allows"], "tasks.py" = ["Tasks.mint", "Tasks.run_of"], "estate_mcp.py" = ["Server.handle"] }
+stamp = "7ada75ccaee46712"
 
 [[machine]]
 name = "a member's own agent on a device"
 tables = ["agent_bindings"]
 columns = ["agent_bindings.status"]
 writers = ["members.py"]
-checked = "unmodelled"
-note = "what becomes of an approved binding when its member is revoked"
+checked = "model"
+model = "Member.tla"
+code = { "members.py" = ["_begin", "bind", "bindings", "decide_binding"], "photo_app.py" = ["PhotoApp.mcp_route", "PhotoApp.device", "PhotoApp.agents_route"], "estate_mcp.py" = ["Server.handle"] }
+stamp = "899630ccdc256182"
 
 [[machine]]
 name = "an inbox item"
@@ -112,7 +117,7 @@ checked = "model"
 model = "InboxItem.tla"
 # (the kinds review and series_update, with the album they are about, are ChangeSet.tla's)
 code = { "member_inbox.py" = ["put", "close", "retitle", "dismiss", "sysadmins", "lens_changed"], "members.py" = ["request", "change", "bind", "decide_binding"], "lenses.py" = ["_begin", "_ref", "propose", "decide", "publish", "publish_album", "subscribe", "unsubscribe"], "stories.py" = ["ask", "_for", "deal", "_deal", "_settle", "dismiss", "put_away", "answer", "tell"], "private.py" = ["_hold", "_open_held", "close_held"], "changes.py" = ["Changes.tell"] }
-stamp = "4a4b4d5647b5caf0"
+stamp = "9a5b458dfbddffee"
 
 [[machine]]
 name = "a question, and whom it was dealt to"

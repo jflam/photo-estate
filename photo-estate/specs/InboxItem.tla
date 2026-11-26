@@ -19,8 +19,9 @@
    and, in every part, the member whose item it is putting it away (member_inbox.dismiss).
 
    Who holds the write lock when it calls put or close (checked caller by caller; Python's `with con:` begins a
-   transaction only at the first write): members.request (after _add's INSERT), members.bind (after its INSERT OR
-   IGNORE, and only when that made the row), members.change and members.decide_binding (after their UPDATE),
+   transaction only at the first write): members.request (members._begin, before its lookup), members.bind (after
+   its INSERT OR IGNORE, and only when that made the row), members.change and members.decide_binding (members._begin,
+   before they read the member or the binding: since specs/Member.tla),
    lenses.propose, decide, publish, publish_album, subscribe, unsubscribe (lenses._begin), Changes.write and so
    Changes.tell and lens_changed (BEGIN IMMEDIATE), private._hold and close_held (private._begin, in every caller),
    stories.answer and stories.dismiss (their first INSERT or UPDATE, before _settle), tasks.Tasks.to_review (after
@@ -29,8 +30,9 @@
        own SELECT inside it, with no write before them: its read, then its write (DealRead, DealWrite);
      - member_inbox.dismiss reads the item (its SELECT) and then UPDATEs it by id, in a `with con:` with no write
        before: its read, then its write (DismissRead, DismissWrite).
-   members.change reads the member before its UPDATE too; that read decides nothing here (a member it moves out of
-   pending was read pending; who is a sysadmin after it is what it writes), so it is one action.
+   members.change reads the member with the write lock held (it did not before specs/Member.tla; that read decided
+   nothing here: a member it moves out of pending was read pending, and who is a sysadmin after it is what it
+   writes), so it is one action.
 
    Guarded = TRUE is the code. Guarded = FALSE is the code before it was fixed (November 2026), kept so the
    invariants can be seen to fail without the guard: stories.deal takes the write lock (BEGIN IMMEDIATE) before
@@ -381,9 +383,10 @@ NoRace == /\ \A d \in {"d1", "d2"} : dl[d].op # "idle" => dl'[d].op = "idle"
    - the item's title, updated_at and the order mine() lists them in; retitle, here part of close_held's keep;
    - a question's own life (the questions and asked tables, deal's weekly allowance and room, the order groups are
      dealt in, the photos one may not be shown, which keep_item hides): specs/Question.tla; here deal's room is enough;
-   - the member and the binding themselves (members.py): members.change writing every field from a copy read
-     earlier, and the newcomer's login (a second request from one login is refused by the member_logins trigger);
-     a member revoked (their items stay as they are: see InboxItem's report); the owner of a lens being a sysadmin;
+   - the member and the binding themselves (members.py): specs/Member.tla (members.change, members.request and
+     decide_binding read with the write lock held now, so a second request from one login is answered with the
+     first's member); a member revoked (their items stay as they are: see InboxItem's report); the owner of a lens
+     being a sysadmin;
    - estate defaults beyond staying published, and their opted_out rows (Lens.tla);
    - more than two dismisses under way at once;
    - estate.py purge, which deletes a purged photo's `private` rows with the app stopped and closes no held item;

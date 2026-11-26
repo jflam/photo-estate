@@ -166,6 +166,15 @@ def _add(con, name: str, login: str | None, role: str, status: str, upload_polic
     return replace(got, login=login or "")
 
 
+def _begin(con) -> None:
+    """Take the write lock now, at the head of a `with con:` block, so what the block reads next is what it writes
+    over: no other request changes the member, the login or the binding in between. Python's own BEGIN waits for the
+    first write, and a read before it sees a row that may have moved on by then (specs/Member.tla is the model of
+    what that let happen: a revoke undone by a rename, a second request from one login answered with an error)."""
+    if not con.in_transaction:
+        con.execute("BEGIN IMMEDIATE")
+
+
 def _check(role: str, status: str, upload_policy: str) -> None:
     if role not in ROLES:
         raise ValueError(f"role must be one of {', '.join(ROLES)}")
@@ -188,11 +197,13 @@ def add(con: sqlite3.Connection, name: str, login: str | None = None, *, role: s
 
 def request(con: sqlite3.Connection, login: str, name: str | None = None) -> Member:
     """A login nobody has let in asks to be: a pending member, journaled as member.requested (its own
-    actor). A login that is already a member's, in any status, is answered with that member."""
+    actor). A login that is already a member's, in any status, is answered with that member (two requests from one
+    login at once too: the lookup is made with the write lock held)."""
     login = norm(login)
     if not login:
         raise ValueError("no login: a request comes through `tailscale serve`, which says who it is")
     with con:
+        _begin(con)
         if got := lookup(con, login):
             return got
         name = " ".join(str(name or "").split())[:80] or login.split("@")[0]
@@ -208,10 +219,12 @@ def change(con: sqlite3.Connection, mid: int, actor: int | None, **fields) -> Me
     """Change some of a member's FIELDS. Approving is status active (joined_at is set the first time),
     revoking is status revoked. One member.changed entry for what changed (none when nothing did).
     ValueError for an unknown member, field or value, a person_id that is no person, or a change that
-    would leave the estate with no active sysadmin."""
+    would leave the estate with no active sysadmin. The member is read with the write lock held, so the fields
+    not given are written as they are, never as another change at the same moment found them."""
     if bad := set(fields) - set(FIELDS):
         raise ValueError(f"not a member field: {', '.join(sorted(bad))}")
     with con:
+        _begin(con)          # (the member as it is when this writes: specs/Member.tla)
         m = get(con, mid)
         if m is None:
             raise ValueError("no such member")
@@ -327,8 +340,10 @@ def decide_binding(con: sqlite3.Connection, member: int | None, bid: int, allow:
     `node`. Allowing must come from another device than the agent's own: whatever the agent could send from there
     (it holds the member's login on that device) is no proof that the member said yes. Turning off is allowed from
     anywhere. One binding.approved or binding.revoked entry by the member, and the binding's inbox item is done.
+    The binding is read with the write lock held, so two decisions at once end as the later one answered.
     BindingError: 404 for a binding that is not theirs, 403 to allow it from its own device."""
     with con:
+        _begin(con)          # (the binding as it is when this writes: specs/Member.tla)
         row = con.execute(f"SELECT {BINDING_COLS} FROM agent_bindings WHERE id=? AND member_id IS ?", (bid, member)).fetchone()
         if row is None or member is None:
             raise BindingError(404, "no such agent")
