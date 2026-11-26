@@ -404,7 +404,8 @@ def decide_binding(con: sqlite3.Connection, member: int | None, bid: int, allow:
     Turning off is allowed from anywhere. One binding.approved or binding.revoked entry by the member, and the
     binding's inbox item is done. The binding is read with the write lock held, so two decisions at once end as the
     later one answered. BindingError: 404 for a binding that is not theirs, 403 to allow it from its own device or
-    from one that could not be told apart from it."""
+    from one that could not be told apart from it, or for a member who is not active now (revoked as the request
+    came: their agent would be approved with them out, and back with them)."""
     with con:
         _begin(con)          # (the binding as it is when this writes: specs/Member.tla)
         row = con.execute(f"SELECT {BINDING_COLS} FROM agent_bindings WHERE id=? AND member_id IS ?", (bid, member)).fetchone()
@@ -419,6 +420,8 @@ def decide_binding(con: sqlite3.Connection, member: int | None, bid: int, allow:
                                     " did not answer), so this cannot be told apart from the agent's own device. Try"
                                     " again in a minute. If the agent connected while its device could not be named, let"
                                     " it connect again and allow the new entry")
+        if allow and not ((who := get(con, member)) and who.active):    # (read under the lock: specs/Member.tla)
+            raise BindingError(403, "you are not let in just now, so your agent cannot be allowed")
         status = "approved" if allow else "revoked"
         if b["status"] != status:
             t = now()

@@ -278,7 +278,7 @@ def test_task_cancelled_between_select_and_claim_never_runs(tmp_path, monkeypatc
     marker = tmp_path / "ran"
     looped, fired = threading.Event(), []
     box: dict = {}
-    pick = "SELECT id, prompt FROM agent_tasks WHERE status='queued'"
+    pick = "SELECT id, prompt, acting_for FROM agent_tasks WHERE status='queued'"
 
     def after(sql, params, cur):
         if not sql.startswith(pick):

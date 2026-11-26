@@ -34,7 +34,7 @@ import members  # noqa: E402
 import photo_app  # noqa: E402
 from core import schema  # noqa: E402
 from photo_app import PhotoApp  # noqa: E402
-from test_agent import task, tool  # noqa: E402
+from test_agent import task  # noqa: E402
 from test_inbox_states import Gap, gap, opened  # noqa: E402
 from test_multiplayer import ADA, BEN, CLEO, bind, call, mid, settle  # noqa: E402
 
@@ -496,3 +496,18 @@ def test_two_first_starts_at_once_make_one_first_sysadmin(tmp_path):
     assert c1.execute("SELECT count(*) FROM members WHERE role='sysadmin'").fetchone() == (1,)
     c1.close()
     c2.close()
+
+
+def test_an_agent_is_not_allowed_while_its_member_is_out(db, con):
+    """AllowedSinceLetIn, the last step TLC found once a revoke set agents pending: Ben's allow, let through by a roster
+    read before Ada's revoke committed, lands after it. His agent would be approved with him out, and back with him. The
+    allow is refused under the lock (403); turning it off still works; let in again, he allows it."""
+    members.change(con, B, A, status="active")
+    b = members.bind(con, B, "node:laptop", "laptop")
+    members.change(con, B, A, status="revoked")
+    with pytest.raises(members.BindingError) as e:
+        members.decide_binding(con, B, b["id"], True, "node:phone")
+    assert e.value.status == 403 and members.bindings(con, B)[0]["status"] == "pending"
+    assert members.decide_binding(con, B, b["id"], False, "node:phone")["status"] == "revoked"
+    members.change(con, B, A, status="active")
+    assert members.decide_binding(con, B, b["id"], True, "node:phone")["status"] == "approved"

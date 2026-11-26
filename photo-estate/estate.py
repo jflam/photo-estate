@@ -1373,7 +1373,7 @@ def cmd_purge(a) -> None:
         print("The sources still have their copies (nothing here touches a source):")
         for src, path in sources:
             print(f"  {src}: {path}")
-    print("Restart the app so it forgets the photo now: launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search")
+    print("The running app notices within a minute (its journal listener) and forgets the photo and its faces; no restart is needed.")
 
 
 def unlink_original(f: Path) -> None:

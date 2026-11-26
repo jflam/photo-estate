@@ -39,8 +39,12 @@
    Each thread runs once, in the order of its locks as the code takes them; the gated request that writes is any of
    the routes that take SQLite's write lock inside the gate. Guarded = TRUE is the code (reload_catalog's install
    under fav_write), FALSE the code before. ReloadLocks.cfg checks for deadlock: a state where something waits and
-   nothing can move. One invariant at the end is broken by the code as it is and is not in ReloadLocks.cfg: a
-   question for the owner. *)
+   nothing can move. One invariant at the end is broken by the code as it is and is not in ReloadLocks.cfg: any
+   holder of SQLite's write lock for long still holds the app up. The ingest was the one that did (up to 200 files
+   copied inside one transaction); since issue #141 it copies with no transaction open and holds the lock only for
+   its inserts (estate.record). PhotoApp.mend and PhotoApp.notice (the minute timer, the listeners' pass) call
+   relook and reload_catalog as the threads here do, taking the same locks in the same order: more threads of two
+   kinds already here, and none new. *)
 EXTENDS Naturals, Sequences
 
 CONSTANT Guarded

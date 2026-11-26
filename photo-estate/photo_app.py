@@ -877,6 +877,7 @@ class PhotoApp:
         except BaseException:   # no thread: nothing will count it down (busy would be true for ever)
             with self.settling_lock:
                 self.settling -= 1
+            self.looks_stale = True     # and nothing read the looks again: mend does, within a minute
             raise
 
     def reading(self, fn):

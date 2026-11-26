@@ -409,7 +409,7 @@ if __name__ == "__main__":
 
 # -- ingest copies first and writes after (issue #141) ------------------------------------------------------------
 
-def ingest_args(db: Path, store: Path, src: Path) -> "argparse.Namespace":
+def ingest_args(db: Path, store: Path, src: Path):
     import argparse
     return argparse.Namespace(db=str(db), store=str(store), sources=[str(src)], force=True, facts=None, delete_after=False,
                               progress=False, uploads=False)

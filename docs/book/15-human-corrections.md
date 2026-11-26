@@ -258,7 +258,7 @@ endpoint, `POST /api/people/label`, implements them all.
 | **Not sure** | `{later: [ids], later_person: id}` | A `face_later` row: still unnamed, but moved to the Skipped list for that person |
 | **Rule out only** | `{not: [ids], not_person: id}` | `face_not` rows without renaming |
 | **Name a whole group** | `{cluster: n, person: ...}` | Applies to every still-unsettled face in the group, not only the ones shown; a number that is not one of the answering `People`'s groups (shown before it was loaded again) names nothing and is a 409 |
-| **Yes to everything waiting** | `{pending: {person, year}, person, not: [...]}` | Every pending face for that person (in that year), less the excluded ones |
+| **Yes to everything waiting** | `{pending: {person, year, as_of}, person, not: [...]}` | Every pending face for that person (in that year), less the excluded ones: what waited on the People that showed the page (`as_of`; if People has been loaded again since, 409 and the page is looked at again), in photos the member is shown |
 | **Take it back** | `{undo: [ids], undo_person?}` | Removes the name, and the `not` / `later` rows (for that person, or all if omitted) |
 | **Rename or merge a person** | `POST /api/people/person {id, name}` | A new name renames; an existing person's name (any case) merges the two: their faces, `face_not` and `face_later` rows move to the person who keeps the name (a face ruled out or put aside for both keeps one row), in SQLite and in memory, and nothing naming the merged person is left |
 | **Set a birth month** | `POST /api/people/person {id, born}` | Enables age labels and the "not before birth" rule |

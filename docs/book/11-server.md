@@ -1127,11 +1127,21 @@ is `fav_write` (below), and nothing that holds the gate takes it. In full, where
 
 A read of SQLite never waits for its write lock (the catalog is in WAL mode), so nothing a swap does
 inside the gate waits for SQLite. `specs/ReloadLocks.tla` checks these with TLC and finds no deadlock.
-What it does find, and is the owner's to decide: while the ingest script holds the write lock for a
-batch (up to 200 files copied into the store between its commits), a request inside the gate that
+What it does find: while anything holds SQLite's write lock for long, a request inside the gate that
 writes waits for it, a swap waits for that request, and every request after the swap waits for the
-swap, so the whole app waits on the ingest, until it commits or the request's 60-second busy timeout
-fails it (`tests/test_reload_states.py` shows it with real threads).
+swap, so the whole app waits (`tests/test_reload_states.py` shows it with real threads). The ingest
+was what did: it copied up to 200 files inside one transaction. Since November 2026 it copies with no
+transaction open and takes the lock only to record what it copied (`estate.record`; chapter 4).
+
+**What fails is tried again, and what a script wrote is noticed.** The minute timer also runs
+`PhotoApp.mend`: a relook that raised after its change was committed set `looks_stale`, and the looks
+are read again; a reload that raised set `reload_failed`, and the catalog is reloaded; a load of People
+that raised is run again, and so is a grouping of unnamed faces that failed. Each stays to be done
+until it succeeds. The listeners' pass (every 30 seconds) first runs `PhotoApp.notice`: a journal entry
+that changes who sees what, written after the looks were last read (`private.py library`, run by hand),
+has them read again, and a `photo.purged` entry after the catalog was read (`estate.py purge`) reloads
+the whole catalog and People. The app's own changes are read at once and are behind those marks.
+Loads of People asked for while one runs are one more load after it, however many asked.
 
 **The catalog generation.** `Live.generation` counts every change to the catalog being served, or to what
 anyone sees of it: an install, a relook and a favourite each add one, inside the gate's write side. `Browse.remember` keys its cache
