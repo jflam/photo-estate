@@ -105,8 +105,8 @@ columns = ["agent_bindings.status"]
 writers = ["members.py"]
 checked = "model"
 model = "Member.tla"
-code = { "members.py" = ["_begin", "bind", "bindings", "decide_binding"], "photo_app.py" = ["PhotoApp.mcp_route", "PhotoApp.device", "PhotoApp.agents_route"], "estate_mcp.py" = ["Server.handle"] }
-stamp = "899630ccdc256182"
+code = { "members.py" = ["_begin", "bind", "bindings", "node_kind", "decide_binding"], "photo_app.py" = ["PhotoApp.mcp_route", "PhotoApp.device", "PhotoApp.agents_route"], "estate_mcp.py" = ["Server.handle"] }
+stamp = "3dc4a660debd3d70"
 
 [[machine]]
 name = "an inbox item"
@@ -117,7 +117,7 @@ checked = "model"
 model = "InboxItem.tla"
 # (the kinds review and series_update, with the album they are about, are ChangeSet.tla's)
 code = { "member_inbox.py" = ["put", "close", "retitle", "dismiss", "sysadmins", "lens_changed"], "members.py" = ["request", "change", "bind", "decide_binding"], "lenses.py" = ["_begin", "_ref", "propose", "decide", "publish", "publish_album", "subscribe", "unsubscribe"], "stories.py" = ["ask", "_for", "deal", "_deal", "_settle", "dismiss", "put_away", "answer", "tell"], "private.py" = ["_hold", "_open_held", "close_held"], "changes.py" = ["Changes.tell"] }
-stamp = "9a5b458dfbddffee"
+stamp = "9bc56f75fdde91d9"
 
 [[machine]]
 name = "a question, and whom it was dealt to"

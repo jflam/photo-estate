@@ -26,6 +26,7 @@ appends its journal entry in the same transaction, and commits.
                                             (and a `binding` inbox item) the first time
   bindings(con, member) -> [dict]           the member's own agents, one per device
   decide_binding(con, member, id, allow, node) -> dict   the member allows one (from another device) or turns it off
+  node_kind(node) -> str                    what named a device: node (whois), addr, demo, or unknown
   ROLES, STATUSES, POLICIES, AGENT_NAME, BindingError
 
 Words (docs/notes/MULTIPLAYER-PLAN.md). A member is not a `persons` row, which is someone *in* photos
@@ -335,13 +336,28 @@ def bindings(con: sqlite3.Connection, member: int | None) -> list[dict]:
                                              " ORDER BY seen_at DESC, id DESC", (member,))]
 
 
+NAMED = ("node", "demo")   # the kinds of node that name a device for certain (node_kind)
+
+
+def node_kind(node: str) -> str:
+    """What named a device, from the node PhotoApp.device gave: "node" (tailscale whois: node:<StableID>), "addr"
+    (whois did not answer: addr:<address>, and one device may come from two, its IPv4 and its IPv6), "demo" (--demo:
+    demo:<name>, or `local`, this computer), else "unknown" (nothing said which device it was)."""
+    kind = node.split(":", 1)[0] if ":" in node else node
+    return "demo" if kind in ("demo", "local") else kind if kind in ("node", "addr") else "unknown"
+
+
 def decide_binding(con: sqlite3.Connection, member: int | None, bid: int, allow: bool, node: str) -> dict:
     """The member allows their agent on a device (approved) or turns it off (revoked), from a request that came from
     `node`. Allowing must come from another device than the agent's own: whatever the agent could send from there
-    (it holds the member's login on that device) is no proof that the member said yes. Turning off is allowed from
-    anywhere. One binding.approved or binding.revoked entry by the member, and the binding's inbox item is done.
-    The binding is read with the write lock held, so two decisions at once end as the later one answered.
-    BindingError: 404 for a binding that is not theirs, 403 to allow it from its own device."""
+    (it holds the member's login on that device) is no proof that the member said yes. So it is allowed only when
+    both the request's device and the agent's were named for certain, the same way (node_kind: by whois, or by the
+    demo), and are not the same: a device whois could not name is an address, and one laptop is one node but may be
+    an address, another address, or a node, so nothing unnamed can be told apart from the agent's own device.
+    Turning off is allowed from anywhere. One binding.approved or binding.revoked entry by the member, and the
+    binding's inbox item is done. The binding is read with the write lock held, so two decisions at once end as the
+    later one answered. BindingError: 404 for a binding that is not theirs, 403 to allow it from its own device or
+    from one that could not be told apart from it."""
     with con:
         _begin(con)          # (the binding as it is when this writes: specs/Member.tla)
         row = con.execute(f"SELECT {BINDING_COLS} FROM agent_bindings WHERE id=? AND member_id IS ?", (bid, member)).fetchone()
@@ -351,6 +367,11 @@ def decide_binding(con: sqlite3.Connection, member: int | None, bid: int, allow:
         if allow and b["node"] == node:
             raise BindingError(403, f"allow it from another device than {b['device']}, the one the agent connected from"
                                     " (your phone, say): anything there could be the agent itself")
+        if allow and not (node_kind(node) == node_kind(b["node"]) and node_kind(node) in NAMED):
+            raise BindingError(403, "this device, or the one the agent connected from, could not be named (tailscale whois"
+                                    " did not answer), so this cannot be told apart from the agent's own device. Try"
+                                    " again in a minute. If the agent connected while its device could not be named, let"
+                                    " it connect again and allow the new entry")
         status = "approved" if allow else "revoked"
         if b["status"] != status:
             t = now()

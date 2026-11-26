@@ -274,7 +274,8 @@ Bind ==
   /\ UNCHANGED <<part, admin, xs, pub, prop, dflt, sub, qs, at, dl, waits, wrong>>
   /\ Track
 
-\* members.decide_binding: allowed or turned off (from any status); member_inbox.close of its item either way
+\* members.decide_binding: allowed or turned off (from any status); member_inbox.close of its item either way. (An
+\* allow it refuses, from the agent's own device or one it cannot tell apart from it, changes nothing: no step here)
 DecideBinding(allow) ==
   /\ part = "binding" /\ bnd # "none"
   /\ bnd' = IF allow THEN "approved" ELSE "revoked"

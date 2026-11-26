@@ -4,7 +4,8 @@ or their agent could end up other than as last said, or a request let through on
 replayed on the real code; and, last, what the model shows the code does now where the owner has a question to
 decide (those tests say what is, not what must be).
 
-Every one of the first kind needs bad timing. The races land the other request on a `Gap` connection, as
+All of the first kind but one need bad timing: an agent allowing itself from its own device needs only whois to
+answer for one of its requests and not the other (or for neither, from its two addresses). The races land the other request on a `Gap` connection, as
 tests/test_inbox_states.py does: a request reads what it decides by with no lock held, because Python begins its
 transaction only at the first write, and the other request runs just before the first statement that writes or takes
 the write lock, on a connection of its own. The roster (PhotoApp.roster) is a copy in memory: its race is replayed
@@ -267,7 +268,7 @@ def test_a_member_revoked_while_someone_asks_in_is_refused(app, monkeypatch):
     call(app, "GET", "/api/search?limit=1", BEN, expect=403)
 
 
-# -- what is, where the owner decides (specs/Member.tla's invariants not in Member.cfg) -------------------------
+# -- with no bad timing: allowing an agent from its own device ---------------------------------------------------
 
 @pytest.fixture
 def real(tmp_path):
@@ -280,24 +281,85 @@ def real(tmp_path):
     app.tasks.stop()
 
 
-@pytest.mark.parametrize("first, then", [(None, "node:nKID1"), ("node:nKID1", None)], ids=["made-blind", "allowed-blind"])
-def test_an_agent_allows_itself_from_its_own_device_when_whois_answers_for_one_request_only(real, first, then):
-    """OwnDeviceNeverAllows, what is. A HOLE, left for the owner: the device rule compares two strings, and one laptop is
-    node:<StableID> when `tailscale whois` answers for its address and addr:<ip> when it does not (no CLI, a timeout,
-    an error; a failure is kept a minute, WHOIS_FOR / 10). The kid's agent, which holds the kid's login on the laptop,
-    calls /mcp from it while whois does not answer for it (or does), and then POSTs /api/agents/<id> {allow: true}
-    from the same laptop when whois does (or does not): the two differ, so it is allowed, from its own device."""
-    kid, laptop = {"Tailscale-User-Login": "kid@example.com"}, {"X-Forwarded-For": "100.64.0.5"}
-    names = {"100.64.0.5": ("node:nKID1", "kid-macbook")}
-    real.whois = (lambda addr: names.get(addr)) if first else (lambda addr: None)
-    real.request("POST", "/mcp", {**kid, **laptop}, body={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
-    con = sqlite3.connect(real.a.db)
-    (bid, node), = con.execute("SELECT id, node FROM agent_bindings").fetchall()
-    con.close()
-    assert node == (first or "addr:100.64.0.5")
-    real.whois, real.whois_seen = (lambda addr: names.get(addr)) if then else (lambda addr: None), {}
-    got = real.request("POST", f"/api/agents/{bid}", {**kid, **laptop}, body={"allow": True})
-    assert (got.status, got.json()["binding"]["status"]) == (200, "approved")   # what is: allowed from its own device
+KID = {"Tailscale-User-Login": "kid@example.com"}
+NAMES = {"100.64.0.5": ("node:nKID1", "kid-macbook"), "fd7a:115c:a1e0::5": ("node:nKID1", "kid-macbook"),
+         "100.64.0.9": ("node:nKID2", "kid-iphone")}
+
+
+def whois(app, answers: bool) -> None:
+    """`tailscale whois` answering for the kid's devices, or not answering at all (and nothing kept from before)."""
+    app.whois, app.whois_seen = (NAMES.get if answers else (lambda addr: None)), {}
+
+
+def connect(app, addr: str) -> dict:
+    """The kid's agent calls /mcp from `addr`: its binding (made pending the first time)."""
+    app.request("POST", "/mcp", {**KID, "X-Forwarded-For": addr}, body={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    return status(app)[-1]
+
+
+def status(app) -> list[dict]:
+    con = sqlite3.connect(app.a.db)
+    try:
+        return [dict(zip(("id", "node", "status"), r)) for r in con.execute("SELECT id, node, status FROM agent_bindings ORDER BY id")]
+    finally:
+        con.close()
+
+
+@pytest.mark.parametrize("made, allowed", [
+    ((False, "100.64.0.5"), (True, "100.64.0.5")),            # TLC's trace: made while whois could not name the laptop
+    ((True, "100.64.0.5"), (False, "100.64.0.5")),            # allowed while whois cannot name it
+    ((False, "100.64.0.5"), (False, "fd7a:115c:a1e0::5")),    # unnamed both times, from its IPv4 and then its IPv6
+], ids=["made-blind", "allowed-blind", "two-addresses"])
+def test_an_agent_cannot_allow_itself_from_its_own_device(real, made, allowed):
+    """OwnDeviceNeverAllows. The device rule compared two strings, and one laptop is node:<StableID> when `tailscale
+    whois` answers for its address and addr:<address> when it does not (no CLI, a timeout, an error; a failure is kept
+    a minute), and a laptop has two tailnet addresses. The kid's agent, which holds the kid's login on the laptop,
+    calls /mcp from it, and then POSTs /api/agents/<id> {allow: true} from the same laptop, named the other way (or by
+    its other address): the strings differed, and it was allowed, from its own device."""
+    whois(real, made[0])
+    b = connect(real, made[1])
+    whois(real, allowed[0])
+    got = real.request("POST", f"/api/agents/{b['id']}", {**KID, "X-Forwarded-For": allowed[1]}, body={"allow": True})
+    assert got.status == 403, "allowing must come from another device than the agent's own"
+    assert "could not be named" in got.json()["error"] and [x["status"] for x in status(real)] == ["pending"]
+
+
+def test_an_agent_is_allowed_from_another_named_device_and_turned_off_from_anywhere(real):
+    """What must not change: the agent on the laptop (whois names it) is allowed from the kid's phone (whois names
+    it). An agent that connected while the laptop could not be named stays pending: it cannot be allowed (refused, with
+    what to do), and when it calls again with whois answering it is a second entry, allowed the same way; the first
+    stays pending, and is turned off from the laptop itself, unnamed, or from a request that names no device at all.
+    This computer itself, with no login, is no member and has no agents (404), as before."""
+    whois(real, False)
+    blind = connect(real, "100.64.0.5")
+    assert blind["node"] == "addr:100.64.0.5"
+    whois(real, True)
+    named = connect(real, "100.64.0.5")
+    assert named["node"] == "node:nKID1" and named["id"] != blind["id"]
+    no = real.request("POST", f"/api/agents/{blind['id']}", {**KID, "X-Forwarded-For": "100.64.0.9"}, body={"allow": True})
+    assert no.status == 403 and "allow the new entry" in no.json()["error"]
+    got = real.request("POST", f"/api/agents/{named['id']}", {**KID, "X-Forwarded-For": "100.64.0.9"}, body={"allow": True})
+    assert (got.status, got.json()["binding"]["status"]) == (200, "approved")
+    assert real.request("POST", f"/api/agents/{named['id']}", KID, body={"allow": True}).status == 403   # no device named
+    whois(real, False)
+    off = real.request("POST", f"/api/agents/{blind['id']}", {**KID, "X-Forwarded-For": "100.64.0.5"}, body={"allow": False})
+    assert (off.status, off.json()["binding"]["status"]) == (200, "revoked")
+    assert real.request("POST", f"/api/agents/{named['id']}", KID, body={"allow": False}).json()["binding"]["status"] == "revoked"
+    assert real.request("POST", f"/api/agents/{named['id']}", {}, body={"allow": False}, local=True).status == 404
+
+
+def test_the_demos_devices_still_allow(app):
+    """What must not change: with --demo, X-Demo-Device names a device and a request with none is this computer; an
+    agent on one is allowed from the other, both ways, and never from its own."""
+    here = bind(app, BEN)                                                    # made from this computer, allowed from "phone"
+    assert (here["node"], here["status"]) == ("local", "approved")
+    call(app, "POST", "/mcp", {**CLEO, "X-Demo-Device": "Cleo-Laptop"}, {"jsonrpc": "2.0", "id": 0, "method": "ping"})
+    b = next(x for x in call(app, "GET", "/api/agents", CLEO)["bindings"] if x["node"] == "demo:cleo-laptop")
+    call(app, "POST", f"/api/agents/{b['id']}", {**CLEO, "X-Demo-Device": "Cleo-Laptop"}, {"allow": True}, expect=403)
+    assert call(app, "POST", f"/api/agents/{b['id']}", CLEO, {"allow": True})["binding"]["status"] == "approved"
+
+
+# -- what is, where the owner decides (specs/Member.tla's invariants not in Member.cfg) -------------------------
 
 
 def test_a_revoked_members_agent_is_refused_and_back_with_them(app):

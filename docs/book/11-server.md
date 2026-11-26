@@ -116,7 +116,8 @@ reads the copy again after each (`PhotoApp.load_members`), and requests let thro
 rules: the estate keeps an active sysadmin; a change writes only the fields it was given, the others as they are;
 `joined_at` is set once a member is let in, and stays; once every change has been read again, the copy is what the
 catalog says, and a request is let through only as the catalog says (but in the moment between a change and its
-own load, milliseconds); a second request from one login is answered with its member. `members.change` and
+own load, milliseconds); a second request from one login is answered with its member; a member's own agent is
+never allowed from its own device ([below](#a-members-own-agent)). `members.change` and
 `members.request` take the write lock before they read (`members._begin`), and `load_members` runs one at a time
 (`members_lock`): before, two changes of one member at once could undo each other (a revoke undone by a rename; a
 member let in waiting again, with no item to let them in by), two loads at once could leave the older copy in
@@ -564,10 +565,17 @@ from another device than the agent's own** (403 otherwise): the agent holds the 
 could send any request a browser there could, so nothing that comes from that device is proof that the member said
 yes. Turning one off is allowed from anywhere. Another member's binding is a 404. `decide_binding` reads the binding with the
 write lock held, so an allow and a turn-off at once end as the later one answered (before, a turn-off that read
-the binding already off could answer "off" while an allow landed in between). The rule compares the node strings
-`PhotoApp.device` gives, and one laptop is `node:<StableID>` when whois answers for its address and `addr:<ip>`
-when it does not: an agent whose first call came while whois could not answer (or whose allow comes while it
-cannot) is allowed from its own device. That is a question for the owner, open (specs/Member.tla).
+the binding already off could answer "off" while an allow landed in between). One laptop is `node:<StableID>`
+when whois answers for its address and `addr:<address>` when it does not, and it has two tailnet addresses (IPv4
+and IPv6), so a device whois could not name cannot be told apart from another. **An allow is refused (403) unless
+the request's device and the agent's were both named for certain, the same way, and differ** (`members.node_kind`:
+both by whois, or both by the demo, where `X-Demo-Device` and "this computer" are names alike). A request that
+names no device at all (`unknown`: no forwarded address, which `tailscale serve` always sends) never allows. Until
+November 2026 the rule compared the two strings only, and an agent whose first call came while whois could not
+answer (or whose allow came while it could not) was allowed from its own device (specs/Member.tla). The page shows
+the refusal's words: try again in a minute (a failed whois is asked again after one), and an agent that connected
+while its device could not be named connects again, named this time, as a second entry to allow; the first stays
+pending, and can be turned off.
 
 **What it may call.** The estate's agent's tools acting for its member, less `submit_task`, `get_task` and
 `cancel_task` (its work runs in the member's harness, never on the owner's subscription; called anyway they answer

@@ -44,12 +44,13 @@
 
    Guarded = TRUE is the code. Guarded = FALSE is the code before it was fixed (November 2026), kept so the
    invariants can be seen to fail without the guard: members.change, members.request and members.decide_binding take
-   the write lock (BEGIN IMMEDIATE, members._begin) before they read, and PhotoApp.load_members holds members_lock
-   from its read to its assignment. Here a read under the lock keeps nothing for its write (Kept), which reads what
+   the write lock (BEGIN IMMEDIATE, members._begin) before they read, PhotoApp.load_members holds members_lock
+   from its read to its assignment, and decide_binding allows only between two nodes of one kind that names a device
+   for certain (members.node_kind), and different. Here a read under the lock keeps nothing for its write (Kept), which reads what
    is there when it writes, and two loads are never between their read and their assignment at once.
 
    Member.cfg checks the code; Member.before.<invariant>.cfg each find the violation there was. tests/test_specs.py
-   runs them all with TLC, and tests/test_member_states.py replays each on the real code. Four invariants at the end
+   runs them all with TLC, and tests/test_member_states.py replays each on the real code. Three invariants at the end
    are broken by the code as it is and are not in Member.cfg: each is a question for the owner (the module's last
    comment, and the tests that show each). *)
 EXTENDS Naturals, FiniteSets
@@ -88,7 +89,8 @@ VARIABLES
   wr,        \* each writer: "idle"; "read" (between its read and its write, with its copy `cp`, or `saw`); "load"
              \*   (committed, its load_members not begun); "assign" (load_members has read `lc` and not assigned it)
   bnd,       \* Ben's binding on his laptop: "none" (no call yet) | "pending" | "approved" | "revoked"
-  bnode,     \* its node: "node" (whois answered its first call: node:<StableID>) or "addr" (it did not: addr:<ip>)
+  bnode,     \* its node: "node" (whois answered its first call: node:<StableID>), or the laptop's address when it did
+             \*   not: "v4" or "v6" (addr:<address>; a tailnet node has an IPv4 and an IPv6 address, and either may come)
   dc,        \* each decide_binding: "idle", or "read" with what it read (`saw`) and what it says (`allow`)
   run,       \* a run of the estate's agent acting for Ben is under way (its token is live)
   \* not in the code:
@@ -225,11 +227,11 @@ RunEnd ==
                  runRevoked>>
 
 \* Ben's own agent's first call to /mcp from his laptop (mcp_route: the roster says he is active; members.bind): its
-\* binding, pending, its node as whois named the laptop then (wh), or its address
-Bind(wh) ==
+\* binding, pending, its node as whois named the laptop then (wh), or the address it came from (ip)
+Bind(wh, ip) ==
   /\ part = "agent" /\ bnd = "none" /\ Active(roster["ben"])
   /\ Gate("ben", Active)
-  /\ bnd' = "pending" /\ bnode' = IF wh THEN "node" ELSE "addr"
+  /\ bnd' = "pending" /\ bnode' = IF wh THEN "node" ELSE ip
   /\ UNCHANGED <<part, n, db, roster, wr, ever, since, lost, err, dc, run, told, selfAllow, backIn, runRevoked>>
 
 \* a later call of the agent that writes (members.bind reads the binding: approved, so the tool runs as Ben)
@@ -239,14 +241,18 @@ AgentWrite ==
   /\ backIn' = (backIn \/ (since /\ Active(Seen(db["ben"]))))
   /\ UNCHANGED <<part, n, db, roster, wr, ever, since, lost, err, bnd, bnode, dc, run, told, selfAllow, runRevoked>>
 
-\* POST /api/agents/<id> {allow} by Ben from device `dev`, whois answering for it or not (wh): let through by the
-\* roster (MEMBER), and decide_binding's read of the binding. Allowing from the node the binding has is 403: the
-\* request's node is node:<StableID> when whois answers and addr:<ip> when it does not; the binding's is one of them
-DecideRead(t, allow, dev, wh) ==
+\* POST /api/agents/<id> {allow} by Ben from device `dev`, whois answering for it or not (wh), from its address ip:
+\* let through by the roster (MEMBER), and decide_binding's read of the binding. The request's node is node:<StableID>
+\* when whois answers and addr:<address> when it does not (the laptop's own two differ, and the phone's are its own).
+\* Allowing from the node the binding has is 403. Guarded: so is allowing unless both nodes are of one kind that names
+\* a device for certain (members.node_kind: node, or the demo's, which is not here) and differ; here, from the phone
+\* with whois answering for it, to a binding whois named
+DecideRead(t, allow, dev, wh, ip) ==
   /\ dc[t].ph = "idle" /\ bnd # "none" /\ Active(roster["ben"])
   /\ Gate("ben", Active)
-  /\ LET same == dev = "laptop" /\ (wh <=> bnode = "node") IN
-       IF allow /\ same
+  /\ LET same == dev = "laptop" /\ (IF wh THEN "node" ELSE ip) = bnode
+         refused == IF Guarded THEN ~(bnode = "node" /\ wh /\ dev # "laptop") ELSE same IN
+       IF allow /\ refused
          THEN UNCHANGED <<dc, selfAllow>>
          ELSE /\ dc' = [dc EXCEPT ![t] = [ph |-> "read", allow |-> allow, saw |-> Kept(bnd, "none")]]
               /\ selfAllow' = (selfAllow \/ (allow /\ dev = "laptop"))
@@ -270,9 +276,10 @@ Next ==
   \/ \E w \in W : LoadRead(w) \/ LoadWrite(w)
   \/ \E p \in P : Let(p)
   \/ Submit \/ RunCall \/ RunEnd
-  \/ \E wh \in BOOLEAN : Bind(wh)
+  \/ \E wh \in BOOLEAN, ip \in {"v4", "v6"} : Bind(wh, ip)
   \/ AgentWrite
-  \/ \E t \in T, allow \in BOOLEAN, dev \in {"laptop", "phone"}, wh \in BOOLEAN : DecideRead(t, allow, dev, wh)
+  \/ \E t \in T, allow \in BOOLEAN, dev \in {"laptop", "phone"}, wh \in BOOLEAN, ip \in {"v4", "v6"} :
+       DecideRead(t, allow, dev, wh, ip)
   \/ \E t \in T : DecideWrite(t)
 
 Spec == Init /\ [][Next]_vars
@@ -285,7 +292,7 @@ TypeOK ==
   /\ db \in [Who -> [role : Roles, st : Sts \cup {"none"}, nm : {"n0", "n1"}, jn : BOOLEAN]]
   /\ roster \in [Who -> [role : Roles, st : Sts \cup {"none"}]]
   /\ \A w \in W : wr[w].ph \in {"idle", "read", "load", "assign"}
-  /\ bnd \in {"none", "pending", "approved", "revoked"} /\ bnode \in {"node", "addr"}
+  /\ bnd \in {"none", "pending", "approved", "revoked"} /\ bnode \in {"node", "v4", "v6"}
   /\ \A t \in T : dc[t].ph \in {"idle", "read"}
   /\ told \in {"-", "approved", "revoked"}
 
@@ -316,11 +323,12 @@ AskedOnceAnswered == ~err
 \* is under way, the binding is what the last one answered Ben it is
 BindingAsLastAnswered == (\A t \in T : dc[t].ph = "idle") /\ told # "-" => bnd = told
 
-(* Broken by the code as it is, and not in Member.cfg: questions for the owner (see the end of this module) *)
-
-\* decide_binding: "Allowing must come from another device than the agent's own". Broken with no bad timing when
-\* whois answers for one of the two requests and not the other: the two node strings of one laptop differ.
+\* decide_binding: "Allowing must come from another device than the agent's own". Before the fix it broke with no bad
+\* timing when whois answered for one of the two requests and not the other, or for neither and they came from the
+\* laptop's two addresses: the two node strings of one laptop differed.
 OwnDeviceNeverAllows == ~selfAllow
+
+(* Broken by the code as it is, and not in Member.cfg: questions for the owner (see the end of this module) *)
 
 \* A member revoked and let in again has their own agents as they were: an approved one writes again, unasked.
 AllowedSinceLetIn == ~backIn
@@ -362,14 +370,15 @@ Quiet == (\A w \in W : wr[w].ph = "idle") /\ \A t \in T : dc[t].ph = "idle"
    - whois's cache of a device's name (WHOIS_FOR: ten minutes, a failure one): here each request finds whois
      answering or not, which is what the cache can give; an address that moves to another node is not modelled;
    - a second device for the agent, and a second agent; the device's name (bind updates it, never the node);
+     the second binding a call from the laptop makes once whois names it, when its first came unnamed (an entry
+     of its own, allowed as any other; the first stays pending, never allowed, until turned off);
+     --demo's devices (demo:<name> and `local`, one kind that names a device: members.node_kind);
      members.bindings, the listing /agents shows, which only reads;
    - SQLite itself: each transaction is atomic, and a write never fails (one that waits for the lock longer than
      the connection's timeout fails, and nothing is written).
 
-   The four invariants above that are not in Member.cfg, with TLC's traces (tests/test_member_states.py shows each on
+   The three invariants above that are not in Member.cfg, with TLC's traces (tests/test_member_states.py shows each on
    the real app):
-   - OwnDeviceNeverAllows: Bind(whois not answering) then DecideRead(allow, laptop, whois answering): Ben's agent
-     can allow itself from the laptop, its node then addr:<ip> and the request's node:<StableID> (or the other way);
    - AllowedSinceLetIn: his agent approved, Ben revoked and let in again: it writes as him with no word from him;
    - RunsOnlyForActive: Ben's run under way, Ben revoked: the run's calls act for him until it ends;
    - PendingOnlyBeforeLetIn: Ben let in, then set to pending (the raw API; members.html never offers it). *)
