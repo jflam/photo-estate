@@ -28,6 +28,29 @@ A change that adds a writer to such a state, or a new state to it, changes its m
 A machine with one writer and a table of legal moves (`core/states.py`'s `TASK_MOVES`, `JOB_MOVES`; `flow()` in
 `app/fsm.js`) is already checked where it runs, and needs no model for that alone.
 
+## The register, and what tells you
+
+Nobody has to remember the rule above. `machines.toml` in this folder lists every piece of state in the app
+that is in one of a few named conditions, the modules that write it, and how its moves are checked: a model
+here, a table of legal moves, not needed (and why), or not modelled yet. `tests/test_machines.py` holds that
+file to the code, in CI, and fails with what to do when:
+
+- **You add state**: a column called `status`, `state`, `why`, `mode`, `decision`, `phase` or `stage`, or a
+  `StrEnum` in `core/`, that no entry claims. Register it and decide how it is checked. The backlog of
+  machines with no model only gets shorter: a new one is modelled, or given its table of moves, in the pull
+  request that adds it.
+- **You add a writer**: a module with SQL that writes a registered machine's tables and is not listed. If the
+  machine has a model, the model gets an action for your writer first.
+- **You change modelled code**: each model's entry names the functions it stands for, with a fingerprint of
+  them (comments, docstrings and layout do not change it). When one changes, the test says which model to
+  read, and prints the new fingerprint to put in `machines.toml` once the model has been looked at. That
+  line of the diff is what a reviewer looks for: a fingerprint that moved beside a model that did not is a
+  claim that the model still matches.
+
+What it cannot see: state that is not a column or an enum (flags that only make sense together, a string in a
+dict), and whether a model's rules are the right ones. A survey with the skill `verify-state-machines` finds
+the first; a person decides the second.
+
 ## The loop
 
 1. **Find the machine.** Write down its states, what moves it from one to another, who makes each move, and
@@ -124,7 +147,6 @@ needs no bad timing) and `CONSTRAINT OnlyTimer` (the check and the library run n
 
 ## Machines with no model yet
 
-From the survey of November 2026 (states that have no table of legal moves, and more than one writer):
-change sets and their items (`changes.py`), lenses and subscriptions (`lenses.py`), members and agent bindings
-(`members.py`), inbox items (`member_inbox.py`, written from seven modules), questions (`stories.py`), and the
-catalog reload (`photo_app.py`).
+The entries of `machines.toml` that say `checked = "unmodelled"`, each with what the survey of November 2026
+noticed about it: change sets and their photos, lenses, subscriptions, members, agent bindings, inbox items,
+questions, the catalog reload, and the clustering of faces.

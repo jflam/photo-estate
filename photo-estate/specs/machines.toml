@@ -1,0 +1,136 @@
+# Every piece of state in the app that is in one of a few named conditions, and what checks its moves.
+# tests/test_machines.py holds the code to this file; specs/README.md says how to decide.
+#
+#   tables   the tables whose rows are the state (their writers are worked out from the code)
+#   columns  the status-like columns among them (every such column in core/schema.py must be claimed here)
+#   enums    the StrEnums of core/ that name its states (each must be claimed here)
+#   writers  the modules with SQL that writes those tables, as the test finds them. A new one fails the test:
+#            look at what it does to the machine before adding it here.
+#   checked  how its moves are checked:
+#              "model"       a TLA+ model in this folder (`model`), run by TLC in tests/test_specs.py. `code` names
+#                            the functions the model stands for, and `stamp` is their fingerprint: when one of
+#                            them changes, the test fails until the model has been looked at and the stamp renewed.
+#              "table"       a table of legal moves checked where it runs (`table`: module:NAME), and one writer
+#              "not_needed"  it is not a machine (`why`): the value is fixed when the row is written, or is text
+#              "unmodelled"  it needs a model and has none yet. This list only gets shorter: a new machine with
+#                            several writers that decides what someone is shown or allowed gets its model in the
+#                            pull request that adds it.
+
+[[machine]]
+name = "a private photo"
+tables = ["private"]
+columns = ["private.why"]
+writers = ["private.py"]
+checked = "model"
+model = "PrivatePhoto.tla"
+code = { "private.py" = ["record_sharer", "_begin", "_hold", "check", "library", "review", "change", "release_due"] }
+stamp = "ed8914e71288b5c9"
+
+[[machine]]
+name = "an agent task"
+tables = ["agent_tasks"]
+columns = ["agent_tasks.status"]
+enums = ["TaskStatus"]
+writers = ["tasks.py"]
+checked = "table"
+table = "core.states:TASK_MOVES"
+
+[[machine]]
+name = "an intake job"
+tables = ["jobs"]
+columns = ["jobs.state", "jobs.stage"]
+enums = ["JobState", "StageState"]
+writers = ["intake/engine.py"]
+checked = "table"
+table = "core.states:JOB_MOVES"
+
+[[machine]]
+name = "the ingest run"
+enums = ["IngestState"]
+checked = "table"
+table = "upload:IngestJob.MOVES"
+
+[[machine]]
+name = "something loaded in the background (the search model, People)"
+enums = ["Phase"]
+checked = "table"
+table = "core.lifecycle:MOVES"
+
+[[machine]]
+name = "a change set and its photos"
+tables = ["change_sets", "change_items", "hidden"]
+columns = ["change_sets.status", "change_items.decision"]
+enums = ["ChangeStatus", "ChangeOp", "AlbumKind", "Decision", "SetState"]
+writers = ["changes.py", "estate.py", "lenses.py"]
+checked = "unmodelled"
+note = "survey: `candidates` is not refused on a done set; `hide` and `discard` do not look for a published series"
+
+[[machine]]
+name = "a lens: published, proposed, an estate default"
+tables = ["lenses"]
+writers = ["changes.py", "lenses.py"]
+checked = "unmodelled"
+note = "survey: decide() reads proposed_at before its transaction, so a proposal taken back can still be accepted"
+
+[[machine]]
+name = "a subscription to a lens"
+tables = ["subscriptions"]
+columns = ["subscriptions.mode"]
+writers = ["lenses.py"]
+checked = "unmodelled"
+note = "one module, but requests run side by side and its reads come before its transactions; model it with the lens"
+
+[[machine]]
+name = "a member"
+tables = ["members"]
+columns = ["members.status"]
+writers = ["members.py"]
+checked = "unmodelled"
+note = "survey: change() writes every field from a copy read earlier; any status may follow any other"
+
+[[machine]]
+name = "a member's own agent on a device"
+tables = ["agent_bindings"]
+columns = ["agent_bindings.status"]
+writers = ["members.py"]
+checked = "unmodelled"
+note = "what becomes of an approved binding when its member is revoked"
+
+[[machine]]
+name = "an inbox item"
+tables = ["inbox_items"]
+columns = ["inbox_items.state"]
+writers = ["member_inbox.py", "stories.py"]
+checked = "unmodelled"
+note = "opened and closed for seven modules (put, close); put() reads then inserts with no lock: two open items for one thing"
+
+[[machine]]
+name = "a question, and whom it was dealt to"
+tables = ["questions", "asked"]
+columns = ["questions.status"]
+writers = ["stories.py"]
+checked = "unmodelled"
+note = "survey: dismissing its inbox item by the inbox's own route leaves the question dealt and never closed"
+
+[[machine]]
+name = "the catalog reload"
+checked = "unmodelled"
+note = "PhotoApp.reload_state: idle | running | rerun, a string in a dict under reload_lock; and which looks a relook installs"
+
+[[machine]]
+name = "the clustering of unnamed faces"
+enums = ["ClusterState"]
+checked = "unmodelled"
+note = "faces.People, in memory; not read closely in the survey"
+
+[[machine]]
+name = "a tombstone's reason"
+columns = ["tombstones.why"]
+checked = "not_needed"
+why = "opted_out or purged, fixed when the row is written; only lifted_at changes after, and a trigger refuses anything else"
+
+[[machine]]
+name = "why a question was asked"
+columns = ["questions.why"]
+checked = "not_needed"
+why = "the asker's words, not a state"

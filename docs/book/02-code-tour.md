@@ -221,7 +221,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      49  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             7,994  16 self-running test scripts and 23 pytest files; conftest.py runs the scripts under pytest,
+  tests/             7,994  16 self-running test scripts and 24 pytest files; conftest.py runs the scripts under pytest,
                             test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_members.py checks members.py and its journal entries on a scratch catalog;
@@ -246,6 +246,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             a photo not checked yet, and a release or withdrawal landing while check, the library
                             run or the timer is between its read and its write;
                             test_specs.py runs TLC on every model in specs/ (skipped without Java and tla2tools.jar);
+                            test_machines.py holds specs/machines.toml to the code: unregistered state, a new
+                            writer of a registered table, or a change to a modelled function fails;
                             test_private.py checks private photos: who may be shown one with one to three sharers,
                             every way a photo leaves the app (over real HTTP too), People, release on a day, an
                             agent, ingest's sharers and the hold before any reload, the one-off run, and the
@@ -294,7 +296,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
   specs/               193  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
                             says when a change needs one, how to read one and how to run them; chapter 17):
                             PrivatePhoto.tla, one `private` row and everything that writes it; <Name>.cfg is the
-                            code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail
+                            code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail;
+                            machines.toml, the register of every state machine, its writers and how it is checked
   demo/                     104 CC0 photos, their catalog, and credits
 
 ios/                 6,705  the iPhone app (chapters 19-24, 26)

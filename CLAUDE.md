@@ -29,6 +29,11 @@ dependencies, a plain HTTP server and SQLite), and an iPhone app in `ios/` (need
   code as it is, run TLC (never call a model checked that was not run), replay each trace on the real
   code as a failing test, fix, then model the fix. A change that adds a writer or a state to a modelled
   machine changes its model in the same pull request.
+- `specs/machines.toml` registers every such state, its writers and how it is checked;
+  `tests/test_machines.py` fails when a status-like column or a state enum is unregistered, when a new
+  module writes a registered table, or when a modelled function changes. Do what its message says: never
+  renew a model's `stamp` without reading the model's action for what changed, and never add a new
+  machine as `unmodelled`.
 
 ## Docs
 
