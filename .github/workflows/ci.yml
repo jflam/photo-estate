@@ -58,8 +58,17 @@ jobs:
         run: uv run --locked ruff check .
       - name: Type check (pyright)
         run: uv run --locked pyright
+      - name: TLC, the TLA+ model checker (tests/test_specs.py checks the models in specs/ with it; Java is on the runner)
+        run: |
+          mkdir -p ~/.local/share/tlaplus
+          curl -fsSL -o ~/.local/share/tlaplus/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+          echo "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  $HOME/.local/share/tlaplus/tla2tools.jar" | sha256sum -c -
       - name: Fast tests
         run: uv run --locked pytest -m "not slow"
+      - name: The models were checked, not skipped
+        run: |
+          uv run --locked pytest tests/test_specs.py -q -rs | tee "$RUNNER_TEMP/specs.out"
+          ! grep -q skipped "$RUNNER_TEMP/specs.out"
       - uses: actions/setup-node@v4
         with:
           node-version: 22

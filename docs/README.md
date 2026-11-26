@@ -42,6 +42,7 @@ Working notes, kept as they were written; the book is the current description.
 
 | Document | What it covers |
 |---|---|
+| [../photo-estate/specs/README.md](../photo-estate/specs/README.md) | Models checked by a machine: the TLA+ models of state several things write, when a change needs one, how to read one, how to run TLC |
 | [notes/PLAN.md](notes/PLAN.md) | The original plan: why Takeout, rolling ingest, the tagging tiers |
 | [notes/INTAKE-PLAN.md](notes/INTAKE-PLAN.md) | Bringing photos in from the app, by phases |
 | [notes/TAGGING-RESEARCH.md](notes/TAGGING-RESEARCH.md) | The tiered tagging pipeline and the model comparison |

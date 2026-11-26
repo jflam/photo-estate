@@ -335,6 +335,15 @@ def _open_held(con, member: int) -> list[str]:
                                     " ORDER BY updated_at DESC, id DESC", (member,))]
 
 
+def _begin(con) -> None:
+    """Take the write lock now, at the head of a `with con:` block, so what the block reads next is what it
+    writes over: no other connection (a request of the app's, `check` in the ingest script's process) changes a
+    row in between. Python's own BEGIN waits for the first write, and a read before it sees a table that may
+    have moved on by then (specs/PrivatePhoto.tla is the model of what that let happen)."""
+    if not con.in_transaction:
+        con.execute("BEGIN IMMEDIATE")
+
+
 def _hold(con, member: int, shas: list[str], how: str, t: str) -> int:
     """Hold `shas` for `member` (rows that exist become held, to be looked over again; the rest are made), one
     photo.held entry, and their held inbox item: the one open already (brought up to date and to the top), else
@@ -356,8 +365,9 @@ def check(con, model: str, out=print) -> dict:
     """The ingest step (ingest-iphone.sh, after the embeddings and before the app reloads): every `new` row whose
     photo has a vector is scored: held (photo.held, and a held inbox item per sharer), or let go (the row goes:
     the photo is shared). A photo with no vector yet keeps its row and is scored by the next run; it is in no
-    view meanwhile (catalog.load reads only photos with a vector). MissingVectors (nothing changes) without the
-    prompts' vectors. Safe to run again."""
+    view meanwhile (catalog.load reads only photos with a vector). A row its sharer released or withdrew while
+    it was being scored is theirs now, and is left alone. MissingVectors (nothing changes) without the prompts'
+    vectors. Safe to run again."""
     rows = con.execute("SELECT sha256, member_id FROM private WHERE why='new' AND released_at IS NULL").fetchall()
     if not rows:
         out("hold: nothing new to check")
@@ -374,11 +384,17 @@ def check(con, model: str, out=print) -> dict:
             let_go.append((sha, m))
     t = now()
     with con:
-        con.executemany("DELETE FROM private WHERE sha256=? AND member_id=? AND why='new'", let_go)
+        _begin(con)
+        # Scoring took a while, and the sharer may have spoken meanwhile (released it, or withdrawn it: change()).
+        # Only a row that is still `new` and open is the app's to hold or to let go; any other is left as it is.
+        still = set(con.execute("SELECT sha256, member_id FROM private WHERE why='new' AND released_at IS NULL"))
+        let_go = [x for x in let_go if x in still]
+        held = {m: kept for m, shas in held.items() if (kept := [s for s in shas if (s, m) in still])}
+        con.executemany("DELETE FROM private WHERE sha256=? AND member_id=? AND why='new' AND released_at IS NULL", let_go)
         for m, shas in held.items():
             _hold(con, m, shas, "upload", t)
     n = sum(len(v) for v in held.values())
-    waiting = len(rows) - len(let_go) - n
+    waiting = sum(1 for sha, _ in rows if sha not in found)
     out(f"hold: {len(rows) - waiting} new photos checked, {n} held as private"
         + (f", {waiting} waiting for their vectors" if waiting else ""))
     return {"checked": len(rows) - waiting, "held": n, "waiting": waiting}
@@ -429,7 +445,13 @@ def library(con, member: int, model: str, dry_run: bool = False, out=print, samp
         return report
     if hold:
         with con:
-            report["batch"] = _hold(con, member, hold, "library", now())
+            _begin(con)        # (a photo the member withdrew or released while this ran has a row now: not held)
+            has = {s for part in chunks(hold) for s, in con.execute(
+                f"SELECT sha256 FROM private WHERE member_id=? AND sha256 IN ({','.join('?' * len(part))})", [member, *part])}
+            hold = [s for s in hold if s not in has]
+            report["held"] = len(hold)
+            if hold:
+                report["batch"] = _hold(con, member, hold, "library", now())
     out(f"held {len(hold)} of member {member}'s {len(shas)} photos as private to them"
         + ("" if hold else ": nothing new to hold"))
     return report
@@ -521,6 +543,7 @@ def review(con, member: int, release=(), keep=()) -> dict:
         raise ValueError("a photo cannot be released and kept private at once")
     t, ready = now(), set()
     with con:
+        _begin(con)
         for part in chunks(release + keep):
             ready.update(s for s, in con.execute(
                 f"SELECT sha256 FROM private WHERE member_id=? AND why='held' AND released_at IS NULL AND reviewed_at IS NULL"
@@ -552,7 +575,8 @@ def day(s) -> str | None:
 
 def change(con, member: int, shas, private: bool, until=KEEP, sharers_of=None) -> dict:
     """POST /api/private: `member` makes these photos private (`private` true: withdrawn, from a photo of theirs
-    they share with the family; already private: its release day set, if `until` is given) or releases them
+    they share with the family, or from an upload not checked yet (a `new` row); held or withdrawn already: its
+    release day set, if `until` is given) or releases them
     (false: now). Only a sharer may (PrivateError 403 for a photo they did not share; the caller has already
     answered 404 for one they may not be shown). One journal entry per action; the held items it empties close."""
     shas = list(dict.fromkeys(s for s in shas if isinstance(s, str)))
@@ -560,6 +584,7 @@ def change(con, member: int, shas, private: bool, until=KEEP, sharers_of=None) -
     t, out = now(), {"withdrawn": 0, "released": 0, "release_set": 0}
     first = _sysadmin(con)
     with con:
+        _begin(con)
         for sha in shas:
             sharers = {m for m, in con.execute("SELECT member_id FROM sharers WHERE sha256=?", (sha,))} or {first}
             if member not in sharers:
@@ -568,13 +593,15 @@ def change(con, member: int, shas, private: bool, until=KEEP, sharers_of=None) -
             f"SELECT sha256, why, until FROM private WHERE member_id=? AND released_at IS NULL AND sha256 IN"
             f" ({','.join('?' * len(shas))})", [member, *shas])} if shas else {}
         if private:
-            fresh = [s for s in shas if s not in rows]
+            # (a `new` row is the app's, until check() has scored it: their word makes it theirs, withdrawn, so
+            # check neither lets it go nor holds it over the day they set)
+            fresh = [s for s in shas if s not in rows or rows[s][0] == "new"]
             for s in fresh:
                 con.execute("INSERT INTO private(sha256, member_id, why, since, until) VALUES (?,?,'withdrawn',?,?)"
                             " ON CONFLICT(sha256, member_id) DO UPDATE SET why='withdrawn', since=excluded.since,"
                             " until=excluded.until, released_at=NULL, batch=NULL",
                             (s, member, t, None if until is KEEP else until))
-            moved = [s for s in shas if s in rows and until is not KEEP and rows[s][1] != until]
+            moved = [s for s in shas if s in rows and rows[s][0] != "new" and until is not KEEP and rows[s][1] != until]
             con.executemany("UPDATE private SET until=? WHERE sha256=? AND member_id=? AND released_at IS NULL",
                             ((until, s, member) for s in moved))
             if fresh:
@@ -612,14 +639,14 @@ def about(con, st: Private, member: int | None, sha: str) -> dict:
 def release_due(con, today: str) -> dict[int, int]:
     """The timer's (PhotoApp.release_timer): every private row whose release day (`until`) is `today` or before is
     released, one photo.released {photos, auto: true} entry per member, by no actor (the app). {member: photos}."""
-    rows = con.execute("SELECT sha256, member_id FROM private WHERE released_at IS NULL AND until IS NOT NULL AND until <= ?",
-                       (today,)).fetchall()
-    if not rows:
+    due = "SELECT sha256, member_id FROM private WHERE released_at IS NULL AND until IS NOT NULL AND until <= ?"
+    if not con.execute(due + " LIMIT 1", (today,)).fetchone():       # (nearly every pass: no write lock taken)
         return {}
     t, by = now(), {}
-    for sha, m in rows:
-        by.setdefault(m, []).append(sha)
     with con:
+        _begin(con)            # what is due is read with the write lock held: a day moved just now is the day
+        for sha, m in con.execute(due, (today,)).fetchall():
+            by.setdefault(m, []).append(sha)
         for m, shas in by.items():
             con.executemany("UPDATE private SET released_at=? WHERE sha256=? AND member_id=? AND released_at IS NULL",
                             ((t, s, m) for s in shas))

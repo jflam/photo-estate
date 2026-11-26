@@ -78,12 +78,13 @@ photo-estate/                  the server and the web app (Python run with uv; n
   lenses.py            360  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
                             out of an estate default), "show it anyway", each member's favourites, why a photo is
                             hidden; State, the looks every member view is worked out from (chapter 11)
-  private.py           609  photos private to their sharer (chapter 11): who may be shown a photo, the sharer ingest
+  private.py           745  photos private to their sharer (chapter 11): who may be shown a photo, the sharer ingest
                             records from the inbox's member folder, withdrawing and releasing (now, or on a day:
                             the app's timer), the hold at ingestion (PROMPTS and HOLD_AT, in one place, and the
                             phone's screenshot mark), the one-off run over the library (`private.py library
                             --dry-run`) and looking held photos over (/held: review_list, its order and sections,
-                            and review, "Reviewed up to here"); the phone gate's tombstones (a member's opt-outs)
+                            and review, "Reviewed up to here"); every writer of a row takes the write lock and
+                            reads it again first (_begin); the phone gate's tombstones (a member's opt-outs)
   hold-prompts.json         the hold's prompts as SigLIP text vectors, made once by `embed.py hold-prompts`
   member_inbox.py      169  each member's inbox (inbox_items; not the upload folder): put, close and retitle, called by the
                             code that makes and decides each kind, what an item opens, the member's list,
@@ -220,7 +221,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      49  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             7,741  16 self-running test scripts and 21 pytest files; conftest.py runs the scripts under pytest,
+  tests/             7,994  16 self-running test scripts and 24 pytest files; conftest.py runs the scripts under pytest,
                             test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_members.py checks members.py and its journal entries on a scratch catalog;
@@ -240,6 +241,13 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             test_tombstones.py checks the phone gate's tombstones: the endpoints, an upload refused
                             before its body and dropped from staging, one member's opt-out against another's copy,
                             a purge, the phone's screenshot mark reaching the hold;
+                            test_private_states.py replays, on a scratch catalog, each way the model of a private
+                            row (specs/PrivatePhoto.tla) found it could go against its sharer's word: a day set on
+                            a photo not checked yet, and a release or withdrawal landing while check, the library
+                            run or the timer is between its read and its write;
+                            test_specs.py runs TLC on every model in specs/ (skipped without Java and tla2tools.jar);
+                            test_machines.py holds specs/machines.toml to the code: unregistered state, a new
+                            writer of a registered table, or a change to a modelled function fails;
                             test_private.py checks private photos: who may be shown one with one to three sharers,
                             every way a photo leaves the app (over real HTTP too), People, release on a day, an
                             agent, ingest's sharers and the hold before any reload, the one-off run, and the
@@ -285,6 +293,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
   deploy/              330  launchd plists, photo-search.service (systemd) and HOME-COMPUTE.md for the Linux PC, the cloud
                             preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
+  specs/               193  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
+                            says when a change needs one, how to read one and how to run them; chapter 17):
+                            PrivatePhoto.tla, one `private` row and everything that writes it; <Name>.cfg is the
+                            code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail;
+                            machines.toml, the register of every state machine, its writers and how it is checked
   demo/                     104 CC0 photos, their catalog, and credits
 
 ios/                 6,705  the iPhone app (chapters 19-24, 26)

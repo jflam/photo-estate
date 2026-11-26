@@ -23,6 +23,17 @@ dependencies, a plain HTTP server and SQLite), and an iPhone app in `ios/` (need
   (`tsc --noEmit --allowJs --checkJs`) and `npm test` (`node --test`). CI runs both.
 - For a change to the page, drive the real page with Playwright and look at screenshots in light and
   dark mode.
+- State that more than one thing writes (two requests, a request and a background job, the app and a
+  script) and that decides what someone is shown or allowed has a TLA+ model in `photo-estate/specs/`,
+  checked by TLC (`uv run pytest tests/test_specs.py`; CI runs it). `specs/README.md` is how: model the
+  code as it is, run TLC (never call a model checked that was not run), replay each trace on the real
+  code as a failing test, fix, then model the fix. A change that adds a writer or a state to a modelled
+  machine changes its model in the same pull request.
+- `specs/machines.toml` registers every such state, its writers and how it is checked;
+  `tests/test_machines.py` fails when a status-like column or a state enum is unregistered, when a new
+  module writes a registered table, or when a modelled function changes. Do what its message says: never
+  renew a model's `stamp` without reading the model's action for what changed, and never add a new
+  machine as `unmodelled`.
 
 ## Docs
 
