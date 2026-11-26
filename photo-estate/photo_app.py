@@ -115,6 +115,7 @@ import io
 import json
 import os
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -285,6 +286,15 @@ class PhotoApp:
         # mounted here so naming works wherever the app does. Loads in the background, like the encoder.
         # Its Lifecycle's value is the faces.People that answers; people_state() is what the page is told.
         self.people, self.people_loading = Lifecycle("the People page"), threading.Lock()   # one load at a time
+        # Asked for while one runs, a load runs once more after it and no more (load_people: idle | running | rerun)
+        self.people_asked, self.people_asked_lock = "idle", threading.Lock()
+        # What failed and is tried again by the minute timer (mend): a relook, a reload of the catalog, a load of People
+        self.looks_stale = self.reload_failed = self.people_failed = False
+        self.reload_whole = False        # the next reload reads the whole catalog, not only what an ingest added
+        self.purged = self.read_purged()   # photos removed for good (estate.py purge): no crop of a face of one is served
+        # The newest journal entry the looks were read after: an entry after it that changes who sees what was written
+        # by another process (a script run by hand), and notice() reads the looks again
+        self.looks_through = self.loaded_through
         self.encoder = Encoder(a.model, a.threads, images=bool(inbox), device=a.device)   # the image side too, for photos from the phone
         # Devices that keep their own copy of the catalog (the iPhone app) follow it through a change feed
         # (sync.py), one per member, of what that member sees: a photo one member's filters hide leaves only
@@ -413,9 +423,15 @@ class PhotoApp:
         worked out anew. Never from inside the gate (a request): it takes the write side. True if what People is
         built without changed (what the estate defaults hide, and the photos private to anyone: faces.py)."""
         with self.fav_write:     # not while a favourite is being shown: it would be lost from the looks
-            before = self.live.looks.people_out() if isinstance(self.live.looks, lenses.State) else None
-            looks = self.read_looks()
-            self.live.relook(looks, then=self.caught_up)
+            try:
+                before = self.live.looks.people_out() if isinstance(self.live.looks, lenses.State) else None
+                mark = self.journal_end()
+                looks = self.read_looks()
+                self.live.relook(looks, then=self.caught_up)
+            except BaseException:       # the catalog may say what memory does not: mend() reads again (issue #138)
+                self.looks_stale = True
+                raise
+            self.looks_stale, self.looks_through = False, max(self.looks_through, mark)
         return before != looks.people_out()
 
     def people_out(self) -> set[str] | None:
@@ -429,8 +445,31 @@ class PhotoApp:
         return isinstance(looks, lenses.State) and looks.private.refused(sha, member)
 
     def load_people(self) -> None:
+        """Load People again. Asked while a load runs, it returns at once and one more load runs after that one, however
+        many asked (as reload_catalog: each load reads everything, so one that begins after the asking serves them
+        all; issue #145)."""
+        with self.people_asked_lock:
+            if self.people_asked != "idle":
+                self.people_asked = "rerun"
+                return
+            self.people_asked = "running"
+        try:
+            while True:
+                self.load_people_once()
+                with self.people_asked_lock:
+                    if self.people_asked != "rerun":
+                        self.people_asked = "idle"
+                        break
+                    self.people_asked = "running"
+        except BaseException:
+            with self.people_asked_lock:
+                self.people_asked = "idle"
+            raise
+
+    def load_people_once(self) -> None:
         """Again after a reload: the one that is ready keeps answering until the new one is, and keeps
-        answering if the new one fails. Loads run one at a time, so the newest faces are the last swapped in.
+        answering if the new one fails (mend tries again, every minute). Loads run one at a time, so the newest faces
+        are the last swapped in.
         The one answering takes names meanwhile: the new one reads them again before it is swapped in if there
         were any, and a name that reaches the old one after is passed on to it (People.replaced_by)."""
         with self.people_loading:
@@ -447,9 +486,11 @@ class PhotoApp:
                     old.replaced_by(p, seen)
             except Exception as e:   # a missing or broken table, out of memory: /people says so, not "loading"
                 self.people.fail(e)
+                self.people_failed = True
                 print(f"people: failed to load: {self.people.snapshot().error}", flush=True)
                 return
             self.people.succeed(p)
+            self.people_failed = False
 
     def people_state(self) -> str:
         """none (no faces) | loading | ready | failed (and nothing loaded before to keep answering)."""
@@ -496,13 +537,80 @@ class PhotoApp:
         return got
 
     def release_timer(self) -> None:
-        """The background thread start() runs: release_due every `release_every` seconds until release_stop."""
+        """The background thread start() runs: release_due, then mend, every `release_every` seconds until release_stop."""
         while not self.release_stop.is_set():
             try:
                 self.release_due()
             except Exception as e:       # (a locked catalog, a disk gone): try again next time
                 print(f"private: release timer: {type(e).__name__}: {e}", flush=True)
+            try:
+                self.mend()
+            except Exception as e:
+                print(f"mend: {type(e).__name__}: {e}", flush=True)
             self.release_stop.wait(self.release_every)
+
+    def mend(self) -> dict[str, threading.Thread | None]:
+        """What failed is tried again, each in a thread of its own (returned, for a test to wait on; None: started by
+        on_hidden_change or People): the looks, when a relook raised after its change was committed (the catalog says
+        private and memory does not: issue #138); the catalog, when its last reload failed (#139); People, when its
+        last load failed, or else its grouping of unnamed faces (#143). Each sets its own flag again if it fails again."""
+        did: dict[str, threading.Thread | None] = {}
+        if self.looks_stale:
+            print("mend: reading who sees what again", flush=True)
+            self.on_hidden_change()
+            did["looks"] = None
+        if self.reload_failed and self.reload_state["state"] == "idle":
+            print("mend: reloading the catalog again", flush=True)
+            did["catalog"] = threading.Thread(target=self.reload_catalog, daemon=True)
+        people = self.people.snapshot().value
+        if self.people_failed and self.live.cat.has_faces:
+            print("mend: loading People again", flush=True)
+            did["people"] = threading.Thread(target=self.load_people, daemon=True)
+        elif people is not None and getattr(people, "recluster", lambda: False)():
+            print("mend: grouping the unnamed faces again", flush=True)
+            did["groups"] = None
+        for t in did.values():
+            if t is not None:
+                t.start()
+        return did
+
+    def read_purged(self) -> frozenset[str]:
+        con = connect(self.a.db)
+        try:
+            return frozenset(s for s, in con.execute("SELECT sha256 FROM tombstones WHERE member_id=0 AND why='purged'"))
+        except sqlite3.OperationalError:      # a catalog from before tombstones
+            return frozenset()
+        finally:
+            con.close()
+
+    BY_HAND_LOOKS = ("photo.held", "photo.withdrawn", "photo.released", "photo.release_set")   # private.py's entries
+
+    def notice(self) -> dict[str, bool]:
+        """What another process wrote (a script run by hand: `private.py library`, `estate.py purge`), told by the
+        journal, every pass of the listeners: an entry that changes who sees what, written after the looks were last
+        read, has them read again (the app's own changes are read at once, so theirs are behind looks_through); a
+        photo purged after the catalog being served was read has it reloaded, and People loaded again without its
+        faces. (Issue #140.)"""
+        con = connect(self.a.db)
+        try:
+            marks = ", ".join("?" * len(self.BY_HAND_LOOKS))
+            looks = con.execute(f"SELECT 1 FROM journal WHERE id > ? AND kind IN ({marks}) LIMIT 1",
+                                (self.looks_through, *self.BY_HAND_LOOKS)).fetchone() is not None
+            purged = con.execute("SELECT 1 FROM journal WHERE id > ? AND kind='photo.purged' LIMIT 1",
+                                 (self.loaded_through,)).fetchone() is not None
+        finally:
+            con.close()
+        if purged:
+            print("a photo was purged by hand: reloading the catalog and People", flush=True)
+            self.purged = self.read_purged()
+            self.reload_whole = True
+            self.reload_catalog()
+            if self.live.cat.has_faces:
+                threading.Thread(target=self.load_people, daemon=True).start()
+        if looks:
+            print("who sees what was changed by hand: reading it again", flush=True)
+            self.on_hidden_change()
+        return {"looks": looks, "purged": purged}
 
     # -- the journal's listeners, questions and stories (listeners.py, stories.py) -----------------------------
 
@@ -539,6 +647,10 @@ class PhotoApp:
         """The background thread start() runs: every listener, every listen_every seconds or when woken. A search
         model still loading (Unavailable) waits for the next pass; any other failure is printed and tried again."""
         while not self.listen_stop.is_set():
+            try:
+                self.notice()
+            except Exception as e:
+                print(f"listeners: notice: {type(e).__name__}: {e}", flush=True)
             try:
                 self.listen_once()
             except Unavailable:
@@ -697,14 +809,21 @@ class PhotoApp:
                 t, ok = time.time(), False
                 try:
                     mark = self.journal_end()
-                    fresh = self.load_catalog(self.live.cat.raw)
+                    whole, self.reload_whole = self.reload_whole, False
+                    try:     # (all of it when a photo was removed: reading only what changed never drops one)
+                        fresh = self.load_catalog(None if whole else self.live.cat.raw)
+                    except BaseException:
+                        self.reload_whole = self.reload_whole or whole
+                        raise
                     if os.environ.get("PHOTO_ESTATE_CHECK_RELOAD"):   # tools/bench_ingest.py --check
                         print(f"reload check: {fresh.differences(self.load_catalog()) or 'same as a full load'}", flush=True)
                     with self.fav_write:     # not between a relook's read and its install, nor while a favourite is shown
                         out = self.people_out()
+                        seen = self.journal_end()
                         self.live.install(fresh, then=self.caught_up, looks=self.with_private)
                         people = out != self.people_out()
-                    self.loaded_through, ok = mark, True
+                        self.looks_through = max(self.looks_through, seen)   # (with_private read the private rows)
+                    self.loaded_through, ok, self.reload_failed = mark, True, False
                     if people and self.live.cat.has_faces:
                         threading.Thread(target=self.load_people, daemon=True).start()
                     self.listen_wake.set()      # an ingest's new photos are searchable now: the series listener
@@ -715,6 +834,7 @@ class PhotoApp:
                         threading.Thread(target=self.images.pregenerate, daemon=True).start()
                 except Exception as e:   # keep serving the old catalog
                     rs["error"] = f"{type(e).__name__}: {e}"
+                    self.reload_failed = not ok      # mend tries again, every minute (issue #139)
                     print(f"catalog reload failed: {rs['error']}", flush=True)
                     if self.ingest and not ok:   # what the ingest catalogued is not in: /stats says so again, though
                         self.ingest.fresh = True  # an earlier call, done meanwhile, cleared it (specs/Reload.tla)
@@ -735,7 +855,11 @@ class PhotoApp:
         says whether the estate defaults' hides changed), every member's feed, and People if they did."""
         try:
             if people is None:
-                people = self.relook()
+                try:
+                    people = self.relook()
+                except Exception as e:      # (looks_stale is set: mend reads them again, every minute)
+                    print(f"who sees what could not be read again: {type(e).__name__}: {e}", flush=True)
+                    return
             self.feed_update()
             if people and self.live.cat.has_faces:
                 self.load_people()
@@ -930,7 +1054,7 @@ class PhotoApp:
             return Response.of(self.intake.handle("POST", path, qs, body, req.local))
         if (got := self.changes_route("POST", path, qs, body, who, m.id if m else None)) is not None:
             return got
-        if (got := self.people_page("POST", path, qs, body, m.id if m else None)) is not None:
+        if (got := self.people_page("POST", path, qs, body, m.id if m else None, viewer=m.id if m else None)) is not None:
             return got
         return NOT_FOUND
 
@@ -1029,8 +1153,8 @@ class PhotoApp:
         if s.value is None and s.phase is Phase.FAILED:   # nothing loaded to keep answering: say why, don't spin
             if page:
                 return Response(500, pages.waiting("Faces could not be loaded", f"{html.escape(s.error or '')}. The rest"
-                                                   " of the library works; the faces load again after the next"
-                                                   " ingest or restart.", refresh=False), "text/html; charset=utf-8")
+                                                   " of the library works; loading the faces is tried again"
+                                                   " every minute.", refresh=False), "text/html; charset=utf-8")
             return Response(500, f"Faces could not be loaded: {s.error}".encode(), "text/plain")
         if s.value is None:
             if page:   # the page itself: wait, and ask again
@@ -1039,11 +1163,14 @@ class PhotoApp:
             return Response(503, b"Faces are still loading; try again in a moment.", "text/plain")
         if method == "POST" and not isinstance(body, dict):
             return json_response({"error": "expected a JSON object"}, 400)
-        keep = see = None
+        # keep: the photos this member is shown (every GET's faces, and what "everything waiting" names: issue #144);
+        # see: a face's crop, which is there for a photo not in the catalog served too, unless it is private to
+        # someone else or was purged (issue #146: its cached crop outlives its rows until People is loaded again)
+        v = self.live.visible_for(viewer)
+        keep = lambda sha: (i := v.cat.index.get(sha)) is not None and bool(v.visible[i])   # noqa: E731
+        see = None
         if method == "GET":
-            v = self.live.visible_for(viewer)
-            keep = lambda sha: (i := v.cat.index.get(sha)) is not None and bool(v.visible[i])   # noqa: E731
-            see = lambda sha: not self.refused(sha, viewer)                                       # noqa: E731
+            see = lambda sha: not self.refused(sha, viewer) and sha not in self.purged            # noqa: E731
         return Response.of(s.value.handle(method, path, qs, body, actor, keep=keep, see=see))
 
     def changes_route(self, method: str, path: str, qs: dict, body, who: str, acting_for: int | None = None) -> Response | None:
