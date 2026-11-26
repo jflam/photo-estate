@@ -227,6 +227,17 @@ def test_an_album_taken_back_while_published_twice_has_one_word(db, con):
     assert not any(p for _, p in series(con)), "taken back, it is published nowhere"
 
 
+# -- a member, twice at once -----------------------------------------------------------------------------------
+
+def test_subscribing_twice_at_once_appends_one_entry(db, con):
+    """NoEmptyEntry, with only subscribe left unguarded: two subscribes read the filter and Cleo's row (none);
+    both write a live row, and both append lens.subscribed."""
+    lenses.publish(con, BEN, LID, True)
+    got = lenses.subscribe(request(db, lambda c: lenses.subscribe(c, CLEO, LID, "live")), CLEO, LID, "live")
+    assert kinds(con) == ["lens.published", "lens.subscribed"], "a write that changes nothing appends nothing"
+    assert not got["changed"] and sub(con) == "live"
+
+
 # -- a member, twice at once, as the filter becomes an estate default ------------------------------------------
 
 def test_leaving_a_filter_as_it_becomes_an_estate_default_leaves_it(db, con):
