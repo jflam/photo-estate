@@ -7,7 +7,8 @@ import SwiftUI
 ///
 /// Each resource is exported to a temporary file (fetching it from iCloud if it was optimised away),
 /// hashed, uploaded in one POST with its hash (`X-Content-SHA256`), and forgotten. The server ignores files
-/// it already has, so running this twice, or alongside the system uploader, only costs the bandwidth. A
+/// it already has, so running this twice, or alongside the system uploader, only costs the bandwidth. A photo
+/// this phone holds back by its identifier (kept back, or in a batch to look over: `Gate.held`) is not read. A
 /// file whose hash this member opted out of is not sent: the phone knows (`Gate.refused`), or the server
 /// says so before the body (`X-Upload-Refused`), and the photo is kept back on this iPhone from then on.
 @MainActor
@@ -56,6 +57,7 @@ final class ForegroundUploader: ObservableObject {
         var i = 0
         while i < assets.count, !Task.isCancelled {
             let asset = assets.object(at: i)
+            if Gate.held(asset.localIdentifier, GateStore.read()) { kept += 1; i += 1; continue }   // kept back, or to look over
             var done = true, back = false
             for r in PHAssetResource.assetResources(for: asset) where UploadRequest.wanted(r) {
                 switch await upload(asset, r, batch) {
