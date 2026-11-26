@@ -258,10 +258,13 @@ def test_search_answers_503_then_500(app, monkeypatch):
 
 class StubPeople:
     def __init__(self, *a, **k):
-        pass
+        self.lock, self.writes = threading.RLock(), 0     # what load_people reads of the People it replaces
 
     def handle(self, method, path, qs, body, actor=None, keep=None, see=None):   # actor, keep, see: as faces.People.handle takes them
         return 200, b'{"ok":true}', "application/json", "no-store"
+
+    def replaced_by(self, new, seen):                     # (faces.People.replaced_by)
+        pass
 
 
 class BrokenPeople:

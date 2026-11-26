@@ -425,10 +425,10 @@ member's own filters apply to what a GET lists: faces in photos they do not see 
 | `GET /api/people/review?person=ID[&year=Y][&limit=60][&skipped=1]` | Faces waiting for that person, most likely first |
 | `GET /api/people/person?person=ID[&year=Y][&limit=12]` | A person's named faces: a few per year, or all of one year |
 | `GET /api/people/odd?person=ID[&year=Y][&offset=0][&limit=60]` | A person's named faces, least like the rest first |
-| `GET /api/people/unknown[?limit=12]` | Groups of unnamed faces: `{state, groups}`, `state` as in the overview; with `failed`, also `error` (what the grouping raised) and no groups |
+| `GET /api/people/unknown[?limit=12]` | Groups of unnamed faces: `{state, groups}`, `state` as in the overview; with `failed`, also `error` (what the grouping raised) and no groups. Each group's `cluster` is a number of the People answering's own (each load of People numbers its groups anew, from its own multiple of 1000), to send back to name it |
 | `GET /api/people/photo?face=ID` | One face's photo and every face in it |
-| `POST /api/people/label` | Name, forget, rule out, put aside, undo, name a cluster ([chapter 15](15-human-corrections.md) for the body) |
-| `POST /api/people/label-many` | `{"items": [label bodies]}`: apply in order, in one transaction (all or none), rescore once |
+| `POST /api/people/label` | Name, forget, rule out, put aside, undo, name a cluster ([chapter 15](15-human-corrections.md) for the body). A `cluster` that is not one of the answering People's groups (shown by the one before it was loaded again, or by another run of the app) names nothing: 409 `{"error"}`. A change that reaches a People being replaced goes to the one replacing it |
+| `POST /api/people/label-many` | `{"items": [label bodies]}`: apply in order, in one transaction (all or none), rescore once; 409 as above if an item names another People's cluster |
 | `POST /api/people/person` | `{"id", "name"?, "born"?}`: rename (or merge: a name another person has, in any case, moves this person's faces, `face_not` and `face_later` rows to them) and set birth month. Returns `{"ok": true, "id": ID}` (the kept person's id after a merge), or `{"error": "unknown person"}` |
 
 `review`, `person`, `odd` (an unknown or just-merged `person`) and `photo` (an unknown `face`) are 404.

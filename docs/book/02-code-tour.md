@@ -65,10 +65,10 @@ Code lines, measured as above (a script module's JSDoc comments are not counted)
 ```
 photo-estate/                  the server and the web app (Python run with uv; no build step)
   embed.py             351  image and video embeddings: run, search, and serve (cmd_serve: find the library, build a PhotoApp, serve it)
-  photo_app.py         823  the photo app as an object: PhotoApp (wiring, who a request is for and what it may do, from
+  photo_app.py         836  the photo app as an object: PhotoApp (wiring, who a request is for and what it may do, from
                             the members it keeps in memory and reads again one load at a time, the
                             request-access page and /members' routes, favourites, reloads and relooks, one install
-                            at a time under fav_write) and its HTTP
+                            at a time under fav_write, People loaded again beside the one answering) and its HTTP
                             handler, which streams uploads, album downloads and videos (/video/, with Range)
   http_util.py         186  what the servers share: Response, bounded JSON bodies, int_param (400s), byte_range, the Auth rules
   members.py           217  who the estate knows: members, their Tailscale logins, roles and upload policies; the first
@@ -118,7 +118,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
   estate.py          1,219  ingest, link, exif, live (Live Photo pairs), dupes, review, tag, search, stats; purge (one
                             photo for good, by hand) and migrate (every photo's first sharer, the Estate defaults lens,
                             owners and favourites); the immutable flag (chapter 4)
-  faces.py             979  faces: run, serve, and the People class (who is who)
+  faces.py           1,017  faces: run, serve, and the People class (who is who; a new one reads again the names given
+                            while it loaded, and the one it replaced passes on what reaches it after; its groups'
+                            numbers are its own) (chapter 14)
   changes.py           748  albums and change sets: proposed, reviewed, applied, reverted, discarded as a mark; every
                             write takes the write lock first, and a published or growing series is neither put up
                             for hiding nor away (chapter 26)
@@ -231,7 +233,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      49  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             9,023  16 self-running test scripts and 28 pytest files; conftest.py runs the scripts under pytest,
+  tests/             9,353  16 self-running test scripts and 29 pytest files; conftest.py runs the scripts under pytest,
                             test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_members.py checks members.py and its journal entries on a scratch catalog;
@@ -291,6 +293,13 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             relook's swap, a failed reload after another leaving fresh false, settling left at one
                             when no thread could start; and shows, as they are, a relook or a reload that raises
                             not tried again, and the whole app waiting on the ingest's write lock (ReloadLocks.tla);
+                            test_people_states.py replays, on made-up faces on the demo's photos, the ways the model
+                            of who each face is (specs/People.tla) found the catalog and People's memory parting
+                            while People loads again: a member's name written over by the load's own (seed, rescore),
+                            missing from the People swapped in, or written to the one replaced; a group named from
+                            the page naming another People's group, or nothing; a photo made private or released as
+                            a reload takes it in, and People not loaded again; and shows, as they are, a load or a
+                            grouping that fails not tried again, and a face id a purge freed given to the next scan's;
                             test_specs.py runs TLC on every model in specs/ (skipped without Java and tla2tools.jar);
                             test_machines.py holds specs/machines.toml to the code: unregistered state, a new
                             writer of a registered table, or a change to a modelled function fails;
@@ -339,7 +348,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
   deploy/              330  launchd plists, photo-search.service (systemd) and HOME-COMPUTE.md for the Linux PC, the cloud
                             preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
-  specs/             2,570  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
+  specs/             2,924  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
                             says when a change needs one, how to read one and how to run them; chapter 17):
                             PrivatePhoto.tla, one `private` row and everything that writes it; Lens.tla, a filter
                             lens, a subscription to it and an album's series rows (lenses.py); ChangeSet.tla, an
@@ -354,7 +363,10 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             catalog and every thread that replaces it (PhotoApp.reload_catalog, relook,
                             set_favorites, on_hidden_change; catalog.Live; an ingest in its own process), and
                             ReloadLocks.tla, who waits for whom among them (the gate, fav_write, SQLite's write
-                            lock); <Name>.cfg is the
+                            lock); People.tla, who each face is in the catalog and in People's memory, a load of
+                            People beside the one answering, a member's change, a group named from the page, and
+                            what People is built without (faces.People, PhotoApp.load_people, reload_catalog);
+                            <Name>.cfg is the
                             code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail;
                             machines.toml, the register of every state machine, its writers and how it is checked
   demo/                     104 CC0 photos, their catalog, and credits

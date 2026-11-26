@@ -12,9 +12,9 @@
 #                            them changes, the test fails until the model has been looked at and the stamp renewed.
 #              "table"       a table of legal moves checked where it runs (`table`: module:NAME), and one writer
 #              "not_needed"  it is not a machine (`why`): the value is fixed when the row is written, or is text
-#              "unmodelled"  it needs a model and has none yet. This list only gets shorter: a new machine with
-#                            several writers that decides what someone is shown or allowed gets its model in the
-#                            pull request that adds it.
+#              "unmodelled"  it needs a model and has none yet. None is left from the survey of November 2026, and
+#                            none is added: a new machine with several writers that decides what someone is shown or
+#                            allowed gets its model in the pull request that adds it.
 
 [[machine]]
 name = "a private photo"
@@ -140,7 +140,7 @@ model = "Reload.tla"
 # the looks, favourites shown in place, the generation and what is kept from one, reload_state and the ingest's fresh,
 # settling. Who waits for whom among the same threads is the next entry's)
 code = { "photo_app.py" = ["PhotoApp.reload_catalog", "PhotoApp.relook", "PhotoApp.read_looks", "PhotoApp.with_private", "PhotoApp.caught_up", "PhotoApp.set_favorites", "PhotoApp.on_hidden_change", "PhotoApp.hidden_changed", "PhotoApp.private_write"], "catalog.py" = ["Live.install", "Live.relook", "Live.update", "Live.forget_views"], "admin.py" = ["Admin.forget_library", "Admin.stats_payload"], "upload.py" = ["IngestJob._follow"] }
-stamp = "383f63e13f429019"
+stamp = "c03843b62c9673e6"
 
 [[machine]]
 name = "who waits for whom in the app's memory"
@@ -148,13 +148,22 @@ checked = "model"
 model = "ReloadLocks.tla"
 # (the catalog gate, fav_write and SQLite's write lock, among the threads of Reload.tla)
 code = { "catalog.py" = ["Gate.__enter__", "Gate.__exit__", "Gate.swap"], "photo_app.py" = ["PhotoApp.handle", "PhotoApp.gated", "PhotoApp.reload_catalog", "PhotoApp.relook", "PhotoApp.set_favorites"] }
-stamp = "6f69d8e8780da158"
+stamp = "2a6c95fe09edd48c"
 
 [[machine]]
-name = "the clustering of unnamed faces"
+name = "who each face is, and the clustering of unnamed faces"
+tables = ["faces", "persons", "face_not", "face_later"]
 enums = ["ClusterState"]
-checked = "unmodelled"
-note = "faces.People, in memory; not read closely in the survey"
+writers = ["faces.py"]
+checked = "model"
+model = "People.tla"
+# (the catalog's names and the People page's memory of them, a load of People beside the one answering, a member's
+# change, a group named from the page, and what People is built without against the looks. ClusterState has one
+# writer, each People's own clustering thread, which writes it three times in order (People.cluster): no table of
+# moves. faces.py run writes faces and face_scans from a process of its own, and only adds; estate.py purge deletes a
+# photo's rows with SQL the writers' search does not see (f-strings), by hand, with a restart after it)
+code = { "faces.py" = ["default_hidden", "face_rows", "People.__init__", "People.load", "People.decisions", "People.refresh", "People.replaced_by", "People.rescore", "People.seed", "People.cluster", "People.find_clusters", "People.unknown", "People.commit", "People.label", "People.label_many", "People.decide", "People.edit_person", "People.handle"], "photo_app.py" = ["PhotoApp.load_people", "PhotoApp.people_page", "PhotoApp.people_out", "PhotoApp.private_write", "PhotoApp.relook", "PhotoApp.hidden_changed", "PhotoApp.reload_catalog"], "lenses.py" = ["State.people_out"] }
+stamp = "6adf8eae7c12f702"
 
 [[machine]]
 name = "a tombstone's reason"
