@@ -277,7 +277,19 @@ not released (`released_at`); its `why` is how it got there:
 - **`new`**: a phone upload not checked yet. Ingest writes the row in the transaction that adds the photo, for
   an image nobody else is shown yet (a new photo, or one every sharer holds private).
 - **`held`**: the check found it looks like a receipt, a screenshot or a document, and kept it private.
-- **`withdrawn`**: its sharer took it back from the family, from the viewer.
+- **`withdrawn`**: its sharer took it back from the family, from the viewer. A `new` photo whose sharer makes
+  it private, or sets its release day, before the check has scored it is withdrawn too: it is theirs by their
+  own word from then on, and the check leaves it alone.
+
+**One row, several writers.** The sharer writes this row from the app; the app writes it by itself in three
+places that read the table, work for a while and then write: `private.py check` (in the ingest script's own
+process), the one-off `private.py library`, and the release timer. Each of those takes the write lock
+(`BEGIN IMMEDIATE`, `private._begin`) and reads again what it is about to write over, so a photo released or
+withdrawn while it was being scored is not held, and a day cleared as the timer fires is not released.
+`specs/PrivatePhoto.tla` is a TLA+ model of the row and all its writers, checked by TLC against three rules:
+a photo its sharer released stays released, a photo they said is private stays private until their day, and
+the day is the one they last set. The model's `Guarded = FALSE` is the code before those guards, which broke
+all three; `tests/test_private_states.py` replays each of those on the real code.
 
 **Who may be shown it** (`lenses.State.shared`, from `private.Private`): everyone, unless every one of its
 sharers holds it private; then those sharers only. So a photo Ben and Cleo both shared, withdrawn by Ben, is
