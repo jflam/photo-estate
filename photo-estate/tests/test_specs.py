@@ -1,6 +1,7 @@
 """The TLA+ models in specs/, checked by TLC: every reachable state of each, against its invariants.
 
   specs/PrivatePhoto.tla   one `private` row and everything that writes it (private.py)
+  specs/Lens.tla           a filter lens, a subscription to it and an album's series rows (lenses.py)
 
 For each model, <Name>.cfg is the code as it is and must pass; each <Name>.before.<invariant>.cfg is the code
 before a fix, and must still find its violation (an invariant that can no longer fail checks nothing).

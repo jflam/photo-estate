@@ -310,6 +310,15 @@ def create(con, member: int | None, title, actor=None) -> int:
         return add(con, member if member is not None else sysadmin_id(con), title, actor=actor)
 
 
+def _begin(con) -> None:
+    """Take the write lock now, at the head of a `with con:` block, so what the block reads next is what it
+    writes over: no other request changes the lens, the album's series row or the subscription in between.
+    Python's own BEGIN waits for the first write, and a read before it sees a row that may have moved on by then
+    (specs/Lens.tla is the model of what that let happen; private._begin is the same for the private table)."""
+    if not con.in_transaction:
+        con.execute("BEGIN IMMEDIATE")
+
+
 def _theirs(con, lid, member) -> Lens:
     lens = get(con, lid)
     if lens is None:
@@ -340,15 +349,16 @@ def subscribe(con, member: int | None, lid, mode: str, shas=None, title: str | N
     m = member if member is not None else sysadmin_id(con)
     if mode not in MODES:
         raise LensError(400, f"mode is one of {', '.join(MODES)}")
-    lens = _visible(con, lid, member)
-    own = owner_of(con, lens) == m
-    if own and not lens.estate_default:
-        raise LensError(409, "this lens is your own: it is always on")
-    if not lens.published:
-        raise LensError(404, "no such lens")
     t, data = now(), {"mode": mode}
     data: dict[str, Any]
     with con:
+        _begin(con)          # (the lens and her row, as they are when this writes: specs/Lens.tla)
+        lens = _visible(con, lid, member)
+        own = owner_of(con, lens) == m
+        if own and not lens.estate_default:
+            raise LensError(409, "this lens is your own: it is always on")
+        if not lens.published:
+            raise LensError(404, "no such lens")
         if mode == "snapshot":
             name = title or f"{lens.title} (a copy)"
             if lens.kind == "filter":
@@ -391,9 +401,10 @@ def unsubscribe(con, member: int | None, lid) -> dict:
     """Leave a lens: a live or snapshot subscription ends (a snapshot's copy stays the member's), and an
     estate default is opted out of (until subscribe takes it back). One lens.unsubscribed entry."""
     m = member if member is not None else sysadmin_id(con)
-    lens = _visible(con, lid, member)
-    was = con.execute("SELECT mode FROM subscriptions WHERE member_id=? AND lens_id=?", (m, lens.id)).fetchone()
     with con:
+        _begin(con)          # (the lens and her row, as they are when this writes: specs/Lens.tla)
+        lens = _visible(con, lid, member)
+        was = con.execute("SELECT mode FROM subscriptions WHERE member_id=? AND lens_id=?", (m, lens.id)).fetchone()
         if lens.estate_default and lens.published:
             if was is not None and was[0] == "opted_out":
                 return {"lens": lens.id, "mode": "opted_out", "changed": False}
@@ -410,12 +421,15 @@ def unsubscribe(con, member: int | None, lid) -> dict:
 
 
 def publish(con, member: int | None, lid, on: bool) -> dict:
-    lens = _theirs(con, lid, member)
-    if lens.estate_default and not on:
-        raise LensError(409, "an estate default stays published")
-    if lens.published == on:
-        return {"lens": lens.id, "published": on, "changed": False}
+    """Publish a lens of the member's, or take it back (and a proposal of it with it). An estate default stays
+    published (409), and so does one a sysadmin accepted while the request was on its way."""
     with con:
+        _begin(con)          # (a sysadmin may be deciding it: what this goes by is what it writes over, specs/Lens.tla)
+        lens = _theirs(con, lid, member)
+        if lens.estate_default and not on:
+            raise LensError(409, "an estate default stays published")
+        if lens.published == on:
+            return {"lens": lens.id, "published": on, "changed": False}
         con.execute("UPDATE lenses SET published=?, proposed_at=CASE WHEN ? THEN proposed_at END WHERE id=?",
                     (int(on), int(on), lens.id))
         if not on and lens.proposed_at:    # a proposal taken back with it: nothing is left for a sysadmin to decide
@@ -427,18 +441,19 @@ def publish(con, member: int | None, lid, on: bool) -> dict:
 def publish_album(con, member: int | None, sid: int, on: bool) -> dict:
     """Publish an album of the member's as a series (its lenses row, made the first time), or take it back."""
     m = member if member is not None else sysadmin_id(con)
-    row = con.execute("SELECT title, op, owner FROM change_sets WHERE id=? AND status IS NOT 'discarded'", (sid,)).fetchone()
-    if row is None:
-        raise LensError(404, "no such album")
-    title, op, owner = row
-    if (owner if owner is not None else sysadmin_id(con)) != m:
-        raise LensError(403, "this album is someone else's")
-    if op != "view":
-        raise LensError(409, "a change set up for hiding is not published; a filter lens is (its hides)")
-    got = con.execute("SELECT id, published FROM lenses WHERE kind='series' AND set_id=?", (sid,)).fetchone()
-    if got and bool(got[1]) == on or not got and not on:
-        return {"album": sid, "lens": got[0] if got else None, "published": on, "changed": False}
     with con:
+        _begin(con)          # (its series row, as it is when this writes: one is made the first time only, specs/Lens.tla)
+        row = con.execute("SELECT title, op, owner FROM change_sets WHERE id=? AND status IS NOT 'discarded'", (sid,)).fetchone()
+        if row is None:
+            raise LensError(404, "no such album")
+        title, op, owner = row
+        if (owner if owner is not None else sysadmin_id(con)) != m:
+            raise LensError(403, "this album is someone else's")
+        if op != "view":
+            raise LensError(409, "a change set up for hiding is not published; a filter lens is (its hides)")
+        got = con.execute("SELECT id, published FROM lenses WHERE kind='series' AND set_id=?", (sid,)).fetchone()
+        if got and bool(got[1]) == on or not got and not on:
+            return {"album": sid, "lens": got[0] if got else None, "published": on, "changed": False}
         if got:
             lid = got[0]
             con.execute("UPDATE lenses SET published=?, title=? WHERE id=?", (int(on), title, lid))
@@ -450,13 +465,14 @@ def publish_album(con, member: int | None, sid: int, on: bool) -> dict:
 
 def propose(con, member: int | None, lid) -> dict:
     """Propose a filter of the member's own as an estate default: it is published, and waits for a sysadmin."""
-    lens = _theirs(con, lid, member)
-    if lens.kind != "filter" or lens.estate_default:
-        raise LensError(409, "only a filter that is not an estate default yet can be proposed")
-    if lens.proposed_at:
-        return {"lens": lens.id, "proposed_at": lens.proposed_at, "changed": False}
     t = now()
     with con:
+        _begin(con)          # (a sysadmin may be accepting it already: specs/Lens.tla)
+        lens = _theirs(con, lid, member)
+        if lens.kind != "filter" or lens.estate_default:
+            raise LensError(409, "only a filter that is not an estate default yet can be proposed")
+        if lens.proposed_at:
+            return {"lens": lens.id, "proposed_at": lens.proposed_at, "changed": False}
         con.execute("UPDATE lenses SET published=1, proposed_at=? WHERE id=?", (t, lens.id))
         journal.append(con, member, "lens.proposed", f"lens:{lens.id}", {"title": lens.title})
         name = (con.execute("SELECT name FROM members WHERE id=?", (owner_of(con, lens),)).fetchone() or ["Someone"])[0]
@@ -467,15 +483,17 @@ def propose(con, member: int | None, lid) -> dict:
 
 def decide(con, member: int | None, lid, accept: bool) -> dict:
     """A sysadmin accepts a proposed filter as an estate default (every member then sees through it unless
-    they opt out), or declines it (it stays its owner's, published)."""
-    if not is_sysadmin(con, member):
-        raise LensError(403, "only a sysadmin decides the estate defaults")
-    lens = get(con, lid)
-    if lens is None:
-        raise LensError(404, "no such lens")
-    if not lens.proposed_at:
-        raise LensError(409, "this lens has not been proposed")
+    they opt out), or declines it (it stays its owner's, published). One its owner took back, or another
+    sysadmin decided, while this was asked is not proposed any more (409)."""
     with con:
+        _begin(con)          # (the proposal, as it stands when this writes: specs/Lens.tla)
+        if not is_sysadmin(con, member):
+            raise LensError(403, "only a sysadmin decides the estate defaults")
+        lens = get(con, lid)
+        if lens is None:
+            raise LensError(404, "no such lens")
+        if not lens.proposed_at:
+            raise LensError(409, "this lens has not been proposed")
         if accept:
             con.execute("UPDATE lenses SET estate_default=1, published=1, proposed_at=NULL WHERE id=?", (lens.id,))
         else:
