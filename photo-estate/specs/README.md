@@ -14,6 +14,7 @@ small and close enough to the code that what it finds can be tried on the real t
 |---|---|---|---|
 | `PrivatePhoto.tla` | One row of the `private` table: a photo private to one of its sharers, and everything that writes it | A released photo stays released; a photo its sharer said is private stays private until their day; the day is the one they last set | `private.py` |
 | `Lens.tla` | One filter lens (published, proposed, an estate default), a member's subscription to it, and an album's series rows, written by its owner, two sysadmins and the member at once | An estate default stays published, and is one its owner proposed and did not take back; a proposal is published and an estate default is not proposed; a sysadmin's item is open exactly while there is something to decide; a write that changes nothing appends nothing; a subscription is as its member last said; one series row per album, as its owner last said | `lenses.py` (and the inbox items it writes) |
+| `ChangeSet.tla` | One album or change set (status, op, kind, a search it grows from), its photos' marks and hidden rows, its series row and the two inbox items about it, written by its owner through `changes.py`, by `lenses.py`, by the series listener and by a task's end | A photo is hidden exactly while it is in the set and applied; an album, or a set put away, hides nothing; a set stored as done has every photo as marked and is as it was committed until reopened; one stored as reverted hides nothing; a published series is an album there to look at; new photos wait only for a series; a review item is about a hiding set | `changes.py`, `listeners.py`'s series listener, `lenses.py`'s publish and subscribe |
 
 ## When a change needs one
 
@@ -152,4 +153,4 @@ needs no bad timing) and `CONSTRAINT OnlyTimer` (the check and the library run n
 The entries of `machines.toml` that say `checked = "unmodelled"`, each with what the survey of November 2026
 noticed about it: change sets and their photos, lenses, subscriptions, members, agent bindings, inbox items,
 questions, the catalog reload, and the clustering of faces. (Lenses and subscriptions were modelled in
-November 2026: `Lens.tla`.)
+November 2026: `Lens.tla`; and change sets and their photos: `ChangeSet.tla`.)
