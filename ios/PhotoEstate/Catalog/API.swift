@@ -78,9 +78,7 @@ enum Favourites {
 
     /// The server has made these favourites (or not): the phone's catalog now says so too.
     static func keep(_ shas: [String], _ on: Bool) async {
-        try? await Catalog.shared.store.write { db in
-            try db.transaction { for s in shas { try db.run("UPDATE photos SET fav=? WHERE sha=?", [on, s]) } }
-        }
+        try? await Catalog.shared.store.write { try Catalog.keep($0, shas, on) }
         await SyncEngine.shared.catalogEdited()
     }
 }
