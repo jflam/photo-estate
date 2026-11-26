@@ -37,8 +37,8 @@ STATE_COLUMNS = {"status", "state", "why", "mode", "decision", "phase", "stage"}
 ENUM_MODULES = ("core.states", "core.lifecycle")
 # The machines the survey of November 2026 found with no model. This set only gets shorter, as each is modelled:
 # a machine that is new is modelled, or given its table of moves, in the pull request that adds it.
-BACKLOG = {"a change set and its photos", "a member", "a member's own agent on a device", "an inbox item",
-           "a question, and whom it was dealt to", "the catalog reload", "the clustering of unnamed faces"}
+BACKLOG = {"a member", "a member's own agent on a device", "an inbox item", "a question, and whom it was dealt to",
+           "the catalog reload", "the clustering of unnamed faces"}
 HOW = "see tests/test_machines.py's docstring and specs/README.md"
 
 
@@ -53,11 +53,14 @@ def writers(tables) -> list[str]:
 
 
 def fingerprint(code: dict[str, list[str]]) -> str:
-    """A hash of the named functions as Python reads them: comments, docstrings and layout do not change it."""
+    """A hash of the named functions as Python reads them: comments, docstrings and layout do not change it. A
+    method is named Class.method."""
     h = hashlib.sha256()
+    fns = (ast.FunctionDef, ast.AsyncFunctionDef)
     for path in sorted(code):
         tree = ast.parse((ROOT / path).read_text())
-        defs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        defs = {n.name: n for n in tree.body if isinstance(n, fns)}
+        defs |= {f"{c.name}.{n.name}": n for c in tree.body if isinstance(c, ast.ClassDef) for n in c.body if isinstance(n, fns)}
         for name in sorted(code[path]):
             assert name in defs, f"{path} has no function {name}, which specs/machines.toml says a model stands for ({HOW})"
             fn = defs[name]

@@ -26,6 +26,8 @@ their original files downloaded as one zip (`embed.py serve` answers that: it ha
   POST /api/albums/<id>/publish {on?: true|false}   publish it as a series (lenses.py; photo_app.py answers it)
   POST /api/albums/<id>/hide | /view                 put it up for hiding, or take it down again
   POST /api/albums/<id>/discard                      put it away (it must hide nothing): marked discarded
+An album published as a series, or one with new photos waiting for it (its owner's series_update item), is neither
+put up for hiding nor away (409): its owner stops publishing it, or adds the new photos or none, first.
 
 A **series** (multiplayer phase 7) is a list album that grows from a search (`grows_from`, a search as
 `query` is): made with POST /api/albums {title, grows_from} (it starts as what the search finds now), or given
@@ -515,6 +517,10 @@ class Changes:
         with self.lock:
             con = self.con()
             try:
+                # The write lock first (Changes.lock keeps out only Changes' own writes): what the write goes by is
+                # then what it writes over, though lenses.py and the series listener write the album's series row and
+                # its inbox items on connections of their own (specs/ChangeSet.tla).
+                con.execute("BEGIN IMMEDIATE")
                 was = self.summary(con, sid, viewer)
                 if not was:
                     return {"error": "no such change set"}, 404
@@ -564,6 +570,8 @@ class Changes:
                     what = "items" if extra["added"] else what
                 elif what == "hide":             # the album becomes a change set: reviewed, then applied, as any other
                     if was["op"] != ChangeOp.HIDE:
+                        if bad := self.followed(con, was):
+                            return {"error": bad}, 409
                         if was["kind"] == AlbumKind.LIVE:    # fixed as what it finds now: a review needs photos that stay put
                             extra = self.add_items(con, sid, self.members(con, was, viewer), viewer)
                         con.execute("UPDATE change_sets SET op='hide', kind='list', status='open' WHERE id=?", (sid,))
@@ -633,6 +641,8 @@ class Changes:
                 elif what == "discard":          # marked, never deleted: its rows stay, and it is in no listing
                     if con.execute("SELECT 1 FROM hidden WHERE set_id=? LIMIT 1", (sid,)).fetchone():
                         return {"error": "this set is hiding photos; undo it first"}, 409
+                    if bad := self.followed(con, was):
+                        return {"error": bad}, 409
                     con.execute("UPDATE change_sets SET status=?, updated_at=? WHERE id=?", (ChangeStatus.DISCARDED, t, sid))
                     member_inbox.close(con, "review", f"album:{sid}")     # put away: nothing is left to look over
                     journal.append(con, actor, "album.discarded", f"album:{sid}", {"title": was["title"]}, acting_for)
@@ -651,6 +661,19 @@ class Changes:
         if changed:
             self.on_change()
         return {**out, "busy": bool(self.busy())}, 200
+
+    @staticmethod
+    def followed(con, was: dict) -> str | None:
+        """Why an album is not put up for hiding (`hide`) or away (`discard`) now, or None: it is published as a series
+        (members follow it, and a set up for hiding or put away is published nowhere), or new photos are waiting for
+        it as a series (an open series_update item, which only a series has). Its owner takes the series back, or adds
+        the new photos or none, first."""
+        if was["published"]:
+            return "this album is published as a series; stop publishing it first"
+        if con.execute("SELECT 1 FROM inbox_items WHERE kind='series_update' AND ref=? AND state='open' LIMIT 1",
+                       (f"album:{was['id']}",)).fetchone():
+            return "new photos are waiting for this series; add them, or none, first"
+        return None
 
     def tell(self, con, sid: int, what: str, was: dict, extra: dict, changed: bool, wrote: bool, viewer, actor) -> None:
         """The inbox (member_inbox.py), in the write's transaction: a hiding set applied in full, or taken down

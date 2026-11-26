@@ -81,6 +81,26 @@ The rules that make this safe:
    renamed, discarded) is one journal entry naming the set and the member it was done for, never one per
    photo ([chapter 11](11-server.md#the-journal)).
 
+**One set, several writers.** Its owner writes a set through `changes.py`, which holds one lock around every
+write; but `lenses.py` writes the album's series row, and the series listener (a background thread) its owner's
+`series_update` item, each on a connection of its own. So every write of `changes.py` takes the write lock first
+(`BEGIN IMMEDIATE`) and reads the set inside that transaction. An album published as a series, or one with new
+photos waiting for it, is neither put up for hiding nor discarded (409: stop publishing it, or add the new photos
+or none, first); the listener takes the lock and reads the album again before it opens the item, and opens none for
+an album that is no longer a series; and a series is published by its lens's own route (`POST
+/api/lenses/<id>/publish`) only while its album is one to look at. `specs/ChangeSet.tla` is a TLA+ model of one
+set, its photos' marks and hidden rows, its series row and the two inbox items about it, with every writer, checked
+by TLC against nine rules: a hidden row is there exactly while its photo is in the set and applied; an album to
+look at, or a set put away, hides nothing, and an album is never done or reverted; a set stored as done has every
+photo as marked, and stays as it was committed until it is reopened; one stored as reverted hides nothing; a
+published series is an album there to look at; new photos wait only for a series; a review item is about a hiding
+set. The model's `Guarded = FALSE` is the code before, which broke four of them: a series with new photos waiting
+could be put up for hiding, applied, committed and then given the new photo from the inbox (stored as done, with a
+photo not as marked, which write's refusals and `reopen` then no longer took to be done); put up for hiding or away
+with the item left open; a published series could be put up for hiding or away, still published and out of its
+owner's reach; and the listener could open an item for an album made no series while its search ran.
+`tests/test_change_set_states.py` replays each on the real code.
+
 The page keeps itself honest about what the server has
 ([app/changes-flow.js](../../photo-estate/app/changes-flow.js), issue #80). A mark shows at once and is
 saved behind it; marks, apply, revert, commit and reopen are sent one at a time in the order made, so an

@@ -75,7 +75,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   journal.py            63  the estate's append-only log: append(con, actor, kind, subject, data) in the caller's
                             transaction, since(con, id); the kinds, where each is appended and who may read it;
                             by_agent (a member's own agent's writes) and for_member (journal_since) (chapter 11)
-  lenses.py            599  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
+  lenses.py            603  what each member sees: filter lenses and series, subscriptions (live, snapshot, opting
                             out of an estate default), "show it anyway", each member's favourites, why a photo is
                             hidden; State, the looks every member view is worked out from (chapter 11)
   private.py           745  photos private to their sharer (chapter 11): who may be shown a photo, the sharer ingest
@@ -92,7 +92,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   stories.py           486  questions and stories (chapter 11): ask (only photos the recipient may be shown), the
                             inbox's weekly allowance, ranking and grouping (deal), answering typed or spoken,
                             telling a story, who may read one, a recording into the store with no assets row
-  listeners.py         211  what the estate does by itself: listeners reading the journal from their cursors, at
+  listeners.py         218  what the estate does by itself: listeners reading the journal from their cursors, at
                             least once; series kept up to date as photos arrive, an answer that wakes the agent
   transcribe.py        210  a story's recording written out on this computer (Parakeet TDT 0.6B v2: MLX on a Mac, ONNX
                             on an NVIDIA GPU or the CPU elsewhere; PyAV reads the audio, no ffmpeg); `fetch` the model by hand; the app's queued job (chapter 11)
@@ -112,7 +112,9 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             photo for good, by hand) and migrate (every photo's first sharer, the Estate defaults lens,
                             owners and favourites); the immutable flag (chapter 4)
   faces.py             979  faces: run, serve, and the People class (who is who)
-  changes.py           473  albums and change sets: proposed, reviewed, applied, reverted, discarded as a mark (chapter 26)
+  changes.py           748  albums and change sets: proposed, reviewed, applied, reverted, discarded as a mark; every
+                            write takes the write lock first, and a published or growing series is neither put up
+                            for hiding nor away (chapter 26)
   places.py            388  place names, local time, events, trips
   estate_mcp.py        423  the library as MCP tools for an agent, at /mcp: who a call is for (a login, a run's
                             token), ask_member, stories in get_photos (chapter 26)
@@ -250,6 +252,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             proposal taken back or decided by another sysadmin as it is accepted, an estate default
                             unpublished as it is accepted, an album published twice at once, a member leaving a
                             filter as it becomes an estate default, and an entry for a write that changed nothing;
+                            test_change_set_states.py replays the same way each way the model of an album or change
+                            set (specs/ChangeSet.tla) found it going where nobody asked: a committed set given new
+                            photos, a published series or one with new photos waiting put up for hiding or away, the
+                            series of a hiding set published by the lens's route, and the listener, hide or discard
+                            landing between another writer's read and its write;
                             test_specs.py runs TLC on every model in specs/ (skipped without Java and tla2tools.jar);
                             test_machines.py holds specs/machines.toml to the code: unregistered state, a new
                             writer of a registered table, or a change to a modelled function fails;
@@ -298,10 +305,12 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
   deploy/              330  launchd plists, photo-search.service (systemd) and HOME-COMPUTE.md for the Linux PC, the cloud
                             preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
-  specs/               521  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
+  specs/               943  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
                             says when a change needs one, how to read one and how to run them; chapter 17):
                             PrivatePhoto.tla, one `private` row and everything that writes it; Lens.tla, a filter
-                            lens, a subscription to it and an album's series rows (lenses.py); <Name>.cfg is the
+                            lens, a subscription to it and an album's series rows (lenses.py); ChangeSet.tla, an
+                            album or change set, its photos, its series row and its inbox items (changes.py, and
+                            the listener and lenses.py beside it); <Name>.cfg is the
                             code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail;
                             machines.toml, the register of every state machine, its writers and how it is checked
   demo/                     104 CC0 photos, their catalog, and credits

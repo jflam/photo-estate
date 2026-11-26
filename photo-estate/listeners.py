@@ -114,6 +114,13 @@ def series(con, e: dict, env: Env):
                        " AND json_extract(data, '$.ingest')=?", (f"album:{sid}", e["id"])).fetchone():
             continue                                # handled already (at least once)
         with con:      # the item first, so the entry is never older than it (Changes.candidates reads from it on)
+            # The write lock, and the album read again: one made no series while its search ran (given no search, put
+            # up for hiding or away) is waited for by nothing (specs/ChangeSet.tla).
+            if not con.in_transaction:
+                con.execute("BEGIN IMMEDIATE")
+            if not con.execute("SELECT 1 FROM change_sets WHERE id=? AND grows_from IS NOT NULL AND op='view' AND kind='list'"
+                               " AND status IS NOT 'discarded'", (sid,)).fetchone():
+                continue
             n = len(_named(con, sid, owner) | set(got[:MAX_NAMED]))
             member_inbox.put(con, [owner], "series_update", f"album:{sid}",
                              f"{n} new photo{'' if n == 1 else 's'} may belong in your series {what}")
