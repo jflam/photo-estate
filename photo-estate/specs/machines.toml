@@ -66,7 +66,7 @@ checked = "model"
 model = "ChangeSet.tla"
 # (estate.py is migrate, by hand with the app stopped: it writes only lens_id and owner, which the model leaves out)
 code = { "changes.py" = ["Changes.write", "Changes.create", "Changes.add_items", "Changes.summary", "Changes.candidates", "Changes.tell", "Changes.followed"], "lenses.py" = ["_begin", "subscribe", "publish", "publish_album"], "listeners.py" = ["series"], "tasks.py" = ["Tasks.to_review"], "member_inbox.py" = ["put", "close", "dismiss"] }
-stamp = "570b2be0daf8d89c"
+stamp = "1af0bfc090dc55af"
 
 [[machine]]
 name = "a lens: published, proposed, an estate default"
@@ -111,16 +111,21 @@ writers = ["member_inbox.py", "stories.py"]
 checked = "model"
 model = "InboxItem.tla"
 # (the kinds review and series_update, with the album they are about, are ChangeSet.tla's)
-code = { "member_inbox.py" = ["put", "close", "retitle", "dismiss", "sysadmins", "lens_changed"], "members.py" = ["request", "change", "bind", "decide_binding"], "lenses.py" = ["_begin", "_ref", "propose", "decide", "publish", "publish_album", "subscribe", "unsubscribe"], "stories.py" = ["ask", "_for", "deal", "_deal", "_settle", "dismiss", "answer", "tell"], "private.py" = ["_hold", "_open_held", "close_held"], "changes.py" = ["Changes.tell"] }
-stamp = "4d9a7475f440724f"
+code = { "member_inbox.py" = ["put", "close", "retitle", "dismiss", "sysadmins", "lens_changed"], "members.py" = ["request", "change", "bind", "decide_binding"], "lenses.py" = ["_begin", "_ref", "propose", "decide", "publish", "publish_album", "subscribe", "unsubscribe"], "stories.py" = ["ask", "_for", "deal", "_deal", "_settle", "dismiss", "put_away", "answer", "tell"], "private.py" = ["_hold", "_open_held", "close_held"], "changes.py" = ["Changes.tell"] }
+stamp = "4a4b4d5647b5caf0"
 
 [[machine]]
 name = "a question, and whom it was dealt to"
 tables = ["questions", "asked"]
 columns = ["questions.status"]
+enums = ["QuestionStatus"]
 writers = ["stories.py"]
-checked = "unmodelled"
-note = "survey: dismissing its inbox item by the inbox's own route leaves the question dealt and never closed"
+checked = "model"
+model = "Question.tla"
+# (member_inbox.dismiss writes the questions of an item it puts away through stories.put_away; the moves of
+# questions.status are also core.states:QUESTION_MOVES, checked at each write by stories._move)
+code = { "stories.py" = ["ask", "_for", "deal", "_deal", "_move", "_open", "waiting", "keep_item", "_asked", "_settle", "dismiss", "put_away", "answer", "tell"], "member_inbox.py" = ["dismiss"], "listeners.py" = ["stories", "run"], "tasks.py" = ["Tasks.submit"] }
+stamp = "7ac0c7163812f817"
 
 [[machine]]
 name = "the catalog reload"

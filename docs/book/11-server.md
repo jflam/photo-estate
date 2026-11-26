@@ -276,7 +276,8 @@ set looked at half-made would be reviewed again.
 
 `GET /api/inbox` is the member's open items, newest first, each with what it `opens`, and how many;
 `POST /api/inbox/<id>/dismiss` puts one away (`404` for any item that is not the member's own, `409` for one
-that is not open), journaled as `inbox.dismissed`, the one thing about an item that no other entry says.
+that is not open), journaled as `inbox.dismissed`, the one thing about an item that no other entry says. A
+`question` item takes its questions with it: each that waits in it is put away, as "I don't know" puts one.
 The page is **`/inbox`** ([chapter 26](26-albums-and-agents.md#the-inbox)); the Library's menu shows how many
 items are open. A later phase adds a kind with a row in `member_inbox.OPENS` (what its item opens) and a
 `put` and a `close` in the code that makes and decides it.
@@ -477,6 +478,23 @@ are dealt naming a photo nobody has told a story about first, then a photo of a 
 priority, then oldest first. "I don't know" (dismissing a question, or its item) puts it away for that member
 for good; it counts against the week it was dealt in and nothing after. A question naming a photo the member may
 not be shown now waits, and one already dealt is left out of their inbox, item and all.
+
+**A question's own life.** Its status is `queued` until it is dealt, `asked` once it is, `answered` once anyone
+tells a story answering it, and `closed` when the one member it was asked of puts it away; one who answers it after
+all (another tab still showed it) makes it `answered`, and the story stands beside the "I don't know". A question to
+the family is never closed: it is dealt to each member, however many have answered or put it away. Each write of the
+status is a conditional UPDATE from the statuses it names, which `core.states.QUESTION_MOVES` must allow
+(`stories._move`). Dismissing a question's item from the inbox (`POST /api/inbox/<id>/dismiss`) is "I don't know" to
+every question in it (`stories.put_away`, in the dismiss's transaction): before, it left them waiting in an item
+nobody would see again, never dealt again and never closed. `specs/Question.tla` models two questions (one to a
+member, one to the family, in one group or two), the asked rows dealing them, the two members' items with an
+allowance of one, and the follow-up run of a story typed, spoken or both, with the app stopping before the
+listener's cursor moves; TLC checks it against nine rules and a property of its steps: a dealt question that
+waits on a member is in an open item of theirs; "I don't know" puts it away for good, and closes a question to them
+alone; a story told answers it; the status is what its rows say; one open item per group, and an open one has a
+question waiting in it; the weekly allowance and the open items stay within it; one run per story; and every move
+of the status is one of `QUESTION_MOVES`. The model's `Guarded = FALSE` is the code before the fix, which broke three of them with no bad
+timing; `tests/test_question_states.py` replays the trace on the real code.
 
 **Stories** are what a member said, attributed and dated: typed, or a recording uploaded as the body of the
 request (an iPhone's AAC `.m4a`, a browser's `audio/mp4` or `audio/webm`, `.wav`, up to 8 MiB), stored in the

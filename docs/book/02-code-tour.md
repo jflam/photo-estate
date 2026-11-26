@@ -87,13 +87,14 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             and review, "Reviewed up to here"); every writer of a row takes the write lock and
                             reads it again first (_begin); the phone gate's tombstones (a member's opt-outs)
   hold-prompts.json         the hold's prompts as SigLIP text vectors, made once by `embed.py hold-prompts`
-  member_inbox.py      174  each member's inbox (inbox_items; not the upload folder): put, close and retitle, called by the
+  member_inbox.py      179  each member's inbox (inbox_items; not the upload folder): put, close and retitle, called by the
                             code that makes and decides each kind, what an item opens, the member's list,
-                            dismissing (with the write lock held); a lens that changed tells its live subscribers once
-                            (chapter 11)
-  stories.py           491  questions and stories (chapter 11): ask (only photos the recipient may be shown), the
+                            dismissing (with the write lock held; a question item puts its questions away with it); a
+                            lens that changed tells its live subscribers once (chapter 11)
+  stories.py           524  questions and stories (chapter 11): ask (only photos the recipient may be shown), the
                             inbox's weekly allowance, ranking and grouping (deal, which takes the write lock and reads
-                            again what it deals), answering typed or spoken,
+                            again what it deals), answering typed or spoken, "I don't know" to a question or to its
+                            whole item (put_away), each status written as QUESTION_MOVES allows (_move),
                             telling a story, who may read one, a recording into the store with no assets row
   listeners.py         218  what the estate does by itself: listeners reading the journal from their cursors, at
                             least once; series kept up to date as photos arrive, an answer that wakes the agent
@@ -140,7 +141,8 @@ photo-estate/                  the server and the web app (Python run with uv; n
     states.py                 the finite string domains as StrEnums (change set op/status/state, decisions, task,
                               ingest, intake job and stage, clustering), each value the string already stored (issue #90)
                               and the moves each job lifecycle may make (TASK_MOVES, JOB_MOVES) with check_move,
-                              which raises IllegalMove for any other (issue #86)
+                              which raises IllegalMove for any other (issue #86); a question's status and its moves
+                              (QuestionStatus, QUESTION_MOVES: stories.py)
     lifecycle.py              Lifecycle: idle | loading | ready | failed for what loads in a thread (the search
                               model, the People page), under a lock, so a request hears "loading" or "failed" (issue #82)
     procs.py                  stop(proc, grace): SIGTERM, then SIGKILL after the grace (tasks, intake jobs; issue #86)
@@ -226,7 +228,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   pull-drive.sh         58  rclone: Takeout zips from Drive, one at a time
   ingest-iphone.sh      49  catalogue what the phone uploaded, touching only the new photos
   pull-icloud.sh        23  icloudpd: mirror iCloud, then ingest
-  tests/             8,200  16 self-running test scripts and 25 pytest files; conftest.py runs the scripts under pytest,
+  tests/             8,394  16 self-running test scripts and 26 pytest files; conftest.py runs the scripts under pytest,
                             test_harness.py checks it;
                             test_photo_app.py, test_http_util.py and test_compare_app.py call the app in process (chapter 17);
                             test_members.py checks members.py and its journal entries on a scratch catalog;
@@ -265,6 +267,11 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             it, or put away once decided: a sysadmin who stops being one, a lens taken back, two reads
                             of one inbox dealing a question at once, a question dealt into an item done meanwhile, and
                             a dismiss landing after the item's decision;
+                            test_question_states.py replays the way the model of a question and whom it was dealt to
+                            (specs/Question.tla) found one put away left waiting: a question item dismissed from the
+                            inbox, its questions shown nowhere, never dealt again and never closed; and, as controls,
+                            a question's normal life, an answer told while another tab puts it away, one follow-up
+                            run per story, and QUESTION_MOVES against the model's moves;
                             test_specs.py runs TLC on every model in specs/ (skipped without Java and tla2tools.jar);
                             test_machines.py holds specs/machines.toml to the code: unregistered state, a new
                             writer of a registered table, or a change to a modelled function fails;
@@ -313,13 +320,16 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
   deploy/              330  launchd plists, photo-search.service (systemd) and HOME-COMPUTE.md for the Linux PC, the cloud
                             preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
-  specs/             1,334  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
+  specs/             1,658  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
                             says when a change needs one, how to read one and how to run them; chapter 17):
                             PrivatePhoto.tla, one `private` row and everything that writes it; Lens.tla, a filter
                             lens, a subscription to it and an album's series rows (lenses.py); ChangeSet.tla, an
                             album or change set, its photos, its series row and its inbox items (changes.py, and
                             the listener and lenses.py beside it); InboxItem.tla, the inbox items about one thing
-                            (member_inbox.py and its callers: members.py, lenses.py, stories.py, private.py); <Name>.cfg is the
+                            (member_inbox.py and its callers: members.py, lenses.py, stories.py, private.py);
+                            Question.tla, a question, the asked rows dealing it, the members' items within their
+                            allowance and the run an answer starts (stories.py, member_inbox.dismiss, the stories
+                            listener); <Name>.cfg is the
                             code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail;
                             machines.toml, the register of every state machine, its writers and how it is checked
   demo/                     104 CC0 photos, their catalog, and credits

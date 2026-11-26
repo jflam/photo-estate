@@ -41,8 +41,9 @@ The kinds, who each is for, what makes and closes it (all in the caller's transa
 
   question        the member it is dealt to stories.deal (when their inbox is read): one item per group of
                   ask:<group>             questions (a group_key, or q<id>), within their weekly allowance; done once
-                                          each question in it is answered or put away (stories.py). Not shown while
-                                          none of its questions may be shown to them. Opens /inbox?ask=<group>
+                                          each question in it is answered or put away (stories.py); dismissed, it
+                                          puts each away with it (stories.put_away). Not shown while none of its
+                                          questions may be shown to them. Opens /inbox?ask=<group>
   series_update   a series' owner         listeners.py, when new photos match a member's own series (an album that
                   album:<id>              grows from a search): its candidates are in series.update_requested; done
                                           when the owner adds them, or none (POST /api/albums/<id>/candidates).
@@ -153,7 +154,8 @@ def mine(con: sqlite3.Connection, member: int | None, keep=None) -> dict:
 def dismiss(con: sqlite3.Connection, member: int | None, iid: int) -> dict:
     """POST /api/inbox/<id>/dismiss: the member puts one of their own open items away. inbox.dismissed in the
     journal. InboxError 404 for an item that is not theirs (as if there were none), 409 for one not open. It takes the
-    write lock before it reads the item: one decided (or put away from another tab) as this was asked is not open."""
+    write lock before it reads the item: one decided (or put away from another tab) as this was asked is not open. A
+    question item takes its questions with it: "I don't know" to each that waits in it (stories.put_away)."""
     with con:
         if not con.in_transaction:
             con.execute("BEGIN IMMEDIATE")
@@ -163,6 +165,9 @@ def dismiss(con: sqlite3.Connection, member: int | None, iid: int) -> dict:
         kind, ref, state = row
         if state != "open":
             raise InboxError(409, f"this item is {state} already")
+        if kind == "question":
+            import stories               # (here: stories imports this module)
+            stories.put_away(con, member, iid)
         con.execute("UPDATE inbox_items SET state='dismissed', done_at=? WHERE id=?", (now(), iid))
         journal.append(con, member, "inbox.dismissed", f"inbox:{iid}", {"kind": kind, "ref": ref})
     return {"id": iid, "state": "dismissed", "open": mine(con, member)["open"]}
