@@ -41,7 +41,7 @@ $E search '"sea stacks"'
 ## embed.py: embeddings and the photo app
 
 ```bash
-uv run embed.py [--db estate.db] [--model google/siglip2-base-patch16-256] [--threads 8] [--device auto|mps|cpu] <command>
+uv run embed.py [--db estate.db] [--model google/siglip2-base-patch16-256] [--threads 8] [--device auto|cuda|mps|cpu] <command>
 ```
 
 | Command | Options | Purpose | Chapter |
@@ -99,13 +99,13 @@ uv run private.py --db ~/estate/estate.db library --member 1
 uv run transcribe.py [--db estate.db] [--store STORE] <command>
 ```
 
-A uv script with its own environment (`parakeet-mlx`, `av`, `numpy`): NVIDIA Parakeet TDT 0.6B v2 through its MLX
-port, on Apple silicon only. It reads the audio with PyAV, which carries its own FFmpeg, so no system `ffmpeg` is
-needed.
+A uv script with its own environment: NVIDIA Parakeet TDT 0.6B v2, through its MLX port (`parakeet-mlx`) on Apple
+silicon, and through its ONNX export (`onnx-asr` on onnxruntime) on any other computer, on an NVIDIA GPU when there
+is one. It reads the audio with PyAV, which carries its own FFmpeg, so no system `ffmpeg` is needed.
 
 | Command | Options | Purpose | Chapter |
 |---|---|---|---|
-| `fetch` | none | By hand, once, with the network: the model (`mlx-community/parakeet-tdt-0.6b-v2`, its `config.json` and a 2.3 GB `model.safetensors`) into the Hugging Face cache of the user who runs the app; the first run also builds the script's environment (MLX, librosa). Nothing else ever downloads it: the app runs with `HF_HUB_OFFLINE=1` | [11](11-server.md#the-estates-agent-listeners-questions-and-stories) |
+| `fetch` | none | By hand, once, with the network: the model, for the user who runs the app. On Apple silicon `mlx-community/parakeet-tdt-0.6b-v2` (its `config.json` and a 2.3 GB `model.safetensors`) into the Hugging Face cache; elsewhere `istupakov/parakeet-tdt-0.6b-v2-onnx` (2.4 GB) into `~/.cache/photo-estate/parakeet-tdt-0.6b-v2-onnx`, as real files, since onnxruntime refuses weights reached through the cache's links. The first run also builds the script's environment. Nothing else ever downloads it: the app runs with `HF_HUB_OFFLINE=1` | [11](11-server.md#the-estates-agent-listeners-questions-and-stories) |
 | `run` | `--store DIR` (**required**: where the recordings are, the estate's store) | What the app runs as a queued job (`transcribe.Job`) when a recording is uploaded, and at start: every story whose recording has no transcript (a failed one again), each written once (`story.transcribed`). Without the model in the cache, each waiting story says how to fetch it, and it exits `2` | [11](11-server.md#the-estates-agent-listeners-questions-and-stories) |
 | `file` | `path` | Transcribe one audio file and print it: to try the model | |
 
@@ -123,7 +123,7 @@ uv run faces.py [--db estate.db] <command>
 
 | Command | Options | Purpose | Chapter |
 |---|---|---|---|
-| `run` | `--store DIR` (**required**); `--cache DIR` (default `<db dir>/review`); `--workers 3`; `--threads 6` onnxruntime threads; `--limit 0` | Detect and embed faces in images not scanned yet | [14](14-faces.md) |
+| `run` | `--store DIR` (**required**); `--cache DIR` (default `<db dir>/review`); `--workers 3`; `--threads 6` onnxruntime threads; `--device auto` (an NVIDIA GPU when onnxruntime can use one, else the CPU; or `cuda`, `cpu`); `--limit 0` | Detect and embed faces in images not scanned yet | [14](14-faces.md) |
 | `stats` | none | Faces found, named by source, waiting | [15](15-human-corrections.md) |
 | `serve` | `--store DIR` (**required**); `--cache DIR`; `--port 8764` | The naming page on its own (`http://127.0.0.1:8764/people`). `embed.py serve` also shows it at `/people` once faces exist | [15](15-human-corrections.md) |
 

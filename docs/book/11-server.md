@@ -441,12 +441,15 @@ takes the purged photo out of the stories about it (it drops `story_photos_no_de
 others) and keeps the stories: one about that photo alone is then its teller's only.
 
 **Transcription** is a queued job (`transcribe.Job`), run when a recording is uploaded and at start:
-`uv run transcribe.py run`, a uv script with its own environment, NVIDIA Parakeet TDT 0.6B v2 through
-`parakeet-mlx`. Its own audio loader calls a system `ffmpeg`, which the mini does not have on the app's PATH, so
-transcribe.py decodes with PyAV (16 kHz mono) and hands the samples to the model. The model is fetched by hand
-(`transcribe.py fetch`, deploy/MAC-MINI.md), never by a request: the app runs with `HF_HUB_OFFLINE=1`. Without
-it, each waiting story says how to fetch it (`transcript_error`), and a job that cannot run at all (no MLX: not a
-Mac) says so on each; both are tried again on the next run. It need not be real time.
+`uv run transcribe.py run`, a uv script with its own environment, NVIDIA Parakeet TDT 0.6B v2: through
+`parakeet-mlx` on Apple silicon, and through its ONNX export (`onnx-asr`) elsewhere, on an NVIDIA GPU when there is
+one. parakeet-mlx's own audio loader calls a system `ffmpeg`, which the mini does not have on the app's PATH, so
+transcribe.py decodes with PyAV (16 kHz mono) and hands the samples to the model. The ONNX model takes a recording
+whole, so one over two minutes is cut at the quietest moment near each two-minute mark (`pieces()`) and the pieces'
+words joined; on the RTX 2080 nine minutes of speech took 4.4 s. The model is fetched by hand
+(`transcribe.py fetch`, the deploy runbooks), never by a request: the app runs with `HF_HUB_OFFLINE=1`. Without
+it, each waiting story says how to fetch it (`transcript_error`), and a job that cannot run at all (no speech
+library in its environment) says so on each; both are tried again on the next run. It need not be real time.
 
 ### A member's own agent
 

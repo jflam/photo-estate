@@ -160,13 +160,25 @@ def wants_copy(size: int, duration: float | None, ext: str) -> bool:
     return bool(duration and duration > 0 and size * 8 / duration > COPY_OVER)
 
 
+NVIDIA = "/proc/driver/nvidia/version"     # there when Linux has an NVIDIA card and its driver loaded
+
+
 def _hw():
-    """Apple's decoder and encoder where there are any (the Mac mini): about 1.3x real time for 4K at 60."""
+    """The computer's own video hardware where there is any, as (how to decode, the encoder's name), else None.
+    On a Mac, Apple's decoder and encoder (the Mac mini: about 1.3x real time for 4K at 60). On a Linux PC with
+    an NVIDIA card, its encoder only (PyAV's FFmpeg has it on every Linux PC, so the driver is looked for too):
+    measured on a 16-core Threadripper with an RTX 2080, 10 s of 4K at 60 took 2.1 s decoded on the CPU and
+    encoded on the card, 3.3 s all on the CPU (libx264), and 4.3 s decoded on the card as well, since each
+    frame then comes back to the CPU to be scaled."""
+    import os
+
     import av
     try:
         from av.codec.hwaccel import HWAccel, hwdevices_available
         if "videotoolbox" in hwdevices_available() and "h264_videotoolbox" in av.codecs_available:
-            return HWAccel(device_type="videotoolbox", allow_software_fallback=True)
+            return HWAccel(device_type="videotoolbox", allow_software_fallback=True), "h264_videotoolbox"
+        if "h264_nvenc" in av.codecs_available and os.path.exists(NVIDIA):
+            return None, "h264_nvenc"
     except Exception:
         pass
     return None
@@ -180,8 +192,8 @@ def stream_copy(src: str, dest: str, side: int = COPY_SIDE, fps: float = COPY_FP
     hw = _hw()
     if hw is not None:
         try:
-            return _copy(src, dest, side, fps, hw)
-        except Exception:      # Apple's encoder would not open (it does not in every kind of process): FFmpeg's own, slower
+            return _copy(src, dest, side, fps, *hw)
+        except Exception:      # the hardware encoder would not open (Apple's does not in every kind of process): FFmpeg's own, slower
             pass
     return _copy(src, dest, side, fps, None)
 
@@ -198,11 +210,11 @@ def _in_order(frame: Any, heard: list[int]) -> Any:
     return frame
 
 
-def _copy(src: str, dest: str, side: int, fps: float, hw: Any) -> int:
+def _copy(src: str, dest: str, side: int, fps: float, hw: Any, enc: str = "libx264") -> int:
     import importlib
     import os
     av: Any = importlib.import_module("av")
-    enc, pix = ("h264_videotoolbox", "nv12") if hw is not None else ("libx264", "yuv420p")
+    pix = "nv12" if hw is not None else "yuv420p"
     with av.open(src, hwaccel=hw) as c:              # its first frame: the size and format frames come in, and which way up
         first = next(iter(c.decode(_stream(c))), None)
     if first is None:

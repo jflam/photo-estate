@@ -1,13 +1,20 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11,<3.14"
-# dependencies = ["parakeet-mlx>=0.7,<0.8", "av>=14", "numpy"]
+# dependencies = [
+#   "av>=14", "numpy", "huggingface_hub",
+#   "parakeet-mlx>=0.7,<0.8; sys_platform == 'darwin' and platform_machine == 'arm64'",
+#   "onnx-asr>=0.12; sys_platform != 'darwin' or platform_machine != 'arm64'",
+#   "onnxruntime-gpu[cuda,cudnn]>=1.21; sys_platform == 'linux' and platform_machine == 'x86_64'",
+#   "onnxruntime>=1.21; (sys_platform != 'darwin' or platform_machine != 'arm64') and (sys_platform != 'linux' or platform_machine != 'x86_64')",
+# ]
 # ///
 """transcribe.py — a story's recording, written out, on this computer (multiplayer phase 7): NVIDIA Parakeet TDT
-0.6B v2 through its MLX port (parakeet-mlx), on Apple silicon. Nothing is sent anywhere.
+0.6B v2. On Apple silicon through its MLX port (parakeet-mlx); on any other computer through its ONNX export
+(onnx-asr on onnxruntime), on an NVIDIA GPU when there is one, else the CPU. Nothing is sent anywhere.
 
-  uv run transcribe.py fetch                       once, by hand, with the network: the model (about 2.5 GB, in the
-                                                   Hugging Face cache) and this script's environment
+  uv run transcribe.py fetch                       once, by hand, with the network: the model (about 2.5 GB) and
+                                                   this script's environment
   uv run transcribe.py --db estate.db --store STORE run    every recording with no transcript yet (a failed one again)
   uv run transcribe.py file story.m4a              one file, printed: to try it
 
@@ -23,12 +30,22 @@ AAC .m4a, Safari's audio/mp4, Chrome's and Firefox's audio/webm (Opus), .wav, .m
 to the model in place of its loader. No ffmpeg is needed.
 
 The model is never fetched by a request or by the app: the app runs with HF_HUB_OFFLINE=1, and `run` reads the
-model from the cache only. Without it, every recording waiting is marked with how to fetch it, and `run` exits 2.
+model from this computer only. Without it, every recording waiting is marked with how to fetch it, and `run` exits 2.
+
+Where the model is. The MLX one is in the Hugging Face cache. The ONNX one is in a folder of its own
+(~/.cache/photo-estate/parakeet-tdt-0.6b-v2-onnx): onnxruntime refuses a model whose weights file is reached
+through a link out of the model's folder, which is how the Hugging Face cache keeps every file.
+
+A long recording. The MLX port reads one in overlapping pieces itself. The ONNX model takes a recording whole, and
+the memory it needs grows with the square of its length, so here one longer than CHUNK seconds is cut at the
+quietest moment in the last OVERLAP seconds of each CHUNK (pieces(), below: between words, not through one) and
+the pieces' words are joined.
 """
 from __future__ import annotations
 
 import argparse
 import os
+import platform
 import sqlite3
 import subprocess
 import sys
@@ -37,11 +54,15 @@ from pathlib import Path
 from typing import Callable
 
 HERE = Path(__file__).resolve().parent
-MODEL = "mlx-community/parakeet-tdt-0.6b-v2"
+MLX = sys.platform == "darwin" and platform.machine() == "arm64"     # Apple silicon: parakeet-mlx; else onnx-asr
+MODEL = "mlx-community/parakeet-tdt-0.6b-v2" if MLX else "istupakov/parakeet-tdt-0.6b-v2-onnx"
+MLX_FILES = ("config.json", "model.safetensors")
+ONNX_FILES = ("config.json", "vocab.txt", "encoder-model.onnx", "encoder-model.onnx.data", "decoder_joint-model.onnx")
 RATE = 16000                 # what the model listens at
-CHUNK, OVERLAP = 120.0, 15.0     # seconds: a long recording is read in overlapping pieces (parakeet-mlx's own way)
+CHUNK, OVERLAP = 120.0, 15.0     # seconds: a long recording is read in pieces (overlapping ones on MLX: parakeet-mlx's own way)
+QUIET = 0.3                  # seconds: the length of the quiet moment a long recording is cut in (ONNX)
 MISSING = (f"the speech model ({MODEL}) is not on this computer: run `uv run transcribe.py fetch` once "
-           "(deploy/MAC-MINI.md)")
+           "(the deploy runbook)")
 
 
 class ModelMissing(RuntimeError):
@@ -67,10 +88,64 @@ def decode(path: Path, rate: int = RATE):
     return np.concatenate(out).astype(np.float32) / 32768.0
 
 
+def pieces(samples, rate: int = RATE, chunk: float = CHUNK, look: float = OVERLAP, quiet: float = QUIET) -> list:
+    """`samples` as a list of pieces of at most `chunk` seconds each, in order and with nothing left out: each cut
+    is in the middle of the quietest `quiet` seconds of the last `look` seconds of its piece."""
+    import numpy as np
+    n, back, win = int(chunk * rate), int(look * rate), max(1, int(quiet * rate))
+    out, start = [], 0
+    while len(samples) - start > n:
+        tail = samples[start + n - back:start + n].astype(np.float64) ** 2
+        loud = np.convolve(tail, np.ones(win), "valid")          # the energy of every `quiet` seconds of the tail
+        cut = start + n - back + int(np.argmin(loud)) + win // 2
+        out.append(samples[start:cut])
+        start = cut
+    out.append(samples[start:])
+    return out
+
+
+def onnx_dir() -> Path:
+    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "photo-estate" / MODEL.split("/")[-1]
+
+
+def fetch() -> list[str]:
+    """Download the model for this computer (by hand, once, with the network). -> the files."""
+    os.environ["HF_HUB_OFFLINE"] = "0"
+    from huggingface_hub import hf_hub_download  # pyright: ignore[reportMissingImports]
+    if MLX:
+        return [hf_hub_download(MODEL, name) for name in MLX_FILES]
+    return [hf_hub_download(MODEL, name, local_dir=onnx_dir()) for name in ONNX_FILES]     # real files, not links
+
+
 def model() -> Callable[[Path], str]:
-    """A transcriber (path -> text) with the model from the Hugging Face cache only. ModelMissing without it."""
+    """A transcriber (path -> text) with the model already on this computer only. ModelMissing without it."""
+    return mlx_model() if MLX else onnx_model()
+
+
+def onnx_model() -> Callable[[Path], str]:
+    """Parakeet's ONNX export through onnx-asr: on an NVIDIA GPU when onnxruntime can use one, else the CPU."""
+    d = onnx_dir()
+    if not all((d / f).is_file() for f in ONNX_FILES):
+        raise ModelMissing(MISSING)
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    import onnx_asr  # pyright: ignore[reportMissingImports]
+    import onnxruntime as ort  # pyright: ignore[reportMissingImports]
+    ort.set_default_logger_severity(3)     # (it warns of two copies between the GPU and the CPU in the graph)
+    want = [p for p in ("CUDAExecutionProvider", "CPUExecutionProvider") if p in ort.get_available_providers()]
+    if "CUDAExecutionProvider" in want and hasattr(ort, "preload_dlls"):
+        ort.preload_dlls()                 # CUDA and cuDNN from this environment's nvidia packages, not the system's
+    m = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v2", d, providers=want)
+
+    def transcribe(path: Path) -> str:
+        said = (m.recognize(piece, sample_rate=RATE) for piece in pieces(decode(path)))
+        return " ".join(t.strip() for t in said if t.strip())
+    return transcribe
+
+
+def mlx_model() -> Callable[[Path], str]:
+    """Parakeet's MLX port, with the model from the Hugging Face cache."""
     from huggingface_hub import try_to_load_from_cache  # pyright: ignore[reportMissingImports]
-    for f in ("config.json", "model.safetensors"):
+    for f in MLX_FILES:
         if not isinstance(try_to_load_from_cache(MODEL, f), str):
             raise ModelMissing(MISSING)
     os.environ["HF_HUB_OFFLINE"] = "1"
@@ -126,7 +201,7 @@ class Job:
     def __init__(self, command: list[str], waiting: Callable[[], int], then: Callable[[], None] = lambda: None,
                  failed: Callable[[str], None] = lambda why: None, log=print, timeout: float = 3600):
         self.command, self.waiting, self.then, self.log, self.timeout = command, waiting, then, log, timeout
-        self.failed = failed         # failed(why): the job could not run at all (no uv, no MLX on this computer)
+        self.failed = failed         # failed(why): the job could not run at all (no uv, no speech library on this computer)
         self.wake, self.stopping = threading.Event(), threading.Event()
         self.thread = threading.Thread(target=self.loop, daemon=True, name="transcribe")
 
@@ -174,16 +249,13 @@ def main() -> None:
     ap.add_argument("--db", default="estate.db")
     ap.add_argument("--store", help="where the recordings are (the estate's store)")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("fetch", help="download the model into the Hugging Face cache (by hand, once, with the network)")
+    sub.add_parser("fetch", help="download the model onto this computer (by hand, once, with the network)")
     sub.add_parser("run", help="write out every recording waiting (what the app runs)")
     f = sub.add_parser("file", help="transcribe one file and print it")
     f.add_argument("path")
     a = ap.parse_args()
     if a.cmd == "fetch":
-        os.environ["HF_HUB_OFFLINE"] = "0"
-        from huggingface_hub import hf_hub_download  # pyright: ignore[reportMissingImports]
-        for name in ("config.json", "model.safetensors"):
-            print(hf_hub_download(MODEL, name))
+        print(*fetch(), sep="\n")
         return
     if a.cmd == "file":
         try:

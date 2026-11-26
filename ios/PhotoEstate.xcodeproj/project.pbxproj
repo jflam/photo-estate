@@ -468,7 +468,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
-				SERVER_BASE = "https://johns-mac-mini.taila5abb.ts.net:8766";
+				SERVER_BASE = "https://home-compute.taila5abb.ts.net:8766";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -575,7 +575,7 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
-				SERVER_BASE = "https://johns-mac-mini.taila5abb.ts.net:8766";
+				SERVER_BASE = "https://home-compute.taila5abb.ts.net:8766";
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;

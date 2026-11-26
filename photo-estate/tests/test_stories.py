@@ -307,6 +307,23 @@ def test_decode_reads_what_a_phone_and_a_browser_record(tmp_path):
         assert 7000 < n < 9500, (name, n)
 
 
+def test_a_long_recording_is_cut_where_it_is_quiet_and_nothing_is_lost():
+    """pieces() (the ONNX model takes a recording whole): no piece is longer than the chunk, the pieces are the
+    recording again, and each cut is in a pause, not through the speech around it."""
+    rate = 100
+    rng = np.random.default_rng(0)
+    said = rng.normal(0, 0.5, 35 * rate).astype(np.float32)
+    for at in (8.0, 17.5, 26.0):                        # three pauses of one second
+        said[int(at * rate):int((at + 1) * rate)] = 0
+    got = transcribe.pieces(said, rate, chunk=10, look=4, quiet=0.3)
+    assert all(len(p) <= 10 * rate for p in got) and len(got) == 4
+    assert np.array_equal(np.concatenate(got), said)
+    cuts = np.cumsum([len(p) for p in got])[:-1] / rate
+    assert 8.0 < cuts[0] < 9.0 and 17.5 < cuts[1] < 18.5 and 26.0 < cuts[2] < 27.0, cuts
+    short = said[:5 * rate]
+    assert [len(p) for p in transcribe.pieces(short, rate, chunk=10, look=4)] == [len(short)]
+
+
 # -- append-only ----------------------------------------------------------------------------------------
 
 def test_stories_are_append_only_but_for_their_transcript(tmp_path):

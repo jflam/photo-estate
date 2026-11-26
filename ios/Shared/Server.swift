@@ -4,7 +4,7 @@ enum Server {
     /// The server's address, from Info.plist (`SERVER_BASE` in project.yml).
     static var baseURL: URL {
         let s = Bundle.main.object(forInfoDictionaryKey: "BackgroundUploadURLBase") as? String ?? ""
-        return URL(string: s) ?? URL(string: "https://johns-mac-mini.taila5abb.ts.net:8766")!
+        return URL(string: s) ?? URL(string: "https://home-compute.taila5abb.ts.net:8766")!
     }
 
     /// A debug build started with `-demoMember ben` (`xcrun simctl launch <device> com.jflam.photoestate -demoMember ben`)

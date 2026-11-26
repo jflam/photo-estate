@@ -10,6 +10,7 @@ introduction; everything else is here.
 | [README](../README.md) | What it is, the two-minute demo, bringing your photos in, where it runs |
 | [guides/DISK-SETUP.md](guides/DISK-SETUP.md) | Choosing and preparing storage, the overnight pull, checking the archive |
 | [guides/COMPARE-A-MODEL.md](guides/COMPARE-A-MODEL.md) | Putting a new image model through `/compare`: export, embed, run, read the report |
+| [../photo-estate/deploy/HOME-COMPUTE.md](../photo-estate/deploy/HOME-COMPUTE.md) | Moving it to a Linux PC with an NVIDIA GPU: what runs on the card, the systemd service, the disk |
 | [../photo-estate/deploy/MAC-MINI.md](../photo-estate/deploy/MAC-MINI.md) | Running it all the time on a Mac mini, reaching it over Tailscale, the cloud preview's side |
 
 ## Understand it

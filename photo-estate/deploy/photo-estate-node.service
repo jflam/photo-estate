@@ -1,0 +1,14 @@
+# The estate's own Tailscale node ("photo-estate"): a second, userspace tailscaled whose only job is to publish the
+# photo app at https://photo-estate.<tailnet>.ts.net:8766. Its identity is the folder %h/.local/state/photo-estate-node:
+# copy that folder to another computer and the name and address move with it. HOME-COMPUTE.md says more.
+[Unit]
+Description=Photo Estate: the estate's Tailscale node (photo-estate)
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/tailscaled --tun=userspace-networking --statedir=%h/.local/state/photo-estate-node --socket=%h/.local/state/photo-estate-node/tailscaled.sock --port=0
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
