@@ -17,7 +17,8 @@
    (lenses._begin, BEGIN IMMEDIATE, as private._begin) and makes every read and every check inside that
    transaction, so what it decides on is what it writes over. Here that is each write going by what is there
    when it writes (Now), and refusing, or doing nothing, exactly as the function does when it runs then; its
-   read actions still happen, and only stand for the request having arrived.
+   read actions still happen, and only stand for the request having arrived. (Later, from InboxItem.tla: publish
+   taking the lens back closes its lens_changed items.)
 
    Lens.cfg checks the code; Lens.before.<invariant>.cfg each find the violation there was. tests/test_specs.py
    runs them all with TLC, and tests/test_lens_states.py replays each violation on the real code. *)
@@ -81,7 +82,8 @@ PublishRead(b, on) ==
   /\ UNCHANGED <<lens, cleo, album, offered, empty>>
 
 \* publish's transaction: UPDATE lenses SET published, proposed_at (kept only when publishing); taken back while
-\* it was proposed (as it read), member_inbox.close of the lens_proposed item
+\* it was proposed (as it read), member_inbox.close of the lens_proposed item. Guarded: taken back, its lens_changed
+\* items are closed too (member_inbox.close: InboxItem.tla's ToldWhileFollowing)
 PublishWrite(b) ==
   /\ rq[b].op = "publish"
   /\ LET on == rq[b].on
@@ -89,14 +91,15 @@ PublishWrite(b) ==
          p == Now(rq[b].P, pub)
          q == Now(rq[b].Q, prop) IN
      IF (d /\ ~on) \/ p = on
-       THEN UNCHANGED <<pub, prop, asked, offered, empty>>         \* (Guarded: refused, or nothing to do now)
+       THEN UNCHANGED <<pub, prop, asked, offered, empty, told>>   \* (Guarded: refused, or nothing to do now)
        ELSE /\ pub' = on
             /\ prop' = (on /\ prop)
             /\ asked' = IF ~on /\ q THEN FALSE ELSE asked
             /\ offered' = (on /\ offered)
             /\ empty' = (empty \/ (pub = on /\ prop' = prop))
+            /\ told' = IF ~on /\ Guarded THEN FALSE ELSE told
   /\ Done(b)
-  /\ UNCHANGED <<dflt, cleo, album>>
+  /\ UNCHANGED <<dflt, sub, word, album>>
 
 \* propose: _theirs reads the lens; only a filter that is not an estate default (409); one proposed already is
 \* left (changed: false)

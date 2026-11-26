@@ -66,7 +66,7 @@ checked = "model"
 model = "ChangeSet.tla"
 # (estate.py is migrate, by hand with the app stopped: it writes only lens_id and owner, which the model leaves out)
 code = { "changes.py" = ["Changes.write", "Changes.create", "Changes.add_items", "Changes.summary", "Changes.candidates", "Changes.tell", "Changes.followed"], "lenses.py" = ["_begin", "subscribe", "publish", "publish_album"], "listeners.py" = ["series"], "tasks.py" = ["Tasks.to_review"], "member_inbox.py" = ["put", "close", "dismiss"] }
-stamp = "08b650694af22bdf"
+stamp = "570b2be0daf8d89c"
 
 [[machine]]
 name = "a lens: published, proposed, an estate default"
@@ -75,7 +75,7 @@ writers = ["changes.py", "lenses.py"]
 checked = "model"
 model = "Lens.tla"
 code = { "lenses.py" = ["add", "_begin", "_theirs", "get", "owner_of", "is_sysadmin", "publish", "publish_album", "propose", "decide"], "member_inbox.py" = ["put", "close"] }
-stamp = "439db0c38e7eb754"
+stamp = "bf66160a85a8a566"
 
 [[machine]]
 name = "a subscription to a lens"
@@ -108,8 +108,11 @@ name = "an inbox item"
 tables = ["inbox_items"]
 columns = ["inbox_items.state"]
 writers = ["member_inbox.py", "stories.py"]
-checked = "unmodelled"
-note = "opened and closed for seven modules (put, close); put() reads then inserts with no lock: two open items for one thing"
+checked = "model"
+model = "InboxItem.tla"
+# (the kinds review and series_update, with the album they are about, are ChangeSet.tla's)
+code = { "member_inbox.py" = ["put", "close", "retitle", "dismiss", "sysadmins", "lens_changed"], "members.py" = ["request", "change", "bind", "decide_binding"], "lenses.py" = ["_begin", "_ref", "propose", "decide", "publish", "publish_album", "subscribe", "unsubscribe"], "stories.py" = ["ask", "_for", "deal", "_deal", "_settle", "dismiss", "answer", "tell"], "private.py" = ["_hold", "_open_held", "close_held"], "changes.py" = ["Changes.tell"] }
+stamp = "4d9a7475f440724f"
 
 [[machine]]
 name = "a question, and whom it was dealt to"

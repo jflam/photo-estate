@@ -438,6 +438,8 @@ def publish(con, member: int | None, lid, on: bool) -> dict:
                     (int(on), int(on), lens.id))
         if not on and lens.proposed_at:    # a proposal taken back with it: nothing is left for a sysadmin to decide
             member_inbox.close(con, "lens_proposed", f"lens:{lens.id}")
+        if not on:                         # nobody sees through it now: what it did is nobody's to hear of
+            member_inbox.close(con, "lens_changed", _ref(lens))
         journal.append(con, member, "lens.published" if on else "lens.unpublished", f"lens:{lens.id}")
     return {"lens": lens.id, "published": on, "changed": True}
 
@@ -463,6 +465,8 @@ def publish_album(con, member: int | None, sid: int, on: bool) -> dict:
             con.execute("UPDATE lenses SET published=?, title=? WHERE id=?", (int(on), title, lid))
         else:
             lid = add(con, m, title, "series", set_id=sid, published=True, entry=False)
+        if not on:                         # (as publish: its subscribers' lens_changed items are about nothing now)
+            member_inbox.close(con, "lens_changed", f"album:{sid}")
         journal.append(con, member, "album.published" if on else "album.unpublished", f"album:{sid}", {"lens": lid})
     return {"album": sid, "lens": lid, "published": on, "changed": True}
 

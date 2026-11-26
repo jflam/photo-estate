@@ -14,7 +14,10 @@ appends its journal entry in the same transaction, and commits.
   change(con, id, actor, **fields) -> Member   name, role, status, upload_policy, person_id; ValueError
                                             when a value is not one of these, it would leave no sysadmin, or
                                             the member is the estate's agent;
-                                            a pending member let in or turned away closes their request's items
+                                            a pending member let in or turned away closes their request's items;
+                                            one who is no active sysadmin after it has their member_request and
+                                            lens_proposed items done (one made a sysadmin is given none for what
+                                            waits already: /members and Albums show it)
   first_start(con, logins, sysadmin=None) -> [Member]   no members yet: these logins become active members
   demo(con) -> [Member]                     the demo's three members (in its scratch catalog)
   agent(con) -> Member                      the estate's agent (kind agent), made the first time it is needed
@@ -232,6 +235,10 @@ def change(con: sqlite3.Connection, mid: int, actor: int | None, **fields) -> Me
         journal.append(con, actor, "member.changed", f"member:{mid}", diff)
         if m.status == "pending" and new["status"] != "pending":     # let in or turned away: the request is decided
             member_inbox.close(con, "member_request", f"member:{mid}")
+        if (new["role"], new["status"]) != ("sysadmin", "active"):   # no sysadmin now: nothing is theirs to decide
+            for kind, ref in con.execute("SELECT kind, ref FROM inbox_items WHERE member_id=? AND state='open'"
+                                         " AND kind IN ('member_request', 'lens_proposed')", (mid,)).fetchall():
+                member_inbox.close(con, kind, ref, mid)
     got = get(con, mid)
     assert got is not None
     return got

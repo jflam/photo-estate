@@ -37,7 +37,7 @@ STATE_COLUMNS = {"status", "state", "why", "mode", "decision", "phase", "stage"}
 ENUM_MODULES = ("core.states", "core.lifecycle")
 # The machines the survey of November 2026 found with no model. This set only gets shorter, as each is modelled:
 # a machine that is new is modelled, or given its table of moves, in the pull request that adds it.
-BACKLOG = {"a member", "a member's own agent on a device", "an inbox item", "a question, and whom it was dealt to",
+BACKLOG = {"a member", "a member's own agent on a device", "a question, and whom it was dealt to",
            "the catalog reload", "the clustering of unnamed faces"}
 HOW = "see tests/test_machines.py's docstring and specs/README.md"
 
