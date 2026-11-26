@@ -1097,7 +1097,8 @@ The server is multi-threaded but not multi-process. The relevant locks are small
 - `Live.gate` lets requests share the catalog and a reload swap it alone (writers first, so a stream
   of requests cannot starve a reload). It is not re-entrant: a thread inside it that asks for a swap
   would wait for itself once a writer waits, so `Gate.swap` raises `RuntimeError` instead.
-- `PhotoApp.fav_write` puts favourites, and re-reading the looks (`relook`), one at a time.
+- `PhotoApp.fav_write` puts favourites, re-reading the looks (`relook`, from its read to its install) and
+  installing a reloaded catalog one at a time.
 - `Live.views_lock` guards the member views being kept (catalog.py); a view worked out while the catalog or
   the looks were being replaced is not kept.
 - `People` has its own `RLock`.
@@ -1105,15 +1106,58 @@ The server is multi-threaded but not multi-process. The relevant locks are small
 **Lock order.** Take `live.gate` before any module's own lock (`Browse.lru_lock`, `Live.views_lock`,
 `Admin.st_lock`, ...), and never take the gate while holding one: a request holds the gate and then
 takes the others, so the opposite order could deadlock against it. The only lock taken before the gate
-is `fav_write` (below), and nothing that holds the gate takes it.
+is `fav_write` (below), and nothing that holds the gate takes it. In full, where two are ever held at once:
+
+1. `fav_write`, then the gate's write side: `set_favorites` (with SQLite's write lock taken and let go
+   between them), `relook`, and `reload_catalog`'s install.
+2. The gate (a request, or a swap), then `Live.views_lock`: every view worked out or let go.
+3. The gate, then `Admin.st_lock`, then `Live.views_lock` (`/api/stats`); `stats_job` takes the gate
+   only with `st_lock` let go.
+4. The gate, then `members_lock` (`change_member`, `ask_in`), `feeds_lock` (`/api/sync`), `Changes.lock`,
+   then SQLite's write lock: the routes inside the gate that write take the write lock there
+   (`BEGIN IMMEDIATE` in members.py, changes.py, member_inbox.py, stories.py; a tombstone or an agent's
+   binding at its first write). The lens and private routes write outside the gate.
+5. Held alone, with nothing taken inside them: `reload_lock`, `settling_lock`, `Browse.lru_lock`,
+   `people_loading` (across a whole People load, outside the gate).
+
+A read of SQLite never waits for its write lock (the catalog is in WAL mode), so nothing a swap does
+inside the gate waits for SQLite. `specs/ReloadLocks.tla` checks these with TLC and finds no deadlock.
+What it does find, and is the owner's to decide: while the ingest script holds the write lock for a
+batch (up to 200 files copied into the store between its commits), a request inside the gate that
+writes waits for it, a swap waits for that request, and every request after the swap waits for the
+swap, so the whole app waits on the ingest, until it commits or the request's 60-second busy timeout
+fails it (`tests/test_reload_states.py` shows it with real threads).
 
 **The catalog generation.** `Live.generation` counts every change to the catalog being served, or to what
 anyone sees of it: an install, a relook and a favourite each add one, inside the gate's write side. `Browse.remember` keys its cache
 by the generation the entry was made in and keeps a value only if the generation is unchanged when it
 is done, so nothing worked out from an older catalog (a mask, a ranking sized to the old `N`) is ever
 used once a newer one is served, even in the moment between an install and `Browse.forget()`, which
-now only frees memory. (`Admin`'s `/stats` numbers keep their own counter, `st_gen`, bumped by
-`forget_library`.)
+now only frees memory. (`Admin`'s `/stats` numbers are not keyed: `forget_library` lets them go, inside
+the same swap, as `caught_up` in an install, a relook and a favourite. A relook let them go only after
+its swap until November 2026, and a `/api/stats` in between was answered from the looks before.)
+
+**What the model of it checks.** `specs/Reload.tla` models what the app holds from the catalog (the
+photos, the looks with their private rows, the favourites, the generation and Admin's numbers,
+`reload_state`, the ingest's `fresh`, `settling`) and every thread that replaces it, each read and its
+install as two steps: an ingest run in its own process (its photo's `new` row, `private.py check`, then
+`on_added`), `reload_catalog`'s loop, a member making a photo private (commit, relook, answer), a change
+set taken in by `on_hidden_change`'s thread, and a favourite. Its rules: a request sees one catalog and
+one set of looks from start to finish; nothing is shown to anyone that the catalog says is private to
+someone else, but while that member's own request takes it in; a change to what someone holds private
+is in every view before the answer; once nothing is being reloaded or looked at again, memory is what
+the catalog says; `reload_state` is idle exactly when no call is in its loop; `fresh` is false only
+once every photo an ingest run told the app about is in; `busy` is true while a change settles and false
+once all are done; nothing worked out in one generation is used in a later one. It found, and November
+2026 fixed: a relook that had read the looks just before an ingest's commit could install them after the
+ingest's reload, so the new photo had no private row in memory and was shown to everyone (a held receipt
+in every member's search and feed) until something next relooked or reloaded; the reload's install now
+takes `fav_write`. Also: Admin's numbers let go after a relook's swap; `fresh` cleared by one call of
+`reload_catalog` as another began, which then failed (a run that fails now sets it again); and
+`settling` left at one for ever when `on_hidden_change`'s thread could not be started. Left to the
+owner: a relook that raises after its commit (the photo stays shown, and nothing tries again), a reload
+that raises (not tried again: the new photos wait for the next ingest), and the scripts run by hand,
+which tell the running app nothing.
 
 **Favourites and reloads.** `PhotoApp.set_favorites`, called outside the gate:
 
@@ -1126,7 +1170,8 @@ The catalog no longer reads favourites at all, so a reload cannot miss one: the 
 worked out from the looks, which have it. (Until 2026-11-22 the catalog read the `favorites` table, and a
 log of the favourites set while a reload read it, `fav_log`, was shown to the new catalog as it was
 swapped in.) `relook` takes `fav_write` too, so the looks it reads from the tables are never read between
-a favourite's table write and its step 3.
+a favourite's table write and its step 3; and so does a reload's install, so no relook installs looks it
+read before the private rows the install reads with the new catalog.
 
 NumPy releases the GIL during large array operations, so concurrent searches overlap usefully, and
 for one household a handful of simultaneous requests is the realistic load.
@@ -1194,8 +1239,8 @@ modules of their own:
 
 Two more things exist only for phone uploads. **Hot reload** (`PhotoApp.reload_catalog`):
 after an ingest the server re-reads what changed *in the background* (`catalog.load` with the last
-load's `raw`) and swaps the new catalog in under the gate, with the favourites set meanwhile, and
-clears the rankings cache, so searches
+load's `raw`) and swaps the new catalog in under the gate (and `fav_write`), with the favourites set
+meanwhile and the private rows read again, and clears the rankings cache, so searches
 never wait and nothing needs a restart; it ends by calling `feed_update()`. **Preparing arrivals**
 (`Admin.prepare_arrivals`): a photo that has just been uploaded gets its grid thumbnail and its
 embedding made in the server's own process, using the model it already holds, so the ingest that
