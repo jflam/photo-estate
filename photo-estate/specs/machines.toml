@@ -140,7 +140,7 @@ model = "Reload.tla"
 # the looks, favourites shown in place, the generation and what is kept from one, reload_state and the ingest's fresh,
 # settling. Who waits for whom among the same threads is the next entry's)
 code = { "photo_app.py" = ["PhotoApp.reload_catalog", "PhotoApp.relook", "PhotoApp.read_looks", "PhotoApp.with_private", "PhotoApp.caught_up", "PhotoApp.set_favorites", "PhotoApp.on_hidden_change", "PhotoApp.hidden_changed", "PhotoApp.private_write", "PhotoApp.mend", "PhotoApp.notice"], "catalog.py" = ["Live.install", "Live.relook", "Live.update", "Live.forget_views"], "admin.py" = ["Admin.forget_library", "Admin.stats_payload"], "upload.py" = ["IngestJob._follow"] }
-stamp = "7701ba3df829cdc3"
+stamp = "1fd2d640c5207b35"
 
 [[machine]]
 name = "who waits for whom in the app's memory"
@@ -148,7 +148,7 @@ checked = "model"
 model = "ReloadLocks.tla"
 # (the catalog gate, fav_write and SQLite's write lock, among the threads of Reload.tla)
 code = { "catalog.py" = ["Gate.__enter__", "Gate.__exit__", "Gate.swap"], "photo_app.py" = ["PhotoApp.handle", "PhotoApp.gated", "PhotoApp.reload_catalog", "PhotoApp.relook", "PhotoApp.set_favorites"] }
-stamp = "30ce3fa3983bb564"
+stamp = "4ff9698443194853"
 
 [[machine]]
 name = "who each face is, and the clustering of unnamed faces"
@@ -166,6 +166,19 @@ code = { "faces.py" = ["default_hidden", "face_rows", "People.__init__", "People
 stamp = "fbc8af59003b2fe3"
 
 [[machine]]
+name = "the phone gate: a photo on a member's iPhone, and its opt-out"
+tables = ["tombstones"]
+writers = ["estate.py", "private.py"]
+checked = "model"
+model = "PhoneGate.tla"
+# (GateState, the JSON file in the app group the iPhone app and its upload extension both write, ios/Shared/PhoneGate.swift;
+# the extension's jobs; and on the server, the member's tombstones and the bytes it has. Its Swift is fingerprinted as
+# Type.func, by tests/test_machines.py's swift_defs. estate.py writes tombstones only in purge (member 0, why purged, by
+# hand), which the model leaves out)
+code = { "../ios/Shared/PhoneGate.swift" = ["Gate.known", "Gate.held", "Gate.route", "Gate.queued", "Gate.gather", "Gate.toggle", "Gate.apply", "Gate.shareAfterAll", "Gate.refused", "Gate.keptBack", "Gate.sent", "Gate.me", "Gate.told", "ServerTurns.begin", "ServerTurns.round", "ServerTurns.end", "GateStore.update"], "../ios/PhotoEstate/Gate/GateModel.swift" = ["GateModel.refresh", "GateModel.readMe", "GateModel.gather", "GateModel.toggle", "GateModel.apply", "GateModel.shareAfterAll", "GateModel.tellServer", "GateModel.hashes"], "../ios/PhotoEstate/ForegroundUploader.swift" = ["ForegroundUploader.send", "ForegroundUploader.start", "ForegroundUploader.run", "ForegroundUploader.upload"], "../ios/UploadExtension/UploadExtension.swift" = ["UploadExtension.run", "UploadExtension.queue"], "private.py" = ["tombstones", "change_tombstones", "refused_upload"], "admin.py" = ["Admin.refused", "Admin.upload"] }
+stamp = "36e88bf9e37b7b0b"
+
+[[machine]]
 name = "a tombstone's reason"
 columns = ["tombstones.why"]
 checked = "not_needed"
@@ -176,3 +189,14 @@ name = "why a question was asked"
 columns = ["questions.why"]
 checked = "not_needed"
 why = "the asker's words, not a state"
+
+[[machine]]
+name = "a member's phone's copy of the catalog, and the feed it follows"
+checked = "model"
+model = "PhoneReplica.tla"
+# (sync.Feed, one per member, in its own file beside the catalog (sync-feed*.db, never the catalog: no table here), and
+# the replica on each phone. The model stands for Swift too, which no stamp holds, as this test reads Python only:
+# ios/PhotoEstate/Catalog/SyncEngine.swift (SyncEngine.run), Catalog.swift (Catalog.cursor, applyPage, apply,
+# dropOtherEpochs, keep), API.swift (Favourites.set, keep). Their stamp is still to be wired in)
+code = { "sync.py" = ["Feed.update", "Feed.touch", "Feed._write", "Feed._agree", "Feed.page"], "photo_app.py" = ["PhotoApp.feed_of", "PhotoApp.feed_rows", "PhotoApp.feed_update", "PhotoApp.sync_route", "PhotoApp.set_favorites", "PhotoApp.favorite"], "catalog.py" = ["View.feed_row"] }
+stamp = "23326367716f528a"

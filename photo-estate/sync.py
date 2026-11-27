@@ -26,6 +26,7 @@ import json
 import secrets
 import sqlite3
 import threading
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 
@@ -74,33 +75,68 @@ class Feed:
         gone gets the next version. Returns how many rows that was."""
         fresh = {sha: digest(row) for sha, row in rows.items()}
         with self.lock:
-            changed = [sha for sha, dg in fresh.items() if (self.rows.get(sha) or (None,))[0] != dg]
+            changed = {sha: dg for sha, dg in fresh.items() if (self.rows.get(sha) or (None,))[0] != dg}
             removed = [sha for sha in self.rows if sha not in fresh] if whole else []
             if changed or removed:
-                ver = self.version + 1
-                with closing(self._open()) as con, con:   # one transaction: committed, or rolled back on an error
-                    con.executemany("INSERT OR REPLACE INTO rows VALUES (?, ?, ?, 0)", ((s, fresh[s], ver) for s in changed))
-                    con.executemany("INSERT OR REPLACE INTO rows VALUES (?, NULL, ?, 1)", ((s, ver) for s in removed))
-                    con.execute("INSERT OR REPLACE INTO kv VALUES ('version', ?)", (str(ver),))
-                for s in changed:
-                    self.rows[s] = (fresh[s], ver)
-                    self.gone.pop(s, None)
-                for s in removed:
-                    del self.rows[s]
-                    self.gone[s] = ver
-                self.version = ver
+                self._write(changed, removed)
             self.ready = self.ready or whole
             return len(changed) + len(removed)
 
-    def page(self, epoch: str, since: int, after: str, limit: int):
+    def _write(self, changed: dict[str, bytes], removed: list[str]) -> None:
+        """Under the lock: these rows new or different (sha -> digest), these gone, at the next version."""
+        ver = self.version + 1
+        with closing(self._open()) as con, con:   # one transaction: committed, or rolled back on an error
+            con.executemany("INSERT OR REPLACE INTO rows VALUES (?, ?, ?, 0)", ((s, dg, ver) for s, dg in changed.items()))
+            con.executemany("INSERT OR REPLACE INTO rows VALUES (?, NULL, ?, 1)", ((s, ver) for s in removed))
+            con.execute("INSERT OR REPLACE INTO kv VALUES ('version', ?)", (str(ver),))
+        for s, dg in changed.items():
+            self.rows[s] = (dg, ver)
+            self.gone.pop(s, None)
+        for s in removed:
+            del self.rows[s]
+            self.gone[s] = ver
+        self.version = ver
+
+    def _agree(self, start: tuple[int, str], limit: int, now: Callable[[str], dict | None]) -> None:
+        """Under the lock, before a page is cut: what it is about to send is made to agree with `now` (the member's
+        view as the request has it). The rows after `start`, in order, until `limit` of them are as `now` has them:
+        each one on the way that is not is put right (gone, if `now` has no row for it; its row, if it differs); and
+        every deletion after `start` of a photo `now` has is taken back. All at the next version, so they come later
+        in the order (specs/PhoneReplica.tla: the feed can be behind the view, or an older view can be written over a
+        newer one, and the page used to send the view's rows whatever the feed said)."""
+        fresh: dict[str, bytes] = {}
+        removed: list[str] = []
+        good = 0
+        for _, sha in sorted((ver, sha) for sha, (_, ver) in self.rows.items() if (ver, sha) > start):
+            if good == limit:
+                break
+            row = now(sha)
+            if row is None:
+                removed.append(sha)
+            elif (dg := digest(row)) == self.rows[sha][0]:
+                good += 1
+            else:
+                fresh[sha] = dg
+        for sha, ver in self.gone.items():
+            if (ver, sha) > start and (row := now(sha)) is not None:
+                fresh[sha] = digest(row)
+        if fresh or removed:
+            self._write(fresh, removed)
+
+    def page(self, epoch: str, since: int, after: str, limit: int, now: Callable[[str], dict | None] | None = None):
         """What a device at cursor (since, after) is missing: (shas to send, shas deleted, new cursor, more?).
         The cursor means "I have every row, and every deletion, up to this (version, sha)"; a device that is
         up to date holds (version, "~"), which sorts after every sha. `limit` counts rows; the deletions
-        sent are those after the old cursor and up to the new one, so consecutive pages never repeat one."""
+        sent are those after the old cursor and up to the new one, so consecutive pages never repeat one.
+        With `now` (sha -> the row the member's view has for it now, None if it does not show it), what the page
+        sends is first made to agree with it (_agree): a page never carries a row of a photo the member does not see,
+        each row it sends is the one the feed has, and a deletion it sends is of a photo the member does not see."""
         with self.lock:
             if epoch != self.epoch:
                 since, after = 0, ""
             start = (since, after)
+            if now is not None:
+                self._agree(start, limit, now)
             todo = sorted((ver, sha) for sha, (_, ver) in self.rows.items() if (ver, sha) > start)
             more = len(todo) > limit
             cursor = todo[limit - 1] if more else (self.version, "~")

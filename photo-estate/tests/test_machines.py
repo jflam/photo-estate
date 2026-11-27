@@ -52,12 +52,90 @@ def writers(tables) -> list[str]:
     return [str(p.relative_to(ROOT)) for p in modules() if any(pat.search(p.read_text()) for pat in pats)]
 
 
+def swift_defs(text: str) -> dict[str, str]:
+    """The functions of a Swift file's types, as Type.name: each one's text with comments taken out and its layout
+    made one line (whitespace kept only between two word characters), so that neither changes a fingerprint.
+    Strings are read as strings (with their interpolations), so that a `//` or a brace in one is not taken for code."""
+    code, i, stack = [], 0, ["code"]          # stack: "code" | "str" | "raw" | "(" (an interpolation's parentheses)
+    while i < len(text):
+        c, two, mode = text[i], text[i:i + 2], stack[-1]
+        if mode in ("code", "("):
+            if two == "//":
+                i = text.find("\n", i) if "\n" in text[i:] else len(text)
+                continue
+            if two == "/*":
+                i = text.index("*/", i) + 2
+                continue
+            if two == '#"':
+                stack.append("raw")
+                code.append(two)
+                i += 2
+                continue
+            if c == '"':
+                stack.append("str")
+            elif c == "(" and mode == "(":
+                stack.append("(")
+            elif c == ")" and mode == "(":
+                stack.pop()
+        elif mode == "str":
+            if two in ("\\(",):
+                stack.append("(")
+                code.append(two)
+                i += 2
+                continue
+            if c == "\\":
+                code.append(two)
+                i += 2
+                continue
+            if c == '"':
+                stack.pop()
+        elif mode == "raw" and two == '"#':
+            stack.pop()
+            code.append(two)
+            i += 2
+            continue
+        code.append(c)
+        i += 1
+    src = re.sub(r"\s+", " ", "".join(code))
+    src = re.sub(r"(?<=\W) | (?=\W)", "", src)
+    out: dict[str, str] = {}
+
+    def block(start: int) -> int:             # the index after the brace that closes the one at `start`
+        depth = 0
+        for j in range(start, len(src)):
+            depth += {"{": 1, "}": -1}.get(src[j], 0)
+            if depth == 0:
+                return j + 1
+        raise ValueError("unbalanced braces")
+    for t in re.finditer(r"\b(?:class|struct|enum|actor|extension) (\w+)[^{]*\{", src):
+        body_end = block(t.end() - 1)
+        j = t.end()
+        while j < body_end - 1:
+            if src[j] == "{":
+                j = block(j)
+                continue
+            f = re.match(r"func (\w+)", src[j:])
+            if f and (j == 0 or not src[j - 1].isalnum()):
+                end = block(src.index("{", j))
+                out.setdefault(f"{t.group(1)}.{f.group(1)}", src[j:end])
+                j = end
+                continue
+            j += 1
+    return out
+
+
 def fingerprint(code: dict[str, list[str]]) -> str:
     """A hash of the named functions as Python reads them: comments, docstrings and layout do not change it. A
-    method is named Class.method."""
+    method is named Class.method. A Swift file's (the iPhone app's, ../ios/...) are read by swift_defs, as Type.func."""
     h = hashlib.sha256()
     fns = (ast.FunctionDef, ast.AsyncFunctionDef)
     for path in sorted(code):
+        if path.endswith(".swift"):
+            defs = swift_defs((ROOT / path).read_text())
+            for name in sorted(code[path]):
+                assert name in defs, f"{path} has no function {name}, which specs/machines.toml says a model stands for ({HOW})"
+                h.update(f"{path}:{name}\n{defs[name]}\n".encode())
+            continue
         tree = ast.parse((ROOT / path).read_text())
         defs = {n.name: n for n in tree.body if isinstance(n, fns)}
         defs |= {f"{c.name}.{n.name}": n for c in tree.body if isinstance(c, ast.ClassDef) for n in c.body if isinstance(n, fns)}

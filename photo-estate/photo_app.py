@@ -722,6 +722,33 @@ class PhotoApp:
         """A feed's rows: every photo the member sees, as its search result plus View.feed_extra."""
         return {s: v.feed_row(s) for s, ok in zip(v.cat.shas, v.visible) if ok}
 
+    def sync_route(self, qs: dict, viewer: int | None, v: catalog.View) -> Response:
+        """GET /api/sync, inside the gate: a page of the member's own feed (made now, from what they see, for their
+        first phone; 503 until it is ready after a start). The page is cut only once what it sends agrees with the
+        request's view (Feed.page's `now`): a photo the member does not see is never sent, and each row sent is the one
+        the feed has, so a feed that is behind the view, or that an older view was written over, is put right by the
+        next page (specs/PhoneReplica.tla)."""
+        one = lambda k, d="": (qs.get(k) or [d])[0]
+        feed = self.feed_of(viewer)
+        if feed is None:      # this member's first phone: their feed is made now, from what they see
+            int_param(qs, "limit", 2000, min=1, max=10000)   # (a bad number is a 400 first)
+            feed = self.feed_of(viewer, make=True)
+            assert feed is not None
+            feed.update(self.feed_rows(v))
+        if not feed.ready:
+            return json_response({"error": "starting"}, 503, {"Retry-After": "5"})
+        since, limit = one("since", "0"), int_param(qs, "limit", 2000, min=1, max=10000)
+
+        def now(sha: str) -> dict | None:   # the row the member's view has for it, if it shows it
+            i = v.cat.index.get(sha)
+            return v.feed_row(sha) if i is not None and v.visible[i] else None
+        ids, deleted, (ver, after), more = feed.page(one("epoch"), int(since) if since.isdigit() else 0, one("after"),
+                                                     limit, now=now)
+        rows = [dict(sha=s, **v.feed_row(s)) for s in ids]
+        return json_response({"epoch": feed.epoch, "photos": rows, "deleted": deleted, "since": ver,
+                              "after": after, "more": more, "total": v.info["total"],
+                              "trips": [] if more else v.trip_list})
+
     def feed_update(self) -> None:
         """Tell every member's feed what they now see (only members who have a feed: see feed_of)."""
         for member, feed in list(self.feeds.items()):
@@ -739,9 +766,9 @@ class PhotoApp:
         """Record them as `member`'s favourites (by default the actor's), show them, tell the phones. Returns how
         many photos it changed. Called outside the gate (handle() lets the favourite routes through without it):
         showing them takes its write side. One favorite.set journal entry by `actor` (members.id) about
-        `subject` (the photo, or album:<id>)."""
+        `subject` (the photo, or album:<id>). The member's feed is asked for in the swap, and touched ready or not: one
+        made by their first phone meanwhile, or not yet written after a start, is told too (specs/PhoneReplica.tla)."""
         member = actor if member is None else member
-        feed = self.feed_of(member)
         with self.fav_write:   # one at a time, so the table and the catalog end up with the same last word
             shas = [s for s in dict.fromkeys(shas) if s in self.live.cat.index]
             con = connect(self.a.db)   # the table first, outside the gate: requests aren't held up by SQLite
@@ -763,8 +790,9 @@ class PhotoApp:
                         w.show_favorites((s, on) for s in shas)
                 self.browse.forget()            # covers and "favourites only" lists were worked out without them
                 self.admin.forget_library()
-                return changed, {s: v.feed_row(s) for s in changed if v.visible[c.index[s]]} if feed and feed.ready else {}
-            changed, rows = self.live.update(show)
+                feed = self.feed_of(member)
+                return changed, {s: v.feed_row(s) for s in changed if v.visible[c.index[s]]} if feed else {}, feed
+            changed, rows, feed = self.live.update(show)
         if rows and feed:
             feed.touch(rows)
         return len(changed)
@@ -1119,21 +1147,7 @@ class PhotoApp:
         if path == "/api/info":   # (compare: the experiment is on, so the Library's menu offers it)
             return json_response({**v.info, "compare": True} if self.compare else v.info)
         if path == "/api/sync":   # what changed since a device last asked (sync.py), in the member's own feed
-            feed = self.feed_of(viewer)
-            if feed is None:      # this member's first phone: their feed is made now, from what they see
-                limit = int_param(qs, "limit", 2000, min=1, max=10000)   # (a bad number is a 400 first)
-                feed = self.feed_of(viewer, make=True)
-                assert feed is not None
-                feed.update(self.feed_rows(v))
-            if not feed.ready:
-                return json_response({"error": "starting"}, 503, {"Retry-After": "5"})
-            since, limit = one("since", "0"), int_param(qs, "limit", 2000, min=1, max=10000)
-            ids, deleted, (ver, after), more = feed.page(one("epoch"), int(since) if since.isdigit() else 0,
-                                                         one("after"), limit)
-            rows = [dict(sha=s, **v.feed_row(s)) for s in ids if s in v.cat.meta]
-            return json_response({"epoch": feed.epoch, "photos": rows, "deleted": deleted, "since": ver,
-                                  "after": after, "more": more, "total": v.info["total"],
-                                  "trips": [] if more else v.trip_list})
+            return self.sync_route(qs, viewer, v)
         if path in self.app_files:
             f = self.app_files[path]
             return _etagged(f.read_bytes(), APP_TYPES[f.suffix])
@@ -1649,7 +1663,9 @@ class PhotoApp:
 
     def favorite(self, body, who: str, actor: int | None = None) -> Response:
         """POST /api/favorite {sha, fav}: a photo is, or is no longer, a favourite. It changes what everyone
-        sees (a month's cover is a favourite if it has one): MEMBER, checked in route()."""
+        sees (a month's cover is a favourite if it has one): MEMBER, checked in route(). The answer's `fav` is the
+        photo as it is when it answers (another request of the member's may have changed it since this one did), which
+        is what the phone keeps (Favourites.set; specs/PhoneReplica.tla)."""
         sha, on = (body.get("sha"), body.get("fav")) if isinstance(body, dict) else (None, None)
         with self.live.gate:              # (here without it: handle() leaves it to set_favorites)
             known = isinstance(sha, str) and self.may_see(sha, actor)   # (one they may not be shown: as one that is not there)
@@ -1657,8 +1673,10 @@ class PhotoApp:
             return json_response({"error": "say which photo (sha) and fav: true or false"}, 400)
         self.set_favorites([sha], on, who, actor, sha)
         with self.live.gate:
-            n = self.live.visible_for(actor).info["fav"]
-        return json_response({"sha": sha, "fav": on, "favourites": n})
+            v = self.live.visible_for(actor)
+            i = v.cat.index.get(str(sha))
+            n, now = v.info["fav"], bool(v.fav[i]) if i is not None else on
+        return json_response({"sha": sha, "fav": now, "favourites": n})
 
     def album_files(self, sid: int, viewer: int | None = None):
         """The album's title and its (original file, name in the zip) pairs, as `viewer` sees the album (its

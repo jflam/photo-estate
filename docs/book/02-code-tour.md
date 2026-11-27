@@ -131,7 +131,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
   tasks.py             317  a request in words, worked on by Claude Code on the library's computer: the estate's
                             agent, a token per run, who started each run (chapter 26)
   stats.py             181  the numbers behind the /stats page
-  sync.py               98  the change feed a phone syncs from (chapter 20)
+  sync.py              132  the change feed a phone syncs from, and a page that agrees with the member's view (chapter 20)
   scores.py             88  which photos are best: the two scorers (chapter 25)
   stacks.py             74  near-identical shots as one stack (chapter 25)
   pages.py              82  puts the shared stylesheet into each page as it is sent, and says which
@@ -300,6 +300,12 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             the page naming another People's group, or nothing; a photo made private or released as
                             a reload takes it in, and People not loaded again; and shows, as they are, a load or a
                             grouping that fails not tried again, and a face id a purge freed given to the next scan's;
+                            test_phone_replica_states.py replays, with a phone that pages as SyncEngine does, the
+                            ways the model of a member's feed and their phone's copy (specs/PhoneReplica.tla) found
+                            the phone sent or left other than what its member sees: a photo made private sent before
+                            the feed is told, an older view written over a newer one, a cursor past a row never sent,
+                            a favourite set as the first phone makes the feed or before a feed is ready, an answer
+                            saying what was asked rather than what is (and ios/Tests/run-replica.sh, the phone's half);
                             test_specs.py runs TLC on every model in specs/ (skipped without Java and tla2tools.jar);
                             test_machines.py holds specs/machines.toml to the code: unregistered state, a new
                             writer of a registered table, or a change to a modelled function fails;
@@ -348,7 +354,7 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             thumb_formats.py (what a thumbnail costs in each image format, on a sample of the library)
   deploy/              330  launchd plists, photo-search.service (systemd) and HOME-COMPUTE.md for the Linux PC, the cloud
                             preview's scripts, MAC-MINI.md, CLOUD-SESSIONS.md
-  specs/             2,924  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
+  specs/             3,368  TLA+ models of state the code keeps, checked by TLC (tests/test_specs.py; README.md
                             says when a change needs one, how to read one and how to run them; chapter 17):
                             PrivatePhoto.tla, one `private` row and everything that writes it; Lens.tla, a filter
                             lens, a subscription to it and an album's series rows (lenses.py); ChangeSet.tla, an
@@ -366,27 +372,38 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             lock); People.tla, who each face is in the catalog and in People's memory, a load of
                             People beside the one answering, a member's change, a group named from the page, and
                             what People is built without (faces.People, PhotoApp.load_people, reload_catalog);
+                            PhoneGate.tla, the iPhone's phone gate: GateState in the app group, the upload
+                            extension, the app's functions at their awaits, the in-app uploader, and the member's
+                            tombstones and the bytes on the server (ios/Shared/PhoneGate.swift and its callers,
+                            private.py's tombstones);
+                            PhoneReplica.tla, a member's change feed and their phone's copy of the catalog, with
+                            every writer of either (sync.Feed; PhotoApp.feed_update, sync_route, set_favorites,
+                            favorite; the phone's SyncEngine.run, Catalog.applyPage and keep, Favourites.set);
                             <Name>.cfg is the
                             code as it is, <Name>.before.<invariant>.cfg the code before a fix, which must still fail;
                             machines.toml, the register of every state machine, its writers and how it is checked
   demo/                     104 CC0 photos, their catalog, and credits
 
-ios/                 6,705  the iPhone app (chapters 19-24, 26)
+ios/                 6,819  the iPhone app (chapters 19-24, 26)
   PhotoEstate/Library/   4,066  grid, viewer, Library and Search tabs, albums, filter sheets, the phone's own photos,
                                 Movie.swift (178: a video and a Live Photo's clip in the viewer, its bar),
                                 Private.swift (71: the viewer's private mark, withdraw and release)
-  PhotoEstate/Catalog/     985  the replica of the catalog, reading a search, the server's JSON API
+  PhotoEstate/Catalog/   1,022  the replica of the catalog (a sync's page and a kept favourite each one transaction:
+                                Catalog.applyPage, keep), reading a search, the server's JSON API
   PhotoEstate/Images/      306  thumbnails and kept photos
   PhotoEstate/Gate/      1,044  the Inbox tab and the phone gate's half in the app: who I am, batches to look over,
                                 older photos by chunk, kept back and "share after all" (chapter 24); a question
                                 answered natively, typed or spoken (QuestionsView.swift, Teller.swift: the recorder,
                                 a story's row and its player), StoryModel.swift (plain values and functions, checked on the Mac)
   PhotoEstate/*.swift      432  the tab bar, the look, This iPhone, uploads, the in-app web view
-  UploadExtension/         106  the background upload extension (jobs, or candidates for the Inbox)
-  Shared/                  347  the server's address (and a debug build's demo member), the upload request, the
-                                extension's log, PhoneGate.swift (217: the gate's rules and state, in the app group)
-  Tests/                   220  the phone's unit tests (the gate, the upload request, questions and stories): run.sh
-                                compiles them with Shared/ and StoryModel.swift for the Mac and runs them
+  UploadExtension/         109  the background upload extension (jobs, or candidates for the Inbox)
+  Shared/                  406  the server's address (and a debug build's demo member), the upload request, the
+                                extension's log, PhoneGate.swift (276: the gate's rules and state, in the app group)
+  Tests/                   500  the phone's unit tests (the gate, the upload request, questions and stories, and
+                                specs/PhoneGate.tla's traces replayed on the gate): run.sh compiles them with Shared/
+                                and StoryModel.swift for the Mac and runs them;
+                                run-replica.sh compiles Replica/main.swift with Catalog.swift and SQLite.swift: a sync's
+                                pages, an epoch changed mid-way, a page asked before a kept favourite (PhoneReplica.tla)
   project.yml, project-sim.yml, deploy.sh, build-number   XcodeGen specs; build and install on the phone
 ```
 
