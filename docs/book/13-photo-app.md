@@ -458,8 +458,9 @@ Over the photo:
 
 - At the top, a **caption**: the date in full, and under it the time and the city (`vChrome`); a Close button
   on the left; a heart on the right if it is a favourite.
-- At the bottom, a glass **bar** of three buttons: Share, Details (i) and **More like this**; on a Live
-  Photo, a fourth, **LIVE** (below).
+- At the bottom, a glass **bar** of buttons: Share (original file), **Copy link** (`L`: copies a member-only
+  `/?photo=<sha>` link that opens the photo directly for anyone in the estate who may be shown it), Favourite (`F`),
+  Details (`I`) and **More like this**; on a Live Photo, **LIVE** (below).
 - On a desktop, ‹ › buttons at the sides (hidden on touch screens, where you swipe).
 - A note above the bar when something needs saying ("Tap share again", "The full-size image didn’t load").
 - Under the caption, for a photo your filters hide, **why** ("Hidden by your lens *Hidden photos* on Nov

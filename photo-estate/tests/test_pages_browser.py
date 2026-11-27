@@ -711,6 +711,40 @@ def test_search_the_viewer_opened_and_closed_quickly_with_back_and_forward(page,
     assert page.url == home and not page.warned
 
 
+def test_photo_permalink_and_copy_link(page, demo_app):
+    """Copy link (#vLink / L) copies /?photo=<sha>; opening /?photo=<sha> opens the viewer directly on that photo
+    (and closes cleanly back to Library); an unknown or inaccessible photo shows a toast and leaves the viewer closed."""
+    watch_search(page)
+    page.goto(demo_app + "/")
+    page.locator("#libGrid .t").first.wait_for()
+    page.locator("#libGrid .t").first.click()
+    page.wait_for_function("document.querySelector('#v').classList.contains('on')")
+
+    # Intercept clipboard write and click Copy link (#vLink)
+    page.evaluate("() => { window.__copied = []; navigator.clipboard.writeText = async t => { window.__copied.push(t); }; }")
+    page.locator("#vLink").click()
+    page.wait_for_function("window.__copied.length === 1")
+    link = page.evaluate("window.__copied[0]")
+    assert "/?photo=" in link and len(link.split("?photo=")[1]) == 64
+    assert "Link copied" in page.locator("#toast").inner_text()
+
+    # Open the copied link directly on a fresh load: opens viewer on that exact photo, closes back to Library
+    page.goto(link)
+    page.wait_for_function("document.querySelector('#v').classList.contains('on')")
+    sha = link.split("?photo=")[1]
+    srcs = page.evaluate("[...document.querySelectorAll('#vStage .v-pic img.lo')].map(i => i.src)")
+    assert any(s.endswith(f"/thumb/{sha}") for s in srcs), srcs
+    page.keyboard.press("Escape")
+    page.wait_for_function("!document.querySelector('#v').classList.contains('on') && location.search === ''")
+
+    # Unknown photo link: viewer stays closed and toast says so
+    page.goto(demo_app + "/?photo=" + "0" * 64)
+    page.wait_for_function("document.querySelector('#toast').classList.contains('on')")
+    assert "isn’t in your library" in page.locator("#toast").inner_text()
+    assert not page.evaluate("document.querySelector('#v').classList.contains('on')")
+    assert not page.warned
+
+
 def test_library_keeps_its_rows_when_the_page_changes_width_behind_a_search(page, demo_app):
     """The page's width changes while the Library is hidden behind Search (the window is resized, or a short
     list of results takes the scrollbar away and a long one brings it back): a hidden grid has no width, and

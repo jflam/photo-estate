@@ -170,6 +170,9 @@ struct ViewerScreen: View {
     private var actions: some View {
         HStack(spacing: 4) {
             action(sharing ? "ellipsis" : "square.and.arrow.up", "Share") { share() }
+            if !tile.isLocal {        // links point at the photo on your server
+                action("link", "Copy link") { copyLink() }
+            }
             action("info.circle", "Details") { info = photo }
             if !tile.isLocal {        // comparing looks needs the server to have seen the photo
                 action("sparkles", "More like this") {
@@ -209,6 +212,12 @@ struct ViewerScreen: View {
             Image(systemName: symbol).font(.system(size: 19, weight: .medium)).frame(width: 62, height: 50).contentShape(Rectangle())
         }
         .accessibilityLabel(label)
+    }
+
+    private func copyLink() {
+        UIPasteboard.general.string = Server.photoURL(tile.sha).absoluteString
+        Haptics.tap()
+        note = priv?.isPrivate == true ? "Link copied (private to you)" : "Link copied"
     }
 
     /// Share the original file when the server can be reached (so Save Image keeps its date and place),

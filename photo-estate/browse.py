@@ -7,6 +7,7 @@ browsed lists, and the same searches as an agent's tools (estate_mcp.py) ask the
                      the seconds into it where they match best; `is:private`, `is:held`, `is:withdrawn` in q:
                      the member's own private photos, private.py)
   GET /api/similar   ?sha= -> photos that look like it
+  GET /api/photos/<sha>  one photo as /api/search gives it (404 if unknown or private to someone else)
   GET /api/facets    counts per facet value under the current filters
   GET /api/periods   the Library's Years and Months: a card each, with its cover
   GET /api/layout    a byte per photo: the shapes of the Library's photos, in /api/search's order
@@ -41,6 +42,7 @@ from http_util import int_param
 
 filter_re = re.compile(r'\b(place|camera|album|person|people|year|date|event|trip|is):("([^"]*)"|(\S+))', re.I)
 sha_re = re.compile(r"^[0-9a-f]{64}$")
+photo_re = re.compile(r"^/api/photos/([0-9a-f]{64})$")
 
 # Names and places in a typed search ("ben and matthew on a beach", "ben san diego") are filters, not
 # words for the image model: it doesn't know who anyone is, and it can only guess a place from how it
@@ -290,6 +292,15 @@ class Browse:
         one = lambda k, d="": (qs.get(k) or [d])[0]
         if path in ("/api/search", "/api/similar"):
             return self.search(v, path, qs, headers)
+        if (pm := photo_re.match(path)) is not None:
+            sha = pm[1]
+            i = c.index.get(sha)
+            if i is None or not v.shared[i]:
+                return js({"error": "unknown photo"}, 404)
+            row = dict(v.row(sha), **({"stack": int(v.stack_n[i]), "stack_of": c.shas[v.stack_of[i]]} if v.stack_n[i] > 1 else {}))
+            if v.stack_n[i] > 1 and (clip := row.get("live") or v.stack_live.get(int(v.stack_of[i]))):
+                row["stack_live"] = clip
+            return js(row)
         if path == "/api/log":  # the page reports photos opened or shared from a result list
             if one("ev") in ("open", "share") and sha_re.match(one("sha")):
                 pos = one("pos")

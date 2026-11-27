@@ -25,7 +25,7 @@ each request to the module that answers it ([chapter 11](11-server.md)):
 | `/api/private`, `/held`, `/api/held`, `/api/held/review`, `/api/tombstones` | `PhotoApp`, with [private.py](../../photo-estate/private.py) |
 | `/inbox`, `/api/inbox`, `/api/inbox/<id>/dismiss` | `PhotoApp`, with [member_inbox.py](../../photo-estate/member_inbox.py) |
 | `/api/questions*`, `/api/stories*`, `/api/photos/<sha>/stories`, `/api/albums/<id>/stories` | `PhotoApp` (`stories_route`), with [stories.py](../../photo-estate/stories.py) |
-| `/api/search`, `/api/similar`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log` | `Browse` in [browse.py](../../photo-estate/browse.py) |
+| `/api/search`, `/api/similar`, `/api/photos/<sha>`, `/api/facets`, `/api/periods`, `/api/layout`, `/api/log` | `Browse` in [browse.py](../../photo-estate/browse.py) |
 | `/thumb/`, `/preview/`, `/large/`, `/original/` | `Images` in [images.py](../../photo-estate/images.py) |
 | `/video/` | The HTTP handler in photo_app.py (`Handler.video`), which streams the file `Images.video_file` names |
 | `/api/upload/...`, `/api/ingest`, `/api/restart`, `/stats`, `/api/stats` | `Admin` in [admin.py](../../photo-estate/admin.py) |
@@ -121,7 +121,9 @@ takes the `SYSADMIN` rule (the log names files of every member's uploads); `POST
 
 `GET /api/search` and `GET /api/similar` take the same parameters; `/api/similar` additionally
 requires `sha` and ranks by that photo's vector (404 `{"error":"unknown photo"}` if unknown, or private to
-someone else: the same answer). In `q`, `is:private`, `is:held` and `is:withdrawn` keep the member's own
+someone else: the same answer). `GET /api/photos/<sha>` answers one photo as `/api/search` lists it (with
+its stack fields, `fav` and `private` for the member asking; `404 {"error":"unknown photo"}` if unknown or
+private to someone else — used by `/?photo=<sha>` links). In `q`, `is:private`, `is:held` and `is:withdrawn` keep the member's own
 private photos (all of them, those held at ingestion, those they withdrew); a row of theirs carries `private`
 (`held`, `withdrawn`, or `new`: not checked yet). A photo private to someone else is in no result, count,
 facet, trip, cover or "similar" list; a `stack` named by it, an `event` or `trip` only such photos are in, and a
