@@ -446,12 +446,22 @@ def test_a_face_of_a_photo_made_private_is_shown_to_nobody_else_before_people_lo
     assert F not in people(app).row and shown(app, BEN, F) is None
 
 
-# -- what is, for the owner --------------------------------------------------------------------------------------
+# -- what the owner decided (issues #142 to #147): once "what is" tests ------------------------------------------
 
-def test_what_is_a_load_of_people_that_fails_is_not_tried_again(app, monkeypatch):
-    """What is (AsTheCatalogEvenAfterAFailure): Ben releases f's photo; the load of People that asks for raises (a
-    locked catalog, out of memory). The People before keeps answering, without f, and nothing loads it again until the
-    next ingest's faces, private change or restart: f is on nobody's People meanwhile. A question for the owner."""
+def ready(app, state=ClusterState.READY) -> dict:
+    """GET /api/people/unknown once this People's grouping has come to `state`."""
+    for _ in range(GUARD * 20):
+        got = call(app, "GET", "/api/people/unknown?limit=20", CLEO)
+        if got["state"] == state:
+            return got
+        threading.Event().wait(0.05)
+    raise AssertionError(got)
+
+
+def test_a_load_of_people_that_fails_is_tried_again(app, monkeypatch):
+    """AsTheCatalogEvenAfterAFailure: Ben releases f's photo; the load of People that asks for raises (a locked
+    catalog, out of memory). The People before keeps answering, without f. Before the fix nothing loaded it again
+    until the next ingest's faces, private change or restart. The minute timer does (PhotoApp.mend): f is on People."""
     s = photos(app)
     share(app, s[3], BEN)
     call(app, "POST", "/api/private", BEN, {"shas": [s[3]], "private": True})
@@ -465,29 +475,52 @@ def test_what_is_a_load_of_people_that_fails_is_not_tried_again(app, monkeypatch
     monkeypatch.setattr(faces.People, "load", broken)
     call(app, "POST", "/api/private", BEN, {"shas": [s[3]], "private": False})
     settle(app)
-    assert people(app) is before and app.people.snapshot().error and app.people_state() == "ready"
-    assert shown(app, ADA, F) is None and shown(app, BEN, F) is None
+    assert people(app) is before and app.people.snapshot().error and app.people_state() == "ready" and app.people_failed
+    assert shown(app, BEN, F) is None
+    app.mend()["people"].join(GUARD)
+    assert not app.people_failed and people(app) is not before and shown(app, BEN, F) is not None
+    assert "people" not in app.mend()
 
 
-def test_what_is_a_grouping_that_fails_is_not_tried_again_by_that_people(app, monkeypatch):
-    """What is: the clustering thread raises; /api/people/unknown says failed, with why, for as long as that People
-    answers. The next load of People groups again. A question for the owner (people.html says only a restart does)."""
+def test_a_grouping_that_fails_is_tried_again(app, monkeypatch):
+    """The clustering thread raises: /api/people/unknown says failed, with why. Before the fix that People never
+    grouped again (and the page said only a restart would). The minute timer runs it again, on the same People."""
     real = faces.People.find_clusters
     monkeypatch.setattr(faces.People, "find_clusters", lambda pe: (_ for _ in ()).throw(MemoryError("no room")))
     library(app)
-    got = call(app, "GET", "/api/people/unknown", CLEO)
-    assert got["state"] == ClusterState.FAILED and "MemoryError" in got["error"] and got["groups"] == []
+    got = ready(app, ClusterState.FAILED)
+    assert "MemoryError" in got["error"] and got["groups"] == []
+    was = people(app)
+    assert "groups" in app.mend()                             # (still failing: it stays to be done)
+    ready(app, ClusterState.FAILED)
     monkeypatch.setattr(faces.People, "find_clusters", real)
-    app.load_people()
-    grouped(people(app))
-    assert groups(app, CLEO)
+    assert "groups" in app.mend()
+    assert ready(app)["groups"] and people(app) is was and "groups" not in app.mend()
 
 
-def test_what_is_a_face_id_freed_by_a_purge_names_the_next_scans_face(app):
-    """What is: estate.py purge deletes a photo's faces; the People answering still has them until the next load (the
-    runbook restarts the app after a purge). The next scan's face is given the id the purge freed (faces.id is the
-    largest plus one), and a label of the purged face, by id, names the new face in another photo. A question for the
-    owner (the label's UPDATE could say which photo it means)."""
+def test_loads_of_people_asked_for_during_one_are_one_more(app, monkeypatch):
+    """Issue #145: three loads are asked for while one runs (an ingest's faces, two private changes). Each returns at
+    once, and one more load runs after the first, which reads all three's changes: two Peoples made, not four."""
+    library(app)
+    made, init = [], faces.People.__init__
+
+    def counted(pe, *a, **k):
+        made.append(pe)
+        init(pe, *a, **k)
+    monkeypatch.setattr(faces.People, "__init__", counted)
+    go, done = load_held(app, monkeypatch)
+    for _ in range(3):
+        app.load_people()                                     # (returns at once: the one running takes note)
+    assert len(made) == 1 and app.people_asked == "rerun"
+    go()
+    done()
+    assert len(made) == 2 and app.people_asked == "idle" and people(app) is made[-1]
+
+
+def test_a_face_id_freed_by_a_purge_names_no_other_face(app):
+    """Issue #142: estate.py purge deletes a photo's faces; the People answering still has them until it is loaded
+    again. The next scan's face is given the id the purge freed (faces.id is the largest plus one). Before the fix a
+    label of the purged face, by id, named the new face in another photo. Every write says which photo it means."""
     s = library(app)
     con = faces.connect(app.a.db)
     con.execute("DELETE FROM faces WHERE id=?", (GROUP1[-1],))           # (GROUP1's last is the largest id)
@@ -498,6 +531,87 @@ def test_what_is_a_face_id_freed_by_a_purge_names_the_next_scans_face(app):
     con.close()
     assert reused == GROUP1[-1] and people(app).sha[people(app).row[reused]] == s[11]
     label(app, ADA, {"faces": [reused], "person": PAT})
+    label(app, ADA, {"faces": [reused], "person": None})                  # (forget), and undo: none reaches it either
+    label(app, ADA, {"undo": [reused]})
+    label(app, ADA, {"faces": [reused], "person": PAT})
     con = sqlite3.connect(app.a.db)
-    assert con.execute("SELECT sha256, person_id FROM faces WHERE id=?", (reused,)).fetchone() == (s[20], PAT)
+    assert con.execute("SELECT sha256, person_id, source FROM faces WHERE id=?", (reused,)).fetchone() == (s[20], None, None)
     con.close()
+
+
+def add_maybe_pats(app, rows) -> None:
+    """Faces (id, photo) that resemble Pat enough to be asked about and not enough to be named without asking."""
+    def maybe(i: int) -> bytes:
+        v = np.zeros(512, np.float32)
+        v[0], v[100 + i] = 0.4, (1 - 0.16) ** 0.5
+        return v.astype(np.float16).tobytes()
+    con = faces.connect(app.a.db)
+    con.executemany("INSERT INTO faces(id, sha256, idx, model, x, y, w, h, score, px, vec) VALUES (?,?,0,?,0.3,0.3,0.3,0.3,0.9,100,?)",
+                    [(i, sha, faces.MODEL, maybe(i)) for i, sha in rows])
+    con.commit()
+    con.close()
+
+
+def waiting(app, who, person=PAT) -> dict:
+    return call(app, "GET", f"/api/people/review?person={person}&limit=60", who)
+
+
+def test_everything_waiting_is_what_waited_when_the_page_was_shown(app):
+    """Issue #144: Ada opens Pat's faces to check: none wait. A scan adds two faces like Pat's and People is loaded
+    again: they wait now. Her page's "name everything waiting" names nothing she was not shown (409: look again);
+    asked again from the page as it is now, it names them."""
+    s = library(app)
+    before = waiting(app, ADA)
+    add_maybe_pats(app, [(51, s[15]), (52, s[16])])
+    app.load_people()
+    assert not before["faces"] and catalog(app, [51, 52]) == {51: (None, None), 52: (None, None)}
+    label(app, ADA, {"pending": {"person": PAT, "year": None, "as_of": before["as_of"]}, "person": PAT}, expect=409)
+    label(app, ADA, {"pending": {"person": PAT, "year": None}, "person": PAT}, expect=409)      # (a page from before)
+    assert catalog(app, [51, 52]) == {51: (None, None), 52: (None, None)}
+    now_ = waiting(app, ADA)
+    assert {f["id"] for f in now_["faces"]} == {51, 52}
+    label(app, ADA, {"pending": {"person": PAT, "year": None, "as_of": now_["as_of"]}, "person": PAT})
+    assert catalog(app, [51, 52]) == {51: (PAT, "you"), 52: (PAT, "you")}
+
+
+def test_everything_waiting_names_no_face_in_a_photo_the_member_is_not_shown(app):
+    """Issue #144: two faces like Pat's wait, one in a photo Cleo's own filter hides. Her "name everything waiting"
+    names the one she is shown, and leaves the other waiting (for Ada, who sees both)."""
+    s = library(app)
+    add_maybe_pats(app, [(51, s[15]), (52, s[16])])
+    app.load_people()
+    cleo = mid(app, CLEO)
+    sid = app.changes.create({"title": "Not for me", "op": "hide", "items": [s[16]]}, "", cleo)[0]["id"]
+    assert app.changes.write(sid, "apply", {}, "", cleo)[1] == 200
+    settle(app)
+    mine = waiting(app, CLEO)
+    assert {f["id"] for f in mine["faces"]} == {51}
+    label(app, CLEO, {"pending": {"person": PAT, "year": None, "as_of": mine["as_of"]}, "person": PAT})
+    assert catalog(app, [51, 52]) == {51: (PAT, "you"), 52: (None, None)}
+    assert {f["id"] for f in waiting(app, ADA)["faces"]} == {52}
+
+
+def test_a_purged_photos_face_has_no_crop(app, tmp_path):
+    """Issue #146: a face's crop is cached. Its photo is purged by hand (its tombstone; here without the rows going,
+    as People still holds the face until it is loaded again): the app's next look at the journal learns of it, and
+    the crop is a 404 for everyone."""
+    s = library(app)
+    pe = people(app)
+    faces.crop_path(pe.caches[0], s[3], 0).parent.mkdir(parents=True, exist_ok=True)
+    faces.crop_path(pe.caches[0], s[3], 0).write_bytes(b"\xff\xd8 a crop")
+    assert app.request("GET", f"/face/{F}", headers=ADA, body=b"").status == 200
+    con = faces.connect(app.a.db)
+    con.execute("INSERT INTO tombstones(sha256, member_id, why, at) VALUES (?, 0, 'purged', '2026-11-26')", (s[3],))
+    con.commit()
+    con.close()
+    app.purged = app.read_purged()
+    assert app.request("GET", f"/face/{F}", headers=ADA, body=b"").status == 404
+
+
+def test_a_name_saved_is_answered_as_saved_when_the_suggestions_fail_after(app, monkeypatch):
+    """Issue #147: Ada names f; the name is committed; working the suggestions out again then fails (a locked
+    catalog). Before the fix the request answered 500 and the page said it could not save. It answers ok: it is saved."""
+    library(app)
+    monkeypatch.setattr(faces.People, "rescore", lambda pe: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
+    label(app, ADA, {"faces": [F], "person": PAT})
+    assert catalog(app, [F]) == {F: (PAT, "you")} and shown(app, ADA, F)["person"] == PAT

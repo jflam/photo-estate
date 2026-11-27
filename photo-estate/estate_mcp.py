@@ -653,6 +653,8 @@ class Server:
                               " from another computer")
             # the estate's agent, working for the task's member: it sees what they see; acting for no one, what is
             # private to nobody (its own view: private.Private.agents)
+            if not self.tools.app.tasks.lets(run.acting_for):     # revoked since the run began (issue #131)
+                return refuse("the member this run acts for is no longer let in: the run is over")
             viewer = run.acting_for if run.acting_for is not None else run.agent
             cx, in_task = Caller(f"task:{run.task}", run.agent, run.acting_for, viewer, run.task), True
         if body is None:

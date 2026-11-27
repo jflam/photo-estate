@@ -393,7 +393,8 @@ Cautions:
 - The one way a photo leaves the estate is `uv run estate.py --db $DB purge <sha> --reason "..." --store
   $STORE --cache /Volumes/estate/review --cache ~/Library/Caches/photo-estate --backup-dir ~/photo-estate-lab`,
   run here by the sysadmin: it backs the catalog up, journals it, leaves a tombstone so no source brings
-  it back, clears the flag and removes the file and its cached copies; then restart the app. The photo
+  it back, clears the flag and removes the file and its cached copies. The running app notices within a minute (its
+  journal listener reloads the catalog and People); no restart is needed. The photo
   stays in the catalog backups until they rotate out, and in the sources (it lists them).
 
 
@@ -486,7 +487,8 @@ Releasing a photo by hand, or on a day set in the viewer ("Release on a day…")
 app's timer releases what is due every minute, by the mini's own date. To undo the one-off run completely
 (nothing else depends on it): release everything it held by hand (the app has no "release all"),
 `sqlite3 $DB "update private set released_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') where why='held' and released_at is null"`
-then restart the app (the rows stay, released, so the run does not hold them again).
+then restart the app: a hand-written UPDATE writes no journal entry, so the app does not notice it by itself
+(the rows stay, released, so the run does not hold them again).
 
 ## The estate's agent, questions and stories: the by-hand steps (multiplayer phase 7)
 

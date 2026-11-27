@@ -234,7 +234,12 @@ Details that make it feel right:
   writes the tiles. Its unit tests check what the picture above promises: every full row exactly as wide as
   the screen, a short last row left ragged, the same rows again when the list grows.
 - **On a phone the photos run to the edges** (`--gpad: 0` under 760 px), as on the iPhone.
-- **Resize** (a `ResizeObserver` on the page) calls `relayout` only if the *width* changed.
+- **Resize** (a `ResizeObserver` on each grid) calls `fit`, which calls `relayout` only if the grid is showing
+  and its *width* is not the one its rows were laid out for. A hidden grid (another tab, another scale) has no
+  width to measure: one drawn or resized while hidden is marked as laid out for none, and `fit` lays it out
+  when it is next shown (`setTab` and `libShow` call it before they scroll the page back to where it was).
+  Laid out while hidden, every photo was a row of its own, and a search with few results did exactly that to
+  the Library behind it by taking the page's scrollbar, and so 15 px of its width, away.
 - **Sections** group the rows by the grid's `grain`: the Library is always by **month**; Search chooses:
 
 | Situation | Grouping |
@@ -718,7 +723,7 @@ which is in the script modules in [app/](../../photo-estate/app/) ([chapter 2](0
 | State, history and URL | `blank`, `copy`, `toParams`, `fromParams` in [app/query.js](../../photo-estate/app/query.js); `snap`, `url`, `nav`, `restore`, the `popstate` handler, `init` |
 | The machines | [app/viewer-flow.js](../../photo-estate/app/viewer-flow.js) (`VW`, `GS`), [app/video-flow.js](../../photo-estate/app/video-flow.js) (`VIDEO`), [app/grid-flow.js](../../photo-estate/app/grid-flow.js) (`Grid.list`), [app/library-flow.js](../../photo-estate/app/library-flow.js) (`LIB`, read through `L`), [app/albums-flow.js](../../photo-estate/app/albums-flow.js) (`ALB`, `MAKER`), [app/favourite.js](../../photo-estate/app/favourite.js) (`FAV`), `FIELD` |
 | Tabs | `setTab`, the `#tabbar` click handler, `titleDoc` |
-| Grid | `Grid` (`load`, `poke`, `more`, `less`, `add`, `draw`, `relayout`, `top`), `rowH`; the rows themselves are `packRows` in [app/layout.js](../../photo-estate/app/layout.js) |
+| Grid | `Grid` (`load`, `poke`, `more`, `less`, `add`, `draw`, `relayout`, `fit`, `top`), `rowH`; the rows themselves are `packRows` in [app/layout.js](../../photo-estate/app/layout.js) |
 | Library | `lgrid`, `mgrid`, `libLoad`, `libKnown`, `libRetry`, `monthShow`, `libShow`, `renderPeriods`, `libBack`, `libJump`, `toSection` |
 | Scrubber | `scrubShow`, `scrubPlace`, `monthAt`, `scrubEnd` |
 | View options | `V`, `DENS`, `saveView`, `viewParams`, `viewMenu`, `viewChanged`, `setDens`, the pinch handlers |

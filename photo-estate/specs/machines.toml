@@ -65,8 +65,8 @@ writers = ["changes.py", "estate.py", "lenses.py"]
 checked = "model"
 model = "ChangeSet.tla"
 # (estate.py is migrate, by hand with the app stopped: it writes only lens_id and owner, which the model leaves out)
-code = { "changes.py" = ["Changes.write", "Changes.create", "Changes.add_items", "Changes.summary", "Changes.candidates", "Changes.tell", "Changes.followed"], "lenses.py" = ["_begin", "subscribe", "publish", "publish_album"], "listeners.py" = ["series"], "tasks.py" = ["Tasks.to_review"], "member_inbox.py" = ["put", "close", "dismiss"] }
-stamp = "1af0bfc090dc55af"
+code = { "changes.py" = ["Changes.write", "Changes.create", "Changes.add_items", "Changes.summary", "Changes.candidates", "Changes.tell", "Changes.unfollow"], "lenses.py" = ["_begin", "subscribe", "publish", "publish_album", "series_taken_back"], "listeners.py" = ["series"], "tasks.py" = ["Tasks.to_review"], "member_inbox.py" = ["put", "close", "dismiss"] }
+stamp = "023d9223d8502ff2"
 
 [[machine]]
 name = "a lens: published, proposed, an estate default"
@@ -75,7 +75,7 @@ writers = ["changes.py", "lenses.py"]
 checked = "model"
 model = "Lens.tla"
 code = { "lenses.py" = ["add", "_begin", "_theirs", "get", "owner_of", "is_sysadmin", "publish", "publish_album", "propose", "decide"], "member_inbox.py" = ["put", "close"] }
-stamp = "bf66160a85a8a566"
+stamp = "06f214e5137174bb"
 
 [[machine]]
 name = "a subscription to a lens"
@@ -95,8 +95,8 @@ writers = ["members.py"]
 checked = "model"
 model = "Member.tla"
 # (and where a member is read to let a request through: the roster PhotoApp keeps, the gate, a run's token)
-code = { "members.py" = ["_begin", "_add", "add", "request", "change", "first_start", "demo", "agent", "lookup", "get", "by_login", "sysadmin"], "photo_app.py" = ["PhotoApp.load_members", "PhotoApp.who", "PhotoApp.refusal", "PhotoApp.change_member", "PhotoApp.ask_in"], "http_util.py" = ["Auth.allows"], "tasks.py" = ["Tasks.mint", "Tasks.run_of"], "estate_mcp.py" = ["Server.handle"] }
-stamp = "7ada75ccaee46712"
+code = { "members.py" = ["_begin", "_add", "add", "request", "change", "first_start", "demo", "agent", "lookup", "get", "by_login", "sysadmin"], "photo_app.py" = ["PhotoApp.load_members", "PhotoApp.who", "PhotoApp.refusal", "PhotoApp.change_member", "PhotoApp.ask_in"], "http_util.py" = ["Auth.allows"], "tasks.py" = ["Tasks.mint", "Tasks.run_of", "Tasks.lets", "Tasks.cancel_for", "Tasks.worker"], "estate_mcp.py" = ["Server.handle"] }
+stamp = "e4070265aa3c8538"
 
 [[machine]]
 name = "a member's own agent on a device"
@@ -106,7 +106,7 @@ writers = ["members.py"]
 checked = "model"
 model = "Member.tla"
 code = { "members.py" = ["_begin", "bind", "bindings", "node_kind", "decide_binding"], "photo_app.py" = ["PhotoApp.mcp_route", "PhotoApp.device", "PhotoApp.agents_route"], "estate_mcp.py" = ["Server.handle"] }
-stamp = "3dc4a660debd3d70"
+stamp = "589d5685d7c71879"
 
 [[machine]]
 name = "an inbox item"
@@ -116,8 +116,8 @@ writers = ["member_inbox.py", "stories.py"]
 checked = "model"
 model = "InboxItem.tla"
 # (the kinds review and series_update, with the album they are about, are ChangeSet.tla's)
-code = { "member_inbox.py" = ["put", "close", "retitle", "dismiss", "sysadmins", "lens_changed"], "members.py" = ["request", "change", "bind", "decide_binding"], "lenses.py" = ["_begin", "_ref", "propose", "decide", "publish", "publish_album", "subscribe", "unsubscribe"], "stories.py" = ["ask", "_for", "deal", "_deal", "_settle", "dismiss", "put_away", "answer", "tell"], "private.py" = ["_hold", "_open_held", "close_held"], "changes.py" = ["Changes.tell"] }
-stamp = "9bc56f75fdde91d9"
+code = { "member_inbox.py" = ["put", "close", "retitle", "dismiss", "sysadmins", "lens_changed"], "members.py" = ["request", "change", "_waiting", "bind", "decide_binding"], "lenses.py" = ["_begin", "_ref", "propose", "decide", "publish", "publish_album", "subscribe", "unsubscribe"], "stories.py" = ["ask", "_for", "deal", "_deal", "_settle", "dismiss", "put_away", "answer", "tell"], "private.py" = ["_hold", "_open_held", "close_held"], "changes.py" = ["Changes.tell"] }
+stamp = "376ba0688f9451c2"
 
 [[machine]]
 name = "a question, and whom it was dealt to"
@@ -139,8 +139,8 @@ model = "Reload.tla"
 # (everything the app holds in memory from the catalog, and how it is replaced while requests are served: the catalog,
 # the looks, favourites shown in place, the generation and what is kept from one, reload_state and the ingest's fresh,
 # settling. Who waits for whom among the same threads is the next entry's)
-code = { "photo_app.py" = ["PhotoApp.reload_catalog", "PhotoApp.relook", "PhotoApp.read_looks", "PhotoApp.with_private", "PhotoApp.caught_up", "PhotoApp.set_favorites", "PhotoApp.on_hidden_change", "PhotoApp.hidden_changed", "PhotoApp.private_write"], "catalog.py" = ["Live.install", "Live.relook", "Live.update", "Live.forget_views"], "admin.py" = ["Admin.forget_library", "Admin.stats_payload"], "upload.py" = ["IngestJob._follow"] }
-stamp = "c6dc75de22c1182b"
+code = { "photo_app.py" = ["PhotoApp.reload_catalog", "PhotoApp.relook", "PhotoApp.read_looks", "PhotoApp.with_private", "PhotoApp.caught_up", "PhotoApp.set_favorites", "PhotoApp.on_hidden_change", "PhotoApp.hidden_changed", "PhotoApp.private_write", "PhotoApp.mend", "PhotoApp.notice"], "catalog.py" = ["Live.install", "Live.relook", "Live.update", "Live.forget_views"], "admin.py" = ["Admin.forget_library", "Admin.stats_payload"], "upload.py" = ["IngestJob._follow"] }
+stamp = "1fd2d640c5207b35"
 
 [[machine]]
 name = "who waits for whom in the app's memory"
@@ -148,7 +148,7 @@ checked = "model"
 model = "ReloadLocks.tla"
 # (the catalog gate, fav_write and SQLite's write lock, among the threads of Reload.tla)
 code = { "catalog.py" = ["Gate.__enter__", "Gate.__exit__", "Gate.swap"], "photo_app.py" = ["PhotoApp.handle", "PhotoApp.gated", "PhotoApp.reload_catalog", "PhotoApp.relook", "PhotoApp.set_favorites"] }
-stamp = "011e7d3303662e92"
+stamp = "4ff9698443194853"
 
 [[machine]]
 name = "who each face is, and the clustering of unnamed faces"
@@ -162,8 +162,8 @@ model = "People.tla"
 # writer, each People's own clustering thread, which writes it three times in order (People.cluster): no table of
 # moves. faces.py run writes faces and face_scans from a process of its own, and only adds; estate.py purge deletes a
 # photo's rows with SQL the writers' search does not see (f-strings), by hand, with a restart after it)
-code = { "faces.py" = ["default_hidden", "face_rows", "People.__init__", "People.load", "People.decisions", "People.refresh", "People.replaced_by", "People.rescore", "People.seed", "People.cluster", "People.find_clusters", "People.unknown", "People.commit", "People.label", "People.label_many", "People.decide", "People.edit_person", "People.handle"], "photo_app.py" = ["PhotoApp.load_people", "PhotoApp.people_page", "PhotoApp.people_out", "PhotoApp.private_write", "PhotoApp.relook", "PhotoApp.hidden_changed", "PhotoApp.reload_catalog"], "lenses.py" = ["State.people_out"] }
-stamp = "6adf8eae7c12f702"
+code = { "faces.py" = ["default_hidden", "face_rows", "People.__init__", "People.load", "People.decisions", "People.refresh", "People.replaced_by", "People.rescore", "People.seed", "People.cluster", "People.find_clusters", "People.recluster", "People.key", "People.rescored", "People.unknown", "People.commit", "People.label", "People.label_many", "People.decide", "People.edit_person", "People.handle"], "photo_app.py" = ["PhotoApp.load_people", "PhotoApp.load_people_once", "PhotoApp.mend", "PhotoApp.people_page", "PhotoApp.people_out", "PhotoApp.private_write", "PhotoApp.relook", "PhotoApp.hidden_changed", "PhotoApp.reload_catalog"], "lenses.py" = ["State.people_out"] }
+stamp = "fbc8af59003b2fe3"
 
 [[machine]]
 name = "the phone gate: a photo on a member's iPhone, and its opt-out"

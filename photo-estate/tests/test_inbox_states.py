@@ -186,11 +186,28 @@ def test_a_sysadmin_no_longer_one_has_nothing_of_theirs_to_decide(db, con, chang
     assert len(opened(con, "member_request", DEE)) == 1 and len(opened(con, "lens_proposed", DEE)) == 1
 
 
-@pytest.mark.parametrize("how", ["publish", "publish_album", "publish the series"])
+def test_someone_made_a_sysadmin_is_asked_what_already_waits(db, con):
+    """Issue #127: Xan asks to be let in and Ben proposes his filter while Ada and Dee are the sysadmins. Dee makes
+    Cleo a sysadmin, and Ben too: each has an item for what waits, but Ben none for his own proposal. Made a member
+    and a sysadmin again, Cleo has them again, once each."""
+    members.request(con, "xan@example.com", "Xan")
+    lenses.propose(con, BEN, LID)
+    members.change(con, CLEO, DEE, role="sysadmin")
+    assert len(opened(con, "member_request", CLEO)) == 1 and len(opened(con, "lens_proposed", CLEO)) == 1
+    members.change(con, BEN, DEE, role="sysadmin")
+    assert len(opened(con, "member_request", BEN)) == 1 and opened(con, "lens_proposed", BEN) == []
+    members.change(con, CLEO, DEE, role="member")
+    assert opened(con, "member_request", CLEO) == [] and opened(con, "lens_proposed", CLEO) == []
+    members.change(con, CLEO, DEE, role="sysadmin")
+    assert len(opened(con, "member_request", CLEO)) == 1 and len(opened(con, "lens_proposed", CLEO)) == 1
+    members.change(con, CLEO, DEE, name="Cleopatra")              # (a sysadmin already: nothing new)
+    assert len(opened(con, "member_request", CLEO)) == 1
+
+
+@pytest.mark.parametrize("how", ["publish", "publish_album"])
 def test_a_lens_taken_back_leaves_nobody_told_of_it(db, con, how):
     """ToldWhileFollowing: Cleo follows Ben's filter (proposed, so published: TLC's trace) or his album, published as a
-    series, live, and it changes: her lens_changed item. Ben takes it back (lenses.publish, or publish_album, or publish
-    of the series row). She no longer sees through it nor can open it, unsubscribe answers 404, and her item stays
+    series, live, and it changes: her lens_changed item. Ben takes it back (lenses.publish, or publish_album). She no longer sees through it nor can open it, unsubscribe answers 404, and her item stays
     open about a lens she cannot see."""
     if how == "publish":
         lenses.propose(con, BEN, LID)
