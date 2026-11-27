@@ -21,6 +21,10 @@ dependencies, a plain HTTP server and SQLite), and an iPhone app in `ios/` (need
   `photo-estate/tests`. The checked-in demo library (`photo-estate/demo/`) must not change.
 - For the script modules, from `photo-estate/app/` with Node 22: `npm ci` once, then `npm run typecheck`
   (`tsc --noEmit --allowJs --checkJs`) and `npm test` (`node --test`). CI runs both.
+- Before opening a pull request, run `bash photo-estate/tools/check.sh` (what CI checks, in about a minute and
+  a half; it checks the TLA+ models too when the branch changes `specs/`) and open it only on `CHECKS PASSED`.
+  `main` requires CI's `ci` check. Merging is the owner's: with `gh pr merge --auto --merge` a pull request
+  merges itself once that check is green, so nobody waits on it; do not turn that on unless asked.
 - For a change to the page, drive the real page with Playwright and look at screenshots in light and
   dark mode.
 - State that more than one thing writes (two requests, a request and a background job, the app and a

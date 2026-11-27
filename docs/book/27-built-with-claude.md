@@ -149,6 +149,7 @@ library, only propose) are in the tools, not in the prompt.
 | Cloud sessions and the preview, step by step | [deploy/CLOUD-SESSIONS.md](../../photo-estate/deploy/CLOUD-SESSIONS.md) |
 | Preparing a cloud container | [tools/cloud-setup.sh](../../photo-estate/tools/cloud-setup.sh) |
 | Pushing a branch to the preview | [tools/cloud-preview.sh](../../photo-estate/tools/cloud-preview.sh) |
+| Checking a branch before its pull request | [tools/check.sh](../../photo-estate/tools/check.sh) |
 | The preview on the mini, its own user and firewall | [deploy/preview-branch.sh](../../photo-estate/deploy/preview-branch.sh), [deploy/preview-user-setup.sh](../../photo-estate/deploy/preview-user-setup.sh), [deploy/preview-firewall-setup.sh](../../photo-estate/deploy/preview-firewall-setup.sh) |
 | Building and installing the iPhone app | [ios/deploy.sh](../../ios/deploy.sh), [ios/project-sim.yml](../../ios/project-sim.yml) |
 | The agent and the MCP tools | [chapter 26](26-albums-and-agents.md) |

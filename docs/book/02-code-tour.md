@@ -15,7 +15,7 @@ leaving out the checked-in demo library and every Markdown file:
 | Shell scripts the pipeline runs (`pull-drive.sh`, `pull-icloud.sh`, `ingest-iphone.sh`) | 3 | 130 |
 | Tests (`tests/`: 16 self-running scripts, 20 pytest files, `conftest.py`) | 37 | 7,741 |
 | The script modules' unit tests (`app/tests/`) | 22 | 2,619 |
-| Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts, square export and embedding, the video demo) | 27 | 3,506 |
+| Developer tools (`tools/`: demo, screenshots, benchmarks, the book's site, the scorers' tools, cloud scripts, the check before a pull request, square export and embedding, the video demo) | 28 | 3,562 |
 | The cloud preview on the Mac mini (`deploy/*.sh`) | 4 | 330 |
 | **Total** | **198** | **37,499** |
 
