@@ -68,6 +68,24 @@ def pytest_addoption(parser: pytest.Parser) -> None:
                           "or with `uv run`, each in its own PEP 723 environment")
 
 
+def _specs(session: pytest.Session):
+    """tests/test_specs.py as this run imported it, or None when the run has none of its tests."""
+    return next((item.module for item in session.items
+                 if item.path.name == "test_specs.py" and hasattr(getattr(item, "module", None), "start")), None)
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    # The TLA+ models take minutes and each has a core to itself: they are started now, to be checked while
+    # the tests before test_specs.py run (its docstring).
+    if (specs := _specs(session)) and not session.config.option.collectonly:
+        specs.start(session.items)
+
+
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    if specs := _specs(session):
+        specs.stop()
+
+
 def pytest_pycollect_makemodule(module_path: Path, parent: pytest.Collector):
     if module_path.name in LEGACY and module_path.parent == Path(__file__).resolve().parent:
         return LegacyScript.from_parent(parent, path=module_path)

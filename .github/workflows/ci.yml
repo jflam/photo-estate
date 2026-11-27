@@ -34,7 +34,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30   # the models alone take about 12 (TLC, tests/test_specs.py)
+    timeout-minutes: 20   # the whole job takes about 6; the models are most of it (TLC, tests/test_specs.py)
     defaults:
       run:
         working-directory: photo-estate
@@ -64,7 +64,7 @@ jobs:
           mkdir -p ~/.local/share/tlaplus
           curl -fsSL -o ~/.local/share/tlaplus/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
           echo "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  $HOME/.local/share/tlaplus/tla2tools.jar" | sha256sum -c -
-      - name: Fast tests (the models in specs/ among them, checked once, as many at a time as the runner has cores)
+      - name: Fast tests (the models in specs/ among them, checked once, beside the other tests, a core each)
         run: uv run --locked pytest -m "not slow"
       - uses: actions/setup-node@v4
         with:

@@ -134,7 +134,7 @@ uv run pytest tests/test_specs.py
 ```
 
 That runs every `.cfg` here: those that must pass, and those that must fail, as many at a time as the machine
-has cores. It is skipped where there is no Java or no jar; CI has both, runs it on every pull request, and sets
+has cores (in a run of all the tests they are started first, and checked while the others run). It is skipped where there is no Java or no jar; CI has both, runs it on every pull request, and sets
 `REQUIRE_TLC`, with which it fails instead of being skipped. One model by hand, from this folder (on a Mac
 with Homebrew's Java, which is not on the PATH, `java` is `/opt/homebrew/opt/openjdk/bin/java`):
 
