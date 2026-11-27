@@ -117,6 +117,8 @@ class LegacyItem(pytest.Item):
         cmd = (["uv", "run", "--quiet", str(self.path)] if runner == "uv"
                else [sys.executable, str(self.path)])
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        if runner == "uv":
+            env["PHOTO_ESTATE_LEGACY_UV"] = "1"
         env.setdefault("HF_HUB_OFFLINE", "1")          # never download the model from a test
         slow = "slow" in LEGACY[self.path.name]
         try:

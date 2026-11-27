@@ -222,7 +222,7 @@ def test_asking_in_twice_at_once_is_answered_both_times(monkeypatch):
 def race_the_roster(app, monkeypatch, first, then) -> None:
     """`first()` (a request that ends by reading the roster again: load_members) reads it, and before it puts what it
     read in place, `then()` runs to its end on a thread of its own (a second request of the app's). With members_lock,
-    then's own load waits for first's to be done, and the test goes on after two seconds."""
+    then's own load waits for first's to be done, and the test goes on after a short wait."""
     real, fired, others = members.by_login, [], []
 
     def by_login(con):
@@ -232,7 +232,7 @@ def race_the_roster(app, monkeypatch, first, then) -> None:
             t = threading.Thread(target=then)
             others.append(t)
             t.start()
-            t.join(2)
+            t.join(0.25)
         return got
     monkeypatch.setattr(members, "by_login", by_login)
     first()

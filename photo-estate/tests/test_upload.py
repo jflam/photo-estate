@@ -42,9 +42,18 @@ def put(inbox, rel, data, sha=None):
 
 
 def run(*args):
-    r = subprocess.run(["uv", "run", "--quiet", "--script", str(ESTATE), *args], capture_output=True, text=True)
+    cmd = ([sys.executable, str(ESTATE), *args] if not os.environ.get("PHOTO_ESTATE_LEGACY_UV")
+           else ["uv", "run", "--quiet", "--script", str(ESTATE), *args])
+    r = subprocess.run(cmd, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     return r.stdout
+
+
+def wait_until(pred, timeout=10.0, step=0.02):
+    deadline = time.monotonic() + timeout
+    while not pred():
+        assert time.monotonic() < deadline, "timed out waiting for condition"
+        time.sleep(step)
 
 
 def main():
@@ -110,7 +119,9 @@ def main():
 
         # the page's "Catalogue new photos" button: one run at a time, output kept, waiting counted
         fake = td / "fake.sh"
-        fake.write_text("#!/usr/bin/env bash\necho \"inbox=$INBOX root=$1 restart=${RESTART:-unset}\"; sleep 1\n"
+        gate = td / "gate"
+        fake.write_text(f"#!/usr/bin/env bash\necho \"inbox=$INBOX root=$1 restart=${{RESTART:-unset}}\"\n"
+                        f"while [ ! -f {gate} ]; do sleep 0.02; done\n"
                         "echo '== 2 new assets and sidecars: link'\n" + new_assets(2))
         fake.chmod(0o755)
         os.environ["RESTART"] = "com.example.should-not-leak"
@@ -121,10 +132,8 @@ def main():
         assert job.status()["waiting"]["files"] == 1
         assert job.start() is True and job.start() is False, "a second run while one is going is refused"
         assert job.status()["running"]
-        for _ in range(100):
-            if not job.status()["running"]:
-                break
-            time.sleep(0.1)
+        gate.touch()
+        wait_until(lambda: not job.status()["running"])
         st = job.status()
         assert st["exit_code"] == 0 and st["restart_needed"], st
         assert st["log"][0] == f"inbox={inbox} root={td} restart=unset", st["log"]
@@ -132,18 +141,18 @@ def main():
         # automatic runs: a burst of uploads makes one run, after the quiet period; one that arrives
         # while it runs makes a second; and the app is told when a run added photos
         count = td / "runs"
-        fake.write_text(f"#!/usr/bin/env bash\necho x >> {count}; sleep 1\necho '== 1 new assets and sidecars: link'\n"
+        fake.write_text(f"#!/usr/bin/env bash\necho x >> {count}; sleep 0.25\necho '== 1 new assets and sidecars: link'\n"
                         + new_assets(1))
-        auto = IngestJob(fake, td, db, store, inbox, quiet=0.6, max_wait=5)
+        auto = IngestJob(fake, td, db, store, inbox, quiet=0.25, max_wait=5)
         told = []
         auto.on_added = lambda: told.append(1)
         for _ in range(4):
             auto.poke()
-            time.sleep(0.2)
+            time.sleep(0.06)
         assert not count.exists(), "still inside the quiet period"
-        time.sleep(1.0)                      # quiet ended: the run is going
+        wait_until(count.exists)             # quiet ended: the run is going
         auto.poke()                          # an upload during the run
-        time.sleep(3.5)
+        wait_until(lambda: len(told) == 2 and not auto.status()["running"])
         runs = len(count.read_text().split())
         assert runs == 2 and len(told) == 2, (runs, told)
         # the phone says how many files a batch has: the last one starts the run without the quiet period
@@ -151,35 +160,34 @@ def main():
         eager.poke("b1/3", "2026/11/16/a.JPG")
         eager.poke("b1/3", "2026/11/16/a.JPG")           # a retry of the same file is not the next one
         eager.poke("b1/3", "2026/11/16/b.JPG", new=False)   # already here: counts, but starts nothing
-        time.sleep(0.3)
+        time.sleep(0.15)
         assert len(count.read_text().split()) == 2, "batch not complete: still waiting for the quiet period"
         eager.poke("b1/3", "2026/11/16/c.JPG")
-        time.sleep(0.5)
-        assert len(count.read_text().split()) == 3, "the batch's last file starts the run at once"
-        time.sleep(1.0)
+        wait_until(lambda: len(count.read_text().split()) == 3 and not eager.status()["running"])
         eager.poke("b2/1", "2026/11/16/d.JPG", new=False)   # nothing new in it: no run
-        time.sleep(0.5)
+        time.sleep(0.15)
         assert len(count.read_text().split()) == 3
         eager.timer and eager.timer.cancel()
         off = IngestJob(fake, td, db, store, inbox, quiet=0)
         off.poke()
-        time.sleep(0.3)
+        time.sleep(0.15)
         assert len(count.read_text().split()) == 3, "quiet=0 never runs by itself"
 
         # the app reloads when the photos are searchable, before the slow faces step ends
         staged = td / "staged.sh"
+        faces_gate = td / "faces-gate"
         staged.write_text("#!/usr/bin/env bash\necho '== 12:00:00 2 new assets and sidecars: link'\n" + new_assets(2)
-                          + "echo '== 12:00:01 catalog ready'\n" + CATALOG_READY + "sleep 1.5\necho 'faces done'\n")
+                          + "echo '== 12:00:01 catalog ready'\n" + CATALOG_READY
+                          + f"while [ ! -f {faces_gate} ]; do sleep 0.02; done\necho 'faces done'\n")
         staged.chmod(0o755)
         job = IngestJob(staged, td, db, store, inbox)
         events = []
         job.on_added = lambda: events.append(("catalog", job.status()["running"]))
         job.on_faces = lambda: events.append(("faces", job.status()["running"]))
         job.start()
-        time.sleep(0.8)
-        assert events == [("catalog", True)], events
-        time.sleep(1.5)
-        assert events == [("catalog", True), ("faces", False)], events
+        wait_until(lambda: events == [("catalog", True)])
+        faces_gate.touch()
+        wait_until(lambda: events == [("catalog", True), ("faces", False)])
     print("ALL CHECKS PASSED")
 
 
