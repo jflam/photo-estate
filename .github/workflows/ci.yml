@@ -1,33 +1,25 @@
-# Checks every pull request and every push to main: the lockfile is current, ruff finds nothing, pyright
-# finds no type errors, and the fast tests pass. Those run from photo-estate/, against
-# photo-estate/pyproject.toml and uv.lock. Then the web pages' script modules (photo-estate/app/*.js,
-# issue #89): TypeScript checks their JSDoc types (tsc --noEmit --allowJs --checkJs, from
-# app/tsconfig.json) and Node's own test runner runs their unit tests (app/tests/*.test.js). Those run
-# from photo-estate/app, against its package.json and package-lock.json: TypeScript, pinned, is the only
-# package, and nothing of it is shipped (the browser loads the modules as they are).
-#
-# Three kinds of job, side by side, and one that answers for them all:
-#   tests    the lockfile, ruff, pyright, the fast tests without the models, and the script modules.
-#   models   tests/test_specs.py: TLC on the TLA+ models in specs/, the two long models each on a runner of
-#            its own with every core, the rest together on a third. Only when their result could differ:
-#            TLC reads nothing but specs/, so a pull request that changes neither specs/ nor what runs them
-#            (tests/test_specs.py, tests/conftest.py, this file) skips them. A change to modelled code cannot
-#            slip by that way: tests/test_machines.py (in `tests`) fails until its entry in
-#            specs/machines.toml is stamped again, and that file is in specs/. Every push to main runs them.
-#   ci       passes when `tests` passed and `models` passed or was skipped. It is the one check a branch
-#            rule needs to require, whatever jobs there are.
+# Checks every pull request and every push to main, split into parallel jobs and path-gated on pull requests
+# so a change waits only for what it could affect:
+#   changes  inspects changed files on pull requests (on push to main, every job runs as the backstop).
+#   tests    lockfile, ruff, pyright, and the fast Python tests (parallel across cores with pytest-xdist;
+#            exiftool installs in parallel with uv/ruff/pyright so it adds no wall time).
+#   web      the web pages' script modules (photo-estate/app/*.js, issue #89): TypeScript JSDoc type check
+#            (tsc --noEmit --allowJs --checkJs) and Node's unit tests (node --test).
+#   book     dry-run build of docs/book with tools/build_book.py when book sources change.
+#   ios      Swift unit tests and TLA+ trace replays (ios/Tests/run.sh, run-replica.sh) on macOS when ios/ changes.
+#   models   tests/test_specs.py: TLC on the TLA+ models in specs/. On push to main or harness changes, all
+#            three shards run (PhoneReplica, PhoneGate, the rest); on a pull request touching specs/, only the
+#            changed model(s) run. A change to modelled code cannot slip by: tests/test_machines.py (in `tests`)
+#            fails until specs/machines.toml is stamped again.
+#   ci       passes when `changes` passed and every other job passed or was skipped. It is the single required
+#            status check on main.
 #
 # Left out on purpose (run them on a machine that has them: `uv run pytest` runs everything):
-#   - the slow tests (`-m slow`): they start the real app, whose environment brings torch and
-#     transformers, and two of them need the SigLIP 2 search model. CI never downloads the model and
-#     never reaches the Mac mini or a real library: it sees only the checked-in demo library.
-#
+#   - the slow tests (`-m slow`): they start the real app, whose environment brings torch and transformers,
+#     and two of them need the SigLIP 2 search model. CI never downloads the model and never reaches a real
+#     library: it sees only the checked-in demo library.
 #   - the pages in a browser: the modules' logic is tested without one; tests/test_pages.py (fast tier)
-#     checks that every page imports only modules and names that exist and that the servers send them
-#     as JavaScript.
-#
-# Type checks (issue #90): pyright in basic mode, configured in pyproject.toml's [tool.pyright] (every
-# module of the app; not tests/ or tools/). The pyright package fetches its own Node.js on first run.
+#     checks that every page imports only modules and names that exist and that the servers send them as JS.
 name: CI
 
 on:
@@ -58,23 +50,99 @@ jobs:
     permissions:
       pull-requests: read
     outputs:
-      models: ${{ steps.models.outputs.run }}
+      python: ${{ steps.filter.outputs.python }}
+      web: ${{ steps.filter.outputs.web }}
+      book: ${{ steps.filter.outputs.book }}
+      ios: ${{ steps.filter.outputs.ios }}
+      run_models: ${{ steps.filter.outputs.run_models }}
+      models_matrix: ${{ steps.filter.outputs.models_matrix }}
     steps:
-      - name: Do the models need checking?
-        id: models
+      - name: Decide which jobs need to run
+        id: filter
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           PULL: ${{ github.event.pull_request.number }}
         run: |
-          run=true      # a push to main, or a list of files that could not be read: check them
-          if [ "$EVENT" = pull_request ] && files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PULL/files" --paginate --jq '.[].filename'); then
-            grep -qE '^(photo-estate/specs/|photo-estate/tests/(test_specs|conftest)\.py$|\.github/workflows/ci\.yml$)' <<<"$files" || run=false
-          fi
-          echo "run=$run" | tee -a "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import json, os, re, subprocess
+
+          ALL_MODELS = [
+              {"name": "PhoneReplica", "pick": "PhoneReplica"},
+              {"name": "PhoneGate", "pick": "PhoneGate"},
+              {"name": "the rest", "pick": "not PhoneReplica and not PhoneGate"},
+          ]
+
+          event = os.environ["EVENT"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          pull = os.environ.get("PULL", "")
+
+          files = None
+          if event == "pull_request" and pull:
+              r = subprocess.run(
+                  ["gh", "api", f"repos/{repo}/pulls/{pull}/files", "--paginate", "--jq", ".[].filename"],
+                  capture_output=True, text=True,
+              )
+              if r.returncode == 0:
+                  files = [line.strip() for line in r.stdout.splitlines() if line.strip()]
+
+          if files is None:
+              # Push to main, or file list unavailable: run every check as the backstop.
+              out = {
+                  "python": "true",
+                  "web": "true",
+                  "book": "true",
+                  "ios": "true",
+                  "run_models": "true",
+                  "models_matrix": json.dumps(ALL_MODELS),
+              }
+          else:
+              any_match = lambda pat: any(re.search(pat, f) for f in files)
+              python_run = any_match(r"^(photo-estate/|ios/(Shared/|PhotoEstate/(Catalog|Gate)/)|\.github/workflows/ci\.yml$)")
+              web_run = any_match(r"^(photo-estate/app/|photo-estate/[^/]+\.html$|\.github/workflows/ci\.yml$)")
+              book_run = any_match(r"^(docs/book/|docs/screenshots/|photo-estate/tools/build_book\.py$|photo-estate/tools/book_site/|\.github/workflows/(ci|book)\.yml$)")
+              ios_run = any_match(r"^(ios/(Shared/|PhotoEstate/(Catalog|Gate)/|Tests/)|\.github/workflows/ci\.yml$)")
+
+              # TLC reads only specs/*.tla and specs/*.cfg; harness changes re-run every model.
+              if any_match(r"^(photo-estate/tests/(test_specs|conftest)\.py$|\.github/workflows/ci\.yml$)"):
+                  shards = ALL_MODELS
+              else:
+                  changed_models = sorted({
+                      m.group(1)
+                      for f in files
+                      if (m := re.match(r"^photo-estate/specs/([^./]+)\.(?:tla|cfg|before\.[^/]+\.cfg)$", f))
+                  })
+                  shards = []
+                  if "PhoneReplica" in changed_models:
+                      shards.append(ALL_MODELS[0])
+                  if "PhoneGate" in changed_models:
+                      shards.append(ALL_MODELS[1])
+                  other = [m for m in changed_models if m not in ("PhoneReplica", "PhoneGate")]
+                  if other:
+                      label = ", ".join(other) if len(other) <= 2 else "the rest"
+                      pick = " or ".join(other)
+                      shards.append({"name": label, "pick": pick})
+
+              out = {
+                  "python": "true" if python_run else "false",
+                  "web": "true" if web_run else "false",
+                  "book": "true" if book_run else "false",
+                  "ios": "true" if ios_run else "false",
+                  "run_models": "true" if shards else "false",
+                  # GitHub Actions rejects an empty matrix include even on a skipped job.
+                  "models_matrix": json.dumps(shards or [{"name": "none", "pick": "none"}]),
+              }
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              for k, v in out.items():
+                  print(f"{k}={v}")
+                  fh.write(f"{k}={v}\n")
+          PY
 
   tests:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -84,18 +152,26 @@ jobs:
           version: "0.13.5"
           enable-cache: true
           cache-dependency-glob: photo-estate/uv.lock
-      - name: exiftool (test_poc checks EXIF with it, and skips those checks without it)
-        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends libimage-exiftool-perl
-      - name: Lockfile matches pyproject.toml
-        run: uv lock --check
-      - name: Install the dev environment (dev group, from uv.lock)
-        run: uv sync --locked --group dev
-      - name: Lint (ruff)
-        run: uv run --locked ruff check .
-      - name: Type check (pyright)
-        run: uv run --locked pyright
-      - name: Fast tests (the models in specs/ are the `models` jobs)
-        run: uv run --locked pytest -m "not slow" --ignore=tests/test_specs.py
+      - name: Install exiftool & dev env, check lockfile, lint (ruff), type check (pyright)
+        run: |
+          # Install exiftool (used by test_poc and test_events) concurrently with uv/ruff/pyright.
+          (sudo apt-get update -q && sudo apt-get install -y --no-install-recommends libimage-exiftool-perl) >"$RUNNER_TEMP/exiftool.log" 2>&1 &
+          apt_pid=$!
+          uv lock --check
+          uv sync --locked --group dev
+          uv run --locked ruff check .
+          uv run --locked pyright
+          wait "$apt_pid" || { cat "$RUNNER_TEMP/exiftool.log"; exit 1; }
+      - name: Fast tests (parallel; models are in `models`, pyright already ran above)
+        run: uv run --locked pytest -m "not slow" --ignore=tests/test_specs.py --deselect=tests/test_types.py::test_pyright_is_clean -n auto --durations=10
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -111,24 +187,45 @@ jobs:
         working-directory: photo-estate/app
         run: npm test
 
+  book:
+    needs: changes
+    if: needs.changes.outputs.book == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.13.5"
+          enable-cache: true
+          cache-dependency-glob: photo-estate/tools/build_book.py
+      - name: Build the book (dry run)
+        run: uv run tools/build_book.py "$RUNNER_TEMP/site"
+
+  ios:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: iPhone gate & upload unit tests
+        working-directory: .
+        run: ios/Tests/run.sh
+      - name: iPhone replica unit tests
+        working-directory: .
+        run: ios/Tests/run-replica.sh
+
   models:
     needs: changes
-    if: needs.changes.outputs.models == 'true'
+    if: needs.changes.outputs.run_models == 'true'
     name: models (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        # Every config is in exactly one: a model's name picks its own, and the last takes what is left
-        # (a new model too, until it is long enough to want a runner of its own).
-        include:
-          - name: PhoneReplica
-            pick: PhoneReplica
-          - name: PhoneGate
-            pick: PhoneGate
-          - name: the rest
-            pick: not PhoneReplica and not PhoneGate
+        include: ${{ fromJson(needs.changes.outputs.models_matrix) }}
     env:
       REQUIRE_TLC: "1"   # tests/test_specs.py fails, instead of skipping, when TLC cannot run
     steps:
@@ -138,12 +235,19 @@ jobs:
           version: "0.13.5"
           enable-cache: true
           cache-dependency-glob: photo-estate/uv.lock
+      - uses: actions/cache@v4
+        id: tlc-cache
+        with:
+          path: ~/.local/share/tlaplus
+          key: tla2tools-v1.7.4-936a2620
       - name: Install the dev environment (dev group, from uv.lock)
         run: uv sync --locked --group dev
       - name: TLC, the TLA+ model checker (Java is on the runner)
         run: |
           mkdir -p ~/.local/share/tlaplus
-          curl -fsSL -o ~/.local/share/tlaplus/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+          if [ ! -f ~/.local/share/tlaplus/tla2tools.jar ]; then
+            curl -fsSL -o ~/.local/share/tlaplus/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+          fi
           echo "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  $HOME/.local/share/tlaplus/tla2tools.jar" | sha256sum -c -
       - name: Check the models
         env:
@@ -151,17 +255,21 @@ jobs:
         run: uv run --locked pytest tests/test_specs.py -k "$PICK" --durations=5
 
   ci:
-    needs: [changes, tests, models]
+    needs: [changes, tests, web, book, ios, models]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: The tests passed, and the models passed or did not need checking
+      - name: Every required check passed or was skipped
         working-directory: .
         env:
           CHANGES: ${{ needs.changes.result }}
           TESTS: ${{ needs.tests.result }}
+          WEB: ${{ needs.web.result }}
+          BOOK: ${{ needs.book.result }}
+          IOS: ${{ needs.ios.result }}
           MODELS: ${{ needs.models.result }}
         run: |
-          echo "changes: $CHANGES, tests: $TESTS, models: $MODELS"
-          [ "$CHANGES" = success ] && [ "$TESTS" = success ] && { [ "$MODELS" = success ] || [ "$MODELS" = skipped ]; }
+          echo "changes: $CHANGES, tests: $TESTS, web: $WEB, book: $BOOK, ios: $IOS, models: $MODELS"
+          ok() { [ "$1" = success ] || [ "$1" = skipped ]; }
+          [ "$CHANGES" = success ] && ok "$TESTS" && ok "$WEB" && ok "$BOOK" && ok "$IOS" && ok "$MODELS"

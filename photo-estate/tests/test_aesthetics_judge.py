@@ -67,8 +67,8 @@ def test_strata_rules():
     for i, j in seen["good"]:
         assert teacher[i] >= 4.0 and teacher[j] >= 4.0
     # a stratum that cannot supply its share says so
-    q, notes = judge.build_queue(sha, vec, teacher, ridge, per=10_000)
-    assert any("only" in n for n in notes) and 0 < len(q) < 40_000
+    q, notes = judge.build_queue(sha[:20], vec[:20], teacher[:20], ridge[:20], per=100)
+    assert any("only" in n for n in notes) and 0 < len(q) < 400
 
 
 def answer(path, pair, choice, stratum="random", a="a" * 64, b="b" * 64):

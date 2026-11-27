@@ -133,11 +133,15 @@ gh release download v1.7.4 --repo tlaplus/tlaplus --pattern tla2tools.jar --dir 
 uv run pytest tests/test_specs.py
 ```
 
-That runs every `.cfg` here: those that must pass, and those that must fail, as many at a time as the machine
-has cores (in a run of all the tests they are started first, and checked while the others run). It is skipped where there is no Java or no jar; CI has both and sets `REQUIRE_TLC`, with which it fails
-instead of being skipped; it runs it on every push to `main`, and on a pull request that changes this folder or
-what runs the models (TLC reads nothing else, so any other pull request would get the same answer). One model by hand, from this folder (on a Mac
-with Homebrew's Java, which is not on the PATH, `java` is `/opt/homebrew/opt/openjdk/bin/java`):
+That runs every `.cfg` here: those that must pass, and those that must fail, using a core-budget scheduler
+that gives the large whole models multiple TLC worker threads without oversubscribing the machine (and
+starts them at test collection when run alongside other tests). `Lens.tla` and `PhoneReplica.tla` use exact
+`SYMMETRY` sets over their interchangeable slots (sound for all safety invariants). It is skipped where
+there is no Java or no jar; CI caches the jar and sets `REQUIRE_TLC`, with which it fails instead of being
+skipped; it runs all models on every push to `main`, and on a pull request runs only the model(s) whose
+`.tla`/`.cfg` files changed (or all models if the test harness or workflow changed). One model by hand,
+from this folder (on a Mac with Homebrew's Java, which is not on the PATH, `java` is
+`/opt/homebrew/opt/openjdk/bin/java`):
 
 ```
 java -cp ~/.local/share/tlaplus/tla2tools.jar tlc2.TLC -config PrivatePhoto.cfg PrivatePhoto.tla

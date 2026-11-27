@@ -68,6 +68,7 @@ dev = [
     { include-group = "core" },
     "av>=14",              # tests/test_video.py makes its own small videos and reads them back
     "pytest>=8.3",
+    "pytest-xdist>=3.6",
     "ruff>=0.15",
     "pyright>=1.1.400",
     "playwright",          # tests/test_pages_browser.py (slow tier); skipped when it has no Chromium to run

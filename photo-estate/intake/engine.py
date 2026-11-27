@@ -171,8 +171,9 @@ class CatalogLock:
     """The lock ingest-iphone.sh takes (a directory), so a phone's upload run and an intake job never
     write the catalog at once. A lock this process took and then died holding is taken over."""
 
-    def __init__(self, path: Path = LOCK):
+    def __init__(self, path: Path = LOCK, poll: float = 2.0):
         self.path = path
+        self.poll = poll
         self.held = False
 
     def acquire(self, cancelled, waiting) -> None:
@@ -192,7 +193,7 @@ class CatalogLock:
                     told = True
                 if cancelled():
                     raise Cancelled()
-                time.sleep(2)
+                time.sleep(self.poll)
 
     def _stale(self) -> bool:
         try:

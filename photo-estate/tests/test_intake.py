@@ -10,7 +10,7 @@ job stopped mid-pipeline resumed from its stage; the catalog lock shared with in
 folder source's preview; and the API, which must never hand back or write down what was typed to sign in.
 
 The models (embed, faces) and exiftool are left out: they are covered elsewhere and take minutes."""
-import json, os, sqlite3, sys, tempfile, time, zipfile
+import importlib.util, json, os, sqlite3, sys, tempfile, time, zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -28,7 +28,7 @@ def wait(e, jid, states=("done", "failed", "cancelled"), timeout=240):
     t = time.time()
     while (j := e.jobs.get(jid))["state"] not in states:
         assert time.time() - t < timeout, f"job {jid} stuck in {j['state']}/{j['stage']}"
-        time.sleep(0.2)
+        time.sleep(0.02)
     return e.view(jid)
 
 
@@ -40,10 +40,22 @@ def assets(db):
         c.close()
 
 
+USE_PYTHON_ESTATE = (not os.environ.get("PHOTO_ESTATE_LEGACY_UV")
+                     and importlib.util.find_spec("pillow_heif") is not None)
+
+
 def make(root, **kw):
     (root / "store").mkdir(parents=True, exist_ok=True)
     e = Engine(root, str(root / "estate.db"), root / "store", HERE.parent, practice=True, skip=SKIP,
-               lock=CatalogLock(root / "lock"), **kw)
+               lock=CatalogLock(root / "lock", poll=0.05), **kw)
+    if USE_PYTHON_ESTATE:
+        orig_command = e.command
+        def fast_command(stage, paths):
+            argv = orig_command(stage, paths)
+            if argv and stage in ("ingest", "link", "exif"):
+                return [sys.executable, *argv[4:]]
+            return argv
+        e.command = fast_command
     e.start()
     return e
 

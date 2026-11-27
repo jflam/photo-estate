@@ -5,7 +5,7 @@
 # ///
 """End-to-end test: build a synthetic Google Takeout with the real-world quirks, ingest it in two
 rolling batches, link sidecars, check de-dupe, tag through a mock OpenAI-compatible VLM, search."""
-import base64, io, json, random, shutil, sqlite3, subprocess, tempfile, threading, zipfile
+import base64, importlib.util, io, json, os, random, shutil, sqlite3, subprocess, sys, tempfile, threading, zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -130,8 +130,10 @@ class MockVLM(BaseHTTPRequestHandler):
 
 
 def run(*args, script=ESTATE):
-    r = subprocess.run(["uv", "run", "--quiet", "--script", str(script), *args],
-                       capture_output=True, text=True)
+    use_python = (script == ESTATE and not os.environ.get("PHOTO_ESTATE_LEGACY_UV")
+                  and importlib.util.find_spec("pillow_heif") is not None)
+    cmd = [sys.executable, str(script), *args] if use_python else ["uv", "run", "--quiet", "--script", str(script), *args]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     print(f"$ estate.py {' '.join(args[2:]) if args[0] == '--db' else ' '.join(args)}\n{r.stdout}{r.stderr}")
     assert r.returncode == 0, r.returncode
     return r.stdout

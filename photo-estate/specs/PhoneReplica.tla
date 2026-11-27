@@ -53,16 +53,17 @@
      - SyncEngine.run does not apply a page asked before a favourite the phone kept: Catalog.applyPage finds the kv row
        `edits` moved (Catalog.keep moves it), writes nothing, and the run asks again.
    Restarts = TRUE lets the app restart (its feed's file kept, or lost). *)
-EXTENDS Integers, FiniteSets, Sequences
+EXTENDS Integers, FiniteSets, Sequences, TLC
 
-CONSTANTS Guarded, Restarts, Budget, Limit
+CONSTANTS Guarded, Restarts, Budget, Limit, FU, FS
 
 Ph == {1, 2}                  \* Y (1) and W (2), as shas: "" is 0, and "~" (after every sha) is 3
 Y == 1
 W == 2
 Tilde == 3
-FU == {1, 2}                  \* hidden_changed's threads, and start()'s: each one feed_update
-FS == {1, 2}                  \* set_favorites calls, by Ada on the web or from her phone
+\* Slots within FU (hidden_changed/start feed_updates) and FS (set_favorites calls) are interchangeable; all
+\* invariants here are safety invariants, so TLC's symmetry reduction is exact.
+Sym == {f @@ g : f \in Permutations(FU), g \in Permutations(FS)}
 
 Lt(a, b) == a[1] < b[1] \/ (a[1] = b[1] /\ a[2] < b[2])     \* (version, sha) order
 Le(a, b) == ~Lt(b, a)
@@ -257,7 +258,7 @@ Restart ==
                        /\ fver' = [p \in Ph |-> 0]
                   ELSE UNCHANGED <<ep, fv, fst, fdg, fver>>
   /\ n' = n + 1
-  /\ fu' = [s \in FU |-> IF s = 1 THEN [Idle EXCEPT !.st = "read"] ELSE Idle]   \* start()'s feed_update
+  /\ \E s0 \in FU : fu' = [s \in FU |-> IF s = s0 THEN [Idle EXCEPT !.st = "read"] ELSE Idle]   \* start()'s feed_update
   /\ rl' = Idle /\ fs' = [s \in FS |-> NoFav]
   /\ pf' = IF pf = "post" THEN "none" ELSE pf      \* a POST not yet answered fails: nothing is kept
   /\ UNCHANGED <<vis, fav, meta, incat, ph, ask, resp, rep, repe, repv, ce, cv, ca, kept, keptAt, chg, told,

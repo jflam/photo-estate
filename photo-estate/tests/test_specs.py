@@ -38,7 +38,8 @@ import os
 import shutil
 import subprocess
 import tempfile
-from concurrent.futures import Future, ThreadPoolExecutor
+import threading
+from concurrent.futures import Future
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,8 @@ import pytest
 SPECS = Path(__file__).resolve().parent.parent / "specs"
 PASSES = sorted(p for p in SPECS.glob("*.cfg") if ".before." not in p.name)
 FAILS = sorted(SPECS.glob("*.before.*.cfg"))
+# Whole models large enough to benefit from multiple TLC worker threads, longest first.
+HEAVY = ("PhoneReplica.cfg", "PhoneGate.cfg", "Reload.cfg", "Lens.cfg")
 
 
 def _java() -> str | None:
@@ -60,9 +63,12 @@ def _java() -> str | None:
     return None
 
 
-_pool: ThreadPoolExecutor | None = None
-_runs: dict[Path, Future] = {}                 # a config -> its TLC run, started or waiting for a core
+_started = False
+_stop = threading.Event()
+_runs: dict[Path, Future] = {}                 # a config -> its TLC run, started or waiting for cores
 _procs: list[subprocess.Popen] = []
+_procs_lock = threading.Lock()
+_threads: list[threading.Thread] = []
 _tmp: Path | None = None
 
 
@@ -70,65 +76,112 @@ def start(items) -> None:
     """Start TLC on every config these collected tests ask for. Nothing is started twice, and nothing without
     Java or the jar. conftest.py calls it when a run's tests are collected; `tlc` calls it too, for a run
     that did not come through that hook."""
-    global _pool, _tmp
+    global _started, _tmp
     jar = Path(os.environ.get("TLA2TOOLS") or Path.home() / ".local/share/tlaplus/tla2tools.jar")
     here = Path(__file__).resolve()
     asked = {item.callspec.params["cfg"] for item in items
              if item.path == here and "cfg" in getattr(getattr(item, "callspec", None), "params", {})}
-    if _pool is not None or not asked or not jar.exists() or (java := _java()) is None:
+    if _started or not asked or not jar.exists() or (java := _java()) is None:
         return
+    _started = True
+    _stop.clear()
     _tmp = base = Path(tempfile.mkdtemp(prefix="tlc-"))
 
-    def run(cfg: Path) -> subprocess.CompletedProcess:
-        # Its own temporary folder: TLC unpacks Naturals.tla and the other standard modules there, and two
-        # runs starting at once in one folder read each other's half-written copies ("Fatal errors while parsing").
-        module, tmp = cfg.name.split(".")[0] + ".tla", base / cfg.name / "tmp"
-        tmp.mkdir(parents=True)
-        cmd = [java, f"-Djava.io.tmpdir={tmp}", "-cp", str(jar), "tlc2.TLC", "-workers", str(workers(cfg)),
-               "-metadir", str(base / cfg.name / "states"), "-config", cfg.name, module]
-        proc = subprocess.Popen(cmd, cwd=SPECS, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        _procs.append(proc)
+    cores = os.cpu_count() or 2
+    heavy_asked = [c for c in asked if c.name in HEAVY]
+    # Heavy whole models get multiple TLC worker threads without oversubscribing the machine: one alone gets
+    # every core; several share them (up to 4 each, where TLC scales best here). Small whole models and `.before.`
+    # checks stop in seconds and take one core each.
+    heavy_workers = cores if len(heavy_asked) <= 1 else max(2, min(4, cores // min(len(heavy_asked), 3)))
+
+    def want_cores(cfg: Path) -> int:
+        return min(cores, heavy_workers) if cfg.name in HEAVY else 1
+
+    def priority(cfg: Path) -> tuple[int, int, str]:
+        if cfg.name in HEAVY:
+            return (0, HEAVY.index(cfg.name), cfg.name)
+        return (1 if ".before." not in cfg.name else 2, 0, cfg.name)
+
+    ordered = sorted(asked, key=priority)
+    for cfg in ordered:
+        _runs[cfg] = Future()
+
+    cond = threading.Condition()
+    free = cores
+
+    def run_one(cfg: Path, w: int) -> None:
+        nonlocal free
+        fut = _runs[cfg]
         try:
-            out, err = proc.communicate(timeout=900)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            raise
-        return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+            if _stop.is_set():
+                fut.cancel()
+                return
+            # Its own temporary folder: TLC unpacks Naturals.tla and the other standard modules there, and two
+            # runs starting at once in one folder read each other's half-written copies ("Fatal errors while parsing").
+            module, tmp = cfg.name.split(".")[0] + ".tla", base / cfg.name / "tmp"
+            tmp.mkdir(parents=True)
+            cmd = [java, f"-Djava.io.tmpdir={tmp}", "-cp", str(jar), "tlc2.TLC", "-workers", str(w),
+                   "-metadir", str(base / cfg.name / "states"), "-config", cfg.name, module]
+            proc = subprocess.Popen(cmd, cwd=SPECS, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            with _procs_lock:
+                _procs.append(proc)
+            try:
+                out, err = proc.communicate(timeout=900)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                raise
+            fut.set_result(subprocess.CompletedProcess(cmd, proc.returncode, out, err))
+        except BaseException as exc:
+            if not fut.done():
+                fut.set_exception(exc)
+        finally:
+            with cond:
+                free += w
+                cond.notify_all()
 
-    # A whole model is the long kind of run, and TLC can spread one over cores: the whole models asked for share
-    # the machine's between them (one alone has them all; eleven on four cores have one each, as every
-    # `before` config does: those stop at their first violation, seconds in).
-    cores, whole = os.cpu_count() or 2, sum(".before." not in c.name for c in asked)
+    def dispatch() -> None:
+        nonlocal free
+        for cfg in ordered:
+            w = want_cores(cfg)
+            with cond:
+                while free < w and not _stop.is_set():
+                    cond.wait(timeout=0.5)
+                if _stop.is_set():
+                    _runs[cfg].cancel()
+                    continue
+                free -= w
+            t = threading.Thread(target=run_one, args=(cfg, w), daemon=True)
+            _threads.append(t)
+            t.start()
 
-    def workers(cfg: Path) -> int:
-        return 1 if ".before." in cfg.name else max(1, cores // whole)
-
-    _pool = ThreadPoolExecutor(max_workers=cores)
-    # The whole models first: they are the long ones (minutes), and the last to start sets when the run ends.
-    for cfg in sorted(asked, key=lambda c: (".before." in c.name, c.name)):
-        _runs[cfg] = _pool.submit(run, cfg)
+    dt = threading.Thread(target=dispatch, daemon=True)
+    _threads.append(dt)
+    dt.start()
 
 
 def stop() -> None:
     """End every TLC still running (a run that stopped early leaves some) and forget them all."""
-    global _pool, _tmp
-    if _pool is not None:
-        _pool.shutdown(wait=False, cancel_futures=True)
+    global _started, _tmp
+    _stop.set()
+    with _procs_lock:
         for proc in _procs:
             if proc.poll() is None:
                 proc.kill()
-        _pool.shutdown()
+        _procs.clear()
+    for t in _threads:
+        t.join(timeout=2)
+    _threads.clear()
     if _tmp is not None:
         shutil.rmtree(_tmp, ignore_errors=True)
-    _pool = _tmp = None
+    _started = False
+    _tmp = None
     _runs.clear()
-    _procs.clear()
 
 
 @pytest.fixture(scope="module")
 def tlc(request):
     start(request.session.items)
-    if _pool is None:
+    if not _started:
         why = "TLC needs Java and tla2tools.jar (see this file's docstring)"
         if os.environ.get("REQUIRE_TLC"):
             pytest.fail(f"REQUIRE_TLC is set, and {why}", pytrace=False)
