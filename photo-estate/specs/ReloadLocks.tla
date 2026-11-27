@@ -21,7 +21,11 @@
                         few values; nothing else is taken inside them
      Admin.st_lock      inside the gate (stats_payload: then views_lock, through shared_for); stats_job takes the
                         gate only with it let go
-     feeds_lock         inside the gate or outside it (feed_of); a Feed made inside it opens its own file
+     feeds_lock         inside the gate, a swap (set_favorites' show) or outside them (feed_of); a Feed made inside it
+                        opens its own file
+     Feed.lock          each member's feed's own: inside the gate (/api/sync: a first phone's update, and the page, which
+                        may write the feed's own file, sync-feed*.db, never the catalog) or outside it (feed_update, a
+                        touch); nothing is asked for while it is held (specs/PhoneReplica.tla)
      members_lock       load_members: inside the gate (change_member, ask_in) or before any (start); then SQLite reads
      people_loading     load_people, outside the gate (threads, one of them started by reload_catalog after its swap when
                         what People is built without changed), across People's whole load (up to a minute)

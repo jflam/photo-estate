@@ -8,6 +8,8 @@ import SwiftUI
 /// changed since the cursor we hold, apply each page in one transaction together with the new cursor,
 /// repeat until it says there is no more. A page that fails leaves the cursor where it was, so the next
 /// run carries on from there; with no network the catalog simply stays as it is and the app works from it.
+/// A page asked before a favourite was kept here (Favourites.keep) is not applied, and is asked for again: it may be
+/// from before the favourite (Catalog.applyPage; specs/PhoneReplica.tla).
 @MainActor
 final class SyncEngine: ObservableObject {
     static let shared = SyncEngine()
@@ -88,12 +90,10 @@ final class SyncEngine: ObservableObject {
         do {
             var applied = 0
             while true {
-                let cursor = try await Catalog.shared.store.read { db in
-                    (try Catalog.get(db, "epoch") ?? "", try Catalog.get(db, "since") ?? "0", try Catalog.get(db, "after") ?? "")
-                }
+                let cursor = try await Catalog.shared.store.read { try Catalog.cursor($0) }
                 var url = URLComponents(url: Server.baseURL.appendingPathComponent("api/sync"), resolvingAgainstBaseURL: false)!
-                url.queryItems = [.init(name: "epoch", value: cursor.0), .init(name: "since", value: cursor.1),
-                                  .init(name: "after", value: cursor.2), .init(name: "limit", value: "2000")]
+                url.queryItems = [.init(name: "epoch", value: cursor.epoch), .init(name: "since", value: cursor.since),
+                                  .init(name: "after", value: cursor.after), .init(name: "limit", value: "2000")]
                 let (data, resp) = try await session.data(from: url.url!)
                 online = true
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
@@ -110,19 +110,11 @@ final class SyncEngine: ObservableObject {
                 let deleted = j["deleted"] as? [String] ?? []
                 let more = j["more"] as? Bool ?? false
                 let trips = j["trips"].flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { String(data: $0, encoding: .utf8) }
-                let count = try await Catalog.shared.store.write { db -> Int in
-                    try db.transaction {
-                        try Catalog.apply(db, rows: rows, deleted: deleted, epoch: epoch)
-                        try Catalog.set(db, "epoch", epoch)
-                        try Catalog.set(db, "since", String(since))
-                        try Catalog.set(db, "after", after)
-                        if !more {
-                            try Catalog.dropOtherEpochs(db, keep: epoch)
-                            if let trips { try Catalog.set(db, "trips", trips) }
-                        }
-                    }
-                    return try db.one("SELECT count(*) FROM photos") { Int($0.int(0)) } ?? 0
+                let page = Catalog.Page(rows: rows, deleted: deleted, epoch: epoch, since: since, after: after, more: more, trips: trips)
+                let (taken, count) = try await Catalog.shared.store.write { db -> (Bool, Int) in
+                    (try Catalog.applyPage(db, page, asked: cursor), try db.one("SELECT count(*) FROM photos") { Int($0.int(0)) } ?? 0)
                 }
+                if !taken { continue }       // a favourite was kept since this page was asked: ask again
                 serverTotal = (j["total"] as? NSNumber)?.intValue ?? serverTotal
                 if !rows.isEmpty || !deleted.isEmpty || count != photos {
                     applied += rows.count + deleted.count

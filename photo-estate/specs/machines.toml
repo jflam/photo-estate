@@ -140,7 +140,7 @@ model = "Reload.tla"
 # the looks, favourites shown in place, the generation and what is kept from one, reload_state and the ingest's fresh,
 # settling. Who waits for whom among the same threads is the next entry's)
 code = { "photo_app.py" = ["PhotoApp.reload_catalog", "PhotoApp.relook", "PhotoApp.read_looks", "PhotoApp.with_private", "PhotoApp.caught_up", "PhotoApp.set_favorites", "PhotoApp.on_hidden_change", "PhotoApp.hidden_changed", "PhotoApp.private_write"], "catalog.py" = ["Live.install", "Live.relook", "Live.update", "Live.forget_views"], "admin.py" = ["Admin.forget_library", "Admin.stats_payload"], "upload.py" = ["IngestJob._follow"] }
-stamp = "c03843b62c9673e6"
+stamp = "c6dc75de22c1182b"
 
 [[machine]]
 name = "who waits for whom in the app's memory"
@@ -148,7 +148,7 @@ checked = "model"
 model = "ReloadLocks.tla"
 # (the catalog gate, fav_write and SQLite's write lock, among the threads of Reload.tla)
 code = { "catalog.py" = ["Gate.__enter__", "Gate.__exit__", "Gate.swap"], "photo_app.py" = ["PhotoApp.handle", "PhotoApp.gated", "PhotoApp.reload_catalog", "PhotoApp.relook", "PhotoApp.set_favorites"] }
-stamp = "2a6c95fe09edd48c"
+stamp = "011e7d3303662e92"
 
 [[machine]]
 name = "who each face is, and the clustering of unnamed faces"
@@ -176,3 +176,14 @@ name = "why a question was asked"
 columns = ["questions.why"]
 checked = "not_needed"
 why = "the asker's words, not a state"
+
+[[machine]]
+name = "a member's phone's copy of the catalog, and the feed it follows"
+checked = "model"
+model = "PhoneReplica.tla"
+# (sync.Feed, one per member, in its own file beside the catalog (sync-feed*.db, never the catalog: no table here), and
+# the replica on each phone. The model stands for Swift too, which no stamp holds, as this test reads Python only:
+# ios/PhotoEstate/Catalog/SyncEngine.swift (SyncEngine.run), Catalog.swift (Catalog.cursor, applyPage, apply,
+# dropOtherEpochs, keep), API.swift (Favourites.set, keep). Their stamp is still to be wired in)
+code = { "sync.py" = ["Feed.update", "Feed.touch", "Feed._write", "Feed._agree", "Feed.page"], "photo_app.py" = ["PhotoApp.feed_of", "PhotoApp.feed_rows", "PhotoApp.feed_update", "PhotoApp.sync_route", "PhotoApp.set_favorites", "PhotoApp.favorite"], "catalog.py" = ["View.feed_row"] }
+stamp = "23326367716f528a"
