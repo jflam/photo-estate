@@ -25,12 +25,18 @@ before a fix, and must still find its violation (an invariant that can no longer
 Skipped without Java or the TLA+ tools. They are one jar, tla2tools.jar, from
 https://github.com/tlaplus/tlaplus/releases: put it at ~/.local/share/tlaplus/tla2tools.jar or name it in
 TLA2TOOLS. Java is `java` on the PATH, $JAVA_HOME, or Homebrew's openjdk.
+With REQUIRE_TLC set (CI sets it) they
+fail instead of being skipped, so a run that checked no model cannot pass.
+
+Each check is its own TLC process on one core. The ones a run asks for are all started when the first is
+needed, as many at a time as the machine has cores, and each test waits for its own.
 
   uv run pytest tests/test_specs.py
 """
 import os
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -53,17 +59,34 @@ def _java() -> str | None:
 
 
 @pytest.fixture(scope="module")
-def tlc(tmp_path_factory):
+def tlc(request, tmp_path_factory):
     jar = Path(os.environ.get("TLA2TOOLS") or Path.home() / ".local/share/tlaplus/tla2tools.jar")
     java = _java()
     if java is None or not jar.exists():
-        pytest.skip("TLC needs Java and tla2tools.jar (see this file's docstring)")
+        why = "TLC needs Java and tla2tools.jar (see this file's docstring)"
+        if os.environ.get("REQUIRE_TLC"):
+            pytest.fail(f"REQUIRE_TLC is set, and {why}", pytrace=False)
+        pytest.skip(why)
+
+    base = tmp_path_factory.mktemp("tlc")       # each run's own folder is made under it (mktemp is not for threads)
 
     def run(cfg: Path) -> subprocess.CompletedProcess:
-        module = cfg.name.split(".")[0] + ".tla"
-        return subprocess.run([java, "-cp", str(jar), "tlc2.TLC", "-metadir", str(tmp_path_factory.mktemp("tlc")),
-                               "-config", cfg.name, module], cwd=SPECS, capture_output=True, text=True, timeout=600)
-    return run
+        # Its own temporary folder too: TLC unpacks Naturals.tla and the other standard modules there, and two
+        # runs starting at once in one folder read each other's half-written copies ("Fatal errors while parsing").
+        module, tmp = cfg.name.split(".")[0] + ".tla", base / cfg.name / "tmp"
+        tmp.mkdir(parents=True)
+        return subprocess.run([java, f"-Djava.io.tmpdir={tmp}", "-cp", str(jar), "tlc2.TLC",
+                               "-metadir", str(base / cfg.name / "states"), "-config", cfg.name, module],
+                              cwd=SPECS, capture_output=True, text=True, timeout=600)
+
+    here = Path(__file__).resolve()
+    asked = {item.callspec.params["cfg"] for item in request.session.items
+             if item.path == here and "cfg" in getattr(getattr(item, "callspec", None), "params", {})}
+    pool = ThreadPoolExecutor(max_workers=os.cpu_count() or 2)
+    # The whole models first: they are the long ones (minutes), and the last to start sets when the run ends.
+    started = {cfg: pool.submit(run, cfg) for cfg in sorted(asked, key=lambda c: (".before." in c.name, c.name))}
+    yield lambda cfg: started[cfg].result()
+    pool.shutdown(cancel_futures=True)
 
 
 def test_there_are_models():
