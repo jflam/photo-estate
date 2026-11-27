@@ -13,6 +13,9 @@
   specs/People.tla         who each face is, in the catalog and in the People page's memory, while People is loaded
                            again beside the one answering, and the groups of unnamed faces (faces.People;
                            PhotoApp.load_people, reload_catalog)
+  specs/PhoneGate.tla      the iPhone's phone gate: a photo on a member's phone (GateState, the upload extension,
+                           the app, the in-app uploader) and its opt-out on the server (ios/Shared/PhoneGate.swift;
+                           ios/Tests/main.swift replays its traces)
   specs/PhoneReplica.tla   a member's change feed and their phone's copy of the catalog, with every writer of either
                            (sync.Feed; PhotoApp.feed_update, sync_route, set_favorites; the phone's SyncEngine)
 

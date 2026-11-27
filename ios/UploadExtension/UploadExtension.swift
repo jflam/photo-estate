@@ -16,7 +16,7 @@ class UploadExtension: PHBackgroundResourceUploadJobExtension {
 
     private let defaults = UserDefaults.standard
     private let tokenKey = "changeToken"
-    private let pendingKey = "pendingIdentifiers"   // inserted photos not yet turned into jobs (job limit reached)
+    private let pendingKey = "pendingIdentifiers"   // an older build's photos with no job yet: GateState.pending now
 
     func processJobs() async -> PHBackgroundResourceUploadProcessingResult {
         var made = 0
@@ -36,7 +36,8 @@ class UploadExtension: PHBackgroundResourceUploadJobExtension {
             note = "first run: watching for photos from now on"
             return .completed
         }
-        var pending = defaults.stringArray(forKey: pendingKey) ?? []
+        let older = defaults.stringArray(forKey: pendingKey) ?? []   // an older build kept them here
+        var pending: [String] = []
         var inserted: [String] = []
         do {
             var last = token
@@ -46,25 +47,29 @@ class UploadExtension: PHBackgroundResourceUploadJobExtension {
                     inserted += d.insertedLocalIdentifiers.filter { !inserted.contains($0) }
                 }
             }
-            // The gate decides what becomes a job: everything new (as before), or only what the member approved.
+            // The gate decides what becomes a job: everything new (as before), or only what the member approved. What
+            // it returns stays in GateState.pending, in this one locked write, until its jobs exist (Gate.queued):
+            // ended anywhere after it, the next run makes them.
             var held = 0
-            let now = GateStore.update { s -> [String] in
+            pending = GateStore.update { s -> [String] in
                 let before = s.candidates.count
+                s.pending += older.filter { !s.pending.contains($0) }
                 let out = Gate.route(inserted, &s)
                 held = s.candidates.count - before
                 return out
             }
-            pending += now.filter { !pending.contains($0) }
+            if !older.isEmpty { defaults.removeObject(forKey: pendingKey) }
             if held > 0 { note = "\(held) new photo\(held == 1 ? "" : "s") waiting in the app's Inbox" }
             save(token: last)
         } catch {
             note = "could not read changes: \((error as NSError).code)"
             return .failure
         }
-        let kept = GateStore.read().optedOut
-        pending.removeAll { kept[$0] != nil }            // opted out on this iPhone: never a job
+        let gate = GateStore.read()
+        pending.removeAll { Gate.held($0, gate) }        // kept back, or to look over, on this iPhone: never a job
         pending = queue(pending, made: &made, note: &note)
-        defaults.set(pending, forKey: pendingKey)
+        let left = pending
+        GateStore.update { Gate.queued(left: left, &$0) }
         return pending.isEmpty ? .completed : .processing
     }
 

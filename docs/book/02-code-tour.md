@@ -372,6 +372,10 @@ photo-estate/                  the server and the web app (Python run with uv; n
                             lock); People.tla, who each face is in the catalog and in People's memory, a load of
                             People beside the one answering, a member's change, a group named from the page, and
                             what People is built without (faces.People, PhotoApp.load_people, reload_catalog);
+                            PhoneGate.tla, the iPhone's phone gate: GateState in the app group, the upload
+                            extension, the app's functions at their awaits, the in-app uploader, and the member's
+                            tombstones and the bytes on the server (ios/Shared/PhoneGate.swift and its callers,
+                            private.py's tombstones);
                             PhoneReplica.tla, a member's change feed and their phone's copy of the catalog, with
                             every writer of either (sync.Feed; PhotoApp.feed_update, sync_route, set_favorites,
                             favorite; the phone's SyncEngine.run, Catalog.applyPage and keep, Favourites.set);
@@ -392,11 +396,12 @@ ios/                 6,819  the iPhone app (chapters 19-24, 26)
                                 answered natively, typed or spoken (QuestionsView.swift, Teller.swift: the recorder,
                                 a story's row and its player), StoryModel.swift (plain values and functions, checked on the Mac)
   PhotoEstate/*.swift      432  the tab bar, the look, This iPhone, uploads, the in-app web view
-  UploadExtension/         106  the background upload extension (jobs, or candidates for the Inbox)
-  Shared/                  347  the server's address (and a debug build's demo member), the upload request, the
-                                extension's log, PhoneGate.swift (217: the gate's rules and state, in the app group)
-  Tests/                   297  the phone's unit tests (the gate, the upload request, questions and stories): run.sh
-                                compiles them with Shared/ and StoryModel.swift for the Mac and runs them;
+  UploadExtension/         109  the background upload extension (jobs, or candidates for the Inbox)
+  Shared/                  406  the server's address (and a debug build's demo member), the upload request, the
+                                extension's log, PhoneGate.swift (276: the gate's rules and state, in the app group)
+  Tests/                   500  the phone's unit tests (the gate, the upload request, questions and stories, and
+                                specs/PhoneGate.tla's traces replayed on the gate): run.sh compiles them with Shared/
+                                and StoryModel.swift for the Mac and runs them;
                                 run-replica.sh compiles Replica/main.swift with Catalog.swift and SQLite.swift: a sync's
                                 pages, an epoch changed mid-way, a page asked before a kept favourite (PhoneReplica.tla)
   project.yml, project-sim.yml, deploy.sh, build-number   XcodeGen specs; build and install on the phone

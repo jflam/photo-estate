@@ -15,12 +15,14 @@ import Foundation
 /// - Reviewing is a change set's review: everything is shared unless marked. A mark is an opt-out.
 /// - An **opt-out** is a tombstone: the SHA-256 of each original file, as the store keys it, kept here with
 ///   the photo's identifier and sent (only the hashes) to `POST /api/tombstones`. On this phone the identifier
-///   alone keeps it from ever becoming a job; a new phone knows only the hashes (`GET /api/tombstones`), which
-///   the in-app uploader, having the file, checks before it sends and the server checks again.
+///   alone keeps it, and a photo marked in a batch, from ever being sent (`held`); a new phone knows only the
+///   hashes (`GET /api/tombstones`), which the in-app uploader, having the file, checks before it sends and the
+///   server checks again. "Share after all" lifts the hashes; the photo is approved once the server has answered.
 /// - **Approved** photos are sent by the app at once (ForegroundUploader.send); what it could not send, the
-///   extension makes jobs for on its next run.
+///   extension makes jobs for on its next run (kept in `pending` until it has).
 /// - Until the app has read `/api/me`, the policy is not known and the extension makes no job (a candidate is
 ///   safe; a photo sent is for good). Under `everything` the candidates are approved.
+/// - specs/PhoneGate.tla is a model of all of this, with every writer; ios/Tests/main.swift replays its traces.
 enum UploadPolicy: String, Codable {
     case everything, review, review_flagged
 
@@ -47,6 +49,8 @@ struct GateState: Codable, Equatable {
     var candidates: [String] = []
     var batches: [UploadBatch] = []
     var approved: [String] = []             // to be sent
+    var pending: [String] = []              // taken by the extension, no job made yet (Gate.route, Gate.queued)
+    var lifting: [String: [String]] = [:]   // shared after all: identifier -> hashes whose lift the server has not answered
     var shared: Set<String> = []            // sent, or made a job: never offered again (gated policies only)
     var optedOut: [String: [String]] = [:]  // identifier -> the SHA-256 of each of its original files
     var serverTombstones: Set<String> = []  // this member's, as GET /api/tombstones last said
@@ -67,6 +71,8 @@ struct GateState: Codable, Equatable {
         candidates = try c.decodeIfPresent([String].self, forKey: .candidates) ?? []
         batches = try c.decodeIfPresent([UploadBatch].self, forKey: .batches) ?? []
         approved = try c.decodeIfPresent([String].self, forKey: .approved) ?? []
+        pending = try c.decodeIfPresent([String].self, forKey: .pending) ?? []
+        lifting = try c.decodeIfPresent([String: [String]].self, forKey: .lifting) ?? [:]
         shared = try c.decodeIfPresent(Set<String>.self, forKey: .shared) ?? []
         optedOut = try c.decodeIfPresent([String: [String]].self, forKey: .optedOut) ?? [:]
         serverTombstones = try c.decodeIfPresent(Set<String>.self, forKey: .serverTombstones) ?? []
@@ -81,16 +87,24 @@ struct GateState: Codable, Equatable {
 enum Gate {
     /// Every photo the gate already has a place for: never offered again.
     static func known(_ s: GateState) -> Set<String> {
-        var k = Set(s.candidates).union(s.approved).union(s.shared).union(s.optedOut.keys)
+        var k = Set(s.candidates).union(s.approved).union(s.pending).union(s.shared).union(s.optedOut.keys).union(s.lifting.keys)
         for b in s.batches { k.formUnion(b.assets) }
         return k
     }
 
+    /// A photo this phone holds back, by its identifier: kept back, or in a batch waiting for the member's word.
+    /// Neither uploader sends it, whatever the policy (a mark is a word to keep it back before the batch is applied).
+    static func held(_ asset: String, _ s: GateState) -> Bool {
+        s.optedOut[asset] != nil || s.batches.contains { $0.assets.contains(asset) }
+    }
+
     /// The extension's: photos PhotoKit says were added since its last run. Returns those to make jobs for now:
     /// under `everything` all of them, as before; otherwise none of them (they become candidates). Either way the
-    /// approved photos the app has not sent are taken too. An opted-out photo is never a job.
+    /// approved photos the app has not sent are taken too, and what an earlier run took and made no job for. A photo
+    /// held back here is never a job. What it returns stays in `pending`, in this same locked write, until
+    /// `queued` says its jobs exist: an extension ended in between loses nothing (specs/PhoneGate.tla).
     static func route(_ inserted: [String], _ s: inout GateState) -> [String] {
-        var out = s.approved
+        var out = s.pending + s.approved
         s.approved = []
         if s.policy == .everything {
             out += inserted
@@ -98,9 +112,15 @@ enum Gate {
             let k = known(s)
             for id in inserted where !k.contains(id) && !s.candidates.contains(id) { s.candidates.append(id) }
         }
-        out = unique(out.filter { s.optedOut[$0] == nil })
+        out = unique(out.filter { !held($0, s) })
         if s.policy?.gated ?? true { s.shared.formUnion(out) }
+        s.pending = out
         return out
+    }
+
+    /// The extension's, once it has made the jobs it could: `left` are those it could not make (the job limit).
+    static func queued(left: [String], _ s: inout GateState) {
+        s.pending = left
     }
 
     /// The app's: `ids` (candidates, or a chunk of older photos) become a batch to look over. Under
@@ -133,33 +153,62 @@ enum Gate {
     }
 
     /// Apply a batch: the unmarked are approved, the marked opted out with the hashes of their files (`hashes`,
-    /// worked out by the caller, who has PhotoKit), which wait in `unsentAdd` for the server. The batch is done.
-    /// Returns (shared, kept back).
+    /// worked out by the caller, who has PhotoKit), which wait in `unsentAdd` for the server (every one: what
+    /// serverTombstones says may be a lift behind). The batch is done, but for a marked photo with no hashes (its
+    /// file could not be read, or it was marked while the others were hashed): it stays in the batch, marked, never
+    /// sent, until it can be kept back with its hashes. Returns (shared, kept back).
     @discardableResult
     static func apply(_ batch: String, hashes: [String: [String]], _ s: inout GateState) -> (share: [String], keep: [String]) {
         guard let i = s.batches.firstIndex(where: { $0.id == batch }) else { return ([], []) }
-        let b = s.batches.remove(at: i)
-        let keep = b.assets.filter { b.marked.contains($0) }, share = b.assets.filter { !b.marked.contains($0) }
+        var b = s.batches.remove(at: i)
+        let share = b.assets.filter { !b.marked.contains($0) }
+        let keep = b.assets.filter { b.marked.contains($0) && !(hashes[$0] ?? []).isEmpty }
+        let stay = b.assets.filter { b.marked.contains($0) && (hashes[$0] ?? []).isEmpty }
         for id in keep {
             let hs = hashes[id] ?? []
             s.optedOut[id] = hs
             s.unsentLift.removeAll { hs.contains($0) }
-            s.unsentAdd += hs.filter { !s.unsentAdd.contains($0) && !s.serverTombstones.contains($0) }
+            s.unsentAdd += hs.filter { !s.unsentAdd.contains($0) }
         }
         s.approved += share.filter { !s.approved.contains($0) }
+        if !stay.isEmpty {
+            b.assets = stay
+            b.marked = Set(stay)
+            b.flagged = b.flagged.filter { stay.contains($0.key) }
+            s.batches.insert(b, at: i)
+        }
         return (share, keep)
     }
 
     /// "Share after all": an opt-out taken back, by the member who made it, on their phone. Its hashes are lifted
-    /// (or, if the server never heard of them, forgotten) and the photo is approved.
+    /// (every one: one still in unsentAdd may be in a POST under way), and so are the photos kept back with the same
+    /// bytes (a copy kept back would refuse it, and the server would no longer refuse the copy). They wait in
+    /// `lifting` until the server has answered the lift (`told`), so that nothing sends them while it still refuses
+    /// them; a photo with no hashes is approved at once.
     static func shareAfterAll(_ asset: String, _ s: inout GateState) {
-        guard let hs = s.optedOut.removeValue(forKey: asset) else { return }
-        let unsent = Set(s.unsentAdd)
-        s.unsentAdd.removeAll { hs.contains($0) }
-        s.unsentLift += hs.filter { !unsent.contains($0) && !s.unsentLift.contains($0) }
-        s.serverTombstones.subtract(hs)
-        s.shared.remove(asset)
-        if !s.approved.contains(asset) { s.approved.append(asset) }
+        guard s.optedOut[asset] != nil else { return }
+        var ids: Set<String> = [asset], lift = Set(s.optedOut[asset] ?? [])
+        var grew = !lift.isEmpty
+        while grew {                       // the copies, and theirs
+            grew = false
+            for (id, hs) in s.optedOut where !ids.contains(id) && !lift.isDisjoint(with: hs) {
+                ids.insert(id)
+                lift.formUnion(hs)
+                grew = true
+            }
+        }
+        for id in ids.sorted() {
+            let hs = s.optedOut.removeValue(forKey: id) ?? []
+            s.shared.remove(id)
+            if hs.isEmpty {
+                if !s.approved.contains(id) { s.approved.append(id) }
+            } else {
+                s.lifting[id] = hs
+            }
+        }
+        s.unsentAdd.removeAll { lift.contains($0) }
+        s.unsentLift += lift.sorted().filter { !s.unsentLift.contains($0) }
+        s.serverTombstones.subtract(lift)
     }
 
     /// Is a file with this hash opted out by this member: here, on another of their phones, or not yet said to the server.
@@ -169,8 +218,10 @@ enum Gate {
         return s.serverTombstones.contains(sha) || s.unsentAdd.contains(sha) || s.optedOut.values.contains { $0.contains(sha) }
     }
 
-    /// The uploader found that `asset` is opted out (its hash, here or by the server): it is kept back here too.
+    /// The uploader found that `asset` is opted out (its hash, here or by the server): it is kept back here too. Not
+    /// while this phone has a lift of that hash on its way: the server refuses it only until it hears the lift.
     static func keptBack(_ asset: String, sha: String, _ s: inout GateState) {
+        guard !s.unsentLift.contains(sha.lowercased()) else { return }
         var hs = s.optedOut[asset] ?? []
         if !hs.contains(sha) { hs.append(sha) }
         s.optedOut[asset] = hs
@@ -197,12 +248,17 @@ enum Gate {
         }
     }
 
-    /// The server has these hashes now (POST /api/tombstones answered).
+    /// The server has these hashes now (POST /api/tombstones answered). A photo shared after all whose hashes have
+    /// all been lifted is approved.
     static func told(added: [String], lifted: [String], _ s: inout GateState) {
         s.unsentAdd.removeAll { added.contains($0) }
         s.unsentLift.removeAll { lifted.contains($0) }
         s.serverTombstones.formUnion(added)
         s.serverTombstones.subtract(lifted)
+        for (id, hs) in s.lifting.sorted(by: { $0.key < $1.key }) where !hs.contains(where: s.unsentLift.contains) {
+            s.lifting.removeValue(forKey: id)
+            if !s.approved.contains(id) { s.approved.append(id) }
+        }
     }
 
     /// Older photos are offered in coarse chunks: "since you joined", then a year at a time, newest first.
@@ -231,6 +287,38 @@ enum Gate {
     static func unique(_ xs: [String]) -> [String] {
         var seen = Set<String>()
         return xs.filter { seen.insert($0).inserted }
+    }
+}
+
+/// The app's talk with the server about tombstones (GateModel.tellServer: POST /api/tombstones, then Gate.told; and
+/// refresh's GET /api/tombstones, then serverTombstones), one at a time. Two POSTs under way at once may reach the
+/// server in either order (an add after the lift meant to undo it), and the answer to a GET read before a POST and
+/// written after it puts an older copy over a newer one (specs/PhoneGate.tla). A call while one runs is left to it:
+/// it goes round again, with the unsent lists as they are then.
+struct ServerTurns {
+    private(set) var busy = false
+    private var again = false, read = false
+
+    /// May this call talk to the server now (`read`: it wants GET /api/tombstones too)? If not, the one under way
+    /// goes round again for it.
+    mutating func begin(read: Bool) -> Bool {
+        self.read = self.read || read
+        if busy { again = true; return false }
+        busy = true
+        return true
+    }
+
+    /// A round starts: it POSTs what is unsent, then GETs if a call asked for it (the answer).
+    mutating func round() -> Bool {
+        defer { read = false; again = false }
+        return read
+    }
+
+    /// A round is over: true to go round again (a call came meanwhile), false when it is done.
+    mutating func end() -> Bool {
+        if again { return true }
+        busy = false
+        return false
     }
 }
 

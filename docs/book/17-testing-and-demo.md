@@ -380,7 +380,15 @@ The phone gate's (multiplayer phase 6): `ios/Tests/run.sh` compiles `Shared/Phon
 `Shared/UploadRequest.swift` with `ios/Tests/main.swift` ([chapter 24](24-uploading.md#building-and-running-it)).
 The replica's: `ios/Tests/run-replica.sh` compiles `PhotoEstate/Catalog/Catalog.swift` and `SQLite.swift` with
 `ios/Tests/Replica/main.swift`, a sync's pages and a kept favourite on a scratch file ([chapter
-20](20-sync.md#testing-it)). CI runs neither yet. The rest of the app was checked in the iOS Simulator against the demo
+20](20-sync.md#testing-it)). CI runs neither yet. The last part of the gate's is `specs/PhoneGate.tla`'s traces,
+the first model of the phone's Swift (November 2026): the
+gate's rules run in the order the app, the in-app uploader and the extension call them, against a server of a few
+lines. It found five broken by the code as it was: a photo marked in a batch sent once the policy became
+`everything`; an extension ended after `Gate.route` losing what it took (no bad timing); a photo kept back with no
+hash when its file could not be read (none either); "share after all" while the opt-out's POST was on its way; and
+an answer of `GET /api/tombstones` written over a later lift. Taking each fix out of the model in turn found six
+more, among them two POSTs reaching the server out of order and two copies of the same bytes; each is a test there
+too. The rest of the app was checked in the iOS Simulator against the demo
 library (104 photos), with the server up and then stopped, and its videos and Live Photos against
 `tools/video_demo.py`'s library in the Simulator on iOS 27.0 (iPhone 18 Pro), not yet on a real iPhone; `ios/project-sim.yml` builds it for a
 Simulator older than the upload extension needs. The demo is what makes that cheap: `embed.py serve

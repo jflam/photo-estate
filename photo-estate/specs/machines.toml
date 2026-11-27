@@ -166,6 +166,19 @@ code = { "faces.py" = ["default_hidden", "face_rows", "People.__init__", "People
 stamp = "6adf8eae7c12f702"
 
 [[machine]]
+name = "the phone gate: a photo on a member's iPhone, and its opt-out"
+tables = ["tombstones"]
+writers = ["estate.py", "private.py"]
+checked = "model"
+model = "PhoneGate.tla"
+# (GateState, the JSON file in the app group the iPhone app and its upload extension both write, ios/Shared/PhoneGate.swift;
+# the extension's jobs; and on the server, the member's tombstones and the bytes it has. Its Swift is fingerprinted as
+# Type.func, by tests/test_machines.py's swift_defs. estate.py writes tombstones only in purge (member 0, why purged, by
+# hand), which the model leaves out)
+code = { "../ios/Shared/PhoneGate.swift" = ["Gate.known", "Gate.held", "Gate.route", "Gate.queued", "Gate.gather", "Gate.toggle", "Gate.apply", "Gate.shareAfterAll", "Gate.refused", "Gate.keptBack", "Gate.sent", "Gate.me", "Gate.told", "ServerTurns.begin", "ServerTurns.round", "ServerTurns.end", "GateStore.update"], "../ios/PhotoEstate/Gate/GateModel.swift" = ["GateModel.refresh", "GateModel.readMe", "GateModel.gather", "GateModel.toggle", "GateModel.apply", "GateModel.shareAfterAll", "GateModel.tellServer", "GateModel.hashes"], "../ios/PhotoEstate/ForegroundUploader.swift" = ["ForegroundUploader.send", "ForegroundUploader.start", "ForegroundUploader.run", "ForegroundUploader.upload"], "../ios/UploadExtension/UploadExtension.swift" = ["UploadExtension.run", "UploadExtension.queue"], "private.py" = ["tombstones", "change_tombstones", "refused_upload"], "admin.py" = ["Admin.refused", "Admin.upload"] }
+stamp = "36e88bf9e37b7b0b"
+
+[[machine]]
 name = "a tombstone's reason"
 columns = ["tombstones.why"]
 checked = "not_needed"

@@ -82,12 +82,7 @@ final class GateModel: ObservableObject {
         defer { refreshing = false }
         await readMe()
         reload()
-        if gated {
-            await tellServer()
-            if let j = try? await API.get("api/tombstones"), let hs = j["tombstones"] as? [String] {
-                GateStore.update { $0.serverTombstones = Set(hs) }
-            }
-        }
+        if gated { await tellServer(read: true) }
         if let j = try? await API.get("api/inbox") {
             items = (j["items"] as? [[String: Any]] ?? []).compactMap { r in
                 guard let id = (r["id"] as? NSNumber)?.intValue else { return nil }
@@ -165,6 +160,10 @@ final class GateModel: ObservableObject {
         }
         reload()
         await tellServer()
+        if let left = state.batches.first(where: { $0.id == batch.id }) {   // marked, and no hash of theirs (Gate.apply)
+            let n = left.assets.count
+            problem = "\(n) photo\(n == 1 ? "" : "s") to keep back could not be read (in iCloud, with no network?): still here, not sent. Try again when you are online."
+        }
         ForegroundUploader.shared.send(state.approved)
     }
 
@@ -178,21 +177,33 @@ final class GateModel: ObservableObject {
 
     func markTold() { GateStore.update { $0.told = true }; reload() }
 
-    /// POST /api/tombstones with what the server has not heard yet; kept for next time if it cannot be reached.
-    private func tellServer() async {
-        let s = GateStore.read()
-        guard !s.unsentAdd.isEmpty || !s.unsentLift.isEmpty else { return }
-        do {
-            _ = try await API.post("api/tombstones", ["add": s.unsentAdd, "lift": s.unsentLift])
-            GateStore.update { Gate.told(added: s.unsentAdd, lifted: s.unsentLift, &$0) }
-            problem = nil
-        } catch {
-            problem = "Your server has not been told what you kept back yet: it will be, next time it can be reached."
-        }
-        reload()
+    private var turns = ServerTurns()
+
+    /// POST /api/tombstones with what the server has not heard yet (kept for next time if it cannot be reached), and,
+    /// for refresh (`read`), GET /api/tombstones after it. One at a time (ServerTurns): a call while one runs is left to it.
+    private func tellServer(read: Bool = false) async {
+        guard turns.begin(read: read) else { return }
+        repeat {
+            let wantsRead = turns.round()
+            let s = GateStore.read()
+            if !s.unsentAdd.isEmpty || !s.unsentLift.isEmpty {
+                do {
+                    _ = try await API.post("api/tombstones", ["add": s.unsentAdd, "lift": s.unsentLift])
+                    GateStore.update { Gate.told(added: s.unsentAdd, lifted: s.unsentLift, &$0) }
+                    problem = nil
+                } catch {
+                    problem = "Your server has not been told what you kept back yet: it will be, next time it can be reached."
+                }
+            }
+            if wantsRead, let j = try? await API.get("api/tombstones"), let hs = j["tombstones"] as? [String] {
+                GateStore.update { $0.serverTombstones = Set(hs) }
+            }
+            reload()
+        } while turns.end()
     }
 
-    /// The SHA-256 of each original file of a photo (a Live Photo has two).
+    /// The SHA-256 of each original file of a photo (a Live Photo has two); none if any of them cannot be read, so
+    /// that a photo is never kept back with only some of its hashes (Gate.apply leaves it to look over).
     static func hashes(of id: String) async -> [String] {
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else { return [] }
         var out: [String] = []
@@ -201,8 +212,9 @@ final class GateModel: ObservableObject {
             defer { try? FileManager.default.removeItem(at: file) }
             let o = PHAssetResourceRequestOptions()
             o.isNetworkAccessAllowed = true
-            if (try? await PHAssetResourceManager.default().writeData(for: r, toFile: file, options: o)) != nil,
-               let sha = try? FileHash.sha256(file) { out.append(sha) }
+            guard (try? await PHAssetResourceManager.default().writeData(for: r, toFile: file, options: o)) != nil,
+                  let sha = try? FileHash.sha256(file) else { return [] }
+            out.append(sha)
         }
         return out
     }
