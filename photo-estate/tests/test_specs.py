@@ -84,7 +84,7 @@ def start(items) -> None:
         # runs starting at once in one folder read each other's half-written copies ("Fatal errors while parsing").
         module, tmp = cfg.name.split(".")[0] + ".tla", base / cfg.name / "tmp"
         tmp.mkdir(parents=True)
-        cmd = [java, f"-Djava.io.tmpdir={tmp}", "-cp", str(jar), "tlc2.TLC",
+        cmd = [java, f"-Djava.io.tmpdir={tmp}", "-cp", str(jar), "tlc2.TLC", "-workers", str(workers(cfg)),
                "-metadir", str(base / cfg.name / "states"), "-config", cfg.name, module]
         proc = subprocess.Popen(cmd, cwd=SPECS, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         _procs.append(proc)
@@ -95,7 +95,15 @@ def start(items) -> None:
             raise
         return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
-    _pool = ThreadPoolExecutor(max_workers=os.cpu_count() or 2)
+    # A whole model is the long kind of run, and TLC can spread one over cores: the whole models asked for share
+    # the machine's between them (one alone has them all; eleven on four cores have one each, as every
+    # `before` config does: those stop at their first violation, seconds in).
+    cores, whole = os.cpu_count() or 2, sum(".before." not in c.name for c in asked)
+
+    def workers(cfg: Path) -> int:
+        return 1 if ".before." in cfg.name else max(1, cores // whole)
+
+    _pool = ThreadPoolExecutor(max_workers=cores)
     # The whole models first: they are the long ones (minutes), and the last to start sets when the run ends.
     for cfg in sorted(asked, key=lambda c: (".before." in c.name, c.name)):
         _runs[cfg] = _pool.submit(run, cfg)

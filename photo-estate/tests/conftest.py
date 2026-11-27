@@ -7,7 +7,7 @@ subprocess and passes when it exits 0. A failure shows the script's exit code an
 A file not listed here is an ordinary pytest module (tests/test_harness.py checks that no script is left
 out of the list).
 
-  uv run pytest -m "not slow"         # the fast tier: what CI runs (about a minute)
+  uv run pytest -m "not slow"         # the fast tier: what CI runs, in two kinds of job (a few minutes)
   uv run pytest                       # everything, including the app and model tests (several minutes)
   uv run pytest --legacy-runner=uv    # run each script with `uv run`, in its own PEP 723 environment
 
