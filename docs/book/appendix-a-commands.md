@@ -212,6 +212,7 @@ Run from `photo-estate/`; they use `pyproject.toml` and `uv.lock` ([chapter 17](
 | Command | Purpose |
 |---|---|
 | `uv sync [--group ml --group faces --group places]` | Build the locked development environment (the dev group by default) |
+| `bash tools/check.sh [--models]` | Everything CI checks, on this machine, before a pull request is opened: the lockfile, ruff, pyright, the fast tests, the script modules; the TLA+ models when the branch changes `specs/` (or with `--models`). Ends with `CHECKS PASSED` or `CHECKS FAILED` |
 | `uv run pytest -m "not slow"` | The fast tests, as CI runs them |
 | `uv run pytest [-m MARKERS] [--legacy-runner python\|uv]` | Every test (markers `slow`, `server`, `model`, `legacy`); `uv` runs each script in its own PEP 723 environment |
 | `uv run tests/<file>` | One test script on its own |

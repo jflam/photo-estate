@@ -189,7 +189,11 @@ its own with every core and the rest on the third. TLC reads only `specs/`, so a
 neither `specs/` nor what runs the models (`tests/test_specs.py`, `tests/conftest.py`, the workflow) skips
 `models`; a change to modelled code still fails `tests/test_machines.py` until `specs/machines.toml` is
 stamped again, which is a change to `specs/`. Every push to `main` checks the models. `ci` passes when
-`tests` passed and `models` passed or was skipped: it is the one check to require of a branch. It never downloads the model and never reaches the Mac mini or a real library. The slow tests are
+`tests` passed and `models` passed or was skipped: it is the one check `main` requires, so a pull request
+set to merge by itself (`gh pr merge --auto --merge`) does so when `ci` is green.
+[`tools/check.sh`](../../photo-estate/tools/check.sh) runs the same checks on the machine at hand before a
+pull request is opened, the models only when CI would check them, and ends with `CHECKS PASSED` or
+`CHECKS FAILED`: about a minute and a half on an M-series Mac, so a pull request arrives known to pass. CI never downloads the model and never reaches the Mac mini or a real library. The slow tests are
 left out on purpose: they need the ML stack (run `uv run pytest` on a machine that has it). Ruff's rules
 are kept to syntax errors and pyflakes, and `ruff format` is not enforced: the code has its own compact
 style.
