@@ -22,13 +22,13 @@
 
    Lens.cfg checks the code; Lens.before.<invariant>.cfg each find the violation there was. tests/test_specs.py
    runs them all with TLC, and tests/test_lens_states.py replays each violation on the real code. *)
-EXTENDS Naturals
+EXTENDS Naturals, FiniteSets, TLC
 
-CONSTANT Guarded
+CONSTANTS Guarded, Bens, Admins, Cleos
 
-Bens == {"b1", "b2"}
-Admins == {"ada", "dee"}
-Cleos == {"c1", "c2"}
+\* Slots within each role are interchangeable; all invariants here are safety invariants, so TLC's symmetry
+\* reduction checks the exact same reachable state space modulo slot renaming.
+Sym == {f @@ g @@ h : f \in Permutations(Bens), g \in Permutations(Admins), h \in Permutations(Cleos)}
 Slots == Bens \cup Admins \cup Cleos
 
 VARIABLES
@@ -309,8 +309,8 @@ SeriesAsAsked == albumWord # "none" => \A k \in 1..srows : spub[k] = (albumWord 
    requests in flight at once (what is left is a race between people). OneAdmin: Dee never acts. NoAlbum:
    the album is left as it is (a question about the filter alone). *)
 NoRace == \A s \in Slots : Busy(s) => rq'[s] # rq[s]
-OneEach == ~(Busy("b1") /\ Busy("b2")) /\ ~(Busy("c1") /\ Busy("c2"))
-OneAdmin == ~Busy("dee")
+OneEach == Cardinality({b \in Bens : Busy(b)}) <= 1 /\ Cardinality({c \in Cleos : Busy(c)}) <= 1
+OneAdmin == Cardinality({a \in Admins : Busy(a)}) <= 1
 NoAlbum == \A b \in Bens : rq[b].op # "album"
 (* Left out of this model, all of it in the code:
    - every other lens: the Estate defaults lens and a member's own "Hidden photos" (lenses.mine, estate_default:
