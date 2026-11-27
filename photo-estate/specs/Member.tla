@@ -50,9 +50,9 @@
    is there when it writes, and two loads are never between their read and their assignment at once.
 
    Member.cfg checks the code; Member.before.<invariant>.cfg each find the violation there was. tests/test_specs.py
-   runs them all with TLC, and tests/test_member_states.py replays each on the real code. Three invariants at the end
-   are broken by the code as it is and are not in Member.cfg: each is a question for the owner (the module's last
-   comment, and the tests that show each). *)
+   runs them all with TLC, and tests/test_member_states.py replays each on the real code. The three invariants at the
+   end were questions for the owner, who answered them (issues #130, #131, #132, and #134 for who may change a
+   member): they hold now, and are in Member.cfg with a .before config each. *)
 EXTENDS Naturals, FiniteSets
 
 CONSTANT Guarded
@@ -76,7 +76,10 @@ Row(r, s, nm, j) == [role |-> r, st |-> s, nm |-> nm, jn |-> j]
 NoRow == Row("member", "none", "n0", FALSE)         \* x before it asks: no row
 Seen(row) == [role |-> row.role, st |-> row.st]   \* what the roster keeps of a member (by_login)
 NoCopy == [w \in Who |-> Seen(NoRow)]
-Idle == [ph |-> "idle", m |-> "ada", f |-> "st", v |-> "active", cp |-> NoRow, saw |-> FALSE, lc |-> NoCopy]
+Idle == [ph |-> "idle", by |-> "ada", m |-> "ada", f |-> "st", v |-> "active", cp |-> NoRow, saw |-> FALSE, lc |-> NoCopy]
+\* core.states.MEMBER_MOVES: the statuses that may follow a member's status (nobody goes back to pending: issue #132)
+Moves(st) == CASE st = "pending" -> {"active", "revoked"} [] st = "active" -> {"revoked"} [] st = "revoked" -> {"active"}
+               [] OTHER -> {}
 \* What a read keeps for its write: nothing, Guarded (the write reads again, under the lock it takes first)
 Kept(x, none) == IF Guarded THEN none ELSE x
 DcIdle == [ph |-> "idle", allow |-> FALSE, saw |-> "none"]
@@ -138,30 +141,38 @@ ChangeRead(c, a, m, f, v) ==
   /\ part = "agent" => c = "c1" /\ a = "ada" /\ m = "ben" /\ f = "st"
   /\ SysadminIn(roster[a])
   /\ Gate(a, SysadminIn)
-  /\ wr' = [wr EXCEPT ![c] = [Idle EXCEPT !.ph = "read", !.m = m, !.f = f, !.v = v, !.cp = Kept(db[m], NoRow)]]
+  /\ wr' = [wr EXCEPT ![c] = [Idle EXCEPT !.ph = "read", !.by = a, !.m = m, !.f = f, !.v = v, !.cp = Kept(db[m], NoRow)]]
   /\ n' = n + 1
   /\ UNCHANGED <<part, db, roster, ever, since, lost, err, agentv>>
 
 \* members.change's write: new = the copy with the field set. Nothing differs: it returns. Else the UPDATE of every
 \* field from `new` (joined_at: the copy's, or now if `new` is active), then the check: no active sysadmin left is a
-\* ValueError, rolled back and answered 400 (no load). Guarded: the copy is the row as it is now (_begin first).
+\* ValueError, rolled back and answered 400 (no load). Guarded: the copy is the row as it is now (_begin first); and,
+\* since the owner's word of November 2026, read under that lock: whoever asks must be an active sysadmin now
+\* (Forbidden, whatever the roster let through: issue #134); a status follows only as Moves lets it (#132); and
+\* revoking Ben sets his approved agent pending again, which he is told (its item: #130).
 ChangeWrite(c) ==
   LET w == wr[c]
       row == IF Guarded THEN db[w.m] ELSE w.cp
       new == [row EXCEPT ![w.f] = w.v]
       put == [new EXCEPT !.jn = row.jn \/ new.st = "active"]
-      after == [db EXCEPT ![w.m] = put] IN
+      after == [db EXCEPT ![w.m] = put]
+      refused == Guarded /\ (~SysadminIn(Seen(db[w.by])) \/ (new.st # row.st /\ new.st \notin Moves(row.st)))
+      unbind == Guarded /\ w.m = "ben" /\ put.st = "revoked" /\ row.st # "revoked" /\ bnd = "approved" IN
   /\ w.ph = "read"
-  /\ IF new = row
-       THEN /\ wr' = [wr EXCEPT ![c].ph = "load"] /\ UNCHANGED <<db, ever, since, lost>>
-       ELSE IF ~HasSysadmin(after)
-         THEN /\ wr' = [wr EXCEPT ![c] = Idle] /\ UNCHANGED <<db, ever, since, lost>>
-         ELSE /\ db' = after
-              /\ lost' = (lost \/ \E g \in Fld \ {w.f} : put[g] # db[w.m][g])
-              /\ ever' = [ever EXCEPT ![w.m] = @ \/ put.st = "active"]
-              /\ since' = (since \/ (w.m = "ben" /\ put.st = "revoked"))
-              /\ wr' = [wr EXCEPT ![c].ph = "load"]
-  /\ UNCHANGED <<part, n, roster, wrongLet, err, bnd, bnode, dc, run, told, selfAllow, backIn, runRevoked>>
+  /\ IF refused
+       THEN /\ wr' = [wr EXCEPT ![c] = Idle] /\ UNCHANGED <<db, ever, since, lost, bnd, told>>
+       ELSE IF new = row
+         THEN /\ wr' = [wr EXCEPT ![c].ph = "load"] /\ UNCHANGED <<db, ever, since, lost, bnd, told>>
+         ELSE IF ~HasSysadmin(after)
+           THEN /\ wr' = [wr EXCEPT ![c] = Idle] /\ UNCHANGED <<db, ever, since, lost, bnd, told>>
+           ELSE /\ db' = after
+                /\ lost' = (lost \/ \E g \in Fld \ {w.f} : put[g] # db[w.m][g])
+                /\ ever' = [ever EXCEPT ![w.m] = @ \/ put.st = "active"]
+                /\ since' = (since \/ (w.m = "ben" /\ put.st = "revoked"))
+                /\ bnd' = (IF unbind THEN "pending" ELSE bnd) /\ told' = (IF unbind THEN "pending" ELSE told)
+                /\ wr' = [wr EXCEPT ![c].ph = "load"]
+  /\ UNCHANGED <<part, n, roster, wrongLet, err, bnode, dc, run, selfAllow, backIn, runRevoked>>
 
 \* ask_in, for a login the roster has no member for (PUBLIC), and members.request's read: lookup(con, login)
 RequestRead(r) ==
@@ -207,17 +218,21 @@ Let(p) ==
   /\ Gate(p, Active)
   /\ UNCHANGED <<part, n, db, roster, wr, ever, since, lost, err, agentv>>
 
-\* POST /api/tasks by Ben (Tasks.submit, acting_for Ben), and the worker starting it: a run with its token
+\* POST /api/tasks by Ben (Tasks.submit, acting_for Ben), and the worker starting it: a run with its token.
+\* Guarded: the worker (Tasks.worker) starts no task for a member who is not active now (Tasks.lets, which reads the catalog; it is
+\* cancelled where it would have been claimed: issue #131)
 Submit ==
   /\ part = "agent" /\ ~run /\ Active(roster["ben"])
   /\ Gate("ben", Active)
-  /\ run' = TRUE
+  /\ run' = (~Guarded \/ Active(Seen(db["ben"])))
   /\ UNCHANGED <<part, n, db, roster, wr, ever, since, lost, err, bnd, bnode, dc, told, selfAllow, backIn, runRevoked>>
 
-\* a call of the run to /mcp with its token (Server.handle: Tasks.run_of, from this computer): it acts for Ben
+\* a call of the run to /mcp with its token (Server.handle: Tasks.run_of, from this computer): it acts for Ben.
+\* Guarded: refused once he is not active (Tasks.lets, read from the catalog on every call: issue #131; the route that
+\* revoked him also cancels his tasks, Tasks.cancel_for, which is RunEnd here)
 RunCall ==
   /\ run
-  /\ runRevoked' = (runRevoked \/ ~Active(Seen(db["ben"])))
+  /\ runRevoked' = (runRevoked \/ (~Guarded /\ ~Active(Seen(db["ben"]))))
   /\ UNCHANGED <<part, n, db, roster, wr, ever, since, lost, wrongLet, err, bnd, bnode, dc, run, told, selfAllow, backIn>>
 
 \* the run ends (done, failed, cancelled, or its timeout): Tasks.forget of its token
@@ -259,13 +274,16 @@ DecideRead(t, allow, dev, wh, ip) ==
   /\ UNCHANGED <<part, n, db, roster, wr, ever, since, lost, err, bnd, bnode, run, told, backIn, runRevoked>>
 
 \* decide_binding's write: the UPDATE when the status it read is not the one asked for, the binding's item done, and
-\* the answer: the binding with the status asked for. Guarded: read under the lock (_begin), so it is the status now
+\* the answer: the binding with the status asked for. Guarded: read under the lock (_begin), so it is the status now;
+\* and an allow is refused (403) for a member who is not active now, read under the same lock: the roster let the
+\* request through, but a revoke committed since would have its agent approved with them out, and back with them
 DecideWrite(t) ==
   LET s == IF dc[t].allow THEN "approved" ELSE "revoked"
-      cur == IF Guarded THEN bnd ELSE dc[t].saw IN
+      cur == IF Guarded THEN bnd ELSE dc[t].saw
+      refused == Guarded /\ dc[t].allow /\ ~Active(Seen(db["ben"])) IN
   /\ dc[t].ph = "read"
-  /\ bnd' = IF cur # s THEN s ELSE bnd
-  /\ told' = s /\ since' = FALSE
+  /\ bnd' = IF ~refused /\ cur # s THEN s ELSE bnd
+  /\ told' = (IF refused THEN told ELSE s) /\ since' = (refused /\ since)
   /\ dc' = [dc EXCEPT ![t] = DcIdle]
   /\ UNCHANGED <<part, n, db, roster, wr, ever, lost, wrongLet, err, bnode, run, selfAllow, backIn, runRevoked>>
 
@@ -294,7 +312,7 @@ TypeOK ==
   /\ \A w \in W : wr[w].ph \in {"idle", "read", "load", "assign"}
   /\ bnd \in {"none", "pending", "approved", "revoked"} /\ bnode \in {"node", "v4", "v6"}
   /\ \A t \in T : dc[t].ph \in {"idle", "read"}
-  /\ told \in {"-", "approved", "revoked"}
+  /\ told \in {"-", "pending", "approved", "revoked"}
 
 \* members.py: change raises ValueError for "a change that would leave the estate with no active sysadmin"
 KeepsASysadmin == HasSysadmin(db)
@@ -365,8 +383,7 @@ Quiet == (\A w \in W : wr[w].ph = "idle") /\ \A t \in T : dc[t].ph = "idle"
      code as it is; only reading the member on every request would close it;
    - this computer (`local`: always the sysadmin, from PhotoApp.sysadmin, loaded with the roster), --demo's
      X-Demo-Member and X-Demo-Device, the demo's be= cookie;
-   - what a member's revoke does not touch: their questions, inbox items, subscriptions, sync feed and tasks queued
-     (a task queued for them before is started after: RunsOnlyForActive covers a run either way);
+   - what a member's revoke does not touch: their questions, inbox items, subscriptions and sync feed;
    - whois's cache of a device's name (WHOIS_FOR: ten minutes, a failure one): here each request finds whois
      answering or not, which is what the cache can give; an address that moves to another node is not modelled;
    - a second device for the agent, and a second agent; the device's name (bind updates it, never the node);
@@ -377,9 +394,11 @@ Quiet == (\A w \in W : wr[w].ph = "idle") /\ \A t \in T : dc[t].ph = "idle"
    - SQLite itself: each transaction is atomic, and a write never fails (one that waits for the lock longer than
      the connection's timeout fails, and nothing is written).
 
-   The three invariants above that are not in Member.cfg, with TLC's traces (tests/test_member_states.py shows each on
-   the real app):
-   - AllowedSinceLetIn: his agent approved, Ben revoked and let in again: it writes as him with no word from him;
-   - RunsOnlyForActive: Ben's run under way, Ben revoked: the run's calls act for him until it ends;
-   - PendingOnlyBeforeLetIn: Ben let in, then set to pending (the raw API; members.html never offers it). *)
+   The three invariants above were not in Member.cfg until the owner decided them (November 2026), with TLC's traces
+   of the code before (tests/test_member_states.py shows each fixed on the real app):
+   - AllowedSinceLetIn: his agent approved, Ben revoked and let in again: it wrote as him with no word from him.
+     A revoke now sets it pending, and an allow is refused while he is not active;
+   - RunsOnlyForActive: Ben's run under way, Ben revoked: the run's calls acted for him until it ended. They are
+     refused now, his tasks are cancelled, and none queued for him starts;
+   - PendingOnlyBeforeLetIn: Ben let in, then set to pending (the raw API). Refused now (Moves). *)
 =============================================================================

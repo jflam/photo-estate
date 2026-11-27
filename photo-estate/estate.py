@@ -287,7 +287,62 @@ def handle_xmp(con, d: str, fn: str, opener, st: dict) -> None:
     st["sidecars"] += 1
 
 
+BATCH = 200      # photos recorded in one transaction (cmd_ingest)
+
+
+def record(con, batch: list[dict], st: dict, source: str, known: set, actor: int | None, uploads: bool) -> None:
+    """cmd_ingest's short transaction: the rows of the photos it has copied into the store since the last one
+    (assets, who shared each, where it was found), with the write lock taken first and held only for these inserts.
+    Each photo is looked at again under the lock: one the same batch (or anyone) has recorded meanwhile is a
+    duplicate, and one purged meanwhile is refused."""
+    if not batch:
+        return
+    if con.in_transaction:      # (a sidecar's row)
+        con.commit()
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        for r in batch:
+            sha, dest = r["sha"], r["dest"]
+            if purged(con, sha):               # purged while it was being copied: the catalog never has it
+                st["refused"] += 1
+                if dest is not None:
+                    print(f"warning: {sha} was purged while it was copied: run the purge again to remove {dest}", file=sys.stderr)
+                continue
+            new = dest is not None and not con.execute("SELECT 1 FROM assets WHERE sha256=?", (sha,)).fetchone()
+            if new:
+                facts = r["facts"]
+                st["unreadable"] += "error" in facts
+                con.execute(
+                    "INSERT INTO assets(sha256, ext, kind, size, width, height, dhash, exif_taken_at,"
+                    " taken_at, first_seen) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (sha, r["ext"], r["kind"], r["size"], facts.get("width"), facts.get("height"), facts.get("dhash"),
+                     facts.get("exif_taken_at"), facts.get("exif_taken_at"), now()))
+                st["new"] += 1
+                st["new_bytes"] += r["size"]
+            else:
+                st["dup"] += 1
+            # Who shared it (private.py), in this transaction: from a phone inbox (--uploads) the member its
+            # folder names (m<id>/...; none: the first sysadmin), else the first sysadmin. A phone upload that
+            # nobody else is shown yet is private to its sharer until `private.py check` has scored it.
+            by = private.member_of(r["path"]) if uploads else None
+            st["held"] += private.record_sharer(con, sha, by if by in known else actor, new, r["kind"] == "image",
+                                                uploads, actor)
+            con.execute("INSERT OR IGNORE INTO occurrences(sha256, source, path, dir, filename, album)"
+                        " VALUES (?,?,?,?,?,?)", (sha, source, r["path"], r["d"], r["fn"], default_album(r["d"])))
+        con.commit()
+    except BaseException:
+        con.rollback()
+        raise
+    batch.clear()
+
+
 def cmd_ingest(a) -> None:
+    """Copy first, write after (issue #141): each photo is read from its source, hashed, copied into the store and
+    decoded for its facts with no transaction open, so the catalog's write lock is free while the files move; what
+    was copied is then recorded BATCH photos at a time, each batch one short transaction (record). The app answers
+    requests that write while an ingest runs, where it waited on up to 200 files before. A run stopped between a
+    copy and its record leaves a file in the store with no row: the next run finds it there and records it
+    (store_blob keeps a file already at its place)."""
     store = Path(a.store)
     (store / ".tmp").mkdir(parents=True, exist_ok=True)
     con = connect(a.db)
@@ -303,7 +358,8 @@ def cmd_ingest(a) -> None:
         t0 = time.time()
         before = con.execute("SELECT coalesce(max(rowid), 0) FROM assets").fetchone()[0]   # (the new photos: after it)
         st = dict(entries=0, media=0, new=0, dup=0, sidecars=0, seen=0, new_bytes=0, unreadable=0, refused=0, held=0)
-        for i, (path, opener) in enumerate(iter_entries(src), 1):
+        batch: list[dict] = []
+        for path, opener in iter_entries(src):
             st["entries"] += 1
             pp = PurePosixPath(path)
             d, fn = str(pp.parent), pp.name
@@ -322,6 +378,8 @@ def cmd_ingest(a) -> None:
                     events.emit_progress("ingest", done_before + st["media"])
                 else:
                     print(f"progress {done_before + st['media']}", flush=True)
+            if con.in_transaction:     # a sidecar's row: nothing is open, and no lock held, while a file is copied
+                con.commit()
             if con.execute("SELECT 1 FROM occurrences WHERE source=? AND path=?",
                            (name, path)).fetchone():
                 continue  # resuming an interrupted run
@@ -340,28 +398,11 @@ def cmd_ingest(a) -> None:
                 except (OSError, ValueError):
                     pass
                 f.unlink(missing_ok=True)
-            if dest:
-                facts = (worked or image_facts(dest)) if kind == "image" else {}
-                st["unreadable"] += "error" in facts
-                con.execute(
-                    "INSERT INTO assets(sha256, ext, kind, size, width, height, dhash, exif_taken_at,"
-                    " taken_at, first_seen) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (sha, ext, kind, size, facts.get("width"), facts.get("height"), facts.get("dhash"),
-                     facts.get("exif_taken_at"), facts.get("exif_taken_at"), now()))
-                st["new"] += 1
-                st["new_bytes"] += size
-            else:
-                st["dup"] += 1
-            # Who shared it (private.py), in this transaction: from a phone inbox (--uploads) the member its
-            # folder names (m<id>/...; none: the first sysadmin), else the first sysadmin. A phone upload that
-            # nobody else is shown yet is private to its sharer until `private.py check` has scored it.
-            by = private.member_of(path) if a.uploads else None
-            st["held"] += private.record_sharer(con, sha, by if by in known else actor, bool(dest), kind == "image",
-                                                a.uploads, actor)
-            con.execute("INSERT OR IGNORE INTO occurrences(sha256, source, path, dir, filename, album)"
-                        " VALUES (?,?,?,?,?,?)", (sha, name, path, d, fn, default_album(d)))
-            if i % 200 == 0:
-                con.commit()
+            facts = ((worked or image_facts(dest)) if kind == "image" else {}) if dest else {}
+            batch.append(dict(sha=sha, size=size, dest=dest, ext=ext, kind=kind, facts=facts, path=path, d=d, fn=fn))
+            if len(batch) >= BATCH:
+                record(con, batch, st, name, known, actor, a.uploads)
+        record(con, batch, st, name, known, actor, a.uploads)
         con.execute("INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?,?,?)",
                     (name, st["entries"], st["media"], st["new"], st["seen"], st["new_bytes"], now()))
         if st["new"] or st["dup"]:     # a run that added nothing (nothing unseen, or only purged photos) leaves none
@@ -1332,7 +1373,7 @@ def cmd_purge(a) -> None:
         print("The sources still have their copies (nothing here touches a source):")
         for src, path in sources:
             print(f"  {src}: {path}")
-    print("Restart the app so it forgets the photo now: launchctl kickstart -k gui/$(id -u)/com.jflam.photo-search")
+    print("The running app notices within a minute (its journal listener) and forgets the photo and its faces; no restart is needed.")
 
 
 def unlink_original(f: Path) -> None:

@@ -218,7 +218,7 @@ to that is shown.
 stateDiagram-v2
     [*] --> New: first run on this source
     New --> InProgress: streaming entries
-    InProgress --> InProgress: commit every 200 entries
+    InProgress --> InProgress: copy up to 200 files, then record them in one short transaction
     InProgress --> Finished: sources row written with finished_at
     InProgress --> InProgress: interrupted, then re-run<br/>(occurrences already recorded are skipped)
     Finished --> Skipped: re-run, prints "skip ... already ingested"
@@ -233,7 +233,10 @@ Two mechanisms cooperate:
    `pull-drive.sh` skip finished zips *without downloading them*.
 2. **Per-file skip inside an unfinished source.** Before reading an entry, ingest checks
    `occurrences` for `(source, path)`. If a previous run recorded it, the file is skipped without
-   being read. Commits happen every 200 entries, so a crash redoes at most the last 200.
+   being read. Files are copied, hashed and decoded with no transaction open, and what was copied is recorded 200
+   photos at a time, each batch one short transaction (`estate.record`): the catalog's write lock is free
+   while files move, so the app answers requests that write during an ingest. A crash redoes at most the
+   last 200; a file copied and not yet recorded is found at its place in the store and kept.
 
 The source's *name* is its file or directory name (`src.name`), not its full path, so moving a zip
 to a different disk does not make it look new.

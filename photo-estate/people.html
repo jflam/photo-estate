@@ -285,7 +285,7 @@ async function loadUnknown() {
   if (u === STALE || isAbort(u.error)) return;
   const el = $("#unknown");
   if (!el) return;
-  if (u.state === "failed") return say(`The unnamed faces could not be grouped: ${esc(u.error)}. Naming everyone else still works; the grouping runs again when the app is restarted.`);
+  if (u.state === "failed") return say(`The unnamed faces could not be grouped: ${esc(u.error)}. Naming everyone else still works; the grouping is tried again within a minute.`);
   if (u.state === "timeout") return say("Still grouping the unnamed faces after ten minutes.", "Check again");
   if (u.state === "error") return say(`Could not ask for the unnamed faces: ${esc(u.error.message)}.`, "Try again");
   if (!u.groups.length) { el.innerHTML = `<p class="empty">Nobody unnamed turns up often.</p>`; return; }
@@ -468,7 +468,7 @@ async function review(pid, year, skipped = false) {
   if ($("#every")) $("#every").onclick = () => {
     $("#every").disabled = true;
     save(false, async () => {                        // this page first, then everything else that is waiting
-      const ok = await attempt(() => api("/api/people/label", { pending: { person: pid, year }, person: pid }).then(() => true),
+      const ok = await attempt(() => api("/api/people/label", { pending: { person: pid, year, as_of: r.as_of }, person: pid }).then(() => true),
         "This page is saved, but the rest could not be named");
       if (!ok) return false;
       toast(`Everything waiting${year != null ? ` in ${year || "undated photos"}` : ""} named ${name}. The least likely are first here`);

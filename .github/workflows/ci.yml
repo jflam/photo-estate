@@ -34,7 +34,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30   # the models alone take about 12 (TLC, tests/test_specs.py)
     defaults:
       run:
         working-directory: photo-estate

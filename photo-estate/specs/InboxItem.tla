@@ -109,12 +109,14 @@ Init ==
 (* Who is a sysadmin: members.change of Ada's or Dee's role or status (POST /api/members/<id>), refused (ValueError)
    when it would leave the estate with no active sysadmin. Guarded: one who is not an active sysadmin after it has
    none of their member_request and lens_proposed items open (nothing of theirs to decide; deciding answers 403).
-   One made a sysadmin is given no items for what waits already (they see it on /members and in Albums). *)
+   One made a sysadmin has an item for what waits already (members._waiting: everyone asking to be let in, every
+   filter proposed; issue #127. Until then they were given none, and saw it on /members and in Albums). *)
 SetAdmin(a, v) ==
   /\ part \in {"request", "lens"} /\ admin[a] # v
   /\ \E b \in Admins : (IF b = a THEN v ELSE admin[b])
   /\ admin' = [admin EXCEPT ![a] = v]
-  /\ it' = IF Guarded /\ ~v THEN Closed(it, {a}) ELSE it
+  /\ it' = IF ~v THEN (IF Guarded THEN Closed(it, {a}) ELSE it)
+           ELSE IF (part = "request" /\ xs = "pending") \/ (part = "lens" /\ prop) THEN Put(it, {a}) ELSE it
   /\ UNCHANGED <<part, xs, pub, prop, dflt, sub, qs, at, dl, waits, bnd, wrong>>
   /\ Track
 
@@ -129,10 +131,12 @@ Request ==
   /\ UNCHANGED <<part, admin, pub, prop, dflt, sub, qs, at, dl, waits, bnd, wrong>>
   /\ Track
 
-\* members.change of the newcomer's status (any status may follow any other); one who was pending and is not now was
-\* let in or turned away: member_inbox.close of member_request, for every sysadmin
+\* members.change of the newcomer's status, as core.states.MEMBER_MOVES lets it move (let in or turned away; revoked;
+\* let in again; never pending again: issue #132); one who was pending and is not now was let in or turned away:
+\* member_inbox.close of member_request, for every sysadmin
 ChangeX(s) ==
   /\ part = "request" /\ xs # "none" /\ s # xs
+  /\ s \in (CASE xs = "pending" -> {"active", "revoked"} [] xs = "active" -> {"revoked"} [] OTHER -> {"active"})
   /\ xs' = s
   /\ it' = IF xs = "pending" THEN Closed(it, Admins) ELSE it
   /\ UNCHANGED <<part, admin, pub, prop, dflt, sub, qs, at, dl, waits, bnd, wrong>>
@@ -283,6 +287,14 @@ DecideBinding(allow) ==
   /\ UNCHANGED <<part, admin, xs, pub, prop, dflt, sub, qs, at, dl, waits, wrong>>
   /\ Track
 
+\* members.change revoking Cleo, the binding's member: her approved agent is pending again (to be allowed again once
+\* she is let back in: issue #130), with its item (put), in the same transaction
+RevokeMember ==
+  /\ part = "binding" /\ bnd = "approved"
+  /\ bnd' = "pending" /\ it' = Put(it, {"cleo"})
+  /\ UNCHANGED <<part, admin, xs, pub, prop, dflt, sub, qs, at, dl, waits, wrong>>
+  /\ Track
+
 --------------------------------------------------------------------------
 (* Every part: the member whose item it is puts it away (POST /api/inbox/<id>/dismiss) *)
 
@@ -316,7 +328,7 @@ Next ==
   \/ \E q \in Q : Ask(q) \/ Settle(q)
   \/ \E d \in {"d1", "d2"} : DealRead(d) \/ DealWrite(d)
   \/ Hold \/ \E w \in BOOLEAN : Look(w)
-  \/ Bind \/ \E allow \in BOOLEAN : DecideBinding(allow)
+  \/ Bind \/ RevokeMember \/ \E allow \in BOOLEAN : DecideBinding(allow)
   \/ \E t \in Tabs : DismissWrite(t) \/ \E k \in Ids : DismissRead(t, k)
 
 Spec == Init /\ [][Next]_vars
@@ -346,6 +358,12 @@ DoneWhenAnswered == \A s \in Slots : it[s] = "done" => Waiting(s) = {}
 \* member_request and lens_proposed: "every active sysadmin"; sysadmins: "the active sysadmins, whom a request or a
 \* proposal is for"; "done (decided, or no longer waiting on anyone)": an open one is held only by an active sysadmin
 AskedOfASysadmin == part \in {"request", "lens"} => \A a \in Admins : it[a] = "open" => admin[a]
+
+\* and the other way (issue #127): what waits for a sysadmin is before every active sysadmin, as an item that is open
+\* or that they put away themselves: one made a sysadmin after it was asked has it too
+AskedOfEverySysadmin ==
+  /\ part = "request" /\ xs = "pending" => \A a \in Admins : admin[a] => it[a] \in {"open", "dismissed"}
+  /\ part = "lens" /\ prop => \A a \in Admins : admin[a] => it[a] \in {"open", "dismissed"}
 
 \* member_request: "closed when that member is let in or turned away"; lens_proposed: "closed when a sysadmin decides
 \* (lenses.decide) or the owner takes the filter back"

@@ -348,15 +348,36 @@ class Tasks:
             got = {k: got[k] for k in ("id", "status", "created_at", "finished_at") if k in got}
         return got, 200
 
+    def cancel_for(self, member: int, actor: int | None = None) -> list[int]:
+        """A member was revoked: every task acting for them that is queued or running is cancelled (a running one's
+        agent is stopped), by `actor`. The ids cancelled. (Issue #131.)"""
+        with closing(self.con()) as con:
+            ids = [i for i, in con.execute(
+                f"SELECT id FROM agent_tasks WHERE acting_for=? AND status IN ({', '.join('?' * len(TASK_ACTIVE))}) ORDER BY id",
+                (member, *sorted(TASK_ACTIVE)))]
+        return [i for i in ids if self.cancel(i, actor)[0].get("status") == TaskStatus.CANCELLED]
+
+    def lets(self, acting_for: int | None) -> bool:
+        """A run may act for this member: no one (the family archivist), or a member who is active now."""
+        if acting_for is None:
+            return True
+        with closing(self.con()) as con:
+            m = members.get(con, acting_for)
+        return m is not None and m.active
+
     # -- running ---------------------------------------------------------------------------------
 
     def worker(self) -> None:
         while not self.stopping.is_set():
             with closing(self.con()) as con:
-                row = con.execute("SELECT id, prompt FROM agent_tasks WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
+                row = con.execute("SELECT id, prompt, acting_for FROM agent_tasks WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
             if not row:
                 self.wake.wait(30)
                 self.wake.clear()
+                continue
+            *row, acting_for = row
+            if not self.lets(acting_for):      # queued for a member revoked since (a listener's, or a revoke that lost a race)
+                self.move(row[0], TaskStatus.CANCELLED, TaskStatus.QUEUED, finished_at=now())
                 continue
             # the claim: only if it is still queued (a cancel may have landed since the SELECT)
             if not self.move(row[0], TaskStatus.RUNNING, TaskStatus.QUEUED, started_at=now()):

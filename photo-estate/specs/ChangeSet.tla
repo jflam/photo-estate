@@ -23,11 +23,12 @@
 
    Guarded = TRUE is the code. Guarded = FALSE is the code before it was fixed (November 2026), kept so the
    invariants can be seen to fail without the guard: Changes.write takes the write lock (BEGIN IMMEDIATE) before
-   it reads, and refuses `hide` and `discard` (409, Changes.followed) of an album published as a series or with
-   new photos waiting for it (an open series_update item); the series listener takes the write lock and reads the
-   album again before it opens the item, and opens none for an album that is no longer a series; lenses.publish
-   does not publish the series of an album that is up for hiding or discarded (409). Here a write going by what is
-   there when it writes is Now.
+   it reads, and `hide` and `discard` of an album published as a series or with new photos waiting for it (an open
+   series_update item) take the series back and close the item in the same transaction (Changes.unfollow,
+   lenses.series_taken_back; until issues #124 and #125 they were refused instead, 409); the series listener takes
+   the write lock and reads the album again before it opens the item, and opens none for an album that is no longer
+   a series; lenses.publish publishes and takes back no series at all (409: a series goes by its album,
+   publish_album; issue #126). Here a write going by what is there when it writes is Now.
 
    ChangeSet.cfg checks the code; ChangeSet.before.<invariant>.cfg each find the violation there was.
    tests/test_specs.py runs them all with TLC, and tests/test_change_set_states.py replays each on the real code. *)
@@ -220,17 +221,18 @@ HideRead ==
   /\ Seal
 
 \* hide's write: UPDATE change_sets SET op='hide', kind='list', status='open' (a live album first fixed as what
-\* it finds now: Changes.add_items of its members, here both photos). Guarded: refused (409, Changes.followed)
-\* while it is published as a series or new photos wait for it (an open series_update item), as they are once
-\* the write lock is held.
+\* it finds now: Changes.add_items of its members, here both photos). Guarded: Changes.unfollow, with the write
+\* lock held: its series, if published, is taken back (lenses.series_taken_back), and its open series_update item
+\* is done (the new photos wait for nothing now).
 HideWrite ==
   /\ cw.op = "hide"
-  /\ IF Guarded /\ (Now(cw.pub, srow = "pub") \/ Now(cw.ask, asked))
-       THEN UNCHANGED <<row, item>>
-       ELSE /\ op' = "hide" /\ kind' = "list" /\ status' = "open" /\ UNCHANGED grows
-            /\ item' = IF kind = "live" THEN [p \in P |-> New] ELSE item
+  /\ op' = "hide" /\ kind' = "list" /\ status' = "open" /\ UNCHANGED grows
+  /\ item' = IF kind = "live" THEN [p \in P |-> New] ELSE item
+  /\ IF Guarded
+       THEN srow' = (IF srow = "pub" THEN "unpub" ELSE srow) /\ asked' = FALSE /\ waiting' = {}
+       ELSE UNCHANGED <<srow, asked, waiting>>
   /\ cw' = Idle
-  /\ UNCHANGED <<hid, srow, asked, waiting, review, ls>>
+  /\ UNCHANGED <<hid, review, ls>>
   /\ Seal
 
 \* Changes.write discard: summary reads the set; 409 while a hidden row of it is there
@@ -240,16 +242,16 @@ DiscardRead ==
   /\ UNCHANGED <<row, item, hid, srow, asked, waiting, review, ls>>
   /\ Seal
 
-\* discard's write: status 'discarded'; member_inbox.close of the review item. Guarded: refused (409,
-\* Changes.followed) while it is published as a series or new photos wait for it, as they are once the write
-\* lock is held.
+\* discard's write: status 'discarded'; member_inbox.close of the review item. Guarded: Changes.unfollow, as
+\* HideWrite: the series taken back, and the series_update item done.
 DiscardWrite ==
   /\ cw.op = "discard"
-  /\ IF Guarded /\ (Now(cw.pub, srow = "pub") \/ Now(cw.ask, asked))
-       THEN UNCHANGED <<status, review>>
-       ELSE status' = "discarded" /\ review' = FALSE
+  /\ status' = "discarded" /\ review' = FALSE
+  /\ IF Guarded
+       THEN srow' = (IF srow = "pub" THEN "unpub" ELSE srow) /\ asked' = FALSE /\ waiting' = {}
+       ELSE UNCHANGED <<srow, asked, waiting>>
   /\ cw' = Idle
-  /\ UNCHANGED <<op, kind, grows, item, hid, srow, asked, waiting, ls>>
+  /\ UNCHANGED <<op, kind, grows, item, hid, ls>>
   /\ Seal
 
 \* Changes.write candidates {add}: summary, then Changes.candidates reads the open series_update item and the
@@ -283,11 +285,12 @@ PublishAlbum(on) ==
   /\ Seal
 
 \* lenses.publish(on) of the series row by its id (POST /api/lenses/<id>/publish), in its transaction: _theirs
-\* reads the lens, and nothing of its album. Guarded: a series whose album is up for hiding or discarded is not
-\* published (409).
+\* reads the lens, and nothing of its album. Guarded: refused for every series (409), published or not: a series
+\* is published and taken back by publish_album alone, which reads its album.
 LensPublish(on) ==
+  /\ ~Guarded
   /\ srow # "none"
-  /\ IF on THEN srow = "unpub" /\ (Guarded => op = "view" /\ Found) /\ srow' = "pub"
+  /\ IF on THEN srow = "unpub" /\ srow' = "pub"
            ELSE srow = "pub" /\ srow' = "unpub"
   /\ UNCHANGED <<row, item, hid, asked, waiting, review, cw, ls>>
   /\ Seal

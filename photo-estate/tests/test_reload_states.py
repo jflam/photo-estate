@@ -310,14 +310,13 @@ def test_busy_ends_when_the_thread_cannot_be_started(app, monkeypatch):
     assert not call(app, "GET", f"/api/changes/{sid}", ADA)["busy"]
 
 
-# -- what is: questions for the owner ----------------------------------------------------------------------------
+# -- what failed is tried again (the owner's word on issues #138, #139, #140): PhotoApp.mend and notice -----------
 
-def test_what_is_a_relook_that_raises_after_its_commit_leaves_the_photo_shown(app, monkeypatch):
-    """PrivateEvenWhenARelookFails (not in Reload.cfg). Ben makes a photo private: private.change commits, then his
-    relook raises (here: lenses.read finds the catalog locked). His request is answered an error (through the HTTP
-    server: no answer, the connection dropped). The catalog says private; the app goes on showing it to Ada, and
-    nothing tries again: it lasts until something else relooks or reloads (any lens, private or change-set write, a
-    release, a members change, an ingest, a restart)."""
+def test_a_relook_that_raises_after_its_commit_is_read_again(app, monkeypatch):
+    """PrivateEvenWhenARelookFails. Ben makes a photo private: private.change commits, then his relook raises (here:
+    lenses.read finds the catalog locked). His request is answered an error; the catalog says private and the app
+    still shows it to Ada. Before the fix nothing tried again. The app knows its looks are stale, and the minute
+    timer (mend) reads them again: Ada is no longer shown it."""
     y = plain(app, 3)
     share(app, y, BEN)
 
@@ -326,20 +325,20 @@ def test_what_is_a_relook_that_raises_after_its_commit_leaves_the_photo_shown(ap
     monkeypatch.setattr(app, "read_looks", locked)
     with pytest.raises(sqlite3.OperationalError):
         app.request("POST", "/api/private", headers=BEN, body={"shas": [y], "private": True})
+    assert app.looks_stale and "looks" in app.mend()      # (still locked: it fails again, and stays to be done)
+    settle(app)
+    assert app.looks_stale and y in seen(app, ADA)
     monkeypatch.undo()
-    con = estate.connect(app.a.db)
-    assert con.execute("SELECT why FROM private WHERE sha256=?", (y,)).fetchone() == ("withdrawn",)
-    con.close()
-    assert y in seen(app, ADA) and app.may_see(y, mid(app, ADA))     # what is
-    assert app.settling == 0 and app.reload_state["state"] == "idle"   # nothing is under way to bring it up to date
-    app.reload_catalog()                                                # (the next ingest's reload does)
-    assert y not in seen(app, ADA)
+    assert "looks" in app.mend()
+    settle(app)
+    assert not app.looks_stale and y not in seen(app, ADA) and not app.may_see(y, mid(app, ADA))
+    assert app.mend() == {}                                # nothing left to mend
 
 
-def test_what_is_a_reload_that_raises_is_not_tried_again(app, tmp_path, monkeypatch):
-    """AsTheCatalogEvenAfterAFailure (not in Reload.cfg). An ingest's reload raises: the old catalog keeps answering,
-    reload_state says the error, loaded_through stays where it was (the listeners wait for it), and nothing tries
-    again: the run's photos are searchable at the next reload (the next ingest that adds photos) or a restart."""
+def test_a_reload_that_raises_is_tried_again(app, tmp_path, monkeypatch):
+    """AsTheCatalogEvenAfterAFailure. An ingest's reload raises: the old catalog keeps answering, reload_state says
+    the error and loaded_through stays where it was. Before the fix nothing tried again until the next ingest. The
+    minute timer reloads: the run's photos are searchable."""
     x = upload(app, tmp_path, BEN, 2, receipt=False)
     mark = app.loaded_through
 
@@ -347,11 +346,51 @@ def test_what_is_a_reload_that_raises_is_not_tried_again(app, tmp_path, monkeypa
         raise MemoryError("out of memory")
     monkeypatch.setattr(app, "load_catalog", broken)
     app.reload_catalog()
+    assert app.reload_state["state"] == "idle" and "MemoryError" in app.reload_state["error"] and app.reload_failed
+    assert x not in app.live.cat.index and app.loaded_through == mark
+    app.mend()["catalog"].join(GUARD)                      # still broken: it stays to be done
+    assert app.reload_failed and x not in app.live.cat.index
     monkeypatch.undo()
-    assert app.reload_state["state"] == "idle" and "MemoryError" in app.reload_state["error"]
-    assert x not in app.live.cat.index and x not in seen(app, ADA) and app.loaded_through == mark   # what is
+    app.mend()["catalog"].join(GUARD)
+    assert not app.reload_failed and x in seen(app, ADA) and app.loaded_through > mark
+    assert app.mend() == {}
+
+
+def test_a_photo_held_by_a_script_run_by_hand_is_noticed(app, tmp_path):
+    """Issue #140: `private.py library` holds a photo of Ben's from another process (here: private.library on a
+    connection of its own, with a stand-in for the scoring). Its journal entry is after the looks the app holds, and
+    the listeners' next pass reads them again: Ada is no longer shown it. The app's own changes are not read twice."""
+    y = plain(app, 5)
+    share(app, y, BEN)
+    assert app.notice() == {"looks": False, "purged": False}
+    con = estate.connect(app.a.db)
+    judge = private.judge
+    private.judge = lambda con, model, shas: {s: (["a receipt"] if s == y else [], [0.0]) for s in shas}
+    try:
+        assert private.library(con, mid(app, BEN), MODEL, out=lambda *a: None)["held"] == 1
+    finally:
+        private.judge = judge
+        con.close()
+    assert y in seen(app, ADA)                              # (nobody told the app)
+    assert app.notice()["looks"]
+    settle(app)
+    assert y not in seen(app, ADA) and app.notice() == {"looks": False, "purged": False}
+    call(app, "POST", "/api/private", BEN, {"shas": [y], "private": False})      # the app's own: read at once
+    settle(app)
+    assert y in seen(app, ADA) and app.notice() == {"looks": False, "purged": False}
+
+
+def test_a_photo_purged_by_hand_leaves_the_app(app, tmp_path):
+    """Issue #140: `estate.py purge` removes a photo from the catalog while the app runs. Its journal entry is after
+    the catalog being served was read, and the listeners' next pass reloads: nobody is shown it, with no restart."""
+    x = upload(app, tmp_path, BEN, 4, receipt=False)
     app.reload_catalog()
-    assert x in seen(app, ADA) and app.loaded_through > mark
+    assert x in seen(app, BEN) and not app.notice()["purged"]
+    estate.cmd_purge(argparse.Namespace(db=app.a.db, store=str(tmp_path / "store"), sha=x, reason="a test", yes=True,
+                                        backup_dir=str(tmp_path), cache=None))
+    assert x in app.live.cat.index                          # (nobody told the app)
+    assert app.notice()["purged"]
+    assert x not in app.live.cat.index and x not in seen(app, BEN) and not app.notice()["purged"]
 
 
 # -- who waits for whom (specs/ReloadLocks.tla) ------------------------------------------------------------------

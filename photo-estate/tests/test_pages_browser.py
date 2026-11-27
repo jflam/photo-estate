@@ -711,6 +711,36 @@ def test_search_the_viewer_opened_and_closed_quickly_with_back_and_forward(page,
     assert page.url == home and not page.warned
 
 
+def test_library_keeps_its_rows_when_the_page_changes_width_behind_a_search(page, demo_app):
+    """The page's width changes while the Library is hidden behind Search (the window is resized, or a short
+    list of results takes the scrollbar away and a long one brings it back): a hidden grid has no width, and
+    laid out for it every photo was a row of its own, which Back then showed."""
+    watch_search(page)
+    rows = lambda: page.evaluate("() => [...document.querySelectorAll('#libGrid .row')].map(r => [...r.children].map(t => t.style.width))")
+    size = page.viewport_size
+    page.goto(demo_app + "/")
+    page.locator("#libGrid .t img").first.wait_for(state="attached")
+    before = rows()
+    assert any(len(r) > 1 for r in before) and all(not w.startswith("-") for r in before for w in r)
+    page.locator('#tabbar [data-tab="search"]').click()
+    page.locator("#q").fill("kitten")
+    page.keyboard.press("Enter")
+    page.locator("#sGrid .t").first.wait_for()
+    page.set_viewport_size({"width": size["width"] - 200, "height": size["height"]})
+    page.wait_for_timeout(200)
+    page.set_viewport_size(size)
+    page.wait_for_timeout(200)
+    page.go_back(); page.go_back()                              # the search page, then the Library, as it was left
+    page.wait_for_function("!document.querySelector('#libTab').hidden")
+    page.locator("#libGrid .t").first.wait_for()
+    page.wait_for_timeout(200)
+    assert rows() == before
+    page.set_viewport_size({"width": size["width"] - 200, "height": size["height"]})   # and showing, it still follows the page's width
+    page.wait_for_function(f"document.querySelectorAll('#libGrid .row').length > {len(before)}")
+    assert all(not w.startswith("-") for r in rows() for w in r)
+    assert not page.warned, page.warned
+
+
 def test_search_a_rapid_navigation_session_throws_nothing(page, demo_app):
     """Every view, switched faster than the server answers (each request is kept back until a few
     actions later): no uncaught error (a TransitionError is one; the `page` fixture fails the test on

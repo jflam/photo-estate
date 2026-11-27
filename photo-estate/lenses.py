@@ -41,7 +41,7 @@ of M's and one applied hiding set; a series: a new album of M's): later changes 
   estate_default(con)            the Estate defaults lens, made if there is none (both: in the caller's transaction)
   create(con, member, title)     a new filter lens of the member's
   subscribe(con, member, lens, mode, shas=None) / unsubscribe(con, member, lens)
-  publish(con, member, lens, on) / publish_album(con, member, album, on)
+  publish(con, member, lens, on) / publish_album(con, member, album, on) / series_taken_back(con, member, album, why)
   propose(con, member, lens) / decide(con, member, lens, accept)     (decide: a sysadmin)
   show(con, member, sha, on)     "show it anyway", and taking that back
   set_favorites(con, member, shas, on)
@@ -421,19 +421,18 @@ def unsubscribe(con, member: int | None, lid) -> dict:
 
 
 def publish(con, member: int | None, lid, on: bool) -> dict:
-    """Publish a lens of the member's, or take it back (and a proposal of it with it). An estate default stays
-    published (409), and so does one a sysadmin accepted while the request was on its way. A series is published
-    only while its album is one to look at (409 for one up for hiding or discarded), as publish_album publishes it."""
+    """Publish a filter of the member's, or take it back (and a proposal of it with it). An estate default stays
+    published (409), and so does one a sysadmin accepted while the request was on its way. A series is published and
+    taken back from its album only (publish_album, which reads the album; 409 here: issue #126)."""
     with con:
         _begin(con)          # (a sysadmin may be deciding it: what this goes by is what it writes over, specs/Lens.tla)
         lens = _theirs(con, lid, member)
         if lens.estate_default and not on:
             raise LensError(409, "an estate default stays published")
+        if lens.kind == "series":          # (it goes by its album, which only publish_album reads: specs/ChangeSet.tla)
+            raise LensError(409, "a series is published, and taken back, from its album")
         if lens.published == on:
             return {"lens": lens.id, "published": on, "changed": False}
-        if on and lens.kind == "series" and not con.execute(   # (as publish_album: specs/ChangeSet.tla)
-                "SELECT 1 FROM change_sets WHERE id=? AND op='view' AND status IS NOT 'discarded'", (lens.set_id,)).fetchone():
-            raise LensError(409, "a series is published only while its album is there to look at, not up for hiding or put away")
         con.execute("UPDATE lenses SET published=?, proposed_at=CASE WHEN ? THEN proposed_at END WHERE id=?",
                     (int(on), int(on), lens.id))
         if not on and lens.proposed_at:    # a proposal taken back with it: nothing is left for a sysadmin to decide
@@ -469,6 +468,19 @@ def publish_album(con, member: int | None, sid: int, on: bool) -> dict:
             member_inbox.close(con, "lens_changed", f"album:{sid}")
         journal.append(con, member, "album.published" if on else "album.unpublished", f"album:{sid}", {"lens": lid})
     return {"album": sid, "lens": lid, "published": on, "changed": True}
+
+
+def series_taken_back(con, member: int | None, sid: int, why: str, acting_for: int | None = None) -> int | None:
+    """An album is put up for hiding or put away (Changes.write, in its transaction, which holds the write lock): its
+    series, if it is published, is taken back with it, as publish_album(on=False) does, and journaled with `why`.
+    The series' lens id, or None when there was nothing published. (Issue #124.)"""
+    got = con.execute("SELECT id FROM lenses WHERE kind='series' AND set_id=? AND published", (sid,)).fetchone()
+    if not got:
+        return None
+    con.execute("UPDATE lenses SET published=0 WHERE id=?", (got[0],))
+    member_inbox.close(con, "lens_changed", f"album:{sid}")
+    journal.append(con, member, "album.unpublished", f"album:{sid}", {"lens": got[0], "why": why}, acting_for)
+    return got[0]
 
 
 def propose(con, member: int | None, lid) -> dict:

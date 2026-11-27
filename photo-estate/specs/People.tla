@@ -103,10 +103,12 @@ Overwrite(v) == IF Guarded /\ dbSrc \in Settled THEN dbSrc ELSE v
 (* PhotoApp.load_people, one at a time (people_loading) *)
 
 \* people_loading taken, Lifecycle.begin; Guarded: the changes the People answering has taken (People.writes, under its
-\* lock) noted. (Before the fix nothing was noted, and nothing reads bSeen then.)
+\* lock) noted. (Before the fix nothing was noted, and nothing reads bSeen then.) Every load asked for by now is this
+\* one (PhotoApp.load_people, whose every run is PhotoApp.load_people_once: asked while one runs, one more runs after it, however many asked: issue #145; a load
+\* reads everything, so one that begins after the asking serves them all).
 LoadBegin ==
   /\ ld = "none" /\ asks > 0
-  /\ ld' = "begun" /\ asks' = asks - 1 /\ ph' = "loading"
+  /\ ld' = "begun" /\ asks' = 0 /\ ph' = "loading"
   /\ bSeen' = mW
   /\ UNCHANGED <<dbSrc, dbPriv, lPriv, cur, bSrc, bOut, bCs, bGrp, ada, ben, flips, hc, ig, cleo, said, wrong, failed>>
 
@@ -131,11 +133,13 @@ LoadBuild ==
   /\ UNCHANGED <<dbPriv, lPriv, cur, bOut, bSeen, ph, asks, ada, ben, flips, hc, ig, cleo, said, wrong, failed>>
 
 \* People() (or, Guarded, People.refresh in replaced_by) raised (a locked or broken table, out of memory):
-\* Lifecycle.fail; the People answering keeps answering
+\* Lifecycle.fail; the People answering keeps answering. Guarded: people_failed is set, and the minute timer asks for
+\* a load again (PhotoApp.mend: issue #143), until one succeeds
 LoadFail ==
   /\ Fails /\ ld \in {"begun", "read", "built"}
   /\ ld' = "none" /\ ph' = "failed" /\ failed' = TRUE
-  /\ UNCHANGED <<dbSrc, dbPriv, lPriv, cur, new, asks, ada, ben, flips, hc, ig, cleo, said, wrong>>
+  /\ asks' = IF Guarded /\ asks = 0 THEN 1 ELSE asks
+  /\ UNCHANGED <<dbSrc, dbPriv, lPriv, cur, new, ada, ben, flips, hc, ig, cleo, said, wrong>>
 
 \* Guarded: People.replaced_by, under the old one's lock: if it took a change since LoadBegin, the new one reads the names
 \* again from the catalog (People.refresh) and works the automatic ones out again (rescore, written where they changed);
@@ -171,6 +175,13 @@ ClusterDone(o) ==
     \/ /\ o = "new" /\ ld = "built" /\ bCs = "working" /\ bCs' = to
        /\ UNCHANGED <<dbSrc, dbPriv, lPriv, cur, ld, bSrc, bOut, bSeen, bGrp, ph, asks, ada, ben, flips, hc, ig, cleo,
                       said, wrong, failed>>
+
+\* Guarded: a grouping that failed is run again on the same People by the minute timer (PhotoApp.mend,
+\* People.recluster: issue #143). Before, that People never grouped again
+ClusterAgain ==
+  /\ Guarded /\ cs = "failed" /\ cs' = "waiting"
+  /\ UNCHANGED <<dbSrc, dbPriv, lPriv, ep, mSrc, mOut, mW, grp, ld, new, ph, asks, ada, ben, flips, hc, ig, cleo, said,
+                 wrong, failed>>
 
 --------------------------------------------------------------------------
 (* Ada: POST /api/people/label {faces: [f], person: P} *)
@@ -256,6 +267,7 @@ ReloadInstall ==
 Next ==
   \/ LoadBegin \/ LoadRead \/ LoadBuild \/ LoadFail \/ LoadInstall
   \/ \E o \in {"cur", "new"} : ClusterPick(o) \/ ClusterDone(o)
+  \/ ClusterAgain
   \/ AdaTake \/ AdaWrite \/ CleoLook \/ CleoTake \/ CleoWrite
   \/ BenCommit \/ BenRelook \/ BenLoad \/ ReloadInstall
 
@@ -303,10 +315,11 @@ Quiet == ld = "none" /\ asks = 0 /\ hc = 0 /\ ben # "relook" /\ ada.at # "took" 
 \* AsTheCatalogEvenAfterAFailure, for the owner)
 AsTheCatalogOnceQuiet == Quiet /\ ~failed => (mOut = dbPriv /\ (~mOut => mSrc = dbSrc))
 
-(* Broken by the code as it is, and not in People.cfg: a question for the owner (see the end of this module) *)
+(* A question for the owner until November 2026, who answered it (issue #143): in People.cfg now, with its .before *)
 
-\* A load of People that raised is not tried again: until the next ingest's faces, private change or restart, People is
-\* what it was (a photo released meanwhile is not in it; one made private is, but shown to nobody: NoPrivateFaceShown)
+\* A load of People that raised is tried again (LoadFail: a load is asked for, so this is not Quiet until one succeeds).
+\* Before, it was not: until the next ingest's faces, private change or restart, People was what it had been (a photo
+\* released meanwhile not in it; one made private in it, but shown to nobody: NoPrivateFaceShown)
 AsTheCatalogEvenAfterAFailure == Quiet => (mOut = dbPriv /\ (~mOut => mSrc = dbSrc))
 
 (* For asking narrower questions, as an ACTION_CONSTRAINT in a .cfg of your own. NoRace: nothing happens between a
@@ -326,13 +339,15 @@ NoRace == /\ ld = "begun" => ld' \in {"read", "none"}
      names no face to a person it is not (Google's name is never worked out again), and rescore's automatic names are
      worked out again from the face_not rows by refresh. Two members changing names at once inside one People wait for
      its lock, which is held across read, write and swap, so they are not a race (tests/test_faces_consistency.py);
-   - the other faces of a group, what a group label names of f, and "everything waiting for P" (label's `pending`),
-     which is what the People that takes it says is waiting, not what the page showed: by design, one People or two;
+   - the other faces of a group, what a group label names of f, and "everything waiting for P" (label's `pending`):
+     since issue #144 it names what waited on the People that showed the page (its `as_of`, review's answer: another
+     People's is refused, as a group's number is: Cleo's shape here) in photos the member is shown (`keep`);
    - the scan (faces.py run, a process of its own), which adds faces and never changes one: a People misses those
      added after its read until the next load, which the ingest's on_faces asks for; and estate.py purge, which deletes
-     a photo's faces, by hand, with a restart after it (MAC-MINI.md): until then the People answering still has them,
-     and a face id the purge freed (the largest) is given to the next scan's new face, which a label of the purged
-     face by id then names (tests/test_people_states.py shows it; a question for the owner);
+     a photo's faces, by hand: the app notices its journal entry within 30 seconds and loads People again
+     (PhotoApp.notice: issue #140); until then the People answering still has them, and a face id the purge freed
+     (the largest) is given to the next scan's new face. Every write of a name says which photo it means (People.key:
+     id and sha256, issue #142), so a label of the purged face names nothing (tests/test_people_states.py);
    - the estate defaults' hides, which change what People is built without as a private row does, through the lens
      routes' relook and a change set's hidden_changed (Ben's shape);
    - the ingest's on_faces and intake's on_faces (more calls of load_people), the release timer (Ben's shape), and the
@@ -340,7 +355,8 @@ NoRace == /\ ld = "begun" => ld' \in {"read", "none"}
      refused it, persons.name being UNIQUE, and the load failed);
    - the counts People answers (named, pending, a group's n) and a group's guess at a name, which are over every face
      it holds, a stale one's included: no face is shown by them;
-   - a rescore's own SQLite error after a label's transaction committed (the request is answered 500, the name is in);
+   - a rescore's own SQLite error after a label's transaction committed: the name is in, and the request says so
+     (People.rescored: issue #147; it answered 500);
    - who waits for whom: the locks are People.lock (the old one's, then the new one's, in replaced_by and in a change
      passed on; never the other way), people_loading outside them, and SQLite's write lock inside them. *)
 =============================================================================

@@ -780,6 +780,10 @@ class Grid {
   constructor(o) {
     Object.assign(this, o);
     this.el = $(o.grid); this.items = []; this.sections = [];
+    // The width its rows are laid out for; null when they were laid out with the grid not showing (another tab,
+    // another scale), where it has no width to measure and the rows are wrong until `fit` lays them out again.
+    this.drawn = null;
+    new ResizeObserver(() => this.fit()).observe(this.el);   // shown again, or the page another width
     this.thumbs = new Thumbs();
     // What is asked of the server and what has come (app/grid-flow.js). The list as a whole is empty (nothing
     // asked for), loading (its first page is on its way: ghosts, or the list before it dimmed, show meanwhile),
@@ -873,6 +877,7 @@ class Grid {
   }
   gpad() { return parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gpad")) || 0; }
   draw(sec, W) {
+    this.drawn = this.live() ? W : null;
     const wh = $(".where", sec.el);
     if (wh) {                                      // the three places that account for most of this section
       const c = new Map();
@@ -904,9 +909,14 @@ class Grid {
     for (let k = had; k < sec.box.children.length; k++) this.thumbs.watch(sec.box.children[k]);
   }
   relayout() {
+    if (!this.live()) { this.drawn = null; return; }  // not showing: there is no width to lay out for (`fit` does it when it shows)
     const W = this.width();
     for (const sec of this.sections) { sec.rows = []; sec.box.innerHTML = ""; this.draw(sec, W); }
   }
+  // Showing, and its rows are for another width or for none: lay them out for this one. A grid drawn or laid
+  // out again while hidden measured no width and put every photo in a row of its own; a search whose results
+  // were short enough to take the page's scrollbar away did that to the Library behind it.
+  fit() { if (this.live() && this.sections.length && this.drawn !== this.width()) this.relayout(); }
   counts() { for (const sec of this.sections) { const n = $(".n", sec.el); if (n) n.textContent = (this.noun || photos)(this.count?.(sec) || sec.items.length); } }
   top() {                                            // the section now at the top of the screen, under the bar
     const y = barH() + 8;
@@ -982,6 +992,7 @@ function setTab(t, how = "push", arrive = false) {    // how: push, replace, or 
   TAB = t;
   $("#libTab").hidden = t !== "library"; $("#albTab").hidden = t !== "albums"; $("#searchTab").hidden = t !== "search";
   for (const b of $$(".tabbar .tb")) b.classList.toggle("on", b.dataset.tab === t);
+  for (const g of grids()) g.fit();                  // before the page is scrolled to where it was left
   if (how !== "init") nav(how);
   if (t === "library") libShow(arrive);
   else if (t === "albums") albShow();
@@ -1105,6 +1116,7 @@ function libShow(arrive = false) {                    // arrive: at the anchor (
   $("#libBack").hidden = !L.trail.length || coarse.matches;   // on touch, a swipe in from the left edge goes back
   $("#libAll").hidden = !all; $("#libMonth").hidden = !month; $("#libPeriods").hidden = all || month;
   $("#scrub").classList.remove("on");
+  lgrid.fit(); mgrid.fit();                          // (each is hidden while the other scale shows)
   if (month) { clearPeriods(); monthShow(); }
   else if (!all) {
     if (L.known.is("known")) renderPeriods();
@@ -2751,8 +2763,6 @@ addEventListener("popstate", () => {
   closeMenus(); MAKER.cancel();
   restore(history.state);
 });
-let lastW = 0;
-new ResizeObserver(() => { const w = document.documentElement.clientWidth; if (w !== lastW) { lastW = w; for (const g of grids()) g.relayout(); } }).observe(document.documentElement);
 
 history.scrollRestoration = "manual";               // the page puts you back where you were, card or month, itself
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});   // the "can't reach" page

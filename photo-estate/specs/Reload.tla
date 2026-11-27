@@ -187,6 +187,23 @@ ReloadAfter(i) ==
   /\ UNCHANGED <<dbN, dbX, dbY, dbL, dbF, memN, memX, memY, memL, memF, gen, lib, ig, rs, err, got, pc, fw, rd,
                  settling, hc, q, seen, stale, failed>>
 
+\* PhotoApp.mend, on the minute timer (Guarded: the owner's word on issues #138 and #139): a relook that raised, or
+\* a thread that could not be started, set looks_stale, and a reload that raised set reload_failed; mend reads the
+\* looks again (on_hidden_change: relook, the feeds, People) and reloads the catalog (reload_catalog, when no reload
+\* is running). Here both in one step, once nobody holds fav_write and no request reads: a relook holds fav_write from
+\* its read to its install and a reload's install takes it, so no other relook, favourite or install comes between
+\* (the races of a read against a commit are RelookRead's and ReloadRead's, above, and a commit's own relook or the
+\* ingest's own reload follows it as before). It may raise again (Fails): then nothing changes, and the next minute
+\* tries again, which is this action not taken. PhotoApp.notice (the listeners' pass) calls the same two for what a
+\* script run by hand wrote: more callers of the actions above, and no new one.
+Mend ==
+  /\ Guarded /\ failed /\ fw = "none" /\ q = "out" /\ rs = "idle" /\ \A i \in I : inv[i] = "none"
+  /\ \A a \in Relooks : pc[a] \notin {"relook", "install", "forget", "spawn"}
+  /\ memN' = dbN /\ memX' = dbX /\ memY' = dbY /\ memL' = dbL /\ memF' = dbF
+  /\ gen' = gen + 1 /\ lib' = -1
+  /\ err' = FALSE /\ fresh' = FALSE /\ failed' = FALSE
+  /\ UNCHANGED <<dbN, dbX, dbY, dbL, dbF, ig, rs, inv, got, pc, fw, rd, settling, hc, q, seen, stale>>
+
 --------------------------------------------------------------------------
 (* Ben, Ada and Cleo *)
 
@@ -316,7 +333,7 @@ Next ==
   \/ \E i \in I : ReloadRead(i) \/ ReloadInstall(i) \/ ReloadFail(i) \/ ReloadNext(i) \/ ReloadAfter(i)
   \/ BenCommit \/ AdaCommit \/ CleoCommit \/ CleoShow \/ BenSettled \/ AdaSettled
   \/ \E a \in Relooks : RelookRead(a) \/ RelookFail(a) \/ RelookInstall(a) \/ RelookForget(a) \/ Spawn(a) \/ SpawnFail(a)
-  \/ Enter \/ Stats \/ Leave
+  \/ Enter \/ Stats \/ Leave \/ Mend
 
 Spec == Init /\ [][Next]_vars
 
@@ -371,14 +388,17 @@ NotBusyOnceSettled == (hc # "run" /\ pc["ada"] \in {"idle", "done", "failed"} /\
 \* later one"
 NoStaleWork == ~stale
 
-(* Broken by the code as it is, and not in Reload.cfg: questions for the owner (see the end of this module) *)
+(* Not in Reload.cfg: each is broken from a failure until Mend has run (the minute timer; the owner's word on issues
+   #138 and #139). Before that, nothing tried again: they stayed broken until the next ingest, change or restart. An
+   invariant cannot say "within a minute"; AsTheCatalogOnceQuiet says the rest: whatever memory has that the catalog
+   does not say, once quiet, is known to have failed, and Mend is enabled. *)
 
-\* A reload that raised is not tried again: until the next ingest (or a restart), the photos it was to bring in are not
-\* searchable, and the listeners wait for it (loaded_through). A relook that raised is not tried again either.
+\* A reload that raised, or a relook: until Mend, the photos it was to bring in are not searchable, and the listeners
+\* wait for it (loaded_through).
 AsTheCatalogEvenAfterAFailure == Quiet => <<memN, memX, memY, memL, memF>> = db
 
 \* Ben's withdrawal is committed; his relook raises, and his request is answered an error. Y is shown to everyone,
-\* whatever it now says, until something else relooks or reloads.
+\* whatever it now says, until Mend (or anything else that relooks or reloads).
 PrivateEvenWhenARelookFails == ~(pc["ben"] = "failed" /\ dbY /\ ~memY)
 
 (* For asking narrower questions, as an ACTION_CONSTRAINT in a .cfg of your own. NoRace: nothing happens between a
@@ -388,9 +408,11 @@ NoRace == /\ \A a \in Relooks : pc[a] = "install" => pc'[a] # "install"
           /\ \A i \in I : inv[i] = "install" => inv'[i] # "install"
 
 (* Left out of this model, all of it in the code:
-   - the scripts run by hand on the catalog, which tell the running app nothing: `private.py library` (holds photos
-     private), `estate.py purge` (takes photos out), `estate.py migrate`; what they write is in memory only after
-     the next reload or relook (a restart, an ingest, any lens, private or change-set write, a release);
+   - the scripts run by hand on the catalog: `private.py library` (holds photos private) and `estate.py purge`
+     (takes photos out) are noticed by their journal entries on the listeners' next pass (PhotoApp.notice, every 30
+     seconds: a relook for an entry after looks_through, a reload of the whole catalog for a purge after
+     loaded_through; issue #140), which are the relook and the reload modelled here with one more caller;
+     `estate.py migrate` still tells the app nothing;
    - the release timer (release_due, then relook, as Ben's request here), the lens routes (relook, then
      on_hidden_change(people): Ben's shape), a members change (on_hidden_change(None): Ada's shape), held_review
      (Ben's), and intake's on_ready and on_faces (more calls of reload_catalog);
