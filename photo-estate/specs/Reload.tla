@@ -400,9 +400,10 @@ NoRace == /\ \A a \in Relooks : pc[a] = "install" => pc'[a] # "install"
      once check has let them go;
    - loaded_through (the journal mark taken before the load, set only when the catalog is in), and the listeners
      waiting on it: after a failed reload they wait until the next good one (AsTheCatalogEvenAfterAFailure);
-   - feed_update and load_people as such (hidden_changed's work; People reads the catalog itself), the pregenerate
-     thread, and what a run's error message says when feed_update raises after the catalog is in (reported as a
-     failed reload, though the catalog is in);
+   - feed_update and load_people as such (hidden_changed's work; People reads the catalog itself): the feeds, and the
+     phones that follow them, are specs/PhoneReplica.tla, and People specs/People.tla; the pregenerate thread, and what
+     a run's error message says when feed_update raises after the catalog is in (reported as a failed reload, though
+     the catalog is in);
    - who waits for whom: a swap waits for the requests in the gate and makes new ones wait; that, fav_write and
      SQLite's write lock are specs/ReloadLocks.tla. Here a swap is one step;
    - the window between a change set's commit and on_change (Changes.write lets its lock go first): `busy` is false

@@ -2,9 +2,9 @@
 
 The phone's copy of the catalog has to answer one question honestly: *what changed on the server since
 I last asked?* Everything else in the offline design (chapters 21-22) leans on the answer. This chapter
-covers both ends: the **change feed** the server publishes ([sync.py](../../photo-estate/sync.py), 100
+covers both ends: the **change feed** the server publishes ([sync.py](../../photo-estate/sync.py), 144
 lines) and the **sync engine** the phone runs
-([SyncEngine.swift](../../ios/PhotoEstate/Catalog/SyncEngine.swift), 142 lines), and the replica they
+([SyncEngine.swift](../../ios/PhotoEstate/Catalog/SyncEngine.swift), 134 lines), and the replica they
 fill.
 
 ## The problem
@@ -108,6 +108,32 @@ brings every member's feed up to date after a reload or a change to what anyone 
 a member with no phone costs nothing. Each `update()` digests every row the member sees, a little over a
 second for 100,000 photos on the author's laptop (tools/bench_views.py), in a background thread.
 
+### A page agrees with what its member sees
+
+The feed is told after the view has changed, never with it: a relook swaps the new view in and then starts
+the thread whose `feed_update` reads the member's rows (in the gate) and writes them (outside it), and a
+favourite is shown in its swap and touched after. So for a moment the feed can be behind the view, and two
+of those threads can write in the other order from their reads, the older view last. The rows a page sends
+are read from the request's own view, so before November 2026 a phone could be sent a row of a photo its
+member no longer saw (Ben makes a photo private; Ada's phone asks before her feed is told, and is sent
+its place, people and path), or be left without one for good (an older view, without the photo, written
+after a newer one with it).
+
+The model of it ([specs/PhoneReplica.tla](../../photo-estate/specs/PhoneReplica.tla)) found those, and
+the page now puts its own window right before it is cut. The route passes `Feed.page` a function `now`
+(the row the member's view has for a sha, or nothing if it does not show it), and the feed walks the rows
+after the cursor, in order, until `limit` of them are as `now` has them: a row that is not is taken as
+gone if the member does not see it, or given the view's row if it differs, and every deletion after the
+cursor of a photo the member does see is taken back. Those writes get the next version, so they come later
+in the order, on this page or the next. A page never carries a row its member does not see; each row it
+sends is the one the feed has, so the feed's next "nothing changed" is about what the phone really has; and
+whatever an older write left wrong is put right by the next page. It costs a digest for each row the page
+looks at (the `limit` it sends, and any it puts right on the way).
+
+A favourite's touch asks for the member's feed inside its swap, and touches it whether the feed is ready
+or not: a feed a first phone made meanwhile, or one being written after a start, hears of it too.
+`POST /api/favorite` answers `fav` as the photo is when it answers, and that is what the phone keeps.
+
 ### The epoch
 
 Versions live in a file, and a file can be lost. If `sync-feed.db` is deleted, a new one starts again at
@@ -150,7 +176,13 @@ The step that matters is the transaction: **the page and the new cursor commit t
 phone is killed between pages, either both are in the file or neither is, so the cursor never claims
 rows the replica lacks. A request that fails leaves the cursor where it was, and the engine records
 the error and `online = false` for a `URLError`. The app does not retry in a loop: a failed sync just
-means the replica stays as it was, and the next launch or refresh tries again. Each state is published:
+means the replica stays as it was, and the next launch or refresh tries again.
+
+The transaction is `Catalog.applyPage`, and it has one more thing to check. A favourite set on the phone is
+written into the replica as soon as the server agrees (`Favourites.keep`, its own transaction), so a page
+asked before that, and answered from the server's view before the favourite, would put the old one back.
+`keep` moves a counter in `kv` (`edits`) that the cursor is read with; `applyPage` finds it moved, writes
+nothing, and the run asks for that page again (specs/PhoneReplica.tla). Each state is published:
 
 | Published value | Used for |
 |---|---|
@@ -212,16 +244,27 @@ crossed. It checks that a device that pages through ends with exactly the catalo
 sync sends nothing; that a load of an unchanged catalog does not bump the version; that three changes
 and a deletion arrive as exactly those four rows; that a device interrupted after one page and resumed
 ends up identical; that versions survive restarting the feed; and that deleting the feed file gives a
-new epoch and makes the device start again, pruning rows the new feed does not have. The Swift side has
-no unit tests: it was exercised in the Simulator against the demo library, with the server up and then
-stopped (chapter 17's demo is what makes that cheap).
+new epoch and makes the device start again, pruning rows the new feed does not have.
+
+What happens when things run at once is [specs/PhoneReplica.tla](../../photo-estate/specs/PhoneReplica.tla),
+checked by TLC (chapter 17), and each order it found wrong is a test on the real code:
+[tests/test_phone_replica_states.py](../../photo-estate/tests/test_phone_replica_states.py) on a real
+`PhotoApp` on the demo library, with a phone that pages and applies as `SyncEngine` does, a thread held
+between two of its steps while another runs (a photo made private sent before the feed is told; an older
+view written over a newer one; a cursor past a row never sent; a favourite set as a first phone makes the
+feed, or before a feed is ready after a start; an answer that says what was asked, not what is); and
+`ios/Tests/run-replica.sh`, which compiles `Catalog.swift` and `SQLite.swift` for the Mac with a harness:
+pages in turn, a deletion, an epoch changed mid-way, and a page asked before a favourite the phone kept.
+The rest of the Swift side was exercised in the Simulator against the demo library, with the server up and
+then stopped (chapter 17's demo is what makes that cheap).
 
 ## Where to look in the code
 
 | Topic | Where |
 |---|---|
-| The feed: `digest`, `Feed.update`, `Feed.page` | [sync.py](../../photo-estate/sync.py) |
-| `feed_update`, the `/api/sync` route | `PhotoApp` in [photo_app.py](../../photo-estate/photo_app.py); a row's extra fields in `Catalog.feed_extra` ([catalog.py](../../photo-estate/catalog.py)) |
+| The feed: `digest`, `Feed.update`, `Feed.page` and `_agree` | [sync.py](../../photo-estate/sync.py) |
+| `feed_update`, the `/api/sync` route (`sync_route`), a favourite's touch | `PhotoApp` in [photo_app.py](../../photo-estate/photo_app.py); a row's extra fields in `Catalog.feed_extra` ([catalog.py](../../photo-estate/catalog.py)) |
 | The sync loop and its published state | [SyncEngine.swift](../../ios/PhotoEstate/Catalog/SyncEngine.swift) |
-| The replica's schema, `apply`, `dropOtherEpochs` | [Catalog.swift](../../ios/PhotoEstate/Catalog/Catalog.swift) |
+| The replica's schema, `apply`, `applyPage`, `keep`, `dropOtherEpochs` | [Catalog.swift](../../ios/PhotoEstate/Catalog/Catalog.swift) |
+| What runs at once, checked | [specs/PhoneReplica.tla](../../photo-estate/specs/PhoneReplica.tla) |
 | The request and response, in full | [Appendix B](appendix-b-http-api.md) |

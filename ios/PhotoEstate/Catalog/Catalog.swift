@@ -159,7 +159,7 @@ final class Catalog {
         return url
     }()
 
-    private static let schema = """
+    static let schema = """
         CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
         CREATE TABLE IF NOT EXISTS photos (
             id INTEGER PRIMARY KEY, sha TEXT UNIQUE NOT NULL, ext TEXT, taken TEXT, local TEXT, tz TEXT,
@@ -183,7 +183,7 @@ final class Catalog {
     /// A catalog from an older build gets the columns it lacks: two for stacks and "Best first", three for
     /// videos and Live Photos. They fill in as the server sends rows again (a row changes when the server
     /// begins to send a new field of it); until then every photo held is a still, as it always was.
-    private static func migrate(_ db: SQLite) throws {
+    static func migrate(_ db: SQLite) throws {
         let have = Set(try db.query("PRAGMA table_info(photos)") { $0.text(1) })
         for (name, type) in [("stack", "TEXT"), ("best", "REAL"), ("kind", "TEXT"), ("dur", "REAL"), ("live", "TEXT")] where !have.contains(name) {
             try db.exec("ALTER TABLE photos ADD COLUMN \(name) \(type)")
@@ -287,6 +287,62 @@ final class Catalog {
 
     static func set(_ db: SQLite, _ k: String, _ v: String) throws {
         try db.run("INSERT OR REPLACE INTO kv VALUES (?, ?)", [k, v])
+    }
+
+    // MARK: a sync's steps (SyncEngine), and a favourite kept (Favourites): each one transaction on the store's writer
+
+    /// Where the replica is in the feed: what it sends as `epoch`, `since` and `after`; and `edits`, how many times
+    /// the phone's copy was changed here (`keep`), so a page asked before one is not applied over it.
+    struct Cursor: Equatable {
+        var epoch = ""
+        var since = "0"
+        var after = ""
+        var edits = "0"
+    }
+
+    static func cursor(_ db: SQLite) throws -> Cursor {
+        Cursor(epoch: try get(db, "epoch") ?? "", since: try get(db, "since") ?? "0", after: try get(db, "after") ?? "",
+               edits: try get(db, "edits") ?? "0")
+    }
+
+    /// One page of the feed, as the server answered it (`GET /api/sync`).
+    struct Page {
+        var rows: [[String: Any]]
+        var deleted: [String]
+        var epoch: String
+        var since: Int
+        var after: String
+        var more: Bool
+        var trips: String?
+    }
+
+    /// A page and its cursor, in one transaction; when there is no more, whatever another epoch left is dropped and
+    /// the trips replaced. `asked` is the cursor the page was asked with. Returns whether the page was applied: not if
+    /// the phone's copy was changed since it was asked (a favourite kept: the page may be from before it, and would
+    /// put the old one back), and then nothing is written and the caller asks again (specs/PhoneReplica.tla).
+    static func applyPage(_ db: SQLite, _ page: Page, asked: Cursor) throws -> Bool {
+        var applied = false
+        try db.transaction {
+            guard try get(db, "edits") ?? "0" == asked.edits else { return }
+            applied = true
+            try apply(db, rows: page.rows, deleted: page.deleted, epoch: page.epoch)
+            try set(db, "epoch", page.epoch)
+            try set(db, "since", String(page.since))
+            try set(db, "after", page.after)
+            if !page.more {
+                try dropOtherEpochs(db, keep: page.epoch)
+                if let trips = page.trips { try set(db, "trips", trips) }
+            }
+        }
+        return applied
+    }
+
+    /// The server has made these favourites (or not): the phone's copy says so too, and `edits` moves on.
+    static func keep(_ db: SQLite, _ shas: [String], _ on: Bool) throws {
+        try db.transaction {
+            for s in shas { try db.run("UPDATE photos SET fav=? WHERE sha=?", [on, s]) }
+            try set(db, "edits", String((Int(try get(db, "edits") ?? "0") ?? 0) + 1))
+        }
     }
 
     // MARK: reading

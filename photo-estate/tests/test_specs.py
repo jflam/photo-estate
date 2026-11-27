@@ -16,6 +16,8 @@
   specs/PhoneGate.tla      the iPhone's phone gate: a photo on a member's phone (GateState, the upload extension,
                            the app, the in-app uploader) and its opt-out on the server (ios/Shared/PhoneGate.swift;
                            ios/Tests/main.swift replays its traces)
+  specs/PhoneReplica.tla   a member's change feed and their phone's copy of the catalog, with every writer of either
+                           (sync.Feed; PhotoApp.feed_update, sync_route, set_favorites; the phone's SyncEngine)
 
 For each model, <Name>.cfg is the code as it is and must pass; each <Name>.before.<invariant>.cfg is the code
 before a fix, and must still find its violation (an invariant that can no longer fail checks nothing).
