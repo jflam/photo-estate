@@ -26,9 +26,11 @@ enum UploadRequest {
         r.type == .photo || r.type == .video || r.type == .pairedVideo
     }
 
-    /// The resource's file name (iOS 27 renamed `originalFilename` to `filename`; the Simulator-only project builds for 26).
+    /// The resource's file name (iOS 27 / Xcode 27 renamed `originalFilename` to `filename`; older SDKs use `originalFilename`).
     static func name(_ r: PHAssetResource) -> String? {
+        #if compiler(>=6.4)
         if #available(iOS 27, macOS 27, *) { return r.filename }
+        #endif
         return r.originalFilename
     }
 
