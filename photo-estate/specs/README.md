@@ -133,8 +133,10 @@ gh release download v1.7.4 --repo tlaplus/tlaplus --pattern tla2tools.jar --dir 
 uv run pytest tests/test_specs.py
 ```
 
-That runs every `.cfg` here: those that must pass, and those that must fail. It is skipped where there is no
-Java or no jar; CI has both and runs it on every pull request. One model by hand, from this folder (on a Mac
+That runs every `.cfg` here: those that must pass, and those that must fail, as many at a time as the machine
+has cores (in a run of all the tests they are started first, and checked while the others run). It is skipped where there is no Java or no jar; CI has both and sets `REQUIRE_TLC`, with which it fails
+instead of being skipped; it runs it on every push to `main`, and on a pull request that changes this folder or
+what runs the models (TLC reads nothing else, so any other pull request would get the same answer). One model by hand, from this folder (on a Mac
 with Homebrew's Java, which is not on the PATH, `java` is `/opt/homebrew/opt/openjdk/bin/java`):
 
 ```

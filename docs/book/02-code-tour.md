@@ -667,5 +667,5 @@ and embedded still works in the app; each later stage adds capability.
 | [deploy/HOME-COMPUTE.md](../../photo-estate/deploy/HOME-COMPUTE.md) | The same on a Linux PC with an NVIDIA GPU |
 | [deploy/CLOUD-SESSIONS.md](../../photo-estate/deploy/CLOUD-SESSIONS.md) | Working on the app from a phone: cloud sessions and the preview |
 | [demo/CREDITS.md](../../photo-estate/demo/CREDITS.md) | Author and source of every demo photo |
-| [.github/workflows/ci.yml](../../.github/workflows/ci.yml) | CI on every pull request and push to main: the lockfile, ruff, pyright, the fast tests ([chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci)) |
+| [.github/workflows/ci.yml](../../.github/workflows/ci.yml) | CI on every pull request and push to main: the lockfile, ruff, pyright and the fast tests in one job, the TLA+ models in three more when `specs/` changed (always on main), and `ci`, the one check that answers for them ([chapter 17](17-testing-and-demo.md#one-command-pytest-ruff-and-ci)) |
 | [.github/workflows/book.yml](../../.github/workflows/book.yml) | Builds this book and publishes it to GitHub Pages |

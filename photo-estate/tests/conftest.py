@@ -7,7 +7,7 @@ subprocess and passes when it exits 0. A failure shows the script's exit code an
 A file not listed here is an ordinary pytest module (tests/test_harness.py checks that no script is left
 out of the list).
 
-  uv run pytest -m "not slow"         # the fast tier: what CI runs (about a minute)
+  uv run pytest -m "not slow"         # the fast tier: what CI runs, in two kinds of job (a few minutes)
   uv run pytest                       # everything, including the app and model tests (several minutes)
   uv run pytest --legacy-runner=uv    # run each script with `uv run`, in its own PEP 723 environment
 
@@ -66,6 +66,24 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--legacy-runner", choices=("python", "uv"), default="python",
                      help="run the self-running scripts with this environment's Python (default) "
                           "or with `uv run`, each in its own PEP 723 environment")
+
+
+def _specs(session: pytest.Session):
+    """tests/test_specs.py as this run imported it, or None when the run has none of its tests."""
+    return next((item.module for item in session.items
+                 if item.path.name == "test_specs.py" and hasattr(getattr(item, "module", None), "start")), None)
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    # The TLA+ models take minutes and each has a core to itself: they are started now, to be checked while
+    # the tests before test_specs.py run (its docstring).
+    if (specs := _specs(session)) and not session.config.option.collectonly:
+        specs.start(session.items)
+
+
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    if specs := _specs(session):
+        specs.stop()
 
 
 def pytest_pycollect_makemodule(module_path: Path, parent: pytest.Collector):
