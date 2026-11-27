@@ -7,6 +7,14 @@ enum Server {
         return URL(string: s) ?? URL(string: "https://home-compute.taila5abb.ts.net:8766")!
     }
 
+    /// A member-only link to one photo in this estate (`/?photo=<sha>`).
+    static func photoURL(_ sha: String) -> URL {
+        var c = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        c?.path = "/"
+        c?.queryItems = [URLQueryItem(name: "photo", value: sha)]
+        return c?.url ?? baseURL
+    }
+
     /// A debug build started with `-demoMember ben` (`xcrun simctl launch <device> com.jflam.photoestate -demoMember ben`)
     /// is that member of a demo server: every request, the web views' too, carries the `demo_member` cookie, which
     /// only a server started with `--demo` reads (photo_app.py). A session cookie, for that launch only; a release

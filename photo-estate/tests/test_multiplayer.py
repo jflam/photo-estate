@@ -598,3 +598,34 @@ def test_the_view_is_kept_per_member_and_let_go_on_a_change(tmp_path):
     live.install(c)
     live.visible_for(1)
     assert asked == [1, 2, 1, 1]
+
+
+def test_photo_link_endpoint_respects_privacy_and_filters(app):
+    """GET /api/photos/<sha> answers one photo for /?photo=<sha> links: member's own fav and private fields,
+    still reachable when hidden by the member's own filter (so the viewer shows why), and 404 — identical to
+    an unknown sha — when private to someone else."""
+    x = seen(app, ADA)[0]
+    fake = "0" * 64
+
+    # shared photo: Ada and Ben both get 200, each with their own fav
+    call(app, "POST", "/api/favorite", ADA, {"sha": x, "fav": True})
+    a_row = call(app, "GET", f"/api/photos/{x}", ADA)
+    b_row = call(app, "GET", f"/api/photos/{x}", BEN)
+    assert a_row["sha"] == x and a_row["fav"] is True and "private" not in a_row
+    assert b_row["sha"] == x and b_row["fav"] is False
+
+    # hidden by Ben's own filter: still 200 (shared_for) so /?photo=<sha> opens with the why line
+    hide(app, BEN, [x])
+    assert call(app, "GET", f"/api/photos/{x}", BEN)["sha"] == x
+
+    # withdrawn by Ada (its sharer): Ada gets 200 with private='withdrawn'; Ben gets the exact same 404 as unknown
+    call(app, "POST", "/api/private", ADA, {"shas": [x], "private": True})
+    assert call(app, "GET", f"/api/photos/{x}", ADA)["private"] == "withdrawn"
+    b_priv = call(app, "GET", f"/api/photos/{x}", BEN, expect=404)
+    b_fake = call(app, "GET", f"/api/photos/{fake}", BEN, expect=404)
+    assert b_priv == b_fake
+
+    # released: Ben can open the link again; non-member is 403
+    call(app, "POST", "/api/private", ADA, {"shas": [x], "private": False})
+    assert call(app, "GET", f"/api/photos/{x}", BEN)["sha"] == x
+    call(app, "GET", f"/api/photos/{x}", {"X-Demo-Member": "stranger"}, expect=403)
